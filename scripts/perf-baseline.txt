@@ -1,5 +1,8 @@
 # Boot-work baseline for `make check-perf-baseline`.
 #
+# The machine: -smp 1 -m 1G.  A baseline describes one shape, so the check
+# refuses a boot whose shape does not match this line.
+#
 # One row per counter the boot prints: `key baseline tolerance`.
 # Tolerance is absolute: the counters a boot is still moving when it
 # samples (heap, DHCP traffic) drift by scheduling jitter, and the ones
