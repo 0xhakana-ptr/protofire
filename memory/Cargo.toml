@@ -5,4 +5,19 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+# The fault counter's own switch, under the name the previous tree uses.  The
+# code behind it compiles either way; declaring the feature is what makes the
+# gates reachable, and an undeclared name in a `#[cfg]` is a branch nothing can
+# build — which is how three of this tree's feature gates went unexercised.
+fault_profiler = []
+alloc_profiler = ["profiler/alloc_profiler"]
+
 [dependencies]
+# The counters and the static holder.  Neither is a kernel type, which is what
+# makes the frame pool testable on the host: a region of address space is a
+# range and a bitmap, not a machine.
+profiler = { path = "../libs/profiler" }
+cell = { path = "../libs/cell" }
+
+[dev-dependencies]

@@ -273,6 +273,10 @@ dependencies = [
 [[package]]
 name = "memory"
 version = "0.1.0"
+dependencies = [
+ "cell",
+ "profiler",
+]
 
 [[package]]
 name = "net"
