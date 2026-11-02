@@ -5,12 +5,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-[features]
-default = ["x86_64"]
-x86_64 = ["arch/x86_64"]
-aarch64 = ["arch/aarch64"]
-riscv64 = ["arch/riscv64"]
-
 [dependencies]
 abi.workspace = true
+# No architecture feature: `arch` selects its implementation from the target,
+# and a forwarded feature here would be a second place the machine is named.
 arch = { path = "../arch" }

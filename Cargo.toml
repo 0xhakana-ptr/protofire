@@ -55,3 +55,23 @@ aarch64-cpu = "11.2.0"
 riscv = "0.16.0"
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
+
+# There is nothing to unwind to on bare metal, and the `no_std` image is built
+# with this profile: a binary declared `no_main` cannot be built with the host's
+# default `panic = "unwind"` at all ("unwinding panics are not supported without
+# std").  The previous tree settles the same way for the same reason.
+#
+# `opt-level = 1` keeps a debug build fast enough to boot and small enough to
+# read; `debug = 1` keeps file and line in a panic's `Location` and in a
+# backtrace without the type and variable records that dominate a link.
+[profile.dev]
+panic = "abort"
+opt-level = 1
+debug = 1
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = false

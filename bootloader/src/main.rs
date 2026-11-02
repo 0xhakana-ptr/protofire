@@ -13,20 +13,32 @@
 //! The symbols are deliberately thin.  Everything that is a *decision* — what
 //! to initialise, in what order — belongs to `kernel::kernel_main`, where a
 //! test can call it.  This file only translates the handshake.
+//!
+//! ## Host builds
+//!
+//! `cargo build --workspace` builds this package for the host too, and there
+//! the bare-metal half cannot exist: `_start` collides with the C runtime's own,
+//! and `#[panic_handler]` collides with `std`'s.  So the body is gated on
+//! `target_os = "none"` and the host build is an empty `main` — enough for the
+//! workspace to typecheck the package without pretending the image links on a
+//! machine that has an operating system.  The previous tree's root binary draws
+//! the same line (`#![cfg_attr(target_os = "none", no_std)]`) for the same
+//! reason.
 
-#![no_std]
-#![no_main]
+#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(target_os = "none", no_main)]
 
+#[cfg(target_os = "none")]
 use core::panic::PanicInfo;
 
-#[cfg(target_arch = "x86_64")]
-core::arch::global_asm!(include_str!("boot-x86_64.S"));
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+core::arch::global_asm!(include_str!("boot-x86-64.S"));
 
 /// The machine's own stop, for the paths that have nowhere left to go.
 ///
 /// Written per architecture rather than taken from `arch`, because a panic can
 /// fire before `arch` is reachable and this must not be the call that faults.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 fn halt_forever() -> ! {
     loop {
         // SAFETY: `hlt` in ring 0 stops the CPU until an interrupt arrives.
@@ -38,7 +50,7 @@ fn halt_forever() -> ! {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_os = "none", target_arch = "aarch64"))]
 fn halt_forever() -> ! {
     loop {
         // SAFETY: `wfi` waits for an interrupt at the current exception level.
@@ -47,7 +59,7 @@ fn halt_forever() -> ! {
     }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_os = "none", target_arch = "riscv64"))]
 fn halt_forever() -> ! {
     loop {
         // SAFETY: `wfi` waits for an interrupt in S-mode.  See the x86_64 arm
@@ -56,25 +68,35 @@ fn halt_forever() -> ! {
     }
 }
 
-/// What a panic does.
+/// What a panic does on bare metal.
 ///
 /// There is nowhere to unwind to and no console guaranteed to be up, so the
 /// honest answer is to stop.  A console that is up prints through the kernel's
 /// own path; a panic before that leaves the machine stopped, which is what a
 /// debugger reads.
+#[cfg(target_os = "none")]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     halt_forever()
 }
 
-/// x86_64's entry, as `boot-x86_64.S` calls it.
+/// x86_64's entry, as `boot-x86-64.S` calls it.
 ///
 /// SAFETY: this is the symbol the assembly jumps to in long mode, with the
 /// stack it built and the paging it enabled.  `extern "C"` is the calling
 /// convention both sides agree on, and the two arguments are the multiboot2
 /// handshake the assembly saved in its `.bss`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
     kernel::kernel_main(multiboot_magic, multiboot_info)
+}
+
+/// The host build, which is a typecheck and nothing else.
+#[cfg(not(target_os = "none"))]
+fn main() {
+    // Intentionally empty.  The image this package produces is for a machine
+    // with no operating system; when built for a host there is nothing to run
+    // and nothing to link, and saying so is cheaper than a `compile_error!`
+    // that would make `cargo build --workspace` refuse a checkout.
 }

@@ -4,3 +4,9 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+
+# `abi` is the error type.  Nothing else: a primitive that needed a lock, a
+# device or a filesystem would not be a primitive, and this list is short enough
+# that a new dependency shows up in the diff.
+[dependencies]
+abi.workspace = true

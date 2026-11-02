@@ -5,13 +5,23 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-[dependencies]
-arch_x86_64 = { path = "x86_64", optional = true }
-arch_aarch64 = { path = "aarch64", optional = true }
-arch_riscv64 = { path = "riscv64", optional = true }
+# The target picks the implementation, not a feature.
+#
+# A feature would be a second place the machine is named, and a build could
+# select the one that disagrees with `--target`: `cargo build --target
+# aarch64-unknown-none --features x86_64` would compile x86_64's `out`/`in`
+# instructions into an aarch64 image.  Cargo evaluates these tables against the
+# target being built, so the choice is made once and cannot be overridden.
+#
+# The consequence is that `arch` has no features at all, and neither does
+# anything depending on it: `cargo build --target <machine>` is the whole
+# selection, and a target no table names fails to build because `arch` has no
+# implementation for it — which is the right error.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+arch_x86_64 = { path = "x86_64" }
 
-[features]
-default = []
-x86_64 = ["dep:arch_x86_64"]
-aarch64 = ["dep:arch_aarch64"]
-riscv64 = ["dep:arch_riscv64"]
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+arch_aarch64 = { path = "aarch64" }
+
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+arch_riscv64 = { path = "riscv64" }
