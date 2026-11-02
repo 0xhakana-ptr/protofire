@@ -29,6 +29,10 @@
 # not have to depend on each other.
 0 cell
 0 profiler
+# `audit` is the record and its ring buffer: a fixed byte layout, an enable
+# mask, and a bounded queue of them.  It names nothing of this tree, which is
+# what lets the half that persists to a file move with the filesystem instead.
+0 audit
 0 unicode
 0 rights
 

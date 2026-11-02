@@ -21,6 +21,7 @@ members = [
     "fs",
     "kernel",
     "libs/allocator",
+    "libs/audit",
     "libs/cell",
     "libs/profiler",
     "libs/rights",

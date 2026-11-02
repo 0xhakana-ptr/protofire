@@ -1,0 +1,10 @@
+[package]
+name = "audit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Nothing.  The record is a layout and the buffer is a ring of them; the half
+# that names the filesystem and the scheduler stays with those.
+[dependencies]
