@@ -95,10 +95,14 @@ run_p1() {
 run_p2() {
     run_p1
 
-    # The ratchets this tier is for do not exist yet, and saying so is the
-    # honest form of an empty gate.  Each becomes a line here in the change
-    # that adds it.
-    step "not yet: the architecture and dependency censuses"
+    # The architecture census: a `target_arch` gate outside `arch/` is a place a
+    # fourth machine has to be taught, and nothing else in the build notices one.
+    step "scripts/check-arch-fanout.sh"
+    sh scripts/check-arch-fanout.sh || fail "an architecture gate outside arch/"
+
+    # The dependency census is the next one: every crate may name only the
+    # crates below it, and there is no file describing that yet.  Saying so is
+    # the honest form of an empty gate.
 }
 
 run_p3() {

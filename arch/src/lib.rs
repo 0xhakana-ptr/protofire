@@ -20,8 +20,14 @@
 //! below then name crates that are not there — an error that says the
 //! architecture has no implementation, which is the true statement.
 //!
-//! Two implementations at once is equally unexpressible: one target has one
-//! `target_arch`, so exactly one table applies.
+//! ## What this file must not do
+//!
+//! Spell a `target_arch` gate of its own.  The tables in the manifest are the
+//! selection; a `#[cfg(target_arch)]` here would be a second one, and
+//! `scripts/check-arch-fanout.sh` counts gates outside `arch/` precisely
+//! because they are how a new architecture gets forgotten.  This crate is
+//! exempt as a *directory*; the rule it is held to is that the gate lives in
+//! the manifest rather than in code.
 
 #![no_std]
 
@@ -33,3 +39,18 @@ pub use arch_aarch64::*;
 
 #[cfg(target_arch = "riscv64")]
 pub use arch_riscv64::*;
+
+// The handshake parser, re-exported by name.
+//
+// `pub use crate::*` above brings in the implementation crate's root items, and
+// `boot_info` is a function in its `boot` module rather than an item at the
+// root.  Naming it here is what lets the kernel call `arch::boot_info()`
+// without knowing which crate answered — the point of the routing layer.
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::boot::boot_info;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::boot::boot_info;
+
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::boot::boot_info;

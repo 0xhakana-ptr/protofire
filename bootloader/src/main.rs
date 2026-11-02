@@ -82,14 +82,20 @@ fn panic(_info: &PanicInfo) -> ! {
 
 /// x86_64's entry, as `boot-x86-64.S` calls it.
 ///
+/// The handshake is handed to `arch` before the kernel runs: parsing multiboot2
+/// registers is a fact about this machine's loader, and the kernel takes a
+/// `BootInfo` so that a new architecture supplies its own parser rather than
+/// teaching the kernel a second convention.
+///
 /// SAFETY: this is the symbol the assembly jumps to in long mode, with the
 /// stack it built and the paging it enabled.  `extern "C"` is the calling
-/// convention both sides agree on, and the two arguments are the multiboot2
-/// handshake the assembly saved in its `.bss`.
+/// convention both sides agree on, and the two arguments are what the assembly
+/// saved in its `.bss`.
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 #[unsafe(no_mangle)]
-pub extern "C" fn kernel_main(multiboot_magic: u32, multiboot_info: u32) -> ! {
-    kernel::kernel_main(multiboot_magic, multiboot_info)
+pub extern "C" fn kernel_main(multiboot_magic: u32, _multiboot_info: u32) -> ! {
+    arch_x86_64::boot::record_handshake(multiboot_magic);
+    kernel::kernel_main()
 }
 
 /// The host build, which is a typecheck and nothing else.

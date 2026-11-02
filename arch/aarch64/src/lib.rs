@@ -14,6 +14,7 @@
 // this machine from a host is exactly the case that must compile the body.
 #![cfg(target_arch = "aarch64")]
 
+pub mod boot;
 pub mod interrupts;
 pub mod serial;
 

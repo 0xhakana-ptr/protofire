@@ -1,0 +1,30 @@
+# Architecture decisions outside `arch/`: the census
+# `scripts/check-arch-fanout.sh` ratchets.
+#
+# Each row is `<file> <occurrences>  # <reason>`: how many times that file names
+# `x86_64`, `aarch64` or `riscv64` in a `target_arch` gate (line comments
+# stripped first), and why it names one at all.
+#
+# A row's reason is one of exactly two things, and the gate refuses a row that
+# gives neither:
+#
+#   * `fact:` — a fact about the machine.  An ABI record only one architecture
+#     has, a driver for hardware only one machine has.  A fourth architecture
+#     does have to decide what it does here; there is nothing to shim.
+#
+#   * `gap:` — a question the architecture should be answering, and the fix is
+#     to move it behind `arch/`.
+#
+# The number this file is for is zero, and the honest way there is one file at a
+# time.  A row that grows fails with its own reason printed, because a reason
+# that covered the old count may not cover the new one.
+#
+# `bootloader/src/main.rs` is the one row that is expected to stay.  A `no_std`
+# binary needs a `#[panic_handler]` and an entry symbol per architecture, and
+# those are things only a binary can define — the bootloader is where the
+# machine's entry convention lives, and it is the layer below `arch` rather than
+# above it.
+
+# 1 file(s), 5 occurrence(s) outside arch/
+
+bootloader/src/main.rs                               5  # fact: the entry symbol and panic handler are a binary's, one per architecture, and this crate is the layer below arch/

@@ -13,3 +13,9 @@ bench = false
 
 [dependencies]
 kernel = { path = "../kernel" }
+# The handshake parser for this machine.  A `cfg(target_arch)` table rather than
+# a feature, for the reason `arch/Cargo.toml` gives: the target says which
+# machine this is, and a flag that disagreed with it would compile one machine's
+# entry into another's image.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+arch_x86_64 = { path = "../arch/x86_64" }

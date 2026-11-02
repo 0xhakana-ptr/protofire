@@ -110,6 +110,7 @@ name = "arch_x86_64"
 version = "0.1.0"
 dependencies = [
  "abi",
+ "cell",
  "x86_64",
 ]
 
@@ -136,6 +137,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 name = "bootloader"
 version = "0.1.0"
 dependencies = [
+ "arch_x86_64",
  "kernel",
 ]
 

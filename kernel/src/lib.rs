@@ -49,30 +49,31 @@ pub enum BootStage {
     ConsoleUp = 1,
 }
 
-/// x86_64's boot: the handshake is all this machine gives, and the stage is
-/// what the boot does with it.
+/// What the bootloader handed over.
 ///
-/// Two loaders reach this function, and the number says which.  A multiboot2
-/// loader — GRUB — passes [`MULTIBOOT2_BOOTLOADER_MAGIC`] and an information
-/// structure.  QEMU's `-kernel` takes the PVH path instead, where there is no
-/// magic at all; the boot assembly records that as
-/// [`PVH_HANDSHAKE_SENTINEL`], which no multiboot2 magic can be.
+/// Defined in `abi` rather than here: the architecture crate parses the
+/// handshake and the kernel consumes it, so a type either side has to name
+/// belongs where both can reach it.  The re-export keeps the spelling this
+/// crate's callers use.
+pub use abi::BootInfo;
+pub use abi::Loader;
+
+/// The boot, from the point where a machine is up to the point where it stops.
 ///
-/// A value that is neither is checked rather than trusted.  A loader that
-/// hands over something else has done something other than what either header
-/// asked for, and continuing would read whatever happens to be at
-/// `multiboot_info` — which on a machine that did not load us there is not
-/// memory we own.
-#[cfg(target_arch = "x86_64")]
-pub fn kernel_main(multiboot_magic: u32, _multiboot_info: u32) -> ! {
-    // The console is what makes this boot observable, so it comes first: every
-    // line below is a claim, and a claim nothing can read is not evidence.
+/// This takes a [`BootInfo`] rather than a loader's registers: parsing the
+/// handshake is the architecture's business, and the previous tree's entry took
+/// x86_64's convention for the whole tree's.  A new machine supplies its own
+/// `arch::boot_info()` and nothing here changes.
+///
+/// The console is what makes this boot observable, so it comes first: every
+/// line below is a claim, and a claim nothing can read is not evidence.
+pub fn kernel_main() -> ! {
     arch::serial::init();
 
     // The heap's diagnostics go to the same console, and this is where that is
     // decided.  `allocator` reports through a sink it is handed rather than
-    // through a kernel macro, which is what lets its 13 tests run on a host;
-    // the price is this line, and a boot that omitted it would lose every
+    // through a kernel macro, which is what lets its tests run on a host; the
+    // price is this line, and a boot that omitted it would lose every
     // allocation-failure message without failing anything.
     //
     // SAFETY: `write_to_console` is a `fn(&str)` that writes the UART and
@@ -80,19 +81,10 @@ pub fn kernel_main(multiboot_magic: u32, _multiboot_info: u32) -> ! {
     // inside a failed allocation.
     unsafe { allocator::diag::set_writer(Some(write_to_console)) };
 
-    let loader = match multiboot_magic {
-        MULTIBOOT2_BOOTLOADER_MAGIC => "multiboot2",
-        PVH_HANDSHAKE_SENTINEL => "pvh",
-        other => {
-            arch::serial::write_str("protofire: unknown boot handshake: magic=");
-            arch::serial::write_u32(other);
-            arch::serial::write_str("\n");
-            halt()
-        }
-    };
+    let boot = arch::boot_info();
 
     arch::serial::write_str("protofire 0.1.0: entered via ");
-    arch::serial::write_str(loader);
+    arch::serial::write_str(boot.loader.as_str());
     arch::serial::write_str(", console up, stage ");
     arch::serial::write_u32(BootStage::ConsoleUp as u32);
     arch::serial::write_str("\n");
@@ -121,23 +113,10 @@ pub fn kernel_main(multiboot_magic: u32, _multiboot_info: u32) -> ! {
 /// A free function rather than a closure because `set_writer` takes a `fn`, and
 /// because this is the one place the allocator's output and the machine's
 /// console are joined — naming it makes that join visible in a search.
-#[cfg(target_arch = "x86_64")]
 fn write_to_console(text: &str) {
     arch::serial::write_str(text);
     arch::serial::write_str("\n");
 }
-
-/// The magic a multiboot2 loader passes in `%eax`.
-#[cfg(target_arch = "x86_64")]
-pub const MULTIBOOT2_BOOTLOADER_MAGIC: u32 = 0x36D7_628D;
-
-/// What the boot assembly records when the PVH note brought it up.
-///
-/// There is no handshake on that path, so the assembly writes a value a
-/// multiboot2 loader could never produce; `u32::MAX` is not a magic any loader
-/// passes, and treating it as one would be worse than the sentinel.
-#[cfg(target_arch = "x86_64")]
-pub const PVH_HANDSHAKE_SENTINEL: u32 = 0xFFFF_FFFF;
 
 /// Stop this CPU.
 ///

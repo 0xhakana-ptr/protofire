@@ -1,0 +1,70 @@
+//! arch/x86_64/src/boot.rs
+//!
+//! What x86_64's loaders hand over, and how the kernel hears about it.
+//!
+//! ## Two loaders, two conventions
+//!
+//! A multiboot2 loader — GRUB — enters `_start` with a magic in `%eax` and an
+//! information structure's address in `%ebx`.  QEMU's `-kernel` reads the PVH
+//! ELF note instead and enters with **no handshake at all**: there is nothing
+//! in `%eax` to check.
+//!
+//! The boot assembly saves whatever arrived and marks the PVH path with a value
+//! no multiboot2 magic can be, so this module's job is to read that and say
+//! which loader it was.  It is the only place the two conventions are known;
+//! the kernel names [`abi::Loader`] and nothing else.
+
+/// The magic a multiboot2 loader passes in `%eax`.
+pub const MULTIBOOT2_BOOTLOADER_MAGIC: u32 = 0x36D7_628D;
+
+/// What the boot assembly records when the PVH note brought it up.
+///
+/// `u32::MAX` is not a magic any loader passes, and treating it as one would be
+/// worse than a sentinel: the check below would pass for a loader that had done
+/// something else entirely.
+pub const PVH_HANDSHAKE_SENTINEL: u32 = 0xFFFF_FFFF;
+
+/// The handshake, as the assembly saved it.
+///
+/// Set by `boot-x86-64.S` before it leaves 32-bit mode, and read exactly once
+/// by [`boot_info`].  A `static mut` would be the usual shape; this is a
+/// [`SyncUnsafeCell`] because a bare `UnsafeCell` is `!Sync` and the assembly
+/// writes through the symbol's address rather than through Rust.
+static HANDSHAKE: cell::SyncUnsafeCell<u32> = cell::SyncUnsafeCell::new(0);
+
+/// Where the assembly writes the handshake.
+///
+/// # Safety
+///
+/// Called only from the boot assembly, before any Rust code runs, with the
+/// value the loader put in `%eax`.
+#[unsafe(no_mangle)]
+pub fn record_handshake(magic: u32) {
+    // SAFETY: the write happens once, before any other Rust code runs and
+    // before interrupts are enabled, so no other access can be concurrent.
+    unsafe { *HANDSHAKE.get() = magic };
+}
+
+/// Which loader brought this image up.
+///
+/// A value that is neither magic nor the sentinel is not something this machine
+/// can explain, and the honest answer is to stop: continuing would read
+/// whatever is at the information address, which on a machine that did not load
+/// us there is not memory we own.
+pub fn boot_info() -> abi::BootInfo {
+    // SAFETY: the assembly wrote this once before Rust ran; nothing mutates it
+    // afterwards, so reading it here is a read of a value that is already
+    // final.
+    let magic = unsafe { *HANDSHAKE.get() };
+    let loader = match magic {
+        MULTIBOOT2_BOOTLOADER_MAGIC => abi::Loader::Multiboot2,
+        PVH_HANDSHAKE_SENTINEL => abi::Loader::Pvh,
+        other => {
+            crate::serial::write_str("protofire: unknown boot handshake: magic=");
+            crate::serial::write_u32(other);
+            crate::serial::write_str("\n");
+            crate::halt()
+        }
+    };
+    abi::BootInfo { loader }
+}

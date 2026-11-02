@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 abi.workspace = true
 x86_64.workspace = true
+# The handshake slot, and the type the answer is stated in.  No `kernel`: this
+# crate is below it, and an edge upward is the one this tree forbids.
+cell = { path = "../../libs/cell" }

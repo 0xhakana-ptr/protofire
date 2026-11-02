@@ -26,8 +26,11 @@
 
 #![no_std]
 
+pub mod boot;
 pub mod error;
 pub mod syscall;
 
+pub use boot::BootInfo;
+pub use boot::Loader;
 pub use error::Error;
 pub use error::Result;
