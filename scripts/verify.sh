@@ -69,6 +69,11 @@ run_p0() {
     step "cargo fmt --check"
     cargo fmt --all -- --check || fail "formatting"
 
+    # Documents before code: a citation that does not resolve is cheaper to find
+    # than to follow, and the check costs a fraction of a build.
+    step "scripts/check-docs.sh"
+    sh scripts/check-docs.sh || fail "a document cites a file the tree does not have"
+
     step "cargo build --workspace"
     cargo build --offline --workspace || fail "the workspace does not build"
 
