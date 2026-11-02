@@ -328,6 +328,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rights"
+version = "0.1.0"
+
+[[package]]
 name = "riscv"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -374,6 +378,9 @@ name = "security"
 version = "0.1.0"
 dependencies = [
  "abi",
+ "rights",
+ "spin",
+ "sync",
 ]
 
 [[package]]

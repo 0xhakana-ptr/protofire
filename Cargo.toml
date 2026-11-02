@@ -23,6 +23,7 @@ members = [
     "libs/allocator",
     "libs/cell",
     "libs/profiler",
+    "libs/rights",
     "libs/sync",
     "libs/unicode",
     "memory",

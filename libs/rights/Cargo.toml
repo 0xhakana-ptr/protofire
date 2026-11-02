@@ -1,0 +1,9 @@
+[package]
+name = "rights"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Nothing: two constants and the argument for them.
+[dependencies]
