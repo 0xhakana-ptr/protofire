@@ -55,6 +55,13 @@
 2 crypto
 2 async_io
 
+# `power` is the governor policy: a load sample and a frequency range in, a
+# target frequency out.  It names `abi` for the driver trait the architecture
+# crates implement, and nothing else — which is what lets its arithmetic be
+# tested on a host.  The half that probes a machine arrives with the `cpufreq`
+# modules in the architecture crates, and moves up then.
+2 power
+
 # ── Layer 3: the machine ────────────────────────────────────────────────────
 #
 # `arch_*` are the three implementations, each a crate of its own so a missing

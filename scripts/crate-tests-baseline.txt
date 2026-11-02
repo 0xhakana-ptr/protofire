@@ -19,7 +19,8 @@
 
 
 
-abi                   411    8
+
+abi                   462    8
 allocator            2508   13
 arch                 1436    1
 arch_aarch64          446    4
@@ -33,10 +34,11 @@ crypto               4660   64
 e1000                   2    0
 fs                      2    0
 integration_tests       2    0
-kernel                208    1
+kernel                210    1
 memory               1464   19
 net                     2    0
 pci                     2    0
+power                 320   12
 profiler              312    2
 protofire               4    0
 rights                 78    3

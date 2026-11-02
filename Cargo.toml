@@ -29,6 +29,7 @@ members = [
     "libs/unicode",
     "memory",
     "net",
+    "power",
     "security",
     "sound",
     "syscall",
