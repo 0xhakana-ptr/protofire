@@ -3,7 +3,7 @@
 //! Global allocator wiring, `HeapAllocator` public API, and `heap_model()`
 //! accessor.
 
-use super::allocator::KernelGlobalAllocator;
+pub use super::allocator::KernelGlobalAllocator;
 
 // ─── The heap model ───────────────────────────────────────────────────────
 //
@@ -19,7 +19,7 @@ use super::allocator::KernelGlobalAllocator;
 // rather than a second allocator.
 
 /// The model the kernel and the tests both drive.
-static HEAP_MODEL: KernelGlobalAllocator = KernelGlobalAllocator::new();
+pub static HEAP_MODEL: KernelGlobalAllocator = KernelGlobalAllocator::new();
 
 #[derive(Clone, Copy, Default)]
 pub struct HeapAllocator;

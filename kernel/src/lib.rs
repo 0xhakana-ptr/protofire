@@ -32,6 +32,23 @@ pub mod ipc;
 pub mod power;
 pub mod scheduler;
 
+// The heap's global allocator, installed here because this is the crate that
+// knows it is a kernel.
+//
+// `libs/allocator` deliberately does not install one: a library that did could
+// not be a dependency of a test binary, and two global allocators is a link
+// error.  But something has to install one before the first `Vec`, and the
+// first `Vec` is `async_io`'s completion queue — which is why this arrived with
+// the wiring rather than before it.
+//
+// SAFETY: `KernelGlobalAllocator` implements `GlobalAlloc` with every method
+// taking `&self` and reaching its state only through a lock, so it is safe to
+// share as the process-wide allocator.  Its arena is a `static` array and its
+// free lists are laid out on the first call.
+#[cfg(target_os = "none")]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: allocator::KernelGlobalAllocator = allocator::KernelGlobalAllocator::new();
+
 /// The stage a boot has reached, as one word, for a log line that cannot yet
 /// afford to be wrong.
 ///
@@ -105,8 +122,50 @@ pub fn kernel_main() -> ! {
     arch::serial::write_hex(heap_end as u64);
     arch::serial::write_str("\n");
 
+    // The completion queue every asynchronous operation will be drained
+    // through.
+    //
+    // This is not a probe: `async_io`'s whole design is that a service produces
+    // completions into a bounded queue and a caller takes them, and a kernel
+    // with no queue has nowhere for a driver to report a finished request.  The
+    // capacity is the number of outstanding operations the first driver will
+    // allow — the same shape an io_uring ring has, where the program sizes it —
+    // and it is stated here because the kernel is what owns the bound.
+    //
+    // The two assertions after it are what make the wiring observable: a queue
+    // that could not accept and return one entry is a queue that is not there,
+    // and a boot line that said "ok" without the round trip would be a claim
+    // rather than a result.
+    let mut completions = async_io::CompletionQueue::new(COMPLETION_QUEUE_CAPACITY);
+    let probe_id = async_io::RequestId::new(0);
+    let queued = completions
+        .push(async_io::Completion::ok(probe_id, 0))
+        .is_ok();
+    let drained = completions
+        .pop()
+        .filter(|done| done.id == probe_id)
+        .is_some();
+    arch::serial::write_str("protofire: completion queue ");
+    if queued && drained {
+        arch::serial::write_str("ready, capacity ");
+        arch::serial::write_u32(COMPLETION_QUEUE_CAPACITY as u32);
+    } else {
+        // A queue that failed its own round trip is a kernel that cannot hold a
+        // completion, and continuing would be the first lie in the log.
+        arch::serial::write_str("REFUSED the round trip");
+    }
+    arch::serial::write_str("\n");
+
     halt()
 }
+
+/// How many completions the kernel's queue holds.
+///
+/// Stated once.  A driver whose device can have more requests in flight than
+/// this will have completions refused, and `CompletionQueue::refused()` is the
+/// counter that says so — which is why the number is here rather than inside
+/// the crate: only the kernel knows how many devices it expects to run.
+const COMPLETION_QUEUE_CAPACITY: usize = 64;
 
 /// The allocator's diagnostic sink: the console, one string at a time.
 ///

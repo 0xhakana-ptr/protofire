@@ -18,12 +18,13 @@
 
 
 
+
 abi                   411    8
 allocator            2508   13
-arch                 1412    1
-arch_aarch64          438    4
-arch_riscv64          397    4
-arch_x86_64           487    5
+arch                 1436    1
+arch_aarch64          446    4
+arch_riscv64          405    4
+arch_x86_64           495    5
 async_io              717   14
 audit                 595    8
 bootloader            109    0 # exempt: entry symbols, a panic handler and an assembly stub; a test of those is a boot
@@ -32,7 +33,7 @@ crypto               4660   64
 e1000                   2    0
 fs                      2    0
 integration_tests       2    0
-kernel                151    0
+kernel                208    1
 memory               1464   19
 net                     2    0
 pci                     2    0
@@ -46,4 +47,4 @@ syscall                 2    0
 unicode              4662   31
 virt                    2    0
 virtio                  2    0
-xtask                 469    9
+xtask                 470    9
