@@ -1,0 +1,10 @@
+[package]
+name = "arch_x86_64"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+abi.workspace = true
+x86_64.workspace = true

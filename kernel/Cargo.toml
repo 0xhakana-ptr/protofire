@@ -1,0 +1,18 @@
+[package]
+name = "kernel"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+abi.workspace = true
+async_io.workspace = true
+sync.workspace = true
+allocator.workspace = true
+spin.workspace = true
+security.workspace = true
+syscall.workspace = true
+sound.workspace = true
+
+arch = { path = "../arch", features = ["x86_64"] }

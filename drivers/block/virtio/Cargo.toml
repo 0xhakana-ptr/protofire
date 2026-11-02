@@ -1,0 +1,10 @@
+[package]
+name = "virtio"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+abi.workspace = true
+async_io.workspace = true

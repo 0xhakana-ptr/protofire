@@ -1,0 +1,17 @@
+[package]
+name = "arch"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+arch_x86_64 = { path = "x86_64", optional = true }
+arch_aarch64 = { path = "aarch64", optional = true }
+arch_riscv64 = { path = "riscv64", optional = true }
+
+[features]
+default = []
+x86_64 = ["dep:arch_x86_64"]
+aarch64 = ["dep:arch_aarch64"]
+riscv64 = ["dep:arch_riscv64"]

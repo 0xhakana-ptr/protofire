@@ -1,0 +1,10 @@
+[package]
+name = "allocator"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+abi.workspace = true
+sync.workspace = true

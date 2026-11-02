@@ -1,259 +1,54 @@
-# File: Cargo.toml
-# Purpose: Cargo package manifest, crate targets, and build profile configuration.
-
 [package]
 name = "protofire"
-version = "0.8.15"
-edition = "2021"
-authors = ["Raiden Lumine"]
-description = "A Rust bare-metal kernel prototype with a file-oriented user ABI."
-license = "Apache-2.0"
-# The kernel ships as a signed bundle of images, not as a crate: `publish =
-# false` keeps a stray `cargo publish` from offering it to crates.io.  The fuzz
-# package says the same for the same reason.
+version = "0.1.0"
+edition = "2024"
 publish = false
 
-# The KASLR tool under `tools/` is a package of its own, so the workspace has
-# to name it for cargo's commands to reach it: `cargo fmt --all` formats it,
-# `cargo clippy --workspace` lints it, and its lockfile is this one rather than
-# a second one it would otherwise keep.  `fuzz/` is deliberately not here —
-# it declares its own `[workspace]` and needs crates.io, which is the property
-# `fuzz/README.md` argues for — so `make check-fuzz-targets` covers it.
 [workspace]
-members = ["tools/gen-kaslr-relocs", "shared"]
+resolver = "2"
+members = [
+    "abi",
+    "arch",
+    "arch/x86_64",
+    "arch/aarch64",
+    "arch/riscv64",
+    "async_io",
+    "bootloader",
+    "crypto",
+    "drivers/block/virtio",
+    "drivers/bus/pci",
+    "drivers/net/e1000",
+    "kernel",
+    "libs/allocator",
+    "libs/sync",
+    "security",
+    "sound",
+    "syscall",
+    "tools/xtask",
+    "tests",
+    "virt",
+]
 
-# The lints the whole workspace shares.  The root package opts in below, the
-# KASLR tool does the same in its own manifest, and `fuzz/` — a workspace of
-# its own, so it cannot inherit anything from here — spells the clippy one out
-# directly.  Keeping them here rather than on every clippy command line is what
-# makes the policy apply to a clippy run nobody thought about.
-[workspace.lints.rust]
-# Edition 2024 makes this the default; on edition 2021 it is opt-in, and the
-# kernel wants it now: an unsafe operation inside an unsafe function is a
-# distinct statement from "this function's contract covers it" — the block is
-# where the reason goes, and the compiler checks the placement rather than
-# trusting the reader to notice it.
-unsafe_op_in_unsafe_fn = "deny"
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Raiden Lumine"]
+license = "Apache-2.0"
 
-[workspace.lints.clippy]
-# `-D warnings` turns warnings into errors and only the command line can ask
-# for it, but this lint is allow-by-default: a clippy invocation that does not
-# name it does not have it.  Naming it here is what stops the rule from
-# depending on every command remembering a flag; `make clippy`,
-# `make clippy-targets` and `make check-fuzz-targets` therefore pass only
-# `-D warnings`, and `make check-unsafe-comments` stays as the second,
-# independent census.
-undocumented_unsafe_blocks = "deny"
-
-[lints]
-workspace = true
-
-[lib]
-name = "protofire"
-crate-type = ["rlib"]
-
-[[bin]]
-name = "protofire"
-path = "src/main.rs"
-test = false
-bench = false
-
-[[test]]
-name = "path"
-path = "tests/fs/path.rs"
-
-[[test]]
-name = "fs_maintenance"
-path = "tests/fs/maintenance.rs"
-
-[[test]]
-name = "fallocate"
-path = "tests/syscall/fallocate.rs"
-
-[[test]]
-name = "install"
-path = "tests/syscall/install.rs"
-
-[[test]]
-name = "servicefs"
-path = "tests/fs/servicefs.rs"
-
-[[test]]
-name = "sync_lock"
-path = "tests/fs/sync_lock.rs"
-
-[[test]]
-name = "fat32"
-path = "tests/fat32.rs"
-
-[[test]]
-name = "pyrofs"
-path = "tests/pyrofs/validation.rs"
-
-[[test]]
-name = "pyrofs_fault_matrix"
-path = "tests/pyrofs/fault_matrix.rs"
-
-[[test]]
-name = "pyrofs_recovery"
-path = "tests/pyrofs/recovery.rs"
-
-[[test]]
-name = "pyrofs_property"
-path = "tests/pyrofs/property.rs"
-
-[[test]]
-name = "memory_manager"
-path = "tests/memory/manager.rs"
-
-[[test]]
-name = "page_table"
-path = "tests/memory/page_table.rs"
-
-[[test]]
-name = "memory_pressure"
-path = "tests/memory/pressure.rs"
-
-[[test]]
-name = "udp_wait"
-path = "tests/net/udp_wait.rs"
-
-[[test]]
-name = "condvar"
-path = "tests/process/condvar.rs"
-
-[[test]]
-name = "scheduler"
-path = "tests/process/scheduler.rs"
-
-[[test]]
-name = "process_stress"
-path = "tests/process/stress.rs"
-
-[[test]]
-name = "console"
-path = "tests/io/console.rs"
-
-[[test]]
-name = "keyboard"
-path = "tests/io/keyboard.rs"
-
-[[test]]
-name = "io"
-path = "tests/io/io.rs"
-
-[[test]]
-name = "net_fuzz"
-path = "tests/net/fuzz.rs"
-
-[[test]]
-name = "syscall_fuzz"
-path = "tests/syscall/fuzz.rs"
-
-[[test]]
-name = "syscall_abi_golden"
-path = "tests/syscall/abi_golden.rs"
-
-[[test]]
-name = "fs_entries"
-path = "tests/syscall/fs_entries.rs"
-
-[[test]]
-name = "mac_enforcement"
-path = "tests/syscall/mac_enforcement.rs"
-
-[[test]]
-name = "usb_msd"
-path = "tests/drivers/usb_msd.rs"
-
-[[test]]
-name = "parser_fuzz"
-path = "tests/parsers/fuzz.rs"
-
-[[test]]
-name = "pyrofs_undo_property"
-path = "tests/pyrofs/undo_property.rs"
-
-[[test]]
-name = "virgl_demo"
-path = "tests/gpu/virgl_demo.rs"
-
-[features]
-default = []
-demo-disk = []
-# Enables the standalone ring3 runtime bridge (__shell_syscallN wrappers in
-# src/user/shared/runtime.rs). Off in the kernel build: the kernel provides its
-# own bridge in src/user/program/shell/syscall_bridge.rs.
-runtime = []
-# Ships the byte-for-byte payload frozen on 2026-09-27 instead of the one this
-# build compiles, so the boot runs a program that was not rebuilt.  This is what
-# makes "we do not break userspace" a testable claim; see
-# `src/user/demo/demo_program_x86_64_rust_io.rs`.
-abi_frozen_payload = []
-# Ships an init program that reads the declarations and asks for nothing to be
-# started, so the boot's other half — the supervisor starting what is still
-# pending when the hand-off's deadline passes — is exercised by a boot rather
-# than merely reasoned about.  Used by `make check-x8664-init-no-start`.
-init_no_start = []
-fs_profiler = []
-fs_lock_timing = []
-heap_audit = []
-liveness_heartbeat = []
-# Boots a relocated kernel: `kernel_entry` copies the image to a random base
-# the machine's memory map allows, patches the compiled-in relocation table's
-# sites by the delta, and continues in the copy (`src/arch/x86_64/kaslr.rs`).
-# The table is generated by `make gen-kaslr-relocs` from a build with this
-# feature on, and `make check-x8664-kaslr-runtime` proves the two agree by
-# regenerating until it reaches a fixed point.  x86_64 only; a build with it on
-# refuses AP bring-up, because the trampoline enters the link-time address.
-kaslr = []
-# Asks the stack window and the posted-invalidation log for more than they can
-# hold, so the fallbacks (frames at their own addresses, full TLB flushes) are
-# exercised rather than merely reasoned about.  Used by the x86_64 runtime
-# check; it costs tens of megabytes of frames for the moment it runs.
-stack_churn = []
-net_profiler = []
-# Boots with the loopback device as the network stack's only device, on a
-# static address, so the network half of the boot workload has a peer that
-# cannot change between boots and needs no host behind it.  Used by
-# `make check-perf-baseline-net`; see `src/kernel/workload.rs`.
-net_loopback = []
-# Simulates the ring-room bookkeeping defect: every completed TD's room is never
-# handed back.  The producer's occupancy then grows until `RingRoom` refuses a
-# submit with `Busy` — which is the refusal no honest caller reaches, because
-# every submit path here waits for its completion and releases in the same call.
-# `make check-x8664-usb-room-budget` boots a USB disk with it and requires the
-# disk to stop working, which is what proves the accounting is load-bearing.
-xhci_ring_room_leak = []
-# Makes the timer tick's xHCI drain call the interrupt handler **while it holds
-# the rings**, so the handler's `try_lock` fails for real and the miss/acknowledge
-# path runs on a machine with no transfer in flight.  That is the case RFC 0021
-# exists for — a report the interrupt could not take, drained by the tick — and
-# no boot forces it otherwise; `make check-x8664-usb-contention` is the gate.
-xhci_contention = []
-# Prints one line of measured boot work at a fixed tick, so a boot's counters
-# can be compared against a recorded baseline (`make check-perf-baseline`).
-perf_baseline = []
-alloc_profiler = []
-fault_profiler = []
-educational_networking = []
-
-[dependencies]
-protofire-shared = { path = "shared" }
-
-[profile.dev]
-panic = "abort"
-opt-level = 1
-# Line tables only.  Full DWARF made the debug kernel 149 MB per architecture
-# for a debugger workflow nothing in the tree documents, and it is the largest
-# single cost in a link; `debug = 1` keeps file and line in a backtrace (and in
-# a panic's `Location`) without the type and variable records.
-debug = 1
-debug-assertions = true
-
-[profile.release]
-panic = "abort"
-opt-level = "s"
-lto = true
-codegen-units = 1
-debug = false
+[workspace.dependencies]
+abi = { path = "abi" }
+async_io = { path = "async_io" }
+sync = { path = "libs/sync" }
+allocator = { path = "libs/allocator" }
+arch = { path = "arch" }
+security = { path = "security" }
+syscall = { path = "syscall" }
+sound = { path = "sound" }
+virt = { path = "virt" }
+kernel = { path = "kernel" }
+spin = "0.9"
+x86_64 = "0.15.2"
+aarch64-cpu = "11.2.0"
+riscv = "0.16.0"
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }
