@@ -5,5 +5,20 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+# The machine selection is the kernel's, forwarded.  A bootloader that chose an
+# architecture independently could disagree with the kernel it links, and the
+# disagreement would be a link error nobody could read.
+default = ["x86_64"]
+x86_64 = ["kernel/x86_64"]
+aarch64 = ["kernel/aarch64"]
+riscv64 = ["kernel/riscv64"]
+
+[[bin]]
+name = "bootloader"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
-kernel.workspace = true
+kernel = { workspace = true, default-features = false }

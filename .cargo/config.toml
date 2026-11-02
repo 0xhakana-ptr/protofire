@@ -1,0 +1,34 @@
+# File: .cargo/config.toml
+# Purpose: Per-target linker scripts and rustflags for the bare-metal builds.
+
+# The kernel is one image per machine, and each machine's loader expects a
+# different container: x86_64 a multiboot2 ELF, aarch64 a raw Image with a
+# 64-byte header, riscv64 an ELF whose entry OpenSBI jumps to.  The linker
+# script is therefore selected by target here rather than by a `--config` flag
+# on a command line, so a build that forgets it fails instead of producing an
+# image at the wrong address.
+#
+# `-C relocation-model=static` is not a style choice.  Without it the linker is
+# invoked with `-pie` and the image comes out position-independent, which a
+# multiboot2 loader placing it at a fixed address cannot use: the header's
+# entry point would be an offset in a container the loader does not relocate.
+# The previous tree settled on the same flag for the same reason.
+#
+# Nothing here passes `-nostartfiles`: that is a gcc driver flag and rust-lld
+# rejects it outright (`unknown argument`).  A `no_std` binary has no crt to
+# suppress in the first place; the entry symbol is `_start` in the assembly.
+[target.x86_64-unknown-none]
+rustflags = [
+    "-C", "relocation-model=static",
+    "-C", "link-arg=-Tbootloader/linker-x86_64.ld",
+]
+
+[target.aarch64-unknown-none]
+rustflags = [
+    "-C", "relocation-model=static",
+]
+
+[target.riscv64gc-unknown-none-elf]
+rustflags = [
+    "-C", "relocation-model=static",
+]

@@ -5,6 +5,16 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+# One feature per machine, forwarded to `arch`.  The kernel never names a
+# machine itself: `#[cfg(target_arch)]` in this crate would be a gate outside
+# `arch/`, which is the wall `scripts/check-arch-fanout.sh` in the previous
+# tree existed to count.  Selecting one here selects one there.
+default = ["x86_64"]
+x86_64 = ["arch/x86_64"]
+aarch64 = ["arch/aarch64"]
+riscv64 = ["arch/riscv64"]
+
 [dependencies]
 abi.workspace = true
 async_io.workspace = true
@@ -15,4 +25,7 @@ security.workspace = true
 syscall.workspace = true
 sound.workspace = true
 
-arch = { path = "../arch", features = ["x86_64"] }
+# No `features = [...]` here: the selection is this crate's own feature set
+# above, so `cargo build -p kernel --no-default-features --features aarch64`
+# builds the aarch64 kernel and `--features` cannot disagree with the target.
+arch = { path = "../arch", default-features = false }
