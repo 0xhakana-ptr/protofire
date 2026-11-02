@@ -14,6 +14,7 @@
 #![cfg(target_arch = "riscv64")]
 
 pub mod interrupts;
+pub mod serial;
 
 /// Stop this CPU until an interrupt arrives.
 ///

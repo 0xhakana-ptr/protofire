@@ -91,17 +91,29 @@ impl Machine {
         }
     }
 
-    /// The line this machine's boot prints when it reaches its console.
+    /// The lines this machine's boot has to print, in order.
     ///
-    /// This is the first claim the tree makes, and it names the loader: a PVH
-    /// boot and a multiboot2 boot are different code paths through the same
-    /// function, so a mismatch is a real difference rather than a wording
-    /// preference.
-    const fn first_console_line(self) -> &'static str {
+    /// The first names the loader: a PVH boot and a multiboot2 boot are
+    /// different code paths through the same function, so a mismatch is a real
+    /// difference rather than a wording preference.
+    ///
+    /// The second is the heap's own bounds.  It is here rather than treated as
+    /// a log line because reaching it means `bounds()` ran, which is what makes
+    /// the allocator lay out its free lists — a boot that printed the first
+    /// line and stopped before the second has a loader but no heap.  The
+    /// address itself is not asserted: it moves with the image, and the gate
+    /// is that the line is there, not where it points.
+    fn required_lines(self) -> &'static [(&'static str, bool)] {
         match self {
-            Self::X8664 => "protofire 0.1.0: entered via pvh, console up, stage 1",
-            Self::Aarch64 => "",
-            Self::Riscv64 => "",
+            Self::X8664 => &[
+                (
+                    "protofire 0.1.0: entered via pvh, console up, stage 1",
+                    true,
+                ),
+                ("protofire: heap at ", false),
+            ],
+            Self::Aarch64 => &[],
+            Self::Riscv64 => &[],
         }
     }
 }
@@ -279,40 +291,40 @@ fn run(machine: Machine, profile: &str, timeout: u64, log: Option<&Path>) -> Res
     Ok(text)
 }
 
-/// Boot one machine and require the line its console prints first.
+/// Boot one machine and require the lines its console prints.
 fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()> {
-    let expected = machine.first_console_line();
-    if expected.is_empty() {
+    let required = machine.required_lines();
+    if required.is_empty() {
         bail!(
-            "{} has no expected console line yet: there is no boot to check",
+            "{} has no expected console lines yet: there is no boot to check",
             machine.triple()
         );
     }
 
     let log = run(machine, profile, timeout, None)?;
-    match expect_line(&log, expected) {
-        Ok(()) => {
-            println!(
-                "check passed: {} reached its console via {}",
-                machine.triple(),
-                if expected.contains("pvh") {
-                    "pvh"
-                } else {
-                    "multiboot2"
-                }
-            );
-            Ok(())
-        }
-        Err(problem) => {
+    for (expected, exact) in required {
+        let outcome = if *exact {
+            expect_line(&log, expected)
+        } else {
+            expect_line_prefix(&log, expected)
+        };
+        if let Err(problem) = outcome {
             let mut message = String::new();
             writeln!(message, "check failed: {problem}")?;
             writeln!(message, "  serial log ({} bytes):", log.len())?;
             for line in log.lines() {
                 writeln!(message, "    {line}")?;
             }
-            bail!("{message}")
+            bail!("{message}");
         }
     }
+
+    println!(
+        "check passed: {} printed {} required line(s) and reached its heap",
+        machine.triple(),
+        required.len()
+    );
+    Ok(())
 }
 
 /// Whether a serial log contains a line, exactly.
@@ -341,9 +353,35 @@ fn expect_line(log: &str, expected: &str) -> std::result::Result<(), String> {
     Err(format!("the serial log has no line {expected:?}"))
 }
 
+/// Whether a serial log has a line starting with `prefix`.
+///
+/// The counterpart to [`expect_line`] for lines whose tail is a value the build
+/// chose — an address moves with the image, and asserting one would make the
+/// gate fail for a correct kernel.  The prefix is what names the fact; the tail
+/// is what the log reports about it.
+fn expect_line_prefix(log: &str, prefix: &str) -> std::result::Result<(), String> {
+    if log
+        .lines()
+        .map(|line| line.trim_end_matches('\r'))
+        .any(|line| line.starts_with(prefix))
+    {
+        return Ok(());
+    }
+    if log.trim().is_empty() {
+        return Err(format!(
+            "the serial log is empty: the boot died before the console was up \
+             (expected a line starting with {prefix:?})"
+        ));
+    }
+    Err(format!(
+        "the serial log has no line starting with {prefix:?}"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::expect_line;
+    use super::expect_line_prefix;
 
     /// The line the boot prints is found when it is there.
     #[test]
@@ -390,6 +428,32 @@ mod tests {
     #[test]
     fn an_empty_log_says_the_console_never_came_up() {
         let error = expect_line("", "anything").unwrap_err();
+        assert!(error.contains("empty"), "{error}");
+    }
+
+    /// A line whose tail is a value the build chose matches on its prefix.
+    ///
+    /// The heap's bounds move with the image, so the gate asserts the line's
+    /// shape rather than its value: a check that named an address would fail
+    /// for a correct kernel the first time a symbol moved.
+    #[test]
+    fn a_prefix_match_accepts_a_varying_tail() {
+        let log = "protofire: heap at 0x11d790..0x411d790\n";
+        assert_eq!(expect_line_prefix(log, "protofire: heap at "), Ok(()));
+    }
+
+    /// The prefix is required, not merely present somewhere: a log that printed
+    /// the words in another line is not a boot that reached the heap.
+    #[test]
+    fn a_prefix_that_is_absent_is_refused() {
+        let log = "protofire 0.1.0: entered via pvh, console up, stage 1\n";
+        assert!(expect_line_prefix(log, "protofire: heap at ").is_err());
+    }
+
+    /// An empty log says so, the same way `expect_line` does.
+    #[test]
+    fn an_empty_log_says_the_console_never_came_up_for_a_prefix() {
+        let error = expect_line_prefix("", "anything").unwrap_err();
         assert!(error.contains("empty"), "{error}");
     }
 

@@ -69,6 +69,17 @@ pub fn kernel_main(multiboot_magic: u32, _multiboot_info: u32) -> ! {
     // line below is a claim, and a claim nothing can read is not evidence.
     arch::serial::init();
 
+    // The heap's diagnostics go to the same console, and this is where that is
+    // decided.  `allocator` reports through a sink it is handed rather than
+    // through a kernel macro, which is what lets its 13 tests run on a host;
+    // the price is this line, and a boot that omitted it would lose every
+    // allocation-failure message without failing anything.
+    //
+    // SAFETY: `write_to_console` is a `fn(&str)` that writes the UART and
+    // allocates nothing — required, because the allocator may call it from
+    // inside a failed allocation.
+    unsafe { allocator::diag::set_writer(Some(write_to_console)) };
+
     let loader = match multiboot_magic {
         MULTIBOOT2_BOOTLOADER_MAGIC => "multiboot2",
         PVH_HANDSHAKE_SENTINEL => "pvh",
@@ -86,7 +97,34 @@ pub fn kernel_main(multiboot_magic: u32, _multiboot_info: u32) -> ! {
     arch::serial::write_u32(BootStage::ConsoleUp as u32);
     arch::serial::write_str("\n");
 
+    // Initialise the heap and say where it is.
+    //
+    // This is not a probe left behind: `bounds()` is what makes the allocator
+    // lay out its free lists, so a boot that did not call it would hand out
+    // memory from a heap with no free list at all.  The line is how that
+    // arrangement becomes observable — and how the allocator's diagnostic sink
+    // is proven to reach the console, because the sink and this line are the
+    // same path.
+    let heap = allocator::HeapAllocator::new();
+    let (heap_start, heap_end) = heap.bounds();
+    arch::serial::write_str("protofire: heap at ");
+    arch::serial::write_hex(heap_start as u64);
+    arch::serial::write_str("..");
+    arch::serial::write_hex(heap_end as u64);
+    arch::serial::write_str("\n");
+
     halt()
+}
+
+/// The allocator's diagnostic sink: the console, one string at a time.
+///
+/// A free function rather than a closure because `set_writer` takes a `fn`, and
+/// because this is the one place the allocator's output and the machine's
+/// console are joined — naming it makes that join visible in a search.
+#[cfg(target_arch = "x86_64")]
+fn write_to_console(text: &str) {
+    arch::serial::write_str(text);
+    arch::serial::write_str("\n");
 }
 
 /// The magic a multiboot2 loader passes in `%eax`.

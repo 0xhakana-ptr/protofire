@@ -140,6 +140,32 @@ pub fn write_u32(value: u32) {
     }
 }
 
+/// Write a `u64` as lower-case hexadecimal, without allocating.
+///
+/// Used by the boot's address lines.  Decimal would be accurate and unreadable:
+/// an address is a bit pattern, and a reader compares one against a linker
+/// script.
+pub fn write_hex(value: u64) {
+    write_str("0x");
+    if value == 0 {
+        write_byte(b'0');
+        return;
+    }
+    let mut started = false;
+    for shift in (0..16).rev() {
+        let digit = ((value >> (shift * 4)) & 0xF) as u8;
+        if digit == 0 && !started {
+            continue;
+        }
+        started = true;
+        write_byte(if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// The buffer in `write_u32` holds ten digits, which is the most a `u32`
