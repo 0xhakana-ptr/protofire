@@ -8,3 +8,8 @@ license.workspace = true
 [dependencies]
 abi.workspace = true
 riscv.workspace = true
+# The host arm of the console records bytes behind a lock; a host build is
+# multi-threaded in its tests, and the recording is not the kernel's single-CPU
+# boot path.  Only a host build names it.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+spin.workspace = true

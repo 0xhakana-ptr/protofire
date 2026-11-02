@@ -1,0 +1,49 @@
+# Per-crate source lines and test counts: the census
+# `scripts/check-crate-tests.sh` ratchets.
+#
+# Each row is `<crate> <source lines> <tests run>`.  The test count is what
+# `cargo test -p <crate>` reports, which is the only number that means anything:
+# a `#[cfg(test)]` module in a crate that does not compile for the host reports
+# zero, and that is the state this census first found two crates in.
+#
+# A crate with no tests fails when it is large enough to be worth one, and a
+# crate that loses tests fails outright.  The number may rise freely; a fall is a
+# change to this file, which is a sentence a reader can disagree with.
+#
+# Recording is `sh scripts/check-crate-tests.sh --record`.  A row whose crate
+# has left the workspace is refused, so the file describes the tree.
+
+
+
+
+
+
+abi                   411    8
+allocator            2508   13
+arch                 1412    1
+arch_aarch64          438    4
+arch_riscv64          397    4
+arch_x86_64           487    5
+async_io              717   14
+audit                 595    8
+bootloader            109    0 # exempt: entry symbols, a panic handler and an assembly stub; a test of those is a boot
+cell                  217    4
+crypto               4660   64
+e1000                   2    0
+fs                      2    0
+integration_tests       2    0
+kernel                151    0
+memory               1464   19
+net                     2    0
+pci                     2    0
+profiler              312    2
+protofire               4    0
+rights                 78    3
+security             1275   14
+sound                   2    0
+sync                  358    3
+syscall                 2    0
+unicode              4662   31
+virt                    2    0
+virtio                  2    0
+xtask                 469    9

@@ -95,6 +95,7 @@ version = "0.1.0"
 dependencies = [
  "aarch64-cpu",
  "abi",
+ "spin",
 ]
 
 [[package]]
@@ -103,6 +104,7 @@ version = "0.1.0"
 dependencies = [
  "abi",
  "riscv",
+ "spin",
 ]
 
 [[package]]
@@ -111,6 +113,7 @@ version = "0.1.0"
 dependencies = [
  "abi",
  "cell",
+ "spin",
  "x86_64",
 ]
 

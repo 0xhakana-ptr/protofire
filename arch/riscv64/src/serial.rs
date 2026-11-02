@@ -17,14 +17,20 @@
 //! boot gates run on".
 
 /// The NS16550A's data register.
+#[cfg(target_os = "none")]
 const UART_BASE: usize = 0x1000_0000;
 
 // The 16550's register offsets.  With DLAB set, `DATA` and `IER` become the
 // divisor latch's low and high halves.
+#[cfg(target_os = "none")]
 const DATA: usize = 0;
+#[cfg(target_os = "none")]
 const IER: usize = 1;
+#[cfg(target_os = "none")]
 const FCR: usize = 2;
+#[cfg(target_os = "none")]
 const LCR: usize = 3;
+#[cfg(target_os = "none")]
 const LSR: usize = 5;
 
 /// Write one byte to a memory-mapped register.
@@ -32,6 +38,7 @@ const LSR: usize = 5;
 /// # Safety
 ///
 /// `address` must be a mapped, writable MMIO address this machine has.
+#[cfg(target_os = "none")]
 unsafe fn write_reg(address: usize, value: u8) {
     // SAFETY: the caller promises a live MMIO register; volatile keeps the
     // compiler from folding two writes the device must both see.
@@ -43,12 +50,14 @@ unsafe fn write_reg(address: usize, value: u8) {
 /// # Safety
 ///
 /// As `write_reg`.
+#[cfg(target_os = "none")]
 unsafe fn read_reg(address: usize) -> u8 {
     // SAFETY: the caller promises a live MMIO register.
     unsafe { core::ptr::read_volatile(address as *const u8) }
 }
 
 /// Initialise the UART for 115200 baud, 8 bits, no parity, one stop bit.
+#[cfg(target_os = "none")]
 pub fn init() {
     // SAFETY: UART_BASE is where the emulated platform places its UART, and
     // each write below is the documented 16550 initialisation sequence.
@@ -63,6 +72,7 @@ pub fn init() {
 }
 
 /// Whether the transmitter is ready for a byte.
+#[cfg(target_os = "none")]
 fn transmit_ready() -> bool {
     // Bit 5 of the line status register is "transmit holding register empty".
     // SAFETY: reading the status of a UART `init` has programmed.
@@ -70,6 +80,7 @@ fn transmit_ready() -> bool {
 }
 
 /// Write one byte, waiting for the transmitter.
+#[cfg(target_os = "none")]
 pub fn write_byte(byte: u8) {
     if byte == b'\n' {
         write_byte(b'\r');
@@ -81,6 +92,40 @@ pub fn write_byte(byte: u8) {
     // `init` programmed.
     unsafe { write_reg(UART_BASE + DATA, byte) };
 }
+
+#[cfg(not(target_os = "none"))]
+pub fn write_byte(byte: u8) {
+    // The newline expansion is here too, and that is the point of the arm: a
+    // host build that recorded a bare `\n` would let the test below pass while
+    // the real console did something else.  The two arms have to differ in
+    // *where* the byte goes, not in what a newline means.
+    if byte == b'\n' {
+        HOST_CONSOLE.lock().push(b'\r');
+    }
+    HOST_CONSOLE.lock().push(byte);
+}
+
+#[cfg(not(target_os = "none"))]
+static HOST_CONSOLE: spin::Mutex<alloc::vec::Vec<u8>> = spin::Mutex::new(alloc::vec::Vec::new());
+
+/// What a host build "wrote" to the console, in order.
+///
+/// A host has no UART at the address this machine puts one, so the real arm
+/// would fault the moment a test formatted a line.  This records the bytes
+/// instead, which makes `write_str` testable and is also the only way to assert
+/// what a boot path printed without an emulator.
+#[cfg(not(target_os = "none"))]
+pub fn host_console_take() -> alloc::vec::Vec<u8> {
+    core::mem::take(&mut *HOST_CONSOLE.lock())
+}
+
+/// A host build has no port to program.
+///
+/// The console's host arm records bytes, so there is nothing to initialise;
+/// the function exists because the kernel calls it on every machine, and a host
+/// build of the kernel is a typecheck rather than a boot.
+#[cfg(not(target_os = "none"))]
+pub fn init() {}
 
 /// Write a string, one byte at a time.
 pub fn write_str(text: &str) {
@@ -127,5 +172,54 @@ pub fn write_hex(value: u64) {
         } else {
             b'a' + digit - 10
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A host build records what the console was asked to write.
+    ///
+    /// This is the arm that makes the console testable at all: the real one
+    /// writes a port or an MMIO register that a host does not have, so without
+    /// this every assertion about a boot's output would need an emulator.
+    #[cfg(not(target_os = "none"))]
+    #[test]
+    fn a_host_records_what_was_written() {
+        let _ = super::host_console_take();
+        super::write_str("heap");
+        assert_eq!(super::host_console_take(), b"heap");
+    }
+
+    /// A newline is written as CRLF, because the reader is a terminal.
+    ///
+    /// The gate that reads a boot's serial log strips the CR, so this is not
+    /// what that check is about — but a sink that dropped it would make every
+    /// log unusable in a terminal, and nothing else in the tree would notice.
+    #[cfg(not(target_os = "none"))]
+    #[test]
+    fn a_newline_is_two_bytes() {
+        let _ = super::host_console_take();
+        super::write_byte(b'\n');
+        assert_eq!(super::host_console_take(), b"\r\n");
+    }
+
+    /// Hexadecimal is written with a `0x` prefix, lower case, no padding.
+    ///
+    /// The boot's address line is read by a human comparing it against a linker
+    /// script, so the shape matters and is pinned here.
+    #[cfg(not(target_os = "none"))]
+    #[test]
+    fn hexadecimal_has_the_shape_a_reader_expects() {
+        let _ = super::host_console_take();
+        super::write_hex(0);
+        assert_eq!(super::host_console_take(), b"0x0");
+
+        let _ = super::host_console_take();
+        super::write_hex(0x11d790);
+        assert_eq!(super::host_console_take(), b"0x11d790");
+
+        let _ = super::host_console_take();
+        super::write_hex(u64::MAX);
+        assert_eq!(super::host_console_take(), b"0xffffffffffffffff");
     }
 }

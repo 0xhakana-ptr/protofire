@@ -9,6 +9,10 @@
 
 #![no_std]
 
+// The host arm of the console records bytes instead of writing a port.
+#[cfg(not(target_os = "none"))]
+extern crate alloc;
+
 pub mod boot;
 pub mod interrupts;
 pub mod serial;

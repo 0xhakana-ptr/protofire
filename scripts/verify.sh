@@ -106,6 +106,12 @@ run_p2() {
     # above the scheduler and be wrong in a way no compiler sees.
     step "scripts/check-layering.sh"
     sh scripts/check-layering.sh || fail "a dependency that crosses a layer upward"
+
+    # The test census: a crate the workspace builds and nothing runs is the
+    # crate split not paying for itself, and a test that disappeared is a defect
+    # that stopped being caught.
+    step "scripts/check-crate-tests.sh"
+    sh scripts/check-crate-tests.sh || fail "a crate with no tests, or one whose tests fell"
 }
 
 run_p3() {
