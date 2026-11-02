@@ -100,9 +100,12 @@ run_p2() {
     step "scripts/check-arch-fanout.sh"
     sh scripts/check-arch-fanout.sh || fail "an architecture gate outside arch/"
 
-    # The dependency census is the next one: every crate may name only the
-    # crates below it, and there is no file describing that yet.  Saying so is
-    # the honest form of an empty gate.
+    # The dependency census: every crate may name only the crates below it, and
+    # `scripts/layering.txt` is where the order is stated.  "No cycles" alone
+    # would be the weaker rule — an acyclic graph can still put the filesystem
+    # above the scheduler and be wrong in a way no compiler sees.
+    step "scripts/check-layering.sh"
+    sh scripts/check-layering.sh || fail "a dependency that crosses a layer upward"
 }
 
 run_p3() {

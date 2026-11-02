@@ -1,0 +1,153 @@
+# The layering of this tree: which crate may depend on which.
+#
+# `scripts/check-layering.sh` reads this file and refuses an edge that is not
+# allowed here.  A crate may depend on a crate in a *lower* layer and on nothing
+# else — not a peer, not anything above it.
+#
+# Adding a crate: pick the layer by what it is, not by what it happens to need.
+# If it needs something above it, either the layer is wrong or the dependency is.
+#
+# Recording an exception: a row `allow <from> <to>  # reason`.  The gate refuses
+# an exception whose edge has gone, so the list describes the tree and not a tree
+# that used to exist.
+#
+# ── Layer 0: core and alloc, and nothing of this tree ───────────────────────
+#
+# A crate here is a value or an algorithm: a cell, a counter, a Unicode table, a
+# cipher.  Nothing here may name another crate of this tree, which is what makes
+# the layer worth having — everything above may name a layer-0 crate, so anything
+# added here is a cost the whole tree pays.
+#
+# `cell` holds a `Sync`-capable `UnsafeCell`: four lines and a safety argument,
+# needed by the heap, by an architecture crate and by the kernel.
+#
+# `profiler` is operation counters, compiled out when nobody asked for them.  The
+# claim that they cost nothing when off is checked rather than stated.
+#
+# `unicode` is character conversion and normalisation, and `rights` is two
+# constants four layers name.  Both exist as crates because their callers must
+# not have to depend on each other.
+0 cell
+0 profiler
+0 unicode
+0 rights
+
+# ── Layer 1: the wire format ────────────────────────────────────────────────
+#
+# `abi` is what the kernel and a program both compile against: the error type and
+# its discriminants, the syscall status encoding, the boot information.  It is
+# one layer up from the leaves only because it is one value in the tree that is
+# *shared* rather than owned — a type both sides of a privilege boundary name
+# cannot be a private detail of either.
+#
+# Nothing may be added here that needs `alloc`: a program's ABI is a word.
+1 abi
+
+# ── Layer 2: algorithms over the ABI's types ────────────────────────────────
+#
+# These name `abi` for the error type and nothing else.  A cipher that returned
+# `Result` without sharing the tree's `Error` would force every caller to
+# translate, and translation tables are how two error vocabularies drift apart.
+2 crypto
+2 async_io
+
+# ── Layer 3: the machine ────────────────────────────────────────────────────
+#
+# `arch_*` are the three implementations, each a crate of its own so a missing
+# operation is a build failure for the machine missing it rather than a `#[cfg]`
+# arm nobody compiled.  They name `abi` because they answer in its types, and
+# `cell` where the boot assembly needs somewhere to write.
+3 arch_x86_64
+3 arch_aarch64
+3 arch_riscv64
+
+# `arch` is the route between them.  It is a layer above the implementations
+# because it names all three, and the manifests' `cfg(target_arch)` tables are
+# what select one.
+4 arch
+
+# ── Layer 4: infrastructure that needs the machine ──────────────────────────
+#
+# `sync` is here rather than at layer 0, and that placement is a decision with a
+# cost, so it is argued rather than assumed.
+#
+# A spinlock that only spins is safe between CPUs and unsafe against itself: an
+# interrupt taken while the lock is held, whose handler takes the same lock,
+# spins forever on a CPU that cannot make progress.  Closing that window needs
+# the interrupt flag, the flag is the machine's, and putting it behind a trait
+# would add an indirect call to the hottest path in the kernel — measured and
+# declined in the previous tree, where the same question came up.
+#
+# So `sync` names `arch`, and everything that wants a lock also carries the
+# machine layer with it.  That is the price, and it is cheaper than the
+# alternative.
+5 sync
+
+# `memory` is the frame pool and the region pools: a range and a bitmap, plus one
+# injected hook for "make this range writable".  It does *not* name `arch` — the
+# hook is what keeps the page table out of a data structure — which is the
+# difference between this layer and `sync`'s, and it is deliberate.
+4 memory
+
+# `security` is the token and the MAC policy.  Below both the filesystem and the
+# process layer, because both must ask it and neither may name the other to do
+# so.  A denial goes through a sink rather than into an audit record, because
+# finding the current process is the audit layer's business.
+6 security
+
+# `allocator` is the heap: above `sync` because the heap is shared by every CPU
+# and by interrupt handlers, and above `profiler` because its counters live
+# there.
+7 allocator
+
+# ── Layer 5: subsystems that name the machine ───────────────────────────────
+#
+# `syscall` is the table: it turns a number into an operation and calls the
+# subsystem that owns it.  It names `abi` and nothing else today, which is the
+# state a freshly-created crate is in; its real dependencies arrive with the
+# handlers, and the change that adds one argues its layer here.
+5 syscall
+
+# The drivers name a device and the completion queue that reports it.  Each is
+# its own crate so a machine without the device does not carry its code.
+5 pci
+5 virtio
+5 e1000
+
+# `sound` and `virt` are laid out but not filled.  Their ranks are the ones their
+# manifests already imply: `sound` names `sync`, `virt` names `arch`.
+6 sound
+6 virt
+
+# `fs` and `net` are empty crates.  Their rank is the one their contents will
+# need — both will name `abi`, and `fs` will name `sync` — and it is low on
+# purpose so that filling them is a change to the manifest and this file
+# together rather than a crate that quietly arrived at a layer nothing chose.
+6 fs
+6 net
+
+# ── Layer 6: the kernel core ────────────────────────────────────────────────
+#
+# The boot sequence, the scheduler, IPC, power, and whatever else only the kernel
+# organises.  It may name everything below.
+8 kernel
+
+# ── Layer 8: the image ──────────────────────────────────────────────────────
+#
+# The only crate that links an image.  It names the kernel and the machine's arch
+# crate, which is what puts it at the top of the shipped tree.
+9 bootloader
+
+# ── Layer 9: not shipped ────────────────────────────────────────────────────
+#
+# Nothing depends on these.  The integration tests and the build tool may name
+# anything, which is expressible as the top layer rather than as an exception.
+10 integration_tests
+
+# `protofire` is the workspace root's empty package — the name cargo needs before
+# it will accept a `[workspace]` with a `[package]`.  It has no dependencies and
+# nothing depends on it.
+10 protofire
+
+# `xtask` is the build tool: `clap` and `anyhow`, no crate of this tree.
+10 xtask
