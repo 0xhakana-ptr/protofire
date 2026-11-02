@@ -6,4 +6,8 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+# The error type a completion carries, and nothing else.  This crate must not
+# name `sync` or `alloc`'s collections beyond the queue's own `VecDeque`: a
+# service is a contract, and a contract that needed a lock could not be
+# implemented by a driver holding one.
 abi.workspace = true

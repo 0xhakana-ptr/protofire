@@ -1,1 +1,71 @@
+//! async_io/src/lib.rs
+//!
+//! Requests and completions: the shape every asynchronous operation in this
+//! tree has, and the queue they go through.
+//!
+//! ## The model
+//!
+//! An operation is a [`Request`] that a [`Service`] accepts.  The service does
+//! not run it to completion in the call — it either finishes it immediately or
+//! leaves it [`Pending`](request::RequestState::Pending), and a later
+//! [`Service::poll`] makes progress.  A [`Completion`] is delivered once, with
+//! the request's own token so the caller can tell which submission it belongs
+//! to.
+//!
+//! That is the whole of it, and it is deliberately smaller than an executor.
+//! There is no task, no future, no runtime and no scheduler: those are what
+//! *drive* a service, and a crate that also drove one could not be used by the
+//! kernel (which has a scheduler) and by a test (which does not) at once.
+//!
+//! ## Why this is a trait and not a queue of operation codes
+//!
+//! The obvious design is a submission queue and a completion queue with an
+//! operation code in each entry.  The previous tree has exactly that — its
+//! `io_uring` syscall decodes an opcode and calls the subsystem — and it is the
+//! wrong shape here because it puts the *set of operations* in the ABI.  Adding
+//! one would mean extending a wire format, and every service would have to
+//! understand operations it does not provide.
+//!
+//! Here a request is opaque to the queue.  A service decides what it accepts
+//! and the crate never learns what an operation is.  The io_uring ABI stays
+//! what it is — a program's view of a submission — and is translated into these
+//! requests at the syscall boundary.
+//!
+//! ## What a service is
+//!
+//! Anything that accepts a request and completes it later: a disk queue, a
+//! socket's read half, a timer, and — this is the part worth designing for — a
+//! kernel thread or a user program.  The last two are what "everything is a
+//! service" means: starting a program is a request whose completion is its exit
+//! status, and it satisfies this trait the same way a disk does.
+//!
+//! A service that never completes anything would hang its callers, so the trait
+//! has one obligation beyond its three methods: a request it accepted must
+//! eventually be completed or cancelled, and [`Completion`] is the only place a
+//! caller hears about either.
+
 #![no_std]
+
+// The queue is a `VecDeque`, and a service that completes four thousand
+// requests in one call is the shape that needs one.  `alloc` rather than a
+// fixed array because the ring's capacity is the caller's to choose — the
+// io_uring ABI makes a program size its own — and a const-generic queue would
+// have to name a maximum in this crate, which is a policy it has no basis for.
+extern crate alloc;
+
+pub mod completion;
+
+pub mod queue;
+pub mod request;
+pub mod service;
+#[cfg(test)]
+mod service_tests;
+
+pub use completion::Completion;
+pub use queue::CompletionQueue;
+pub use queue::SubmitError;
+pub use request::CompletionStatus;
+pub use request::Request;
+pub use request::RequestId;
+pub use request::RequestState;
+pub use service::Service;
