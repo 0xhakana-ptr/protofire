@@ -24,6 +24,8 @@
 
 
 
+
+
 abi                  3037   52
 allocator            2508   13
 arch                 1436    1
@@ -50,7 +52,7 @@ rights                 78    3
 security             1275   14
 sound                   2    0
 sync                  358    3
-syscall                 2    0
+syscall               576    6
 unicode              4662   31
 virt                    2    0
 virtio                  2    0
