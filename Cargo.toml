@@ -22,6 +22,7 @@ members = [
     "kernel",
     "libs/allocator",
     "libs/sync",
+    "libs/unicode",
     "memory",
     "net",
     "security",

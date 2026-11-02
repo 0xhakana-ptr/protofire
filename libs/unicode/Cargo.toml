@@ -1,0 +1,11 @@
+[package]
+name = "unicode"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Nothing.  This is the point of the crate: a conversion over characters needs
+# `core` and `alloc`, and a dependency here would be one every filesystem using
+# it inherits.
+[dependencies]
