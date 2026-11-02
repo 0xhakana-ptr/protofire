@@ -5,5 +5,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# `arch` for the interrupt flag; nothing else.  The lock is `core`'s atomics
+# plus one machine fact, and the previous tree's copy of this same code named
+# exactly that.
 [dependencies]
-spin.workspace = true
+arch = { path = "../../arch" }

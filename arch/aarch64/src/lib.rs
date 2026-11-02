@@ -15,6 +15,8 @@
 // this machine from a host is exactly the case that must compile the body.
 #![cfg(target_arch = "aarch64")]
 
+pub mod interrupts;
+
 /// Stop this CPU until an interrupt arrives.
 ///
 /// `wfi` is the wait-for-interrupt hint, and the loop around it is what makes

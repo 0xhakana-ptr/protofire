@@ -14,6 +14,8 @@
 // this machine from a host is exactly the case that must compile the body.
 #![cfg(target_arch = "riscv64")]
 
+pub mod interrupts;
+
 /// Stop this CPU until an interrupt arrives.
 ///
 /// `wfi` in S-mode waits for an interrupt.  The loop is what makes the
