@@ -61,6 +61,20 @@ pub enum RequestState {
 pub struct Request {
     /// The caller's handle, returned in the completion.
     pub id: RequestId,
+    /// What the operation is, as the service defines it.
+    ///
+    /// Two words, opaque to the queue and to every service but the one that
+    /// reads them.  A block transfer puts a buffer address here and a length;
+    /// a program launch puts a path handle and an argument count; a poll puts
+    /// the descriptor and the event mask.  The queue never inspects either,
+    /// which is what keeps the operation set out of the ABI.
+    ///
+    /// Two words rather than a pointer to a structure: a request is `Copy` and
+    /// travels through a queue of fixed-size entries, and a pointer would make
+    /// it outlive a caller's borrow without saying so.
+    pub argument: u64,
+    /// The operation's second word, as the service defines it.
+    pub length: usize,
     /// Where the request has got to.
     pub state: RequestState,
 }
@@ -70,6 +84,18 @@ impl Request {
     pub const fn pending(id: RequestId) -> Self {
         Self {
             id,
+            argument: 0,
+            length: 0,
+            state: RequestState::Pending,
+        }
+    }
+
+    /// A pending request carrying the service's own operation words.
+    pub const fn with_arguments(id: RequestId, argument: u64, length: usize) -> Self {
+        Self {
+            id,
+            argument,
+            length,
             state: RequestState::Pending,
         }
     }

@@ -122,42 +122,75 @@ pub fn kernel_main() -> ! {
     arch::serial::write_hex(heap_end as u64);
     arch::serial::write_str("\n");
 
-    // The completion queue every asynchronous operation will be drained
-    // through.
+    // The block service, driven end to end: a write, a read, and a comparison.
     //
-    // This is not a probe: `async_io`'s whole design is that a service produces
-    // completions into a bounded queue and a caller takes them, and a kernel
-    // with no queue has nowhere for a driver to report a finished request.  The
-    // capacity is the number of outstanding operations the first driver will
-    // allow — the same shape an io_uring ring has, where the program sizes it —
-    // and it is stated here because the kernel is what owns the bound.
-    //
-    // The two assertions after it are what make the wiring observable: a queue
-    // that could not accept and return one entry is a queue that is not there,
-    // and a boot line that said "ok" without the round trip would be a claim
-    // rather than a result.
-    let mut completions = async_io::CompletionQueue::new(COMPLETION_QUEUE_CAPACITY);
-    let probe_id = async_io::RequestId::new(0);
-    let queued = completions
-        .push(async_io::Completion::ok(probe_id, 0))
-        .is_ok();
-    let drained = completions
-        .pop()
-        .filter(|done| done.id == probe_id)
-        .is_some();
-    arch::serial::write_str("protofire: completion queue ");
-    if queued && drained {
-        arch::serial::write_str("ready, capacity ");
-        arch::serial::write_u32(COMPLETION_QUEUE_CAPACITY as u32);
+    // This is not a probe left in the tree.  It is the smallest run of a real
+    // service — the same `submit`/`poll`/completion path a driver will use,
+    // over the same queue — and it exists because a crate with a queue and no
+    // producer has not been shown to carry one.  A driver's version of this
+    // check is a boot that drains its queue after a transfer; this is what can
+    // run before there is a driver.
+    use async_io::Service as _;
+    let mut disk = async_io::MemoryBlockService::new(DISK_SECTORS, COMPLETION_QUEUE_CAPACITY);
+
+    let mut written = [0u8; async_io::block::SECTOR_SIZE];
+    written[0] = 0x50; // 'P'
+    written[1] = 0x46; // 'F'
+    let write_id = async_io::BlockOp::Write {
+        sector: 0,
+        count: 1,
+    }
+    .token(0);
+    let accepted = disk
+        .submit(async_io::Request::with_arguments(
+            write_id,
+            written.as_mut_ptr() as u64,
+            written.len(),
+        ))
+        .is_none();
+    let wrote = accepted && disk.poll();
+    let write_done = disk.take_completion().filter(|done| done.is_ok());
+
+    let mut read_back = [0u8; async_io::block::SECTOR_SIZE];
+    let read_id = async_io::BlockOp::Read {
+        sector: 0,
+        count: 1,
+    }
+    .token(1);
+    let accepted = disk
+        .submit(async_io::Request::with_arguments(
+            read_id,
+            read_back.as_mut_ptr() as u64,
+            read_back.len(),
+        ))
+        .is_none();
+    let read = accepted && disk.poll();
+    let read_done = disk.take_completion().filter(|done| done.id == read_id);
+
+    arch::serial::write_str("protofire: block service ");
+    if write_done.is_some() && read_done.is_some() && read_back[..2] == [0x50, 0x46] {
+        arch::serial::write_str("round trip ok, ");
+        arch::serial::write_u32(disk.performed() as u32);
+        arch::serial::write_str(" transfer(s) over ");
+        arch::serial::write_u32(DISK_SECTORS as u32);
+        arch::serial::write_str(" sector(s)");
     } else {
-        // A queue that failed its own round trip is a kernel that cannot hold a
-        // completion, and continuing would be the first lie in the log.
-        arch::serial::write_str("REFUSED the round trip");
+        // A service that accepted a transfer and could not perform it is a
+        // kernel that cannot hold a block, and the log has to say so.
+        let _ = (wrote, read);
+        arch::serial::write_str("FAILED the round trip");
     }
     arch::serial::write_str("\n");
 
     halt()
 }
+
+/// How many sectors the boot's block service models.
+///
+/// Two, because the check writes sector zero and reads it back: a value larger
+/// than that would be a device the check never touched, and the number stands
+/// in for the first real driver's geometry.
+const DISK_SECTORS: usize = 2;
 
 /// How many completions the kernel's queue holds.
 ///

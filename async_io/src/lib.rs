@@ -53,6 +53,7 @@
 // have to name a maximum in this crate, which is a policy it has no basis for.
 extern crate alloc;
 
+pub mod block;
 pub mod completion;
 
 pub mod queue;
@@ -61,6 +62,8 @@ pub mod service;
 #[cfg(test)]
 mod service_tests;
 
+pub use block::BlockOp;
+pub use block::MemoryBlockService;
 pub use completion::Completion;
 pub use queue::CompletionQueue;
 pub use queue::SubmitError;

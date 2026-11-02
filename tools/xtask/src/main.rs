@@ -111,7 +111,7 @@ impl Machine {
                     true,
                 ),
                 ("protofire: heap at ", false),
-                ("protofire: completion queue ready, capacity ", false),
+                ("protofire: block service round trip ok, ", false),
             ],
             Self::Aarch64 => &[],
             Self::Riscv64 => &[],
