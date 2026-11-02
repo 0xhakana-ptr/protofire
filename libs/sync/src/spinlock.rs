@@ -5,7 +5,6 @@
 
 use core::cell::UnsafeCell;
 use core::hint::spin_loop;
-use core::mem::ManuallyDrop;
 use core::ops::Deref;
 use core::ops::DerefMut;
 use core::sync::atomic::AtomicBool;
@@ -34,7 +33,8 @@ impl<T> SpinLock<T> {
     }
 
     pub fn lock(&self) -> SpinLockGuard<'_, T> {
-        // Disable interrupts while spinning to avoid local re-entrancy deadlocks.
+        // Disable interrupts while spinning to avoid local re-entrancy
+        // deadlocks.
         let interrupts_were_enabled = arch::interrupts::save_and_disable();
 
         // Exponential backoff: start with a short spin, double up to a cap.
@@ -154,18 +154,6 @@ impl<T> SpinLock<T> {
 pub struct SpinLockGuard<'a, T> {
     lock: &'a SpinLock<T>,
     interrupts_were_enabled: bool,
-}
-
-impl<T> SpinLockGuard<'_, T> {
-    pub(crate) fn unlock_without_restore(self) -> bool {
-        let guard = ManuallyDrop::new(self);
-        guard.lock.locked.store(false, Ordering::Release);
-        guard.interrupts_were_enabled
-    }
-
-    pub(crate) fn set_interrupt_restore_state(&mut self, enabled: bool) {
-        self.interrupts_were_enabled = enabled;
-    }
 }
 
 impl<T> Deref for SpinLockGuard<'_, T> {

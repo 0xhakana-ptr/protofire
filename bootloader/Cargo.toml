@@ -12,4 +12,4 @@ test = false
 bench = false
 
 [dependencies]
-kernel = { workspace = true }
+kernel = { path = "../kernel" }

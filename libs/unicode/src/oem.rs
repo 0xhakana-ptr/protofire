@@ -116,8 +116,8 @@ pub fn char_to_oem_byte(ch: char, code_page: OemCodePage) -> Option<u8> {
 /// # Example
 ///
 /// ```
-/// use unicode::oem::utf8_to_oem;
 /// use unicode::oem::OemCodePage;
+/// use unicode::oem::utf8_to_oem;
 ///
 /// assert_eq!(
 ///     utf8_to_oem("Café", OemCodePage::Cp437),

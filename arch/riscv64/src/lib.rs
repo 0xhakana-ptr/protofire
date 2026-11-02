@@ -7,7 +7,6 @@
 //! the whole interface.
 
 #![no_std]
-
 // Built on the host, this crate has nothing to say: `wfi` is not an x86
 // instruction, and `cargo build --workspace` builds every member for the host.
 // The gate is `target_arch` rather than `target_os` because a cross build to

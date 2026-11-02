@@ -20,8 +20,8 @@
 //!
 //! An algorithm over bytes: a hash, a cipher, a MAC, a key agreement, a
 //! signature check.  What does not: anything that reads a device, knows a
-//! filesystem, or decides a policy.  A function here takes a slice and returns a
-//! value, which is also why the tests can be exhaustive over known-answer
+//! filesystem, or decides a policy.  A function here takes a slice and returns
+//! a value, which is also why the tests can be exhaustive over known-answer
 //! vectors rather than over a boot.
 
 #![no_std]

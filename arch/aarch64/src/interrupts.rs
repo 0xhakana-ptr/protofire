@@ -49,10 +49,14 @@ pub fn disable() {}
 /// The bare-metal form: set every mask bit.
 #[cfg(target_os = "none")]
 pub fn disable() {
-    // SAFETY: setting the DAIF masks is an EL1 operation with no memory operand.
-    // The caller is responsible for being in a state where masking is correct.
+    // SAFETY: setting the DAIF masks is an EL1 operation with no memory
+    // operand. The caller is responsible for being in a state where masking is
+    // correct.
     unsafe {
-        core::arch::asm!("msr DAIFSet, #0xf", options(nomem, nostack, preserves_flags));
+        core::arch::asm!(
+            "msr DAIFSet, #0xf",
+            options(nomem, nostack, preserves_flags)
+        );
     }
 }
 
@@ -65,7 +69,10 @@ pub fn enable() {
     // SAFETY: as `disable` — clearing the masks, which the caller pairs with a
     // later disable.
     unsafe {
-        core::arch::asm!("msr DAIFClr, #0xf", options(nomem, nostack, preserves_flags));
+        core::arch::asm!(
+            "msr DAIFClr, #0xf",
+            options(nomem, nostack, preserves_flags)
+        );
     }
 }
 

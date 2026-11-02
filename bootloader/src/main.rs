@@ -17,8 +17,8 @@
 //! ## Host builds
 //!
 //! `cargo build --workspace` builds this package for the host too, and there
-//! the bare-metal half cannot exist: `_start` collides with the C runtime's own,
-//! and `#[panic_handler]` collides with `std`'s.  So the body is gated on
+//! the bare-metal half cannot exist: `_start` collides with the C runtime's
+//! own, and `#[panic_handler]` collides with `std`'s.  So the body is gated on
 //! `target_os = "none"` and the host build is an empty `main` — enough for the
 //! workspace to typecheck the package without pretending the image links on a
 //! machine that has an operating system.  The previous tree's root binary draws

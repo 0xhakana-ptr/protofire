@@ -86,12 +86,12 @@ pub fn decode_result(status: usize) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
+    use super::ERROR_CODE_MAX;
+    use super::ERROR_STATUS_FLOOR;
     use super::decode_result;
     use super::encode_error;
     use super::encode_result;
     use super::is_error_status;
-    use super::ERROR_CODE_MAX;
-    use super::ERROR_STATUS_FLOOR;
     use crate::error::Error;
 
     #[test]

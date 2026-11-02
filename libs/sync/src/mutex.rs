@@ -30,9 +30,9 @@ impl<T> Mutex<T> {
     }
 
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        // Keep all locking policy inside SpinLock; Mutex only wraps the RAII surface.
+        // Keep all locking policy inside SpinLock; Mutex only wraps the RAII
+        // surface.
         MutexGuard {
-            mutex: self,
             inner: self.inner.lock(),
         }
     }
@@ -45,7 +45,6 @@ impl<T> Mutex<T> {
     /// operation.
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         Some(MutexGuard {
-            mutex: self,
             inner: self.inner.try_lock()?,
         })
     }
@@ -60,28 +59,19 @@ impl<T> Mutex<T> {
     /// hazard and the conditions under which this is acceptable.
     pub fn lock_without_irq_disable(&self) -> MutexGuard<'_, T> {
         MutexGuard {
-            mutex: self,
             inner: self.inner.lock_without_irq_disable(),
         }
     }
 }
 
+/// A held mutex, as the RAII handle the caller sees.
+///
+/// It does not carry a back-pointer to the `Mutex`: the guard's only job is to
+/// hold the spinlock's guard, and the pointer existed for the parking protocol
+/// (`unlock_without_restore` and its partner), which arrives with the wait
+/// queue and the scheduler rather than with this crate.
 pub struct MutexGuard<'a, T> {
-    mutex: &'a Mutex<T>,
     inner: SpinLockGuard<'a, T>,
-}
-
-impl<'a, T> MutexGuard<'a, T> {
-    pub(crate) fn unlock_without_restore(self) -> (&'a Mutex<T>, bool) {
-        // Split unlock and interrupt-restore so Condvar can atomically park/relock.
-        let mutex = self.mutex;
-        let interrupts_were_enabled = self.inner.unlock_without_restore();
-        (mutex, interrupts_were_enabled)
-    }
-
-    pub(crate) fn set_interrupt_restore_state(&mut self, enabled: bool) {
-        self.inner.set_interrupt_restore_state(enabled);
-    }
 }
 
 impl<T> Deref for MutexGuard<'_, T> {

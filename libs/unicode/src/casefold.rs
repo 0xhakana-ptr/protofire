@@ -109,7 +109,8 @@ mod tests {
     #[test]
     fn fold_char_roundtrips_on_table() {
         // Every 1:1 mapping in the generated table folds to a valid char,
-        // and folding a folded char is a fixed point (simple fold is idempotent).
+        // and folding a folded char is a fixed point (simple fold is
+        // idempotent).
         for &(src, dst) in SIMPLE_FOLDS {
             let from = char::from_u32(src).unwrap();
             let to = char::from_u32(dst).unwrap();

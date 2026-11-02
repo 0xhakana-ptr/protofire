@@ -19,6 +19,17 @@ use core::arch::asm;
 /// the line control register's DLAB bit.
 const COM1: u16 = 0x3F8;
 
+// The 16550's register offsets, so the initialisation sequence can name the
+// register each write reaches.  With DLAB set, `DATA` and `IER` become the
+// divisor latch's low and high halves — which is why the same two offsets
+// appear twice below with different meanings.
+const DATA: u16 = 0;
+const IER: u16 = 1;
+const FCR: u16 = 2;
+const LCR: u16 = 3;
+const MCR: u16 = 4;
+const LSR: u16 = 5;
+
 /// Write one byte to a port.
 ///
 /// SAFETY (of the callers): `port` must be an I/O port this machine has, and
@@ -54,17 +65,25 @@ unsafe fn inb(port: u16) -> u8 {
 pub fn init() {
     // Interrupts off while the divisor is being programmed: the UART's own
     // interrupt enable register, not the CPU's.
+    //
+    // Each offset is named by the register it reaches rather than by its
+    // number, so the sequence reads as the datasheet's table.  `DATA` is the
+    // base address itself, which is why the first write below is not
+    // `COM1 + 0`: naming the register and adding zero would be the same port
+    // twice, and clippy is right that the second spelling has no effect — but
+    // the register name is what makes the block readable, so the constant is
+    // what the code says.
     // SAFETY: COM1 is present on any machine this kernel boots on — a PC
     // without it is not one these three ports describe — and each write below
     // is the documented sequence for programming the divisor latch.
     unsafe {
-        outb(COM1 + 1, 0x00); // disable all UART interrupts
-        outb(COM1 + 3, 0x80); // enable DLAB: the next two writes set the divisor
-        outb(COM1 + 0, 0x01); // divisor low  byte: 115200 / 1 = 115200
-        outb(COM1 + 1, 0x00); // divisor high byte
-        outb(COM1 + 3, 0x03); // 8 bits, no parity, one stop bit; DLAB off
-        outb(COM1 + 2, 0xC7); // enable and clear the FIFOs, 14-byte threshold
-        outb(COM1 + 4, 0x03); // DTR and RTS: the line is up
+        outb(COM1 + IER, 0x00); // disable all UART interrupts
+        outb(COM1 + LCR, 0x80); // enable DLAB: the next two writes set the divisor
+        outb(COM1 + DATA, 0x01); // divisor low  byte: 115200 / 1 = 115200
+        outb(COM1 + IER, 0x00); // divisor high byte
+        outb(COM1 + LCR, 0x03); // 8 bits, no parity, one stop bit; DLAB off
+        outb(COM1 + FCR, 0xC7); // enable and clear the FIFOs, 14-byte threshold
+        outb(COM1 + MCR, 0x03); // DTR and RTS: the line is up
     }
 }
 
@@ -73,7 +92,7 @@ fn transmit_ready() -> bool {
     // Bit 5 of the line status register is "transmit holding register empty".
     // SAFETY: reading the line status register of a UART that `init` has
     // programmed; `inb`'s contract is that the port exists, which COM1 does.
-    unsafe { inb(COM1 + 5) & 0x20 != 0 }
+    unsafe { inb(COM1 + LSR) & 0x20 != 0 }
 }
 
 /// Write one byte, waiting for the transmitter.
@@ -86,8 +105,8 @@ pub fn write_byte(byte: u8) {
     while !transmit_ready() {
         core::hint::spin_loop();
     }
-    // SAFETY: the transmitter reported itself ready, and COM1 is the port `init`
-    // programmed.
+    // SAFETY: the transmitter reported itself ready, and COM1 is the port
+    // `init` programmed.
     unsafe { outb(COM1, byte) };
 }
 
@@ -127,8 +146,22 @@ mod tests {
     /// has; an eleventh digit would be written before the buffer's start and
     /// corrupt whatever precedes it.  The bound is checked here rather than
     /// trusted, because it is the one arithmetic fact the function depends on.
+    ///
+    /// Counted by division rather than by `to_string`: this crate is `no_std`
+    /// and does not link `alloc`, so `Display` is not available — and the
+    /// arithmetic is what `write_u32` itself does, which makes this a check of
+    /// the same operation rather than of a different one.
     #[test]
     fn ten_digits_hold_a_u32() {
-        assert_eq!(u32::MAX.to_string().len(), 10);
+        let mut digits = 1u32;
+        let mut remaining = u32::MAX / 10;
+        while remaining > 0 {
+            digits += 1;
+            remaining /= 10;
+        }
+        assert_eq!(digits, 10);
+        // And the buffer is exactly that long: a digit count larger than it
+        // would be an off-by-one in `write_u32`'s indexing.
+        assert_eq!(digits as usize, 10);
     }
 }

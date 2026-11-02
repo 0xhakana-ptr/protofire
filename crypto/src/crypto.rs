@@ -887,11 +887,7 @@ fn aes_shift_rows(state: &mut [u8; 16]) {
 fn aes_xtime(x: u8) -> u8 {
     let hi = (x & 0x80) != 0;
     let r = x << 1;
-    if hi {
-        r ^ 0x1b
-    } else {
-        r
-    }
+    if hi { r ^ 0x1b } else { r }
 }
 
 /// MixColumns: mix each column using GF(2^8) arithmetic.
@@ -1668,7 +1664,7 @@ fn x25519_ladder_step(
     let tmp = fe25519_sub(&da, &cb); // (DA - CB)
     *z3 = fe25519_mul(x1, &fe25519_square(&tmp)); // z3 = x1 * (DA - CB)^2
     *x2 = fe25519_mul(&aa, &bb); // x2 = AA * BB
-                                 // a24 = 121665 = (486662-2)/4
+    // a24 = 121665 = (486662-2)/4
     let a24: Fe25519 = [121665, 0, 0, 0, 0];
     *z2 = fe25519_mul(&e, &fe25519_add(&aa, &fe25519_mul(&a24, &e)));
     // z2 = E * (AA + a24 * E)
@@ -1998,13 +1994,14 @@ fn rsa_to_mont(
     // R^2 mod n, precomputed.
     let mut r_sq = [0u64; RSA_MAX_LIMBS];
     r_sq[0] = 1; // R = 2^(64*num_limbs) ≡ 1 limb
-                 // Compute R^2 mod n via repeated Montgomery squaring.
-                 // R = 2^(64*num_limbs).  We want R^2 mod n.
-                 // In Montgomery form, an integer x is represented as x*R mod n.
-                 // To convert a to Montgomery form, compute a * R mod n.
-                 // We compute this as MontMul(a, R^2 mod n, n, nprime0).
-                 //
-                 // First compute R mod n: start with 1, shift left by 64*num_limbs bits mod n.
+    // Compute R^2 mod n via repeated Montgomery squaring.
+    // R = 2^(64*num_limbs).  We want R^2 mod n.
+    // In Montgomery form, an integer x is represented as x*R mod n.
+    // To convert a to Montgomery form, compute a * R mod n.
+    // We compute this as MontMul(a, R^2 mod n, n, nprime0).
+    //
+    // First compute R mod n: start with 1, shift left by 64*num_limbs bits mod
+    // n.
     let mut r_mod_n = [0u64; RSA_MAX_LIMBS];
     r_mod_n[0] = 1;
     for _ in 0..num_limbs {
@@ -2169,8 +2166,8 @@ fn rsa_mod_pow(
 
     // R mod n in Montgomery form: MontMul(R mod n, R^2 mod n) — but actually
     // 1 in Montgomery form is just R mod n.
-    // Since Montgomery form of x is x*R mod n, the value 1 is represented as R mod
-    // n. Let's compute R mod n.
+    // Since Montgomery form of x is x*R mod n, the value 1 is represented as R
+    // mod n. Let's compute R mod n.
     let mut one_mont = [0u64; RSA_MAX_LIMBS];
     one_mont[0] = 1;
     // Shift left by 64*num_limbs mod n (same as r_mod_n in rsa_to_mont).
@@ -2394,13 +2391,14 @@ pub fn rsa_pss_verify(
         db[i] = masked_db[i] ^ db_mask[i];
     }
 
-    // 6. Set leftmost 8*kLen - 2*hLen - 16 bits of DB to 0. kLen = k (bytes).  8k -
-    //    2*256 - 16 = 8k
+    // 6. Set leftmost 8*kLen - 2*hLen - 16 bits of DB to 0. kLen = k (bytes).
+    //    8k - 2*256 - 16 = 8k
     //    - 528 bits. That's (8k - 528) bits = (k - 66) bytes.  Wait, let me
     //      recalculate. emBits = 8
-    //    * k - (8 * k - bitlen(n)) rounded down to a multiple of 8? No. Actually,
-    //      RFC 8017 §9.1.1
-    //    says: emBits = modBits - 1 where modBits = bitlen(n). The leftmost 8*emLen
+    //    * k - (8 * k - bitlen(n)) rounded down to a multiple of 8? No.
+    //      Actually, RFC 8017 §9.1.1
+    //    says: emBits = modBits - 1 where modBits = bitlen(n). The leftmost
+    // 8*emLen
     // - emBits bits    of the leftmost octet of DB shall be 0.
     //
     //    modBits = bitlen(n)
@@ -2428,7 +2426,8 @@ pub fn rsa_pss_verify(
     }
 
     // RFC 8017 §9.1.2, steps 9-15 (EMSA-PSS-VERIFY):
-    //   9. Set the leftmost 8*emLen - emBits bits of the leftmost byte of DB to 0.
+    //   9. Set the leftmost 8*emLen - emBits bits of the leftmost byte of DB to
+    //      0.
     //   10. The emLen - hLen - sLen - 2 leftmost bytes of DB must be 0x00.
     //   11. The byte at position emLen - hLen - sLen - 2 of DB must be 0x01.
     //   12. Let salt be the last sLen bytes of DB.
@@ -2462,7 +2461,8 @@ pub fn rsa_pss_verify(
     for byte_idx in 0..ps_len {
         // Wait, step 10 says "emLen - hLen - sLen - 2 leftmost bytes".
         // db_len = k - h_len - 1.
-        // ps_bytes = db_len - s_len - 1 = k - h_len - 1 - s_len - 1 = k - h_len - s_len
+        // ps_bytes = db_len - s_len - 1 = k - h_len - 1 - s_len - 1 = k - h_len
+        // - s_len
         // - 2. That matches step 10.
         if db[byte_idx] != 0 {
             return false;
@@ -2736,6 +2736,13 @@ impl Fe256 {
     /// Modular multiplication using Barrett reduction.
     fn mul(&self, rhs: &Fe256) -> Fe256 {
         let mut prod = [0u64; 8];
+        // The index arithmetic is the algorithm: `prod[i + j]` accumulates the
+        // schoolbook product's columns, and an `enumerate()` iterator would
+        // have to be re-indexed through a running offset to say the same thing
+        // — which is what the lint suggests and what this comment refuses.  The
+        // lint is right that both indices walk the array; it is wrong that the
+        // walk is what the loop is about.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..4 {
             let mut carry = 0u64;
             for j in 0..4 {
@@ -3003,6 +3010,13 @@ impl Fe256 {
 
     fn mul_mod_n(&self, rhs: &Fe256) -> Fe256 {
         let mut prod = [0u64; 8];
+        // The index arithmetic is the algorithm: `prod[i + j]` accumulates the
+        // schoolbook product's columns, and an `enumerate()` iterator would
+        // have to be re-indexed through a running offset to say the same thing
+        // — which is what the lint suggests and what this comment refuses.  The
+        // lint is right that both indices walk the array; it is wrong that the
+        // walk is what the loop is about.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..4 {
             let mut carry = 0u64;
             for j in 0..4 {
@@ -3282,7 +3296,8 @@ mod tests {
 
         let block = super::chacha20_block(&key, counter, &nonce);
 
-        // Expected output cross-verified with independent Python implementation.
+        // Expected output cross-verified with independent Python
+        // implementation.
         let expected: [u8; 64] = [
             0x10, 0xf1, 0xe7, 0xe4, 0xd1, 0x3b, 0x59, 0x15, 0x50, 0x0f, 0xdd, 0x1f, 0xa3, 0x20,
             0x71, 0xc4, 0xc7, 0xd1, 0xf4, 0xc7, 0x33, 0xc0, 0x68, 0x03, 0x04, 0x22, 0xaa, 0x9a,
@@ -3532,11 +3547,13 @@ mod tests {
             //
             // Actually, the LE interpretation means:
             // n0 = 0x72676f7470797243 (from bytes 0-7 reversed)
-            // n1 = 0x6f46206369687061 (from bytes 8-15, but check the endianness!)
+            // n1 = 0x6f46206369687061 (from bytes 8-15, but check the
+            // endianness!)
             //
             // `u64::from_le_bytes` takes the bytes little-endian, so
             // n1 = u64::from_le_bytes([97, 112, 104, 105, 99, 32, 70, 111])
-            //      = 111*2^56 + 70*2^48 + 32*2^40 + 99*2^32 + 105*2^24 + 104*2^16 + 112*2^8
+            //      = 111*2^56 + 70*2^48 + 32*2^40 + 99*2^32 + 105*2^24 +
+            // 104*2^16 + 112*2^8
             // + 97      = 0x6f46206369687061
             //
             // The 2^128 term the appended byte carries, in the third limb.
@@ -3588,14 +3605,14 @@ mod tests {
             block[remainder.len()] = 0x01;
             let n0 = u64::from_le_bytes(block[..8].try_into().unwrap());
             let n1 = u64::from_le_bytes(block[8..16].try_into().unwrap());
-            // remainder = "up" = [117, 112]. block = [117, 112, 0x01, 0, 0, 0, 0, 0] (9
-            // meaningful bytes) n0 = LE of first 8 bytes = [117, 112, 1, 0, 0,
-            // 0, 0, 0] = 117 + 112*256 + 1*65536 = 117 + 28672 + 65536 = 94325
-            // = 0x17075
+            // remainder = "up" = [117, 112]. block = [117, 112, 0x01, 0, 0, 0,
+            // 0, 0] (9 meaningful bytes) n0 = LE of first 8 bytes = [117, 112,
+            // 1, 0, 0, 0, 0, 0] = 117 + 112*256 + 1*65536 = 117 + 28672 + 65536
+            // = 94325 = 0x17075
             assert_eq!(n0, 0x0000000000017075, "blk2 n0");
 
-            // For partial block, the 0x01 byte is at len=2, so it's already in n0.
-            // No +1 to a2 needed.
+            // For partial block, the 0x01 byte is at len=2, so it's already in
+            // n0. No +1 to a2 needed.
             let t0 = a0 as u128 + n0 as u128;
             let t1 = a1 as u128 + n1 as u128 + (t0 >> 64);
             a0 = t0 as u64;
@@ -3636,7 +3653,8 @@ mod tests {
 
     #[test]
     fn chacha20_poly1305_rfc8439_aead_vector() {
-        // RFC 8439 §2.8.2: known ciphertext + tag for a fixed key/nonce/AAD/plaintext.
+        // RFC 8439 §2.8.2: known ciphertext + tag for a fixed
+        // key/nonce/AAD/plaintext.
         let key: [u8; 32] = [
             0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d,
             0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b,
@@ -3907,7 +3925,8 @@ mod tests {
 
     #[test]
     fn crc32_known_vector() {
-        // CRC-32 (IEEE 802.3, polynomial 0xEDB88320) of "123456789" = 0xCBF43926.
+        // CRC-32 (IEEE 802.3, polynomial 0xEDB88320) of "123456789" =
+        // 0xCBF43926.
         assert_eq!(super::crc32(b"123456789"), 0xCBF4_3926);
     }
 
@@ -3963,7 +3982,8 @@ mod tests {
 
     #[test]
     fn crc32c_known_vector() {
-        // CRC-32C (Castagnoli, polynomial 0x82F63B78) of "123456789" = 0xE3069283.
+        // CRC-32C (Castagnoli, polynomial 0x82F63B78) of "123456789" =
+        // 0xE3069283.
         assert_eq!(super::crc32c(b"123456789"), 0xE306_9283);
     }
 
@@ -4018,8 +4038,8 @@ mod tests {
             0x1c, 0x3b, 0x3a, 0x10, 0x2f, 0x77, 0x03, 0x86, 0xe4, 0x83, 0x6c, 0x99, 0xe3, 0x70,
             0xcf, 0x9b,
         ];
-        // sector_id 255 (0xff) encodes little-endian as ff 00 00 00 00 00 00 00,
-        // matching the NIST tweak ff000000000000000000000000000000.
+        // sector_id 255 (0xff) encodes little-endian as ff 00 00 00 00 00 00
+        // 00, matching the NIST tweak ff000000000000000000000000000000.
         super::aes_xts_encrypt(&key, 255, &mut data);
         assert_eq!(data, expected);
 
@@ -4139,15 +4159,14 @@ mod tests {
 
     #[test]
     fn rsa_pkcs1v15_verify_known_vector() {
-        // X.509 `sha256WithRSAEncryption` (RSASSA-PKCS1-v1_5) signature over the
-        // demo leaf certificate's TBS, produced by openssl with the demo root CA
-        // key (both fixtures live in the TLS certificate tests).  This regression
-        // vector pins two past bugs: the Montgomery-multiplication final
-        // reduction (a nonzero guard limb could be truncated, yielding the wrong
-        // `s^e mod n`), and the digest comparison slicing past `k` into the
-        // zeroed tail of the `em` scratch array.
-        let message = hex_to_bytes_vec(
-            concat!(
+        // X.509 `sha256WithRSAEncryption` (RSASSA-PKCS1-v1_5) signature over
+        // the demo leaf certificate's TBS, produced by openssl with the demo
+        // root CA key (both fixtures live in the TLS certificate tests).  This
+        // regression vector pins two past bugs: the Montgomery-multiplication
+        // final reduction (a nonzero guard limb could be truncated, yielding
+        // the wrong `s^e mod n`), and the digest comparison slicing past `k`
+        // into the zeroed tail of the `em` scratch array.
+        let message = hex_to_bytes_vec(concat!(
             "3082022ba003020102021458de22c0610386d5ea9be01a3bb4940590202630300d06092a864886f70d01010b05003021",
             "311f301d06035504030c1650726f746f666972652044656d6f20526f6f74204341301e170d3236303832373131353135",
             "325a170d3336303832343131353135325a3021311f301d06035504030c1664656d6f2e70726f746f666972652e657861",
@@ -4160,8 +4179,7 @@ mod tests {
             "be394bf0fb0203010001a3733071300c0603551d130101ff0402300030210603551d11041a3018821664656d6f2e7072",
             "6f746f666972652e6578616d706c65301d0603551d0e04160414ca9acd6530d985b767d2e501e50f9fc526950dbd301f",
             "0603551d23041830168014ab25b50f8ba632d6d40f47cc532f2e6adc01f240",
-            ),
-        );
+        ));
         assert_eq!(message.len(), 559);
         let n: [u8; 256] = [
             0xab, 0xbd, 0x9c, 0x4c, 0x21, 0x23, 0xef, 0xd4, 0x0f, 0xa0, 0xd8, 0xfa, 0x24, 0xb1,
@@ -4579,7 +4597,8 @@ mod field_debug_tests {
 
 #[cfg(test)]
 mod x25519_correctness_tests {
-    // RFC 7748 §6.1 fixed scalar DH vector (validated against Python reference).
+    // RFC 7748 §6.1 fixed scalar DH vector (validated against Python
+    // reference).
     #[test]
     fn x25519_rfc7748_canonical_vector() {
         let scalar: [u8; 32] = [
