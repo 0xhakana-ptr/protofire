@@ -28,7 +28,10 @@
 
 pub mod boot;
 pub mod error;
+pub mod exception;
+pub mod fs;
 pub mod power;
+pub mod process;
 pub mod syscall;
 
 pub use boot::BootInfo;

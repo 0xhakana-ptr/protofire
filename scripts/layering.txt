@@ -111,12 +111,17 @@
 # process layer, because both must ask it and neither may name the other to do
 # so.  A denial goes through a sink rather than into an audit record, because
 # finding the current process is the audit layer's business.
+# `security` is the token and the MAC policy.  It is *below* the filesystem and
+# the process layer because both have to ask it, and neither may name the other
+# to do so — the same argument the previous tree's `kernel/security/mod.rs`
+# makes.  A denial goes through a sink rather than into an audit record,
+# because finding the current process is the audit layer's business.
 6 security
 
 # `allocator` is the heap: above `sync` because the heap is shared by every CPU
 # and by interrupt handlers, and above `profiler` because its counters live
 # there.
-7 allocator
+8 allocator
 
 # ── Layer 5: subsystems that name the machine ───────────────────────────────
 #
@@ -135,26 +140,26 @@
 # `sound` and `virt` are laid out but not filled.  Their ranks are the ones their
 # manifests already imply: `sound` names `sync`, `virt` names `arch`.
 6 sound
-6 virt
+7 virt
 
 # `fs` and `net` are empty crates.  Their rank is the one their contents will
 # need — both will name `abi`, and `fs` will name `sync` — and it is low on
 # purpose so that filling them is a change to the manifest and this file
 # together rather than a crate that quietly arrived at a layer nothing chose.
-6 fs
-6 net
+7 fs
+7 net
 
 # ── Layer 6: the kernel core ────────────────────────────────────────────────
 #
 # The boot sequence, the scheduler, IPC, power, and whatever else only the kernel
 # organises.  It may name everything below.
-8 kernel
+9 kernel
 
 # ── Layer 8: the image ──────────────────────────────────────────────────────
 #
 # The only crate that links an image.  It names the kernel and the machine's arch
 # crate, which is what puts it at the top of the shipped tree.
-9 bootloader
+10 bootloader
 
 # ── Layer 9: not shipped ────────────────────────────────────────────────────
 #

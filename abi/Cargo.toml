@@ -4,3 +4,10 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+
+[features]
+# The exception record's cross-check against the hand-written payload assembly,
+# which lives in the kernel until the payloads move here.  Off by default: the
+# test it guards reads a file this crate does not own yet, and enabling it is
+# the change that moves the payloads.
+payload_assembly = []
