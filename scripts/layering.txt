@@ -62,6 +62,13 @@
 # modules in the architecture crates, and moves up then.
 2 power
 
+# `ipc` is the pipe's ring buffer: a fixed buffer, two cursors and a count.  It
+# names `abi` for the error a refused resize returns, and nothing else.  The
+# pipe's endpoints — the half that parks a reader or a writer — arrive with the
+# wait queue and move up to the kernel's layer then, because parking is the
+# scheduler's act.
+2 ipc
+
 # ── Layer 3: the machine ────────────────────────────────────────────────────
 #
 # `arch_*` are the three implementations, each a crate of its own so a missing

@@ -19,6 +19,7 @@ members = [
     "drivers/bus/pci",
     "drivers/net/e1000",
     "fs",
+    "ipc",
     "kernel",
     "libs/allocator",
     "libs/audit",
