@@ -21,6 +21,8 @@ members = [
     "fs",
     "kernel",
     "libs/allocator",
+    "libs/cell",
+    "libs/profiler",
     "libs/sync",
     "libs/unicode",
     "memory",
@@ -42,6 +44,8 @@ license = "Apache-2.0"
 [workspace.dependencies]
 abi = { path = "abi" }
 async_io = { path = "async_io" }
+cell = { path = "libs/cell" }
+profiler = { path = "libs/profiler" }
 sync = { path = "libs/sync" }
 allocator = { path = "libs/allocator" }
 security = { path = "security" }

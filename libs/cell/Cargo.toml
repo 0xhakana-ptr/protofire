@@ -1,0 +1,9 @@
+[package]
+name = "cell"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Nothing: this crate is `core` and a safety argument.
+[dependencies]

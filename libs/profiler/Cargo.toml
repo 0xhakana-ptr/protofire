@@ -1,0 +1,13 @@
+[package]
+name = "profiler"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[features]
+# The same name the previous tree uses, because the counters are the same
+# counters and a build script that sets it should not have to learn a new word.
+alloc_profiler = []
+
+[dependencies]
