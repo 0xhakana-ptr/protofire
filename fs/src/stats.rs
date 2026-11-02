@@ -42,34 +42,14 @@ pub struct CacheStats {
     /// Flushes triggered because the dirty count passed the write-back
     /// pressure threshold.
     pub pressure_flushes: u64,
-}
-
-/// Counters from a filesystem's own operations.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct FsProfilerSnapshot {
-    /// Lookups performed.
-    pub lookups: u64,
-    /// Read operations performed.
-    pub reads: u64,
-    /// Write operations performed.
-    pub writes: u64,
-    /// Bytes the read operations were *asked* for.
-    ///
-    /// The summed length of the buffers a caller handed to `read`, counted
-    /// where the operation is counted.  What the layer above wanted is the one
-    /// thing a filesystem can say about volume — how much of it a cache serves
-    /// and how much reaches a device is the layer below's business — and
-    /// counting the request rather than the result means a read that fails
-    /// still shows up as demand.
-    pub read_bytes: u64,
-    /// The same, for writes.
-    pub write_bytes: u64,
+    /// Dirty blocks written back by the aged pass, which the maintenance thread
+    /// drives rather than a caller.
+    pub aged_writebacks: u64,
 }
 
 #[cfg(test)]
 mod tests {
     use super::CacheStats;
-    use super::FsProfilerSnapshot;
 
     /// A filesystem with no cache answers zeros, and the answer is a value.
     ///
@@ -81,11 +61,6 @@ mod tests {
         assert_eq!(cache.hits, 0);
         assert_eq!(cache.misses, 0);
         assert_eq!(cache.evictions, 0);
-
-        let profiler = FsProfilerSnapshot::default();
-        assert_eq!(profiler.lookups, 0);
-        assert_eq!(profiler.reads, 0);
-        assert_eq!(profiler.writes, 0);
     }
 
     /// The two are `Copy`, so a trait method can return one without the caller
@@ -98,6 +73,5 @@ mod tests {
     fn the_counters_are_copy() {
         fn takes_by_value<T: Copy>(_: T) {}
         takes_by_value(CacheStats::default());
-        takes_by_value(FsProfilerSnapshot::default());
     }
 }

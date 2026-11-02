@@ -1,0 +1,239 @@
+//! fs/src/pyrofs/vfs.rs
+//!
+//! VFS integration: PyroFsVolume wrapper, VfsFileSystem trait implementation,
+//! and SimpleVNode implementation.
+
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+
+use crate::stats::CacheStats;
+use abi::Result;
+
+use crate::DirectoryEntry;
+use crate::FileSystem as VfsFileSystem;
+use crate::Metadata;
+use crate::NodeKind;
+use crate::SecurityDescriptor;
+use crate::SecurityDescriptorMutationSupport;
+use crate::VNode;
+use crate::VolumeCheckReport;
+use crate::XattrEntry;
+use crate::profiler::FsProfilerSnapshot;
+use block::DeviceHealth;
+
+use super::PyroFs;
+use super::PyroFsVolume;
+use super::SimpleVNode;
+
+impl PyroFsVolume {
+    pub fn new(inner: Arc<PyroFs>) -> Self {
+        Self { inner }
+    }
+}
+
+impl VfsFileSystem for PyroFsVolume {
+    fn name(&self) -> &str {
+        self.inner.label.as_str()
+    }
+
+    fn lookup(&self, path: &str) -> Result<Arc<dyn VNode>> {
+        let inode_index = self.inner.resolve_path(path)?;
+        self.inner.track_handle(inode_index);
+        Ok(Arc::new(SimpleVNode {
+            name: self.inner.name_of(inode_index),
+            fs: self.inner.clone(),
+            inode_index,
+        }))
+    }
+
+    fn create_file(&self, path: &str) -> Result<Arc<dyn VNode>> {
+        let inode_index = self.inner.create_file(path)?;
+        self.inner.track_handle(inode_index);
+        Ok(Arc::new(SimpleVNode {
+            name: self.inner.name_of(inode_index),
+            fs: self.inner.clone(),
+            inode_index,
+        }))
+    }
+
+    fn create_symlink(&self, target: &str, link_path: &str) -> Result<Arc<dyn VNode>> {
+        let inode_index = self.inner.create_symlink(target, link_path)?;
+        self.inner.track_handle(inode_index);
+        Ok(Arc::new(SimpleVNode {
+            name: self.inner.name_of(inode_index),
+            fs: self.inner.clone(),
+            inode_index,
+        }))
+    }
+
+    fn stat(&self, path: &str) -> Result<Metadata> {
+        self.inner.stat_follow(path)
+    }
+
+    fn read_dir(&self, path: &str, index: usize) -> Result<DirectoryEntry> {
+        self.inner.read_dir(path, index)
+    }
+
+    fn rename(&self, old_path: &str, new_path: &str) -> Result<()> {
+        self.inner.rename(old_path, new_path)
+    }
+
+    fn swap_paths(&self, path_a: &str, path_b: &str) -> Result<()> {
+        self.inner.swap_paths(path_a, path_b)
+    }
+
+    fn create_dir(&self, path: &str) -> Result<()> {
+        self.inner.create_dir(path)
+    }
+
+    fn remove_path(&self, path: &str) -> Result<()> {
+        self.inner.remove_path(path)
+    }
+
+    fn security_descriptor_mutation_support(&self) -> SecurityDescriptorMutationSupport {
+        self.inner.security_descriptor_mutation_support()
+    }
+
+    fn update_security_descriptor(&self, path: &str, security: SecurityDescriptor) -> Result<()> {
+        self.inner.update_security_descriptor(path, security)
+    }
+
+    fn check_and_repair(&self) -> Result<VolumeCheckReport> {
+        self.inner.check_and_repair()
+    }
+
+    fn fs_profiler_snapshot(&self) -> FsProfilerSnapshot {
+        self.inner.profiler_snapshot()
+    }
+
+    fn cache_stats(&self) -> CacheStats {
+        self.inner.cache_stats()
+    }
+
+    /// Write back this volume's aged dirty blocks.
+    ///
+    /// The persistent write-back path is driven by the maintenance thread
+    /// (`kernel::maintenance` → `fs::sync_global_caches_aged`) so that dirty
+    /// data reaches the device without waiting for an explicit `sync`.  Until
+    /// this method existed the VFS default answered `0` here and PyroFs was
+    /// the filesystem that never took part in it — only fat32 implemented the
+    /// call — so its data reached the device through an explicit sync,
+    /// pressure, or eviction and nothing else.
+    fn flush_aged(&self, age_ticks: u64) -> Result<usize> {
+        self.inner.cache.flush_aged(age_ticks)
+    }
+
+    fn list_xattrs(&self, path: &str) -> Result<Vec<XattrEntry>> {
+        self.lookup(path)?.list_xattrs()
+    }
+
+    fn get_xattr(&self, path: &str, name: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.lookup(path)?.get_xattr(name)
+    }
+}
+impl PyroFsVolume {
+    /// Return the number of data blocks that are not referenced by any live
+    /// inode. This is a diagnostic helper; results may include blocks that
+    /// were never allocated on V2 images.
+    pub fn count_orphan_data_blocks(&self) -> usize {
+        self.inner.count_orphan_data_blocks()
+    }
+
+    /// Verify stored data checksums against current file content.
+    /// Returns `(files_checked, failures)`.
+    pub fn check_data_integrity(&self) -> (usize, usize) {
+        self.inner
+            .check_data_integrity()
+            .expect("check data integrity")
+    }
+
+    /// Return the health of the underlying block device.
+    pub fn device_health(&self) -> DeviceHealth {
+        self.inner.device_health()
+    }
+
+    /// Return a point-in-time snapshot of filesystem operation counters.
+    pub fn fs_profiler_snapshot(&self) -> FsProfilerSnapshot {
+        self.inner.profiler_snapshot()
+    }
+}
+
+/// Manages a staging area within the filesystem for atomic install operations.
+///
+/// A staging area is a directory (typically `.staging`) where new content can
+/// be prepared, verified, and atomically published via rename.  Orphaned
+/// staging entries — left behind after a crash — can be cleaned up on next
+/// mount by calling [`cleanup`](StagingArea::cleanup).
+///
+/// # Lifecycle
+///
+/// ```text
+/// prepare("myapp")  →  /system/.staging/myapp/
+///   (write files into the staging directory via normal FS operations)
+/// verify            →  check checksums, metadata, etc.
+/// publish(target)   →  atomically rename to target path
+///   — or —
+/// abort("myapp")    →  recursively remove the staging directory
+/// ```
+impl VNode for SimpleVNode {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn kind(&self) -> NodeKind {
+        self.fs.kind_of(self.inode_index)
+    }
+
+    fn size(&self) -> usize {
+        self.fs.size_of(self.inode_index)
+    }
+
+    fn metadata(&self) -> Result<Metadata> {
+        self.fs.metadata_of(self.inode_index)
+    }
+
+    fn read(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
+        self.fs.read_file(self.inode_index, offset, buffer)
+    }
+
+    fn write(&self, _offset: u64, _buffer: &[u8]) -> Result<usize> {
+        self.fs.write_file(self.inode_index, _offset, _buffer)
+    }
+
+    fn set_len(&self, length: u64) -> Result<()> {
+        self.fs.set_len_file(self.inode_index, length)
+    }
+
+    fn sync(&self) -> Result<()> {
+        // Flush dirty cached blocks before the device-level flush so that
+        // any deferred write-back data reaches the device.
+        self.fs.cache.flush()?;
+        self.fs.device.flush()
+    }
+
+    fn list_xattrs(&self) -> Result<Vec<XattrEntry>> {
+        let state = self.fs.state.lock();
+        Ok(self.fs.list_xattrs_for_inode(&state, self.inode_index))
+    }
+
+    fn get_xattr(&self, name: &[u8]) -> Result<Option<Vec<u8>>> {
+        let state = self.fs.state.lock();
+        self.fs.get_xattr_for_inode(&state, self.inode_index, name)
+    }
+
+    fn get_file_flags(&self) -> Result<u32> {
+        let state = self.fs.state.lock();
+        self.fs.file_flags_for_inode(&state, self.inode_index)
+    }
+
+    fn set_file_flags(&self, set: u32, clear: u32) -> Result<()> {
+        // Inside a transaction, so the inode's flags byte and the tables it
+        // lives in commit together — the same shape every other metadata
+        // mutation here takes.
+        self.fs.transaction(|context| {
+            context
+                .fs
+                .set_file_flags_for_inode(context.state, self.inode_index, set, clear)
+        })
+    }
+}

@@ -35,6 +35,7 @@
 // time it asks.
 extern crate alloc;
 
+pub mod compressed;
 pub mod fault_profiler;
 pub mod frame;
 pub mod slot_pool;

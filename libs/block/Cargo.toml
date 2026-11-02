@@ -1,0 +1,16 @@
+[package]
+name = "block"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+abi.workspace = true
+sync = { path = "../sync" }
+
+[features]
+# The device-command counters, under the name the previous tree uses.  Off by
+# default: with it off every increment is compiled out, so a boot that does not
+# want the measurement does not pay for it.
+perf_baseline = []

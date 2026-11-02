@@ -23,6 +23,7 @@ members = [
     "kernel",
     "libs/allocator",
     "libs/audit",
+    "libs/block",
     "libs/cell",
     "libs/profiler",
     "libs/rights",

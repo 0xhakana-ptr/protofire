@@ -99,6 +99,14 @@
 # So `sync` names `arch`, and everything that wants a lock also carries the
 # machine layer with it.  That is the price, and it is cheaper than the
 # alternative.
+# `block` is the disk interface: what a driver implements and what a filesystem
+# reads.  It is below both so that neither has to name the other, which is the
+# argument the previous tree's `kernel/block.rs` header makes and this tree
+# enforces.
+6 block
+
+# `sync` is here rather than at layer 0, and that placement is a decision with a
+# cost, so it is argued rather than assumed.
 5 sync
 
 # `memory` is the frame pool and the region pools: a range and a bitmap, plus one

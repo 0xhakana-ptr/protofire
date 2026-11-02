@@ -5,6 +5,16 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+# The filesystem's own operation counters, under the name the previous tree
+# uses.  Off by default: with it off every method is a no-op and the profiler
+# is a zero-sized type, so a volume that carries one costs nothing.
+fs_profiler = []
+
 [dependencies]
 abi.workspace = true
 security.workspace = true
+sync = { path = "../libs/sync" }
+memory = { path = "../memory" }
+block = { path = "../libs/block" }
+unicode = { path = "../libs/unicode" }

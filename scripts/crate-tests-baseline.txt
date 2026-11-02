@@ -27,23 +27,27 @@
 
 
 
+
+
+
 abi                  3037   52
 allocator            2508   13
 arch                 1436    1
 arch_aarch64          446    4
 arch_riscv64          405    4
 arch_x86_64           495    5
-async_io             1239   24
+async_io             1302   24
 audit                 595    8
+block                1111   10
 bootloader            109    0 # exempt: entry symbols, a panic handler and an assembly stub; a test of those is a boot
 cell                  217    4
 crypto               4660   64
 e1000                   2    0
-fs                   1856   21
+fs                  11023   54
 integration_tests       2    0
 ipc                   328    9
-kernel                235    1
-memory               1464   19
+kernel                243    1
+memory               1862   27
 net                     2    0
 pci                     2    0
 power                 321   12

@@ -9,8 +9,8 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::profiler::FsProfilerSnapshot;
 use crate::stats::CacheStats;
-use crate::stats::FsProfilerSnapshot;
 use crate::types::DirectoryEntry;
 use crate::types::Metadata;
 use crate::types::NodeKind;
