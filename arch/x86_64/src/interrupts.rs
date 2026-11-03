@@ -39,6 +39,31 @@ pub fn are_enabled() -> bool {
     flags & (1 << 9) != 0
 }
 
+/// Silences the legacy 8259 before interrupts are enabled.
+///
+/// ## Why this is part of enabling
+///
+/// The 8259's reset vector bases are 8 and 0x70, and vector 8 is the double
+/// fault.  A machine whose timer still reaches the 8259 takes its first tick as
+/// a double fault through whatever gate the kernel wrote for vector 8 — which
+/// is a gate for an exception the kernel never meant to raise, so the answer it
+/// gives is the wrong one and the machine stops.
+///
+/// So enabling interrupts on this machine is two things, and they are one
+/// function: silence the legacy controller, then set the flag.  A caller that
+/// did only the second is a caller whose first interrupt is a fault, and this
+/// tree learned that by executing `sti` once.
+///
+/// Masked rather than remapped: q35 has an IOAPIC, and a machine with two
+/// controllers able to raise one line is a worse state than one controller
+/// silent.
+pub fn silence_legacy_controller() {
+    // SAFETY: the two writes go to the 8259's mask registers.  A machine with
+    // no 8259 ignores them, which is the correct effect there.
+    #[cfg(target_os = "none")]
+    crate::pic::mask_all();
+}
+
 /// Disable local interrupts.
 ///
 /// On a host this does nothing: there is no interrupt flag to clear, and the

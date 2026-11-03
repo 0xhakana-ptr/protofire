@@ -30,6 +30,7 @@ members = [
     "libs/rights",
     "libs/sync",
     "libs/unicode",
+    "irq",
     "memory",
     "paging",
     "net",

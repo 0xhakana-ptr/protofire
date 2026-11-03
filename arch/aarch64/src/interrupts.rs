@@ -95,6 +95,17 @@ pub fn restore(enabled: bool) {
     }
 }
 
+/// Silence the legacy interrupt controller, of which this machine has none.
+///
+/// The 8259 is a PC part: its reset vector base is 8, the double fault, which
+/// is why x86_64 masks it before enabling interrupts.  A device-tree machine
+/// has a GIC or a PLIC from reset, with bases the firmware chose and no
+/// collision, so there is nothing to silence.
+///
+/// The function exists on every machine so that enabling interrupts is one call
+/// rather than a question about which machine is running.
+pub fn silence_legacy_controller() {}
+
 #[cfg(test)]
 mod tests {
     use super::save_and_disable;

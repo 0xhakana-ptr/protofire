@@ -118,7 +118,12 @@ impl Machine {
     /// permission per region.  Reaching the heap line means the swap did not
     /// lose any address the boot was still using.
     ///
-    /// The third is the heap's own bounds.  It is here rather than treated as
+    /// The third names the interrupt table, and says the flag is on.  A boot
+    /// that installed a table and never enabled interrupts has never taken one,
+    /// and the machine's first tick would then be a fault nobody saw; enabling
+    /// the flag and staying up is what says the delivery path works.
+    ///
+    /// The fourth is the heap's own bounds.  It is here rather than treated as
     /// a log line because reaching it means `bounds()` ran, which is what makes
     /// the allocator lay out its free lists — a boot that printed the first
     /// line and stopped before the second has a loader but no heap.  The

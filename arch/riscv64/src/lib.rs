@@ -30,6 +30,7 @@ pub mod interrupts;
 pub mod paging;
 pub mod port;
 pub mod serial;
+pub mod stvec;
 
 /// Stop this CPU until an interrupt arrives.
 ///
@@ -50,4 +51,39 @@ pub fn halt() -> ! {
 #[cfg(not(target_os = "none"))]
 pub fn halt() -> ! {
     panic!("halt() called on a host: this is the kernel's stop, not a test's")
+}
+
+/// Install the trap vector.
+///
+/// Returns whether one was installed.  This machine has the vector's shape —
+/// `stvec::Cause` splits a `scause` into its flag and code, and that is tested
+/// — and not yet the entry: the boot assembly does not branch into a Rust trap
+/// handler, so a `stvec` naming an unfilled vector would be a register pointing
+/// at nothing.
+///
+/// So it answers `false`, and the boot says so.
+/// # Safety
+///
+/// A machine with an entry would make a register name an address here; this
+/// one has none, and the promise is kept by doing nothing.  The signature is
+/// unsafe on every machine so that the caller reads one contract.
+#[cfg(target_os = "none")]
+pub unsafe fn install_interrupt_table() -> bool {
+    false
+}
+
+/// Install the sink a trap frame goes to.
+///
+/// A machine with no trap entry has nothing to hand a frame to, so this records
+/// nothing and says nothing: the sink is installed by a machine that can call
+/// one, and [`install_interrupt_table`] is what reports whether that is this
+/// one.
+///
+/// # Safety
+///
+/// The caller promises to call this once, before any vector can be raised.  A
+/// machine that cannot raise one keeps that promise trivially.
+#[cfg(target_os = "none")]
+pub unsafe fn set_interrupt_dispatch(sink: fn(irq::Frame) -> bool) {
+    let _ = sink;
 }

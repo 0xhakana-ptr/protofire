@@ -29,7 +29,8 @@ extracted yet.
          security, allocator, virtio_core, virtio_block
      4   arch, block                                   the route, and the disk interface
      3   arch_x86_64, arch_aarch64, arch_riscv64       the machines
-     2   crypto, async_io, power, ipc                  algorithms and rings
+     2   crypto, async_io, power, ipc, paging, irq      algorithms, rings, page tables,
+                                                       the handler table
      1   abi                                           the wire format
      0   cell, profiler, unicode, rights, audit        core and alloc only
 ```

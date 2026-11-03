@@ -14,13 +14,28 @@
 extern crate alloc;
 
 pub mod boot;
+pub mod idt;
 pub mod interrupts;
 pub mod paging;
+pub mod pic;
 
 // The entry encoding, re-exported by name: `kernel::address_space` builds a
 // mapping and asks the machine how to write it down, and asking through `arch`
 // is what keeps the answer a machine's business.
 pub use paging::install;
+
+// The interrupt table, by name: the kernel installs one and hands it a sink,
+// and both are this crate's decisions about the machine.  Bare-metal only: a
+// host has no IDT to load and no vector to take, and the types are gated the
+// same way for the same reason.
+#[cfg(target_os = "none")]
+pub use idt::InterruptFrame;
+#[cfg(target_os = "none")]
+pub use idt::install as install_interrupt_table;
+#[cfg(target_os = "none")]
+pub use idt::loaded as idt_descriptor;
+#[cfg(target_os = "none")]
+pub use idt::set_dispatch as set_interrupt_dispatch;
 
 pub mod port;
 pub mod serial;

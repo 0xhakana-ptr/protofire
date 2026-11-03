@@ -49,6 +49,30 @@ pub use arch_riscv64::*;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::boot::boot_info;
 
+// The interrupt table.  Every machine has one and it is named the same way —
+// a boot installs a table and hands it a sink — so a machine that has not
+// written its own fails to build here rather than at the call site.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::set_interrupt_dispatch;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::set_interrupt_dispatch;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::InterruptFrame;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::idt_descriptor;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::set_interrupt_dispatch;
+
+// `install_interrupt_table` is re-exported for every machine: each answers
+// whether it has one, and a machine whose entry is not written says `false`
+// rather than making a caller ask which machine it is.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::install_interrupt_table;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::install_interrupt_table;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::install_interrupt_table;
+
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::boot::boot_info;
 

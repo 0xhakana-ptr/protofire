@@ -71,6 +71,16 @@
 # tested on a host.  The half that probes a machine arrives with the `cpufreq`
 # modules in the architecture crates, and reaches the policy through the trait
 # rather than by moving this crate up to the kernel.
+# `irq` is the handler table and the dispatch over it.  It is here because the
+# table is the same on every machine — an array of handlers indexed by identity —
+# and only the way a machine *reaches* it differs.  Two crates above it need it
+# and neither may depend on the other: `arch` delivers a frame to it, and
+# `kernel` decides what a vector means.
+#
+# It names nothing: no machine, no lock, no allocator.  That is what lets a host
+# test register a handler and dispatch to it without an interrupt controller.
+2 irq
+
 2 power
 
 # `ipc` is the pipe's ring buffer: a fixed buffer, two cursors and a count.  It

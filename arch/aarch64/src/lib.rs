@@ -32,6 +32,7 @@ pub mod interrupts;
 pub mod paging;
 pub mod port;
 pub mod serial;
+pub mod vbar;
 
 /// Stop this CPU until an interrupt arrives.
 ///
@@ -60,4 +61,41 @@ pub fn halt() -> ! {
 #[cfg(not(target_os = "none"))]
 pub fn halt() -> ! {
     panic!("halt() called on a host: this is the kernel's stop, not a test's")
+}
+
+/// Install the exception vector table.
+///
+/// Returns whether a table was installed.  This machine has the table's
+/// *structure* — `vbar::Table` is the sixteen entries the architecture defines
+/// and it is tested — and not its *entry*: the boot assembly does not yet
+/// branch into a Rust trap handler, so a `VBAR_EL1` pointing at an unfilled
+/// table would be a register naming code that is not there.
+///
+/// So it answers `false`, and the boot says so.  A machine's silent failure and
+/// a machine's honest gap look the same in a log unless the gap is reported,
+/// and this is the report.
+/// # Safety
+///
+/// A machine with an entry would make a register name an address here; this
+/// one has none, and the promise is kept by doing nothing.  The signature is
+/// unsafe on every machine so that the caller reads one contract.
+#[cfg(target_os = "none")]
+pub unsafe fn install_interrupt_table() -> bool {
+    false
+}
+
+/// Install the sink a trap frame goes to.
+///
+/// A machine with no trap entry has nothing to hand a frame to, so this records
+/// nothing and says nothing: the sink is installed by a machine that can call
+/// one, and [`install_interrupt_table`] is what reports whether that is this
+/// one.
+///
+/// # Safety
+///
+/// The caller promises to call this once, before any vector can be raised.  A
+/// machine that cannot raise one keeps that promise trivially.
+#[cfg(target_os = "none")]
+pub unsafe fn set_interrupt_dispatch(sink: fn(irq::Frame) -> bool) {
+    let _ = sink;
 }

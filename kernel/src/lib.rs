@@ -38,6 +38,7 @@ extern crate alloc;
 
 pub mod address_space;
 pub mod devices;
+pub mod interrupts;
 pub mod iso_disc;
 pub mod scheduler;
 pub mod syscall;
@@ -148,6 +149,67 @@ pub fn kernel_main() -> ! {
     }
     #[cfg(not(target_os = "none"))]
     arch::serial::write_str("not installed (a host has no address space to install)\n");
+
+    // Interrupts: a table of gates, and the sink a frame goes to.
+    //
+    // The order is the point.  The sink is installed first, so a vector that
+    // arrived between the table being loaded and the handler existing would be
+    // one the dispatch could not answer.  Then the table, then the flag.
+    //
+    // Nothing raises a vector yet: the boot has not programmed an interrupt
+    // controller and no driver has registered a line.  That is what makes this
+    // a proof rather than a claim — an interrupt raised with no controller
+    // configured is exactly the spurious case the dispatch has to survive, and
+    // a boot that stays up past `sti` has handled that case.
+    // The machine is asked, not named: `install_interrupt_table` answers
+    // whether this one has a table to install, and a machine whose entry
+    // assembly is not written says `false` rather than making this function ask
+    // which machine it is running on.
+    #[cfg(target_os = "none")]
+    {
+        // SAFETY: called once, with the console up.  The sink answers "not
+        // handled" for everything, so a vector that arrives stops the machine
+        // with its number on the console rather than jumping into nothing.
+        unsafe { arch::set_interrupt_dispatch(interrupts::handle) };
+        // SAFETY: called once, after the sink exists and before any vector can
+        // be raised.
+        let installed = unsafe { arch::install_interrupt_table() };
+        arch::serial::write_str("protofire: interrupt table ");
+        if installed {
+            arch::serial::write_str("installed");
+        } else {
+            arch::serial::write_str("not installed (this machine has no entry yet)");
+        }
+
+        // And enabled, if there is a table behind the flag.
+        //
+        // The 8259 is masked first, and that is not tidiness.  Its reset vector
+        // bases are 8 and 0x70; vector 8 is the double fault.  A machine whose
+        // timer still reaches the 8259 takes its first tick as a double fault
+        // through a gate this kernel wrote for a fault it will never raise —
+        // which is exactly what happened the first time this line existed.
+        // q35 has an IOAPIC, so the legacy controller is masked rather than
+        // remapped: two controllers able to raise one line is a worse state
+        // than one controller silent.  A machine whose
+        // controllers are not programmed raises nothing, so a boot that stays
+        // up past this line has run the path that matters: a vector with no
+        // handler is answered rather than jumping into nothing.
+        //
+        // SAFETY: the table is installed and the sink is set, so a vector that
+        // arrives is one the dispatch can answer.
+        if installed {
+            // The legacy controller is silenced before the flag, not after and
+            // not as part of building the table: its pending lines are latched
+            // until the mask is written, so the order is mask then enable.  The
+            // machine owns both halves — `enable` would be a flag over a
+            // controller that raises vector 8.
+            arch::interrupts::silence_legacy_controller();
+            arch::interrupts::enable();
+            arch::serial::write_str(", interrupts on\n");
+        } else {
+            arch::serial::write_str("\n");
+        }
+    }
 
     // Initialise the heap and say where it is.
     //

@@ -13,7 +13,6 @@ allocator.workspace = true
 spin.workspace = true
 security.workspace = true
 syscall.workspace = true
-sound.workspace = true
 
 # No architecture feature: `arch` picks its implementation from the target, so
 # `cargo build -p kernel --target <machine>` is the whole selection.  A feature
@@ -26,6 +25,8 @@ block = { path = "../block" }
 # The page-table types and the walk arithmetic.  The kernel decides what its
 # address space maps; `paging` is what a table is.
 paging = { path = "../paging" }
+# The handler table an interrupt is delivered through.
+irq = { path = "../irq" }
 # The static holder for the page tables: a `static mut` would be the usual
 # shape and this is the crate that replaces it.
 cell = { path = "../libs/cell" }
