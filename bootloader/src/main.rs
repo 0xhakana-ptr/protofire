@@ -12,8 +12,8 @@
 //! address".  A new loader changes the first; a new machine changes the second.
 //!
 //! So this file holds no instruction, no register, no address and no linker
-//! script.  It defines one symbol — [`protofire_entry`] — and the machine's
-//! entry assembly calls it.  The call is a link-time reference in one
+//! script.  It defines one symbol — `protofire_entry` — and the machine's entry
+//! assembly calls it.  The call is a link-time reference in one
 //! direction: `arch` sits below this crate, so `arch` cannot name
 //! `bootloader`, and the assembly names a neutral symbol instead.  That is the
 //! same inversion the layering gate exists to prevent, solved at the linker

@@ -12,7 +12,7 @@
 //! Encoding (one tag byte + payload):
 //! - `0x00` — zero page (no payload)
 //! - `0x01` — single repeated byte (one payload byte)
-//! - `0x02` — LZSS token stream (see [`lzss_compress`])
+//! - `0x02` — LZSS token stream (`lzss_compress`)
 
 use alloc::vec::Vec;
 

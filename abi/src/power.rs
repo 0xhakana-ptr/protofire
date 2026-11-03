@@ -36,7 +36,7 @@ pub trait CpuFreqDriver {
     /// Request a core frequency in KHz.
     ///
     /// The driver clamps to its supported range.  Returns
-    /// [`Error::Unsupported`] in report-only mode.
+    /// [`crate::Error::Unsupported`] in report-only mode.
     fn set_freq(&mut self, freq_khz: u32) -> Result<()>;
 
     /// The achievable range in KHz, if the machine reports one.

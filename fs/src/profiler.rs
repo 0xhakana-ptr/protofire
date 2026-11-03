@@ -177,7 +177,7 @@ impl FsProfiler {
     // tick-based relative timing
 
     /// Return a monotonically increasing tick value for relative latency
-    /// measurement.  Used with [`record_elapsed`] to accumulate a rough
+    /// measurement.  Used with [`Self::record_elapsed`] to accumulate a rough
     /// cost-per-operation signal.
     #[inline]
     pub fn tick(&self) -> u64 {
@@ -193,7 +193,7 @@ impl FsProfiler {
     }
 
     /// Record the number of profiler ticks elapsed since `start_tick`
-    /// (obtained from a prior [`tick`] call).
+    /// (obtained from a prior [`Self::tick`] call).
     #[inline]
     pub fn record_elapsed(&self, start_tick: u64) {
         #[cfg(feature = "fs_profiler")]

@@ -15,7 +15,7 @@
 //! real device refusing to initialise, and it would be found by whoever ran
 //! this kernel on hardware rather than by whoever wrote the driver.
 //!
-//! So [`Status`] is a machine and [`Status::advance`] refuses a step that
+//! So [`Status`] is a machine and [`next`] refuses a step that
 //! skipped one.  The bits stay `pub` — a caller has to be able to read
 //! `FAILED` off a device — but the transition is this module's.
 

@@ -9,7 +9,8 @@
 //! count, `read_blocks`, `write_blocks`.  An in-memory device and a device
 //! behind a virtqueue both have those.
 //!
-//! The queue is different in one specific way: [`submit_read`] is `unsafe`,
+//! The queue is different in one specific way:
+//! [`QueuedBlockDevice::submit_read`] is `unsafe`,
 //! because the caller's buffer has to stay put until the device is done with
 //! it.  A device that copies during the submit does not need that promise, and
 //! neither does any caller of one.  While the promise lived on `BlockDevice`,

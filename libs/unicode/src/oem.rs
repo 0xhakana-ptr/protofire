@@ -110,8 +110,10 @@ pub fn char_to_oem_byte(ch: char, code_page: OemCodePage) -> Option<u8> {
 /// Encode a UTF-8 string into an OEM code-page byte sequence.
 ///
 /// Characters that cannot be represented in the target code page are
-/// replaced with `0x3F` (`'?'`).  This matches the behaviour of Windows
-/// FAT filesystem drivers when a Unicode character has no OEM equivalent.
+/// replaced with `0x3F` (`'?'`).  That is what a FAT 8.3 name does with a
+/// character it cannot encode: the short name has to be representable in the
+/// code page, and `?` is the byte that says so rather than a silent
+/// substitution.
 ///
 /// # Example
 ///

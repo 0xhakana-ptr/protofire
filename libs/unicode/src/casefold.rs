@@ -8,7 +8,7 @@
 //!
 //! The mapping is the full Unicode **simple** case folding (the `S` column of
 //! Unicode `CaseFolding.txt`, plus single-code-point `C`/`F` mappings) —
-//! every script with case is covered.  See [`casefold_tables`] for the
+//! every script with case is covered.  See `crate::casefold_tables` for the
 //! generated table.  Multi-code-point full folds (e.g. `ß` → `ss`) cannot be
 //! represented by a char-at-a-time mapping; characters with only a multi-char
 //! fold compare byte-exact, which never causes a false *match*.

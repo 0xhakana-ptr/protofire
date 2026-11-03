@@ -27,7 +27,8 @@ pub struct HeapAllocator;
 impl HeapAllocator {
     /// Create a new `HeapAllocator` handle.
     ///
-    /// The allocator is not initialised until [`init()`] is called.
+    /// The allocator is not initialised until `bounds()` is called, which is
+    /// what lays out its free lists.
     pub const fn new() -> Self {
         Self
     }

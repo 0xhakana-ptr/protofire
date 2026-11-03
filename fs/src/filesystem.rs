@@ -28,13 +28,20 @@ use abi::Result;
 /// ## UTF-8 path contract
 ///
 /// All path and filename parameters (`path`, `old_path`, `new_path`,
-/// `link_path`) are valid UTF-8 strings — the kernel enforces this at the
-/// user-kernel boundary (macOS-style).  Backend implementations **may**
-/// assume `&str` validity; they do not need to validate UTF-8 a second time.
+/// `link_path`) are valid UTF-8 strings.  The kernel enforces this once, at the
+/// user-kernel boundary, so a backend **may** assume `&str` validity and does
+/// not need to validate UTF-8 a second time.
 ///
-/// Disk data that is not valid UTF-8 must be handled gracefully (e.g. via
-/// [`String::from_utf8_lossy`] with a U+FFFD replacement, as SimpleFs and
-/// ext2 do).  See §3.11 of the code-quality review plan for details.
+/// That enforcement is a choice this tree makes rather than a property of
+/// bytes: a path is a `&str` because a program's path arrives as UTF-8 and a
+/// kernel that accepted arbitrary bytes would have to decide what a name
+/// comparison means for two byte strings that no encoding agrees on.  The
+/// price is that a filesystem whose on-disk names are not UTF-8 has to convert
+/// them, and `String::from_utf8_lossy` is what PyroFS does — which is lossy,
+/// and the comment at that call site says so.
+///
+/// Disk data that is not valid UTF-8 must therefore be handled gracefully; how
+/// is the backend's decision, and the backend documents it.
 pub trait FileSystem: Send + Sync {
     /// Return the human-readable name of this filesystem.
     fn name(&self) -> &str;

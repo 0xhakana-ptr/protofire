@@ -31,9 +31,9 @@
 //! *index into the ring* is `idx % queue_size`.  A queue that wrapped its
 //! index instead of modulo-ing a counter would lose track after 65536
 //! requests, which on a disk is minutes and which no test that submits five
-//! requests would ever see.  [`VirtQueue::available_index`] and
-//! [`VirtQueue::used_index`] are the two places that do the adjacent work, and
-//! they are tested at the wrap.
+//! requests would ever see.  [`Rings::available_index`] and
+//! [`Rings::used_index`] are the two counters, and `VirtQueue::slot` is the one
+//! place that turns a counter into a ring index; both are tested at the wrap.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -311,7 +311,7 @@ impl VirtQueue {
     /// A queue of `queue_size` entries, with every descriptor free.
     ///
     /// `queue_size` must be a power of two: the specification requires it, and
-    /// the modulo arithmetic in [`VirtQueue::available_index`] relies on it.
+    /// the masking in `VirtQueue::slot` relies on it.
     pub fn new(queue_size: usize) -> Self {
         assert!(
             queue_size.is_power_of_two(),

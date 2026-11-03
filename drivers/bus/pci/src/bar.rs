@@ -17,7 +17,7 @@
 //! original value has to be saved and restored, because the write is a request
 //! the device takes seriously.
 //!
-//! That read-modify-write is why [`Bar::size`] needs a [`ConfigSpace`] rather
+//! That read-modify-write is why [`size`] needs a [`ConfigSpace`] rather
 //! than being a field: the answer is not in the value, it is in what the device
 //! does when asked.
 //!

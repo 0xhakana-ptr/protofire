@@ -30,9 +30,9 @@
 //!
 //! [`SyscallContext`] carries six words, and a word may be an address.  This
 //! boot has no user address space, so the only caller is the kernel itself and
-//! the two address-shaped arguments arrive as borrows through
-//! [`Arguments::with_path`] and [`Arguments::with_buffer`] rather than as
-//! integers a handler would have to turn back into pointers.
+//! the two address-shaped arguments arrive as borrows — [`Arguments::path`]
+//! and [`Arguments::buffer`] — rather than as integers a handler would have to
+//! turn back into pointers.
 //!
 //! That is deliberate.  A handler that does `from_raw_parts` on
 //! `context.arg(1)` carries a promise it cannot show — the comment would say

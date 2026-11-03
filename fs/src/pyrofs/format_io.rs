@@ -155,9 +155,10 @@ pub(crate) fn decode_dir_entries(
             // (replacement character).  This means a filename containing raw
             // bytes that survive a read→write→read round-trip will be
             // *permanently corrupted* — the replacement characters cannot be
-            // mapped back to the original bytes.  This is a known limitation
-            // of the macOS-style "UTF-8 only" path model.  A future WTF-8 or
-            // byte-string VFS layer would be required for lossless round-trips.
+            // mapped back to the original bytes.  This is the price of the VFS
+            // path contract being `&str`; a byte-string path type would keep
+            // round-trips lossless and is a change to the whole VFS, not to
+            // this call site.
             //
             // Store the filename as-is — this kernel treats names as opaque
             // UTF-8 byte sequences.

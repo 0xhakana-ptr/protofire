@@ -231,8 +231,8 @@ pub const SIGNAL_FRAME_SIZE: usize = size_of::<SignalFrame>();
 /// The stack pointer is not among them: it is `orig_sp` on the frame.
 pub const AARCH64_SIGNAL_FRAME_REGS: usize = 31;
 
-/// AArch64-specific signal frame, pushed on the user stack by
-/// [`try_async_signal_delivery_aarch64`].
+/// AArch64-specific signal frame, pushed on the user stack when a signal is
+/// delivered asynchronously on that machine.
 ///
 /// The same shape as [`SignalFrame`]: the interrupted code's registers, then
 /// the AArch64 exception-return state (ELR, SP, SPSR) rather than x86_64
@@ -262,8 +262,8 @@ pub const AARCH64_SIGNAL_FRAME_SIZE: usize = size_of::<AArch64SignalFrame>();
 /// `x2`, and the machine's own name is the honest one to carry.
 pub const RISCV64_SIGNAL_FRAME_REGS: usize = 31;
 
-/// RISC-V-specific signal frame, pushed on the user stack by
-/// [`try_async_signal_delivery_riscv64`].
+/// RISC-V-specific signal frame, pushed on the user stack when a signal is
+/// delivered asynchronously on that machine.
 ///
 /// The same shape as the other two, holding RISC-V exception-return state
 /// (SEPC, SSTATUS) rather than x86_64 (RIP, RSP, RFLAGS) or AArch64
