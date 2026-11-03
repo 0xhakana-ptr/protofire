@@ -1,5 +1,7 @@
-/* File: bootloader/src/boot-x86_64.S */
-/* Purpose: The x86_64 multiboot2 handshake, up to the point Rust can run. */
+/* File: arch/x86_64/src/boot-x86-64.S */
+/* Purpose: The x86_64 entry: the two loader handshakes, long mode, and the
+   jump into the protocol's own entry.  It lives here rather than in
+   `bootloader` because every instruction below is a fact about this machine. */
 
 /* The header is what a loader reads before it loads anything, so it is written
    to the section the linker script places first.  `checksum` is the value that
@@ -181,11 +183,19 @@ long_mode_start:
     lea rsp, [rip + boot_stack_top]
     xor rbp, rbp
 
-    /* The handshake is passed on in the first two argument registers, which is
-       what `kernel_main` declares. */
+    /* The handshake goes to the machine's own record, in 64-bit mode and with
+       the stack this file built: the state was saved into the `.bss` slot while
+       still in 32-bit mode, and this is the first point at which a Rust calling
+       convention exists to hand it over with. */
     mov edi, dword ptr [rip + multiboot_magic]
-    mov esi, dword ptr [rip + multiboot_info]
-    call kernel_main
+    call record_handshake
+
+    /* Then the protocol's entry.  The name is neutral on purpose: this file
+       knows how the machine is entered, `bootloader` knows what to do once it
+       is, and the two meet at a symbol rather than at a crate edge — `arch` is
+       below `bootloader`, and an upward import would be the one thing this
+       tree's layering forbids. */
+    call protofire_entry
 
 halt_forever:
     cli

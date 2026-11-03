@@ -8,6 +8,10 @@
 # on a command line, so a build that forgets it fails instead of producing an
 # image at the wrong address.
 #
+# The script is named by the machine's own directory: where an image goes is a
+# fact about the loader, so the script lives with the entry that reads the
+# loader's conventions rather than with the protocol crate above it.
+#
 # `-C relocation-model=static` is not a style choice.  Without it the linker is
 # invoked with `-pie` and the image comes out position-independent, which a
 # multiboot2 loader placing it at a fixed address cannot use: the header's
@@ -20,7 +24,7 @@
 [target.x86_64-unknown-none]
 rustflags = [
     "-C", "relocation-model=static",
-    "-C", "link-arg=-Tbootloader/linker-x86_64.ld",
+    "-C", "link-arg=-Tarch/x86_64/linker-x86_64.ld",
 ]
 
 [target.aarch64-unknown-none]

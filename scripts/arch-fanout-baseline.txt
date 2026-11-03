@@ -19,12 +19,24 @@
 # time.  A row that grows fails with its own reason printed, because a reason
 # that covered the old count may not cover the new one.
 #
-# `bootloader/src/main.rs` is the one row that is expected to stay.  A `no_std`
-# binary needs a `#[panic_handler]` and an entry symbol per architecture, and
-# those are things only a binary can define — the bootloader is where the
-# machine's entry convention lives, and it is the layer below `arch` rather than
-# above it.
+# ## Zero, and why it is now zero
+#
+# The one row this file used to carry was `bootloader/src/main.rs`, five
+# `target_arch` gates in the entry symbol, the panic handler and three
+# `halt_forever` arms.  Its reason said those were things only a binary can
+# define, which was true and was not the question: the *symbol* is a binary's,
+# but the *instruction* it reaches for is the machine's.
+#
+# `bootloader` is the protocol — a loader put us here, so start the kernel —
+# and `arch` is the machine.  The five gates were five places the machine was
+# named in the crate that is not the machine.  Moving them leaves one neutral
+# `protofire_entry` that every machine's assembly calls, and the stop behind a
+# panic is `arch::halt`, which is one name for `hlt` and `wfi` rather than
+# three spellings of them here.
+#
+# The row is gone rather than rewritten because there is nothing left for it to
+# describe.  A row would have to be re-argued to come back, which is the point
+# of recording to zero.
 
-# 1 file(s), 5 occurrence(s) outside arch/
+# 0 file(s), 0 occurrence(s) outside arch/
 
-bootloader/src/main.rs                               5  # fact: the entry symbol and panic handler are a binary's, one per architecture, and this crate is the layer below arch/

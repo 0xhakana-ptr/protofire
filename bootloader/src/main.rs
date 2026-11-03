@@ -1,29 +1,40 @@
 //! bootloader/src/main.rs
 //!
-//! The image's entry point: the assembly hands control here, and this is where
-//! the kernel takes over.
+//! The image's entry: what a boot does once a machine can run Rust, and the
+//! order it does it in.
 //!
-//! ## Why this crate exists at all
+//! ## This crate is a protocol; `arch` is the machine
 //!
-//! A `no_std` binary needs a `#[panic_handler]` and an entry symbol, and a
-//! library can supply neither.  Keeping them here means the `kernel` crate
-//! stays a library that host tests can build, while the one artifact that must
-//! link on bare metal gets the things only a binary can define.
+//! The two are different questions and this tree keeps them in different
+//! crates.  A *protocol* is "a loader put us here, so now: record what it
+//! said, take over the console, start the kernel".  A *machine* is "the state
+//! arrived in `%eax`, the stack is at this symbol, an image links at this
+//! address".  A new loader changes the first; a new machine changes the second.
 //!
-//! The symbols are deliberately thin.  Everything that is a *decision* — what
-//! to initialise, in what order — belongs to `kernel::kernel_main`, where a
-//! test can call it.  This file only translates the handshake.
+//! So this file holds no instruction, no register, no address and no linker
+//! script.  It defines one symbol — [`protofire_entry`] — and the machine's
+//! entry assembly calls it.  The call is a link-time reference in one
+//! direction: `arch` sits below this crate, so `arch` cannot name
+//! `bootloader`, and the assembly names a neutral symbol instead.  That is the
+//! same inversion the layering gate exists to prevent, solved at the linker
+//! rather than by an upward `use`.
+//!
+//! ## Why the crate exists at all
+//!
+//! A `no_std` binary needs a `#[panic_handler]` and it needs to be the artifact
+//! that is linked; a library can be neither.  Keeping those here means the
+//! `kernel` crate stays a library a host test can build.
+//!
+//! Everything that is a *decision* — what to initialise, in what order —
+//! belongs to `kernel::kernel_main`, where a test can call it.  This file
+//! translates an entry convention into that call and does nothing else.
 //!
 //! ## Host builds
 //!
 //! `cargo build --workspace` builds this package for the host too, and there
-//! the bare-metal half cannot exist: `_start` collides with the C runtime's
-//! own, and `#[panic_handler]` collides with `std`'s.  So the body is gated on
-//! `target_os = "none"` and the host build is an empty `main` — enough for the
-//! workspace to typecheck the package without pretending the image links on a
-//! machine that has an operating system.  The previous tree's root binary draws
-//! the same line (`#![cfg_attr(target_os = "none", no_std)]`) for the same
-//! reason.
+//! the bare-metal half cannot exist: `#[panic_handler]` collides with `std`'s.
+//! The body is therefore gated on `target_os = "none"` and the host build is an
+//! empty `main`.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
@@ -31,71 +42,33 @@
 #[cfg(target_os = "none")]
 use core::panic::PanicInfo;
 
-#[cfg(all(target_os = "none", target_arch = "x86_64"))]
-core::arch::global_asm!(include_str!("boot-x86-64.S"));
-
-/// The machine's own stop, for the paths that have nowhere left to go.
+/// The image's entry, as every machine's boot assembly calls it.
 ///
-/// Written per architecture rather than taken from `arch`, because a panic can
-/// fire before `arch` is reachable and this must not be the call that faults.
-#[cfg(all(target_os = "none", target_arch = "x86_64"))]
-fn halt_forever() -> ! {
-    loop {
-        // SAFETY: `hlt` in ring 0 stops the CPU until an interrupt arrives.
-        // Interrupts stay disabled along every path that reaches here — the
-        // boot assembly clears them at `_start` and nothing re-enables them
-        // before `kernel_main` returns — so this is a stop the machine does
-        // not leave, which is the intent.
-        unsafe { core::arch::asm!("cli; hlt", options(nomem, nostack)) };
-    }
-}
-
-#[cfg(all(target_os = "none", target_arch = "aarch64"))]
-fn halt_forever() -> ! {
-    loop {
-        // SAFETY: `wfi` waits for an interrupt at the current exception level.
-        // Reached only after something has already failed.
-        unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
-    }
-}
-
-#[cfg(all(target_os = "none", target_arch = "riscv64"))]
-fn halt_forever() -> ! {
-    loop {
-        // SAFETY: `wfi` waits for an interrupt in S-mode.  See the x86_64 arm
-        // for why this path exists.
-        unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
-    }
+/// The name is the protocol's and is deliberately neutral: which registers
+/// held what, and which loader spoke, are the machine's business and are
+/// already recorded by the time this runs.  `arch::boot_info()` reads that
+/// record, so this function takes no arguments and there is nothing here for a
+/// new machine to translate.
+///
+/// SAFETY: called from the machine's entry assembly, with a stack that assembly
+/// built and in the mode it established.  `extern "C"` is the calling
+/// convention both sides agree on; there are no arguments to disagree about.
+#[cfg(target_os = "none")]
+#[unsafe(no_mangle)]
+pub extern "C" fn protofire_entry() -> ! {
+    kernel::kernel_main()
 }
 
 /// What a panic does on bare metal.
 ///
-/// There is nowhere to unwind to and no console guaranteed to be up, so the
-/// honest answer is to stop.  A console that is up prints through the kernel's
-/// own path; a panic before that leaves the machine stopped, which is what a
-/// debugger reads.
+/// The machine's stop is `arch::halt`, which is where `hlt` and `wfi` are
+/// spelled.  This is not an upward reference in disguise: `bootloader` sits
+/// above `arch` and may name it, and a panic handler that had to be written
+/// three times would be three more places a fourth machine has to be taught.
 #[cfg(target_os = "none")]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    halt_forever()
-}
-
-/// x86_64's entry, as `boot-x86-64.S` calls it.
-///
-/// The handshake is handed to `arch` before the kernel runs: parsing multiboot2
-/// registers is a fact about this machine's loader, and the kernel takes a
-/// `BootInfo` so that a new architecture supplies its own parser rather than
-/// teaching the kernel a second convention.
-///
-/// SAFETY: this is the symbol the assembly jumps to in long mode, with the
-/// stack it built and the paging it enabled.  `extern "C"` is the calling
-/// convention both sides agree on, and the two arguments are what the assembly
-/// saved in its `.bss`.
-#[cfg(all(target_os = "none", target_arch = "x86_64"))]
-#[unsafe(no_mangle)]
-pub extern "C" fn kernel_main(multiboot_magic: u32, _multiboot_info: u32) -> ! {
-    arch_x86_64::boot::record_handshake(multiboot_magic);
-    kernel::kernel_main()
+    arch::halt()
 }
 
 /// The host build, which is a typecheck and nothing else.

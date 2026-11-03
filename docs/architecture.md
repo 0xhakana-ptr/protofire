@@ -142,13 +142,31 @@ runs on.  `scripts/check-arch-fanout.sh` holds it: every `target_arch` name
 outside `arch/` is counted, each file in the census carries a reason, and the
 number is expected to reach zero.
 
-The census's first honest reading was one row — `bootloader/src/main.rs`, five
-occurrences.  Those are the entry symbol and the panic handler, which a `no_std`
-binary must define, they are necessarily per architecture, and the bootloader is
-the layer *below* `arch` rather than above it.  The kernel had four of its own
-when the census was written, all on x86_64's boot path, and all four are gone:
-the handshake is now the architecture's to parse and the kernel takes no
-arguments.
+**It is now zero.**  The census's first honest reading was one row —
+`bootloader/src/main.rs`, five occurrences — and the reason on it said the entry
+symbol and the panic handler are things only a binary can define.  That was true
+and it was not the question: the *symbol* is a binary's, but the *instruction* it
+reaches for is the machine's.  Five `target_arch` gates meant five places
+`bootloader` named a machine, in the crate that is not the machine.
+
+The distinction the row was missing is the one this tree now states explicitly:
+
+| | |
+|---|---|
+| **`bootloader` is a protocol** | a loader put us here, so record what it said, take over the console, start the kernel |
+| **`arch` is the machine** | the state arrived in `%eax`, the stack is at this symbol, an image links at this address |
+
+A new loader changes the first; a new machine changes the second.  So the
+machine's entry assembly, its linker script and its stop instruction all live in
+`arch/<machine>/`, and `bootloader` defines one neutral symbol —
+`protofire_entry` — that every machine's assembly calls.  The kernel's own four
+gates went the same way: the handshake is the architecture's to parse and the
+kernel takes no arguments.
+
+That last sentence is a link-time reference in one direction, not a crate edge:
+`arch` sits *below* `bootloader`, so `arch`'s assembly cannot name it, and the
+symbol is what the two sides agree on.  An upward `use` would have been the one
+thing the layer gate forbids; a symbol with no type attached is not a dependency.
 
 ### The quiet exception: `sync` above `arch`
 

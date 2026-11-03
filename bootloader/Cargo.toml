@@ -13,9 +13,10 @@ bench = false
 
 [dependencies]
 kernel = { path = "../kernel" }
-# The handshake parser for this machine.  A `cfg(target_arch)` table rather than
-# a feature, for the reason `arch/Cargo.toml` gives: the target says which
-# machine this is, and a flag that disagreed with it would compile one machine's
-# entry into another's image.
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-arch_x86_64 = { path = "../arch/x86_64" }
+# The machine, for one thing: the stop a panic takes.  Every instruction that
+# used to be spelled here — `hlt`, `wfi`, the three `halt_forever` arms — is the
+# architecture crate's, because this crate is the protocol and `arch` is the
+# machine.  The route is `arch` rather than a machine crate by name: a
+# `cfg(target_arch)` table in this manifest would be a place a fourth machine
+# has to be taught, which is what `scripts/check-arch-fanout.sh` counts.
+arch = { path = "../arch" }

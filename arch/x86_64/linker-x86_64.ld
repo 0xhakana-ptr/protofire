@@ -1,5 +1,10 @@
-/* File: bootloader/linker-x86_64.ld */
-/* Purpose: Place the x86_64 image where a multiboot2 loader looks for it. */
+/* File: arch/x86_64/linker-x86_64.ld */
+/* Purpose: Place the x86_64 image where a multiboot2 loader looks for it.
+
+   The script lives beside the entry assembly rather than with the protocol
+   crate: the load address, the header's alignment and the note's placement are
+   all facts about this machine's loaders, and a machine that loads differently
+   writes its own script. */
 
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)

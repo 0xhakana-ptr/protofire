@@ -17,6 +17,20 @@ pub mod boot;
 pub mod interrupts;
 pub mod serial;
 
+// The machine's entry, assembled from `src/boot-x86-64.S`.
+//
+// It is here rather than in `bootloader` because everything in it is a fact
+// about this architecture: the multiboot2 header's checksum, the PVH note's
+// type, the identity map's page-table layout, the GDT's descriptor bits.  A
+// machine that entered differently writes its own file and `bootloader` does
+// not change.
+//
+// `bootloader` supplies the symbol it calls.  The direction is a link-time
+// reference rather than a crate dependency, because `arch` sits below
+// `bootloader` and an upward `use` is the edge this tree's layering forbids.
+#[cfg(target_os = "none")]
+core::arch::global_asm!(include_str!("boot-x86-64.S"));
+
 /// Stop this CPU until an interrupt arrives.
 ///
 /// Interrupts are disabled first, so this does not return unless something
