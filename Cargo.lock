@@ -530,12 +530,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "virtio"
+name = "virtio_block"
 version = "0.1.0"
 dependencies = [
  "abi",
- "async_io",
+ "block",
+ "spin",
+ "virtio_core",
 ]
+
+[[package]]
+name = "virtio_core"
+version = "0.1.0"
 
 [[package]]
 name = "volatile"

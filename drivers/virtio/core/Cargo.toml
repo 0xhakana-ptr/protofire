@@ -1,0 +1,19 @@
+[package]
+name = "virtio_core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The virtio framework: a virtqueue, the feature bits a device and a driver
+# negotiate, the status state machine a device goes through before it may be
+# used, and the PCI modern transport those sit on.
+#
+# Separate from the devices because it is not a device.  A block driver, a
+# network driver and a GPU driver all submit through one virtqueue and all
+# negotiate features the same way; a `virtio` crate that also held the block
+# driver would make the network driver depend on block code to reach the queue.
+#
+# No `block`, no `net`: the framework never learns what a device does with the
+# buffers it hands over.
+[dependencies]

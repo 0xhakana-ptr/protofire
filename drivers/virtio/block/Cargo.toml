@@ -1,0 +1,18 @@
+[package]
+name = "virtio_block"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The virtio block device: a request header and status byte on a virtqueue,
+# and a `BlockDevice`/`QueuedBlockDevice` implementation over it.
+#
+# It names `virtio_core` for the queue and the transport, and `block` for the
+# trait it answers.  It names nothing above either: a driver implements an
+# interface, and the interface is what the filesystem names.
+[dependencies]
+abi.workspace = true
+block = { path = "../../../block" }
+virtio_core = { path = "../core" }
+spin.workspace = true

@@ -25,9 +25,10 @@ extracted yet.
   9-10   integration_tests, protofire (root), xtask     not shipped
      8   bootloader                                    the image
      7   kernel                                        the core
-   5-6   syscall, pci, virtio, e1000, sound, virt, fs, net,
+   5-6   syscall, pci, virtio_block, e1000, sound, virt, fs, net,
          security, allocator
-     4   arch, block                                   the route, and the disk interface
+     4   arch, block, virtio_core                      the route, the disk interface,
+                                                       and the virtio framework
      3   arch_x86_64, arch_aarch64, arch_riscv64       the machines
      2   crypto, async_io, power, ipc                  algorithms and rings
      1   abi                                           the wire format
@@ -187,6 +188,36 @@ exception nobody argues for is what the gate is for.
 and a bitmap, and the one place it needs the machine — "make this range writable"
 — is an injected function.  That is what keeps the page table out of a data
 structure, and it is why the frame pool's arithmetic can be tested on a host.
+
+### `virtio_core`: a framework below the drivers
+
+`virtio_core` is the virtio framework — one split virtqueue, the feature
+negotiation, the status state machine a device goes through, and a `Transport`
+trait with the PCI modern register offsets.  `virtio_block` is the block device
+on top of it: a request header, a data buffer, a status byte, and the two block
+traits over them.
+
+They are two crates and not one because virtio is a protocol with several
+devices behind it.  A network driver and a GPU driver submit through the same
+queue and negotiate features the same way; a `virtio` crate that also held the
+block driver would make them depend on block code to reach a queue.
+
+**The framework sits at layer 4, with `block` and `arch`.**  A framework is
+named by the drivers, so it has to be under them — the same argument that put
+`block` there.  `virtio_block` stays at layer 5 with the other drivers.
+
+**What is testable on a host, and what is not.**  A virtqueue is arithmetic over
+three rings in memory, so a host test builds one over a `Vec` and stands in for
+the device by writing into the used ring.  A transport is register accesses at
+addresses a machine chose, so its host arm reports "no device" rather than
+pretending.  The block driver is written against `Transport` rather than against
+PCI, which is what lets a host test drive the whole of it — initialisation,
+request encoding, the descriptor chain, the doorbell, the used ring — with a
+fake device that behaves like one.
+
+That last point is the reason the trait exists.  Without it the driver would be
+tested by booting, and a boot tells you that it failed, not which of the forty
+things it did was wrong.
 
 ### `block`: an interface at the drivers' layer
 

@@ -46,5 +46,6 @@ sync                  358    3
 syscall               255    4
 unicode              4628   31
 virt                   55    0
-virtio                  2    0
+virtio_block         1088   13
+virtio_core          1435   23
 xtask                 479    9

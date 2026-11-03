@@ -143,7 +143,22 @@
 # The drivers name a device and the completion queue that reports it.  Each is
 # its own crate so a machine without the device does not carry its code.
 5 pci
-5 virtio
+# `virtio_core` is the framework, not a device: one virtqueue, one feature
+# negotiation, one PCI modern transport.  It is a crate of its own because a
+# block driver, a network driver and a GPU driver all submit through it — a
+# `virtio` crate that also held a driver would make the others depend on that
+# driver's code to reach a queue.
+#
+# It names nothing of this tree: the queue is arithmetic over memory the caller
+# provides, and the transport is a trait the device crate implements.  That is
+# why it is at layer 4 beside `block` and `arch` rather than at 5 with the
+# drivers: a framework is *named by* the drivers, so it has to be under them.
+4 virtio_core
+
+# `virtio_block` is the block device on that framework: a request header, a
+# data buffer, a status byte, and the two block traits over them.  It names
+# `virtio_core` for the queue and `block` for the interface it answers.
+5 virtio_block
 5 e1000
 
 # `sound` and `virt` are laid out but not filled.  Their ranks are the ones their
