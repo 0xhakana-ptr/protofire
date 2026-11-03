@@ -95,3 +95,13 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
     let _ = number;
     false
 }
+
+/// The machine's message-signalled interrupt frame: none this crate drives.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn message_frame() -> Option<()> {
+    None
+}

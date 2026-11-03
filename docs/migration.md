@@ -14,17 +14,17 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | Subsystem | Previous tree | Here | What is in |
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 9,155 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011, the device-tree handshake, the GIC — ten of a hundred |
+| `arch` | 95,361 | 9,493 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011, the device-tree handshake, the GIC — ten of a hundred |
 | `crypto` | 4,606 | 4,850 | all of it, one module per algorithm — counted under `libs` below |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
 | `kernel` | 39,704 | 1,536 | the boot sequence, the syscall table, device discovery |
 | `memory` | 9,649 | 1,865 | the frame pool and the region pools |
 | `network` | 39,240 | 1 | nothing |
-| `drivers` | 18,828 | 5,029 | PCI (ports, ECAM, BAR enumeration), and virtio block |
+| `drivers` | 18,828 | 5,422 | PCI (ports, ECAM, BAR enumeration, MSI-X), and virtio block |
 | `syscall` | 15,647 | 253 | the context, the validators, three handlers |
 | `user` | 19,145 | — | nothing; `apps/` holds three skeletons |
 | `libs` | — | 16,291 | allocator, audit, cell, crypto, fdt, irq, paging, profiler, rights, sync, unicode |
-| **total** | **312,131** | **~55,800** | |
+| **total** | **312,131** | **~56,500** | |
 
 The `libs` crates have no previous-tree column because most of them were modules
 under `src/kernel/` or `src/memory/` there; their lines are counted in those
@@ -92,11 +92,48 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
-x86_64 — the port I/O the PCI bus is reached through.  What comes next is
-routing a *device's* line: the GIC works and a boot proves it, but nothing has
-yet learned which of the controller's lines a PCI function raises.  That number
-is in the bridge's `interrupt-map`, and it is the one thing this change left
-out rather than guessed at.
+x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
+last hop of an MSI: the encoding is here and the frame is here, and a write to
+the frame does not raise an interrupt on QEMU's `virt`.  That is an open
+question, and it is written down rather than papered over.
+
+### MSI-X: the encoding, and the hop that does not arrive
+
+`drivers/bus/pci/src/msix.rs` is the MSI-X capability and table: the three
+structures, the entry layout, and the two bits in message control that are
+different — 15 enables the feature and 14 says the function must not fall back
+to its INTx pin.  An entry's mask bit is set-means-masked, the opposite of every
+other enable bit in PCI.  The table size register holds the count *minus one*.
+
+Five defects were fixed while writing it, and four were in the test fake:
+
+- The message control register is the **high half** of the dword at the
+  capability's offset; its low half is `cap_id` and `cap_next`, which are
+  read-only.  Writing the control into the low half corrupts the capability id
+  and leaves the enable bit where the device is not looking.
+- The table size register was read as a count rather than a count minus one.
+- The fake's register file was too small for offset `0x98`.
+- The fake wrote `1` into the size field to mean "one entry", which is two.
+
+`arch/aarch64/src/gicv2m.rs` is the frame: `MSI_TYPER` holds two ten-bit fields
+— the first interrupt and the count — and `MSI_SET_SPI` is an array where the
+**address** selects which interrupt a write raises, not the payload.  The boot
+reads `MSI_TYPER` and reports what it found: `msi frame raises 80 interrupt(s)
+from 64`, which is `0x0050_0040` decoded and not assumed.
+
+**A write to `MSI_SET_SPI` does not raise an interrupt on this machine.**
+Reading `MSI_TYPER` works, so the window is mapped and readable.  Writing it
+leaves `GICD_ISPENDR` at zero — the frame produces nothing, so this is not a
+delivery problem.  Three candidate interrupt numbers were enabled (the frame's
+own report of 64, and 48 and 80 from QEMU's `base-spi`/`num-spi` device
+properties, which disagree with `MSI_TYPER`), and none arrived.  Writing the
+same address from QEMU's monitor does not raise one either.
+
+So the boot test was removed rather than left passing vacuously, and the two
+crates stay: they are arithmetic over a specification, and the
+specification-shaped half is tested.  What is not known is why QEMU's frame does
+not act on the write, and the next step is to find that out rather than to build
+a driver on top of it.
 
 ### The interrupt controller, and the probe that could not fail
 

@@ -230,6 +230,24 @@ pub fn interrupt_controller() -> Option<(usize, usize)> {
     Some((distributor.address as usize, cpu.address as usize))
 }
 
+/// The GICv2m frame's window, if the machine has one.
+///
+/// An MSI-X device raises an interrupt by writing to an address, and the frame
+/// is what turns that write into one of the controller's lines.  Without it a
+/// machine has no way to deliver a message-signalled interrupt, and a driver
+/// falls back to its INTx pin — which is the table this tree could not read.
+///
+/// The node is a child of the interrupt controller and is identified by
+/// `compatible = "arm,gic-v2m-frame"`.  Its `reg` is one window; the two
+/// numbers it can raise are in `MSI_TYPER`, which [`crate::gicv2m::Frame`]
+/// reads at run time rather than this function guessing.
+pub fn msi_frame() -> Option<usize> {
+    let tree = device_tree()?;
+    let node = tree.find_compatible("arm,gic-v2m-frame")?;
+    let region = node.region()?;
+    (region.address != 0).then_some(region.address as usize)
+}
+
 /// Where the tree said the console is, for a boot line.
 ///
 /// Kept beside the window queries because it is the same kind of answer: a fact

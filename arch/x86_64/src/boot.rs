@@ -108,3 +108,11 @@ pub fn pcie_memory_window() -> Option<(u64, u64)> {
 pub fn interrupt_controller() -> Option<(usize, usize)> {
     None
 }
+
+/// The GICv2m frame: this machine has none.
+///
+/// The frame is a GICv2 mechanism.  x86_64's message-signalled interrupts go
+/// through the APIC's own address range, which this crate does not drive yet.
+pub fn msi_frame() -> Option<usize> {
+    None
+}

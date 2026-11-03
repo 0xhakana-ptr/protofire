@@ -59,3 +59,10 @@ pub fn pcie_memory_window() -> Option<(u64, u64)> {
 pub fn interrupt_controller() -> Option<(usize, usize)> {
     None
 }
+
+/// The GICv2m frame: none yet.
+///
+/// A riscv64 machine has a PLIC and an IMSIC; neither is a GICv2m frame.
+pub fn msi_frame() -> Option<usize> {
+    None
+}

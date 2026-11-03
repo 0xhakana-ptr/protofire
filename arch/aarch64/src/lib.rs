@@ -37,6 +37,7 @@ core::arch::global_asm!(include_str!("entry.S"));
 
 pub mod boot;
 pub mod gic;
+pub mod gicv2m;
 pub mod interrupts;
 pub mod paging;
 pub mod port;
@@ -127,6 +128,22 @@ pub unsafe fn install_interrupt_table() -> bool {
         trap::set_controller(gic);
     }
     true
+}
+
+/// The machine's message-signalled interrupt frame, probed.
+///
+/// `None` when the tree names no frame.  The two numbers this answers are the
+/// ones `MSI_TYPER` holds — read from the register, not assumed — so a caller
+/// learns which interrupts the frame can raise rather than inheriting a guess.
+///
+/// # Safety
+///
+/// Called after the page table maps the GIC's region as device memory.
+#[cfg(target_os = "none")]
+pub unsafe fn message_frame() -> Option<gicv2m::Frame> {
+    let base = boot::msi_frame()?;
+    // SAFETY: `base` is the `arm,gic-v2m-frame` window the tree named.
+    Some(unsafe { gicv2m::Frame::probe(base) })
 }
 
 /// Raise one interrupt from the controller, as a device would.

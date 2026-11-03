@@ -111,6 +111,22 @@ pub use arch_riscv64::boot::interrupt_controller;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::boot::interrupt_controller;
 
+// The message-signalled interrupt frame, where a machine has one.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::boot::msi_frame;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::boot::msi_frame;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::boot::msi_frame;
+
+// The message-signalled interrupt frame, probed for the numbers it can raise.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::message_frame;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::message_frame;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::message_frame;
+
 // Enabling one interrupt line.  Every machine answers; `false` is an answer.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::enable_interrupt_line;

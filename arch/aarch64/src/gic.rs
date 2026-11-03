@@ -55,6 +55,8 @@ pub const DIST_IPRIORITYR: usize = 0x400;
 pub const DIST_ITARGETSR: usize = 0x800;
 /// `GICD_SGIR`: raise an interrupt from software.
 pub const DIST_SGIR: usize = 0xF00;
+/// `GICD_IGROUPR`: one bit per interrupt — set means group 1.
+pub const DIST_IGROUPR: usize = 0x080;
 
 /// The priority a device's interrupt is given.
 ///
@@ -271,15 +273,20 @@ impl Gic {
 
     /// Route interrupt `number` to this CPU and enable it.
     ///
-    /// Three writes, and all three are needed:
+    /// Four writes, and all four are needed:
     ///
-    /// 1. `IPRIORITYR` — its priority.  A line at the reset priority of zero is
+    /// 1. `IGROUPR` — **group 1**, which is the non-secure group.  This is the
+    ///    one that is easy to leave out and impossible to notice: a line in
+    ///    group 0 is a *secure* interrupt, and a kernel running at non-secure
+    ///    EL1 never receives one.  The distributor accepts the enable, the line
+    ///    is armed, and nothing ever arrives.
+    /// 2. `IPRIORITYR` — its priority.  A line at the reset priority of zero is
     ///    the highest, which works and makes every device preempt every other;
     ///    [`DEVICE_PRIORITY`] is what this tree gives a device.
-    /// 2. `ITARGETSR` — which CPU.  On a GICv2 the byte is a bitmask of cores,
+    /// 3. `ITARGETSR` — which CPU.  On a GICv2 the byte is a bitmask of cores,
     ///    and on a machine with one core it is `0x01`.  Not written, the line
     ///    goes nowhere.
-    /// 3. `ISENABLER` — the enable bit.
+    /// 4. `ISENABLER` — the enable bit.
     ///
     /// A number below 32 is a per-CPU interrupt: its enable bit is read-only in
     /// the distributor, and its target byte does not exist.  So this refuses
@@ -296,6 +303,12 @@ impl Gic {
         // SAFETY: `number >= 32`, so each array has a register and a byte for
         // it, and the caller promises the addresses are the GIC's.
         unsafe {
+            // Group 1 first: a line in group 0 is a secure interrupt, and this
+            // runs at non-secure EL1 where one is never delivered.
+            let group = self.distributor.array_address(DIST_IGROUPR, number, 32);
+            let current = read(group);
+            write(group, current | Distributor::enable_bit(number));
+
             let priority = self.distributor.array_address(DIST_IPRIORITYR, number, 4);
             let current = read(priority);
             let shift = Distributor::priority_shift(number);

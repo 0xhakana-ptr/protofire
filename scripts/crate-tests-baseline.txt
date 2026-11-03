@@ -15,10 +15,10 @@
 
 abi                  3514   56
 allocator            2508   13
-arch                 6274    1
-arch_aarch64         3114   30
-arch_riscv64         1195   16
-arch_x86_64          1787   21
+arch                 6613    1
+arch_aarch64         3402   36
+arch_riscv64         1212   16
+arch_x86_64          1805   21
 async_io             1302   24
 audit                 595    8
 block                1220   10
@@ -35,7 +35,7 @@ kernel               2551   21
 memory               1865   27
 net                     2    0
 paging                727   13
-pci                  2086   36
+pci                  2481   43
 power                 321   12
 profiler              312    2
 rights                 78    3

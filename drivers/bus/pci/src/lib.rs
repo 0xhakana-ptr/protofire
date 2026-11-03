@@ -50,6 +50,7 @@ pub mod bar;
 pub mod config;
 pub mod device;
 pub mod enumerate;
+pub mod msix;
 
 pub use bar::Bar;
 pub use bar::BarKind;
@@ -63,3 +64,5 @@ pub use device::Scan;
 pub use device::scan_all;
 pub use enumerate::Assignment;
 pub use enumerate::assign_memory_bars;
+pub use msix::Capability as MsixCapability;
+pub use msix::Entry as MsixEntry;
