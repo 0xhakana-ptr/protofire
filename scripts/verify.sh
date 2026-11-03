@@ -74,6 +74,15 @@ run_p0() {
     step "scripts/check-docs.sh"
     sh scripts/check-docs.sh || fail "a document cites a file the tree does not have"
 
+    # The same question one level in: a doc comment that names an item the
+    # crate does not have is a reader sent somewhere that is not there, and
+    # `cargo doc` is what knows.  It denies `rustdoc::broken_intra_doc_links`
+    # through `RUSTDOCFLAGS`, because a warning a run tolerates is a warning
+    # nobody reads.
+    step "cargo doc --workspace"
+    RUSTDOCFLAGS="-D warnings" cargo doc --offline --workspace --no-deps \
+        || fail "a doc comment links to an item the crate does not have"
+
     step "cargo build --workspace"
     cargo build --offline --workspace || fail "the workspace does not build"
 

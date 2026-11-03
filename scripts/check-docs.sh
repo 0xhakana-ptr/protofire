@@ -18,6 +18,16 @@
 #
 # ## What is checked
 #
+# The documents checked are every Markdown file at the root of the tree and
+# every one under `docs/`, one level deep — `docs/` and its subdirectories,
+# because a specification under `docs/fmts/` cites paths for the same reason a
+# README does and a gate that skipped it would be checking the documents that
+# cite least.  A crate's own `//!` header is not checked here: the compiler
+# reads it, and a path in a doc comment is a citation a reader follows the same
+# way — but the crate headers are also where a mechanism is stated in prose
+# that names no files, and a gate over all of them would mostly be checking
+# prose.
+#
 # 1. A backticked path with a separator (`docs/architecture.md`,
 #    `scripts/layering.txt`, `bootloader/src/main.rs`) must exist.
 # 2. A backticked bare filename (`check-layering.sh`, `service_tests.rs`) must
@@ -48,7 +58,7 @@ failed=0
 # The token set is "contains a dot-extension we care about" — a `.sh`, `.txt`,
 # `.md`, `.rs`, `.toml`, `.ld`, `.S`.  That is deliberately narrow: a backticked
 # `VecDeque` is not a path, and a check that guessed would refuse prose.
-for document in README.md docs/*.md; do
+for document in README.md AGENTS.md LICENSES/README.md docs/*.md docs/fmts/*.md; do
     [ -f "$document" ] || continue
     grep -n -oE '`[A-Za-z0-9_./{}*<>-]+\.(sh|txt|md|rs|toml|ld|S)`' "$document" \
         | sed 's/`//g' \
@@ -81,7 +91,7 @@ while IFS="$(printf '\t')" read -r document line path; do
 done <"$work/paths.txt"
 
 # Relative Markdown links resolve from the document that holds them.
-for document in README.md docs/*.md; do
+for document in README.md AGENTS.md LICENSES/README.md docs/*.md docs/fmts/*.md; do
     [ -f "$document" ] || continue
     directory="$(dirname "$document")"
     grep -oE '\]\([^)#]+' "$document" 2>/dev/null | sed 's/](//' | while read -r target; do
