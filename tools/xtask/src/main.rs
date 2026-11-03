@@ -102,9 +102,18 @@ impl Machine {
                 "-device".to_string(),
                 "virtio-blk-pci,drive=blk0".to_string(),
             ],
-            // The device-tree machine: a PL011 at a fixed address, RAM at
-            // 0x40000000, and no disk — this boot has no virtio driver for it
-            // yet, so a disk here would be a device nothing claims.
+            // The device-tree machine.  No disk yet, and the reason is a
+            // measurement rather than caution.
+            //
+            // QEMU's `virt` machine has a PCIe host bridge but nothing to
+            // enumerate it: every BAR comes up "not mapped", because on a
+            // bare-metal boot no firmware has assigned addresses.  A boot that
+            // wants the disk has to size each BAR, allocate its address from
+            // the bridge's `ranges` window and write it back — PCI enumeration,
+            // which is the change after this one.  Handing the boot a disk now
+            // would add a device it can see on the bus and cannot reach, and
+            // the driver would fail with "bad capability" for a reason that is
+            // not its own.
             Self::Aarch64 => vec![
                 "-machine".to_string(),
                 "virt".to_string(),

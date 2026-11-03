@@ -21,6 +21,31 @@
 //! loader, so the boot can say so, and whatever else a machine-independent boot
 //! step learns for its next stage.
 
+/// What a device tree said, in the terms a boot line reports.
+///
+/// ## Why this is an ABI type
+///
+/// `arch` produces it and `kernel` prints it, which is the definition this file
+/// gives for "a type both sides name".  It is deliberately a summary and not
+/// the tree: the tree borrows firmware's memory and lives in `fdt`, and a boot
+/// line that carried it would be a line that owned a slice of somebody else's
+/// address space.
+///
+/// Four numbers because four is what a reader comparing a log against a machine
+/// needs: whether the blob parsed, what version it claims, how much memory it
+/// describes, and where the console is.  A boot whose tree did not parse leaves
+/// a different log line and a console at the machine's constant, so these
+/// numbers are how the two states are told apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceTreeSummary {
+    /// The header's version.
+    pub version: u32,
+    /// How many `device_type = "memory"` regions the tree describes.
+    pub memory_regions: u32,
+    /// Where the tree says the console is, or zero if it does not say.
+    pub uart: usize,
+}
+
 /// What the bootloader handed over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BootInfo {

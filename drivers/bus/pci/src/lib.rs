@@ -54,6 +54,7 @@ pub use bar::Bar;
 pub use bar::BarKind;
 pub use config::ConfigSpace;
 pub use config::DeviceAddress;
+pub use config::EcamConfig;
 pub use config::PortConfig;
 pub use config::VendorId;
 pub use device::Device;

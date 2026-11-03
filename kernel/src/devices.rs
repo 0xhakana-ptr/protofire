@@ -21,9 +21,12 @@
 //! [`physical_address`] is a function with its argument: when the kernel gets a
 //! real address space, this is the one place that has to learn to translate.
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 
+use pci::ConfigSpace;
 use pci::Device;
+use pci::EcamConfig;
 use pci::PortConfig;
 use virtio_core::PciTransport;
 use virtio_core::RegisterFile;
@@ -103,6 +106,56 @@ impl RegisterFile for MappedBar {
     }
 }
 
+/// How this machine's configuration space is reached.
+///
+/// Two mechanisms, one trait.  x86_64 has the `0xCF8`/`0xCFC` ports and no
+/// memory-mapped window, so [`arch::pcie_ecam_window`] answers `None` and a
+/// `PortConfig` is what runs.  A device-tree machine has the window and no port
+/// space, so it gets an [`EcamConfig`].  Everything above this function —
+/// enumeration, capability walks, BAR decoding — is written against
+/// `ConfigSpace` and never learns which one it is.
+///
+/// ## Why a device-tree machine needed this at all
+///
+/// Before it, aarch64's scan asked a `PortConfig` about a machine with no I/O
+/// space: `arch::port`'s aarch64 arm returns all ones, so every bus, device and
+/// function answered "nothing here" and the boot printed `pci scan found 0
+/// device(s)`.  That was correct and it was not the machine's fault — there was
+/// no ECAM, so there was no way to ask.
+fn configuration_space() -> Box<dyn ConfigSpace> {
+    if let Some((base, length)) = arch::pcie_ecam_window() {
+        arch::serial::write_str("protofire: pcie ecam at ");
+        arch::serial::write_hex(base as u64);
+        arch::serial::write_str(", window ");
+        arch::serial::write_u32((length / 1024) as u32);
+        arch::serial::write_str(" KiB");
+
+        // The window must be mapped before the first read of it.  A device-tree
+        // machine's ECAM sits wherever the firmware put it, which on `virt` is
+        // past the identity map's four gigabytes — so this is not a permission
+        // change but the creation of a mapping, and reading before it faults at
+        // an address nothing chose.  The first version of this function did
+        // exactly that and the boot printed `data abort` at `0x4010000000`.
+        //
+        // SAFETY: the region is the ECAM window a `pci-host-ecam-generic` node
+        // declared, so it is the machine's configuration space and nothing
+        // else.
+        #[cfg(target_os = "none")]
+        let mapped = unsafe { crate::address_space::map_device(base, length) };
+        #[cfg(not(target_os = "none"))]
+        let mapped = false;
+
+        arch::serial::write_str(if mapped {
+            ", mapped"
+        } else {
+            ", already mapped"
+        });
+        arch::serial::write_str("\n");
+        return Box::new(EcamConfig::new(base, length));
+    }
+    Box::new(PortConfig::new())
+}
+
 /// The PCI bus this boot scans.
 ///
 /// One bus, and that is the machine's statement rather than a limit of the
@@ -123,8 +176,8 @@ pub struct FoundBlockDevice {
 /// state: a boot with no disk still has a console and a heap, and a machine
 /// that refused to boot because a disk was absent could not be debugged.
 pub fn find_virtio_block() -> Option<FoundBlockDevice> {
-    let config = PortConfig::new();
-    let (scan_result, found) = pci::device::scan(&config, BUS_COUNT, |device| {
+    let config = configuration_space();
+    let (scan_result, found) = pci::device::scan(config.as_ref(), BUS_COUNT, |device| {
         let modern = device.vendor == VENDOR_REDHAT
             && device.device == DEVICE_VIRTIO_BLOCK_MODERN
             && device.class == CLASS_STORAGE;

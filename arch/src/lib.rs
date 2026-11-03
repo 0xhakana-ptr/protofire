@@ -76,6 +76,25 @@ pub use arch_x86_64::install_interrupt_table;
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::boot::boot_info;
 
+// What the machine's handshake contained, when the machine has a device tree.
+// Every machine answers the same question — `None` is an answer — so the kernel
+// prints one line and does not ask which machine it is running on.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::boot::device_tree_summary;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::boot::device_tree_summary;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::boot::device_tree_summary;
+
+// Where this machine memory-maps a PCIe function's configuration space.  `None`
+// is an answer: x86_64 reaches it through ports instead.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::boot::pcie_ecam_window;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::boot::pcie_ecam_window;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::boot::pcie_ecam_window;
+
 #[cfg(target_arch = "riscv64")]
 pub use arch_riscv64::boot::boot_info;
 

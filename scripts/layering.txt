@@ -71,6 +71,19 @@
 # what lets a host test build a table and assert what a walk finds.
 2 paging
 
+# `fdt` is the flattened device tree: the header, the structure block, the
+# strings block, and the walks over them.  It is a **format**, which is why it
+# sits here and not in `arch`: the same bytes are read by aarch64's boot, by
+# riscv64's, and by a host test that has neither, and what differs between them
+# is which register the pointer arrived in — a machine question.
+#
+# It names nothing at all, `alloc` included.  A boot reads the tree before it
+# knows how much memory there is, so a parser that allocated could not be the
+# one that reads the memory map.  That is also what lets thirty tests run
+# against blobs built in the crate's own test files and against one QEMU
+# actually produced.
+2 fdt
+
 # `irq` is the handler table and the dispatch over it.  It is here because the
 # table is the same on every machine — an array of handlers indexed by identity
 # — and only the way a machine *reaches* it differs.  Two crates above it need

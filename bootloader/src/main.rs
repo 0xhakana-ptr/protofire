@@ -59,16 +59,53 @@ pub extern "C" fn protofire_entry() -> ! {
     kernel::kernel_main()
 }
 
-/// What a panic does on bare metal.
+/// What a panic does on bare metal: say what happened, then stop.
 ///
-/// The machine's stop is `arch::halt`, which is where `hlt` and `wfi` are
-/// spelled.  This is not an upward reference in disguise: `bootloader` sits
-/// above `arch` and may name it, and a panic handler that had to be written
-/// three times would be three more places a fourth machine has to be taught.
+/// ## Why it prints
+///
+/// This handler used to call `arch::halt()` and nothing else, and a boot that
+/// panicked left a serial log ending mid-sentence.  Nothing distinguished "the
+/// kernel halted on purpose" from "an assertion fired", which is the same
+/// failure this tree keeps recording in its rules: a mechanism that runs and
+/// says nothing is indistinguishable from one that did not run.
+///
+/// It cost a session.  A boot stopped after `pci scan found 3 device(s)` with
+/// no exception and no further line, and the cause was a panic in the BAR
+/// mapping whose message had nowhere to go.
+///
+/// ## Why printing here is safe
+///
+/// The console is the machine's and allocates nothing: `serial::write_str`
+/// walks a `&str` and writes bytes.  A panic that happened inside the allocator
+/// would recurse into this handler only if this handler allocated, and it does
+/// not.
+///
+/// The message is a `&'static str` from `panic_fmt`, which for the
+/// `panic!("literal")` and `assert!` forms in this tree is always static — but
+/// `PanicInfo::message()` is not statically typed, so it goes through
+/// `Display` only for the location and the piece the caller passed.
 #[cfg(target_os = "none")]
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    arch::serial::write_str("\nprotofire: PANIC: ");
+    // The message is written without formatting machinery: `write_fmt` needs a
+    // `core::fmt::Write` impl and this is the path that must not fail.
+    let mut message = MessageWriter;
+    let _ = core::fmt::write(&mut message, format_args!("{info}"));
+    arch::serial::write_str("\n");
     arch::halt()
+}
+
+/// A `core::fmt::Write` that hands every fragment to the console.
+#[cfg(target_os = "none")]
+struct MessageWriter;
+
+#[cfg(target_os = "none")]
+impl core::fmt::Write for MessageWriter {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        arch::serial::write_str(text);
+        Ok(())
+    }
 }
 
 /// The host build, which is a typecheck and nothing else.

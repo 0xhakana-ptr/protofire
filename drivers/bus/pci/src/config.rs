@@ -130,11 +130,103 @@ impl ConfigSpace for PortConfig {
     }
 }
 
+/// The memory-mapped configuration space PCIe uses: ECAM.
+///
+/// ## The arithmetic
+///
+/// A device's 4096 bytes of configuration space sit at
+///
+/// ```text
+/// base + (bus << 20) | (device << 15) | (function << 12)
+/// ```
+///
+/// which is one 4 KiB page per function.  Reading a dword is a volatile load at
+/// that address plus `register * 4`; there is no address port and no data port,
+/// because the address is in the address.
+///
+/// ## Why this exists at all
+///
+/// The port mechanism at `0xCF8`/`0xCFC` is x86_64's, and only x86_64's.  A
+/// device-tree machine gets its configuration space as a memory region the tree
+/// names, and this is what reads it.  Everything above — enumeration,
+/// capability walks, BAR decoding — is written against [`ConfigSpace`] and does
+/// not know which mechanism answered.
+///
+/// ## Why the base is a parameter
+///
+/// Because it is a device tree's answer, not a constant of the format.  A board
+/// puts its ECAM where it likes and the tree says where; a caller that supplied
+/// a constant would be naming a machine, which is the split this tree keeps.
+pub struct EcamConfig {
+    /// Where the machine's ECAM window starts.
+    base: usize,
+    /// How far the window runs, in bytes.
+    length: usize,
+}
+
+impl EcamConfig {
+    /// An ECAM window at `base`, `length` bytes long.
+    ///
+    /// The length is the region the device tree declared.  Every read is
+    /// checked against it: a bus number beyond the window is a read of whatever
+    /// memory follows, and on a machine with the MMU on that is a fault at an
+    /// address nothing chose.
+    pub const fn new(base: usize, length: usize) -> EcamConfig {
+        EcamConfig { base, length }
+    }
+
+    /// The offset of a function's configuration space within the window.
+    const fn offset(address: DeviceAddress) -> usize {
+        ((address.bus as usize) << 20)
+            | ((address.device as usize) << 15)
+            | ((address.function as usize) << 12)
+    }
+
+    /// Whether `address`'s space is inside this window.
+    fn holds(&self, address: DeviceAddress, register: u8) -> bool {
+        let offset = Self::offset(address).saturating_add((register as usize) * 4);
+        offset + 4 <= self.length
+    }
+}
+
+impl ConfigSpace for EcamConfig {
+    fn read_dword(&self, address: DeviceAddress, register: u8) -> u32 {
+        if !self.holds(address, register) {
+            // The window does not reach this bus.  All ones is what a device
+            // that is not there answers, so a scan finds nothing rather than
+            // faulting on memory past the window.
+            return u32::MAX;
+        }
+        let at = self.base + Self::offset(address) + (register as usize) * 4;
+        // SAFETY: `at` is inside the window the device tree declared, which is
+        // the machine's configuration space and nothing else.  A volatile read
+        // is what ECAM needs: the device answers the load, and the compiler
+        // must not fold two reads of a register it may have changed.
+        unsafe { core::ptr::read_volatile(at as *const u32) }
+    }
+
+    fn write_dword(&self, address: DeviceAddress, register: u8, value: u32) {
+        if !self.holds(address, register) {
+            return;
+        }
+        let at = self.base + Self::offset(address) + (register as usize) * 4;
+        // SAFETY: as `read_dword`.
+        unsafe { core::ptr::write_volatile(at as *mut u32, value) };
+    }
+
+    /// A PCIe function has 4096 bytes, which is the whole page ECAM gives it.
+    fn space_size(&self, _address: DeviceAddress) -> usize {
+        4096
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::CONFIG_ADDRESS_PORT;
     use super::CONFIG_DATA_PORT;
+    use super::ConfigSpace;
     use super::DeviceAddress;
+    use super::EcamConfig;
     use super::NO_DEVICE;
     use super::VendorId;
 
@@ -191,6 +283,93 @@ mod tests {
     fn the_configuration_ports_are_the_specifications() {
         assert_eq!(CONFIG_ADDRESS_PORT, 0xCF8);
         assert_eq!(CONFIG_DATA_PORT, 0xCFC);
+    }
+
+    /// ECAM's address arithmetic puts each function on its own 4 KiB page.
+    ///
+    /// Bus 0x12, device 0x03, function 1 is `(0x12 << 20) | (0x03 << 15) |
+    /// (1 << 12)` — the layout PCIe specifies, and the one a driver that copied
+    /// the port mechanism's bit positions would get wrong: the port address
+    /// packs the same fields into a 32-bit word, and ECAM adds them.
+    #[test]
+    fn ecam_puts_each_function_on_its_own_page() {
+        let address = DeviceAddress {
+            bus: 0x12,
+            device: 0x03,
+            function: 1,
+        };
+        assert_eq!(
+            EcamConfig::offset(address),
+            (0x12 << 20) | (0x03 << 15) | (1 << 12)
+        );
+        assert_eq!(
+            EcamConfig::offset(address) % 4096,
+            0,
+            "a function's space starts on a page"
+        );
+
+        // Two functions of one device are one page apart.
+        let sibling = DeviceAddress {
+            bus: 0x12,
+            device: 0x03,
+            function: 0,
+        };
+        assert_eq!(
+            EcamConfig::offset(address) - EcamConfig::offset(sibling),
+            4096
+        );
+    }
+
+    /// A register inside a function's page is the page's offset plus four bytes
+    /// per dword.
+    #[test]
+    fn ecam_registers_are_dword_strides_inside_the_page() {
+        let address = DeviceAddress {
+            bus: 0,
+            device: 1,
+            function: 0,
+        };
+        let base = EcamConfig::offset(address);
+        assert_eq!(base, 1 << 15);
+
+        // Register 0 is the identity, register 0x10 is 64 bytes in.  A PCIe
+        // function has 4096 bytes — 1024 dwords — so the register field's whole
+        // `u8` range is inside one function's page, and the window check is
+        // about the *bus* number rather than the register.
+        let first = EcamConfig::new(0x1000_0000, 0x1000_0000);
+        assert!(first.holds(address, 0));
+        assert!(first.holds(address, 0x10));
+        assert!(
+            first.holds(address, 0xFF),
+            "255 dwords is 1020 bytes, inside the page"
+        );
+
+        // A window that stops before this device's page.
+        let short = EcamConfig::new(0x1000_0000, 0x1000);
+        assert!(
+            !short.holds(address, 0),
+            "device 1 is at 32 KiB, past the window"
+        );
+    }
+
+    /// A bus outside the window answers all ones rather than reading past it.
+    ///
+    /// With the MMU on, a read past the ECAM region is a fault at an address
+    /// nothing chose — which is a boot that dies in a scan rather than one that
+    /// reports "no device on that bus".
+    #[test]
+    fn a_bus_outside_the_window_answers_nothing() {
+        // A one-bus window: 4096 bytes is not even one bus.
+        let window = EcamConfig::new(0x1000_0000, 4096);
+        let far = DeviceAddress {
+            bus: 1,
+            device: 0,
+            function: 0,
+        };
+        assert!(!window.holds(far, 0));
+        // Reading returns `NO_DEVICE` in both halves, which is what a scan
+        // interprets as "nothing there".
+        assert_eq!(window.read_dword(far, 0), u32::MAX);
     }
 
     /// A vendor of `0xFFFF` is "nothing answered", and that is the value a

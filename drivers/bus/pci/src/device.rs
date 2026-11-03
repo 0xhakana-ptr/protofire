@@ -151,8 +151,23 @@ impl Device {
             let aligned = pointer & !0b11;
             let word = config.read_dword(self.address, aligned >> 2);
             let shift = (pointer & 0b11) as u32 * 8;
-            let id = ((word >> shift) & 0xFF) as u8;
-            let next = ((word >> (shift + 8)) & 0xFF) as u8;
+
+            // The two bytes are `id` and `next` at `pointer`, which may start
+            // at any of the four byte offsets inside the dword.  Reading them
+            // as one `u64` is what makes the `next` byte at `shift = 24`
+            // reachable: `word >> (24 + 8)` is a shift of 32 on a `u32`, which
+            // is undefined — and this boot panicked with "attempt to shift
+            // right with overflow" on exactly that, because a virtio capability
+            // structure happened to sit at offset 0x1C.
+            //
+            // Widening to `u64` puts the next dword's low byte where the shift
+            // expects it.  When the structure's two bytes straddle the dword
+            // boundary the second byte is then the *next* dword's first, which
+            // is what the format means: capability structures are contiguous.
+            let wide = u64::from(word)
+                | (u64::from(config.read_dword(self.address, (aligned >> 2) + 1)) << 32);
+            let id = ((wide >> shift) & 0xFF) as u8;
+            let next = ((wide >> (shift + 8)) & 0xFF) as u8;
 
             if let Some(found) = visit(id, pointer, word) {
                 return Some(found);

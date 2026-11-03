@@ -117,6 +117,28 @@ pub fn kernel_main() -> ! {
     arch::serial::write_u32(BootStage::ConsoleUp as u32);
     arch::serial::write_str("\n");
 
+    // What the machine's handshake actually contained.
+    //
+    // A device-tree machine puts a pointer in a register and the pointer may
+    // name anything: firmware that handed over something unauthoritative, a
+    // loader that cleared the register, a blob whose header disagrees with its
+    // bytes.  So the answer is a line rather than an assumption — and it is the
+    // line that says whether the console's address, the memory map and the
+    // boot's device windows came from a tree or from a fallback.
+    arch::serial::write_str("protofire: device tree ");
+    match arch::device_tree_summary() {
+        Some(summary) => {
+            arch::serial::write_str("v");
+            arch::serial::write_u32(summary.version);
+            arch::serial::write_str(", ");
+            arch::serial::write_u32(summary.memory_regions);
+            arch::serial::write_str(" memory region(s), uart at ");
+            arch::serial::write_hex(summary.uart as u64);
+        }
+        None => arch::serial::write_str("not handed over (using this machine's constants)"),
+    }
+    arch::serial::write_str("\n");
+
     // Replace the boot's page table with one this kernel built.
     //
     // The assembly's table maps four gigabytes identity with 2 MiB pages, every

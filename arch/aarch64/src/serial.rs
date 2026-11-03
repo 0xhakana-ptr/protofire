@@ -4,24 +4,49 @@
 //!
 //! ## Why this is here and not a driver crate
 //!
-//! `qemu-system-aarch64 -machine virt` puts a PL011 at a fixed address that
-//! firmware hands over in the device tree, and a boot has to be able to speak
-//! before it can parse a device tree.  The kernel's first output therefore
-//! cannot be a discovered device, and cannot wait for a driver registry — the
-//! same argument as x86_64's COM1, on a machine where the address is a
-//! constant of the emulated platform.
+//! A boot has to be able to speak before it can parse a device tree, so the
+//! address cannot come from a discovered device and cannot wait for a driver
+//! registry — the same argument as x86_64's COM1.
 //!
-//! ## The address
+//! ## The address: the tree first, the constant second
 //!
-//! `0x0900_0000` is where `virt` places its first PL011, and where QEMU's own
-//! generated device tree reports it.  A real board's address comes from
-//! firmware; until this tree parses one, the constant is the statement "this
-//! is the machine the boot gates run on", and a board with a different address
-//! gets no output rather than wrong output.
+//! [`init`] reads the tree firmware handed over and asks it where the PL011 is.
+//! `0x0900_0000` remains as the fallback for a boot whose tree did not parse,
+//! which is the state a machine with a broken blob is in — and a boot that
+//! cannot say anything at all is a boot nobody can diagnose.
+//!
+//! The constant is therefore a *fallback* and not the answer, and the boot line
+//! says which one was used.  A machine whose UART is elsewhere gets output if
+//! its tree parses, which is every machine this tree boots on.
 
-/// The PL011's data register.
+// The console's address is a runtime value on bare metal; a host records bytes
+// instead, so both of these are absent there and an import a host build never
+// names is what the host check exists to notice.
 #[cfg(target_os = "none")]
-const UART_BASE: usize = 0x0900_0000;
+use core::sync::atomic::AtomicUsize;
+#[cfg(target_os = "none")]
+use core::sync::atomic::Ordering;
+
+/// Where `qemu-system-aarch64 -machine virt` places its first PL011.
+///
+/// A fallback for a boot whose device tree did not parse.  Every read and write
+/// below goes through [`uart_base`], which prefers the tree.
+#[cfg(target_os = "none")]
+const PL011_FALLBACK: usize = 0x0900_0000;
+
+/// Where the console's registers are: the tree's answer, or the fallback.
+///
+/// The tree is read once, by [`init`], and the answer kept in a static — this
+/// is a console, its address does not change, and looking it up per byte would
+/// be a walk of the device tree on the path that prints a panic message.
+#[cfg(target_os = "none")]
+static UART_BASE: AtomicUsize = AtomicUsize::new(PL011_FALLBACK);
+
+/// The console's base address.
+#[cfg(target_os = "none")]
+fn uart_base() -> usize {
+    UART_BASE.load(Ordering::Acquire)
+}
 
 /// Offsets of the registers this file touches.
 #[cfg(target_os = "none")]
@@ -77,18 +102,32 @@ unsafe fn read_reg(address: usize) -> u32 {
 /// programmed from the 24 MHz reference clock `virt` describes.
 #[cfg(target_os = "none")]
 pub fn init() {
-    // SAFETY: UART_BASE is where the emulated platform places its PL011, and
-    // each write below is the documented sequence from the PL011 manual.
+    // The tree first.  `boot::device_tree` bounds-checks the blob and reports
+    // `None` for a pointer that is not a tree, so a firmware that handed over
+    // something else leaves the fallback in place rather than sending writes to
+    // whatever the pointer named.
+    if let Some(tree) = crate::boot::device_tree()
+        && let Some(uart) = tree.find_compatible("arm,pl011")
+        && let Some(region) = uart.region()
+        && region.address != 0
+    {
+        UART_BASE.store(region.address as usize, Ordering::Release);
+    }
+
+    let base = uart_base();
+    // SAFETY: `base` is the address the device tree named for a PL011 — or the
+    // emulated platform's constant — and each write below is the documented
+    // sequence from the PL011 manual.
     unsafe {
         // Disable the UART while its baud rate is changed.
-        write_reg(UART_BASE + CR, 0);
+        write_reg(base + CR, 0);
         // 115200 from a 24 MHz reference: 24_000_000 / (16 * 115200) = 13.02.
-        write_reg(UART_BASE + IBRD, 13);
-        write_reg(UART_BASE + FBRD, 1);
+        write_reg(base + IBRD, 13);
+        write_reg(base + FBRD, 1);
         // 8 bits, FIFOs on, one stop bit, no parity.
-        write_reg(UART_BASE + LCR_H, (1 << 4) | (1 << 5) | (1 << 6));
+        write_reg(base + LCR_H, (1 << 4) | (1 << 5) | (1 << 6));
         // Enable the UART and its transmitter.
-        write_reg(UART_BASE + CR, (1 << 0) | (1 << 8));
+        write_reg(base + CR, (1 << 0) | (1 << 8));
     }
 }
 
@@ -96,7 +135,9 @@ pub fn init() {
 #[cfg(target_os = "none")]
 fn transmit_ready() -> bool {
     // SAFETY: reading the flag register of a UART `init` has programmed.
-    unsafe { read_reg(UART_BASE + FR) & (1 << 5) == 0 }
+    let base = uart_base();
+    // SAFETY: as `init`.
+    unsafe { read_reg(base + FR) & (1 << 5) == 0 }
 }
 
 /// Write one byte, waiting for the transmitter.
@@ -110,9 +151,10 @@ pub fn write_byte(byte: u8) {
     while !transmit_ready() {
         core::hint::spin_loop();
     }
-    // SAFETY: the transmitter reported room, and UART_BASE is the register
+    let base = uart_base();
+    // SAFETY: the transmitter reported room, and `base` is the register block
     // `init` programmed.
-    unsafe { write_reg(UART_BASE + DR, byte as u32) };
+    unsafe { write_reg(base + DR, byte as u32) };
 }
 
 #[cfg(not(target_os = "none"))]

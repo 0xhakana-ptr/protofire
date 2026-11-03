@@ -160,8 +160,38 @@ impl EntryEncoding for Encoding {
 /// ordinary memory" is false there and the answer is a range.  That difference
 /// is the machine's, which is why the question is asked here and not in the
 /// code that builds a table.
-pub const fn device_windows() -> &'static [(usize, usize)] {
-    &[]
+pub fn device_windows() -> Windows {
+    Windows::new()
+}
+
+/// A small set of address ranges that are a device's rather than memory's.
+///
+/// Empty on this machine, and the type is shared with the ones whose answer is
+/// not: `kernel::address_space` asks every machine the same question and gets
+/// the same shape back, which is what keeps the caller from knowing which
+/// machine answered.
+#[derive(Debug, Clone, Copy)]
+pub struct Windows {
+    length: usize,
+}
+
+impl Windows {
+    /// No windows.
+    pub const fn new() -> Windows {
+        Windows { length: 0 }
+    }
+
+    /// The ranges, in no order.  Empty here.
+    pub fn as_slice(&self) -> &[(usize, usize)] {
+        let _ = self.length;
+        &[]
+    }
+}
+
+impl Default for Windows {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Read the address of the table the machine is translating through.

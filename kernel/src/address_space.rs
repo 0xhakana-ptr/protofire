@@ -89,6 +89,17 @@ const THIRD_LEVEL: usize = 4;
 #[cfg(target_os = "none")]
 const LEAF_TABLES: usize = IDENTITY_LIMIT / (512 * GRANULE);
 
+/// Spare tables for device windows above the identity map.
+///
+/// A device's registers are not memory and do not want a 4 KiB granule: one
+/// 2 MiB block per the level that has one covers a device region with a single
+/// entry, and a device region is a whole number of them in practice.  Each
+/// spare table is one 1 GiB span of block entries, which is what a PCIe ECAM
+/// window needs — QEMU's is 256 MiB and sits at `0x40_1000_0000`, three hundred
+/// gigabytes past the identity map's end.
+#[cfg(target_os = "none")]
+const DEVICE_THIRD_LEVEL: usize = 2;
+
 /// The tables this table is built from.
 #[cfg(target_os = "none")]
 #[repr(C, align(4096))]
@@ -97,6 +108,8 @@ struct Tables {
     second: [PageTable; SECOND_LEVEL],
     third: [PageTable; THIRD_LEVEL],
     leaf: [PageTable; LEAF_TABLES],
+    /// Third-level tables for regions above [`IDENTITY_LIMIT`].
+    device: [PageTable; DEVICE_THIRD_LEVEL],
 }
 
 #[cfg(target_os = "none")]
@@ -105,6 +118,7 @@ static TABLES: cell::SyncUnsafeCell<Tables> = cell::SyncUnsafeCell::new(Tables {
     second: [const { PageTable::new() }; SECOND_LEVEL],
     third: [const { PageTable::new() }; THIRD_LEVEL],
     leaf: [const { PageTable::new() }; LEAF_TABLES],
+    device: [const { PageTable::new() }; DEVICE_THIRD_LEVEL],
 });
 
 // The relations between the constants above, checked rather than restated: a
@@ -201,7 +215,7 @@ fn permissions_at(rules: &[Rule], address: usize) -> Permissions {
 /// from the platform, and a kernel that spelled either would be naming a
 /// machine.
 #[cfg(target_os = "none")]
-fn image_rules() -> ([Rule; 2], &'static [(usize, usize)]) {
+fn image_rules() -> ([Rule; 2], arch::paging::Windows) {
     (
         [
             Rule {
@@ -278,6 +292,7 @@ pub unsafe fn install() -> bool {
 #[cfg(target_os = "none")]
 fn build(tables: &mut Tables) {
     let (rules, windows) = image_rules();
+    let windows = windows.as_slice();
     // The index of each level of the walk, hoisted: a loop that recomputed them
     // per page would be arithmetic on every one of a million pages.
     let root_index = index(Level::Root, 0);
@@ -349,25 +364,41 @@ pub unsafe fn map_device(start: usize, length: usize) -> bool {
 
 /// Re-map a region with `permissions`, at the 4 KiB granule.
 ///
-/// A region that crosses a 2 MiB boundary is walked one 4 KiB page at a time,
-/// because the table has a page table per 2 MiB and the mapping has to be found
-/// through all four levels.
+/// ## Two kinds of region
+///
+/// Below [`IDENTITY_LIMIT`] the walk was built by [`build`], and this only
+/// re-encodes leaf entries that already exist.  Above it there is no table —
+/// the identity map stops at four gigabytes — so this **creates** one: a
+/// third-level table of 2 MiB block entries, installed under the root.
+///
+/// The two are different operations on purpose.  Below the limit the region is
+/// already mapped and the question is what it permits; above it the region is
+/// not mapped at all and the question is whether a driver asked for it.  Device
+/// registers are what asks: a PCIe ECAM window sits wherever the firmware put
+/// it, which on the machine this tree boots is three hundred gigabytes past the
+/// identity map's end.
+///
+/// ## Why a 2 MiB block above the limit
+///
+/// A device region is not memory and has no use for a 4 KiB granule.  One block
+/// per 2 MiB covers a whole ECAM window with a handful of entries, where a page
+/// table per 2 MiB would be a thousand tables for the same span and the same
+/// permissions throughout.
 #[cfg(target_os = "none")]
 fn map_region(start: usize, length: usize, permissions: Permissions) -> bool {
     let tables = TABLES.get();
     // SAFETY: the static is this module's; `install` is the only writer and
     // this runs after it.
     let tables = unsafe { &mut *tables };
-    let mut changed = false;
-    let end = start.saturating_add(length);
-    let mut address = start & !(GRANULE - 1);
 
+    if start >= IDENTITY_LIMIT {
+        return map_device_blocks(tables, start, length, permissions);
+    }
+
+    let mut changed = false;
+    let end = start.saturating_add(length).min(IDENTITY_LIMIT);
+    let mut address = start & !(GRANULE - 1);
     while address < end {
-        if address >= IDENTITY_LIMIT {
-            // Past the identity map there is no table to walk: the root has one
-            // entry and it covers four gigabytes.
-            break;
-        }
         if let Some(leaf) = leaf_for(&tables.root, address) {
             let word = encode(Entry::page(address, permissions), Level::Leaf);
             if leaf.entry(index(Level::Leaf, address)) != word {
@@ -378,6 +409,75 @@ fn map_region(start: usize, length: usize, permissions: Permissions) -> bool {
         address = address.saturating_add(GRANULE);
     }
     changed
+}
+
+/// Map a region above the identity map with 2 MiB block entries.
+///
+/// The root's entry for a 512 GiB span names a third-level table, and that
+/// table's entries are blocks.  One spare table per such span, from
+/// [`Tables::device`]; a machine with more than two windows past four gigabytes
+/// has a map this boot does not describe, and the second window is reported by
+/// [`map_device`]'s return value rather than silently dropped.
+///
+/// The 2 MiB rounding is the honest part: a device window's edges are the
+/// firmware's, and a region whose end is not 2 MiB aligned has its last block
+/// cover bytes past the window.  Those bytes belong to no device and nothing
+/// reaches them; the alternative — a page table per 2 MiB — is a thousand
+/// tables to describe one window.
+#[cfg(target_os = "none")]
+fn map_device_blocks(
+    tables: &mut Tables,
+    start: usize,
+    length: usize,
+    permissions: Permissions,
+) -> bool {
+    const BLOCK: usize = 2 * 1024 * 1024;
+    let end = start.saturating_add(length);
+    let mut changed = false;
+    let mut address = start & !(BLOCK - 1);
+
+    while address < end {
+        // Which 512 GiB span of the root this address is in.
+        let span_index = index(Level::Second, address);
+        let Some(slot) = device_table_for(tables, span_index) else {
+            // No table left for this span.  Stopping leaves the rest of the
+            // window unmapped, which faults at the first access — a fault a
+            // reader can trace to this bound rather than to a driver.
+            break;
+        };
+        let slot_in_third = index(Level::Third, address);
+        let word = encode(Entry::page(address, permissions), Level::Third);
+        if slot.entry(slot_in_third) != word {
+            changed = true;
+        }
+        slot.set_entry(slot_in_third, word);
+        address = address.saturating_add(BLOCK);
+    }
+    changed
+}
+
+/// The third-level table for root span `span_index`, created on first use.
+#[cfg(target_os = "none")]
+fn device_table_for(tables: &mut Tables, span_index: usize) -> Option<&'static PageTable> {
+    // The root's entry names a second-level table; that table's entry for this
+    // span names a third-level one.  This boot has one second-level table.
+    let second = &tables.second[0];
+    let existing = second.entry(span_index);
+    if existing != 0 {
+        let address = arch::paging::decode(existing, Level::Second).address;
+        // SAFETY: every entry this module writes names a table in this array.
+        return Some(unsafe { &*(address as *const PageTable) });
+    }
+
+    // No table yet: take the next unused spare.
+    let free = tables.device.iter().position(|table| table.is_empty())?;
+    // The tables live in a `static`, so an address into the array outlives the
+    // borrow of the array itself — which is what `'static` says here.
+    let address = tables.device[free].address();
+    let entry = encode(Entry::table(address), Level::Second);
+    second.set_entry(span_index, entry);
+    // SAFETY: `address` names the entry of a `static` array.
+    Some(unsafe { &*(address as *const PageTable) })
 }
 
 /// The leaf table that holds `address`, if the walk reaches one.

@@ -152,8 +152,30 @@ impl PciTransport {
             // driver that read it from `word` would take `cap_len` as the BAR
             // number and read the wrong window.
             let cfg_type = ((word >> 24) & 0xFF) as u8;
-            let header_second = config.read_dword(device.address, (offset >> 2) + 1);
-            let bar = (header_second & 0xFF) as u8;
+            // The fields after the four-byte PCI capability header.  `word` is
+            // the dword *at* `offset`, so `bar` is the low byte of the dword at
+            // `offset + 4`, `offset` the dword at `+ 8`, and `length` the one
+            // at `+ 12`:
+            //
+            // | offset | field |
+            // |---|---|
+            // | 0 | `cap_vndr` |
+            // | 1 | `cap_next` |
+            // | 2 | `cap_len` |
+            // | 3 | `cfg_type` |
+            // | 4 | `bar`, then three bytes of padding |
+            // | 8 | `offset` |
+            // | 12 | `length` |
+            //
+            // The first version read the BAR from `+ 4` as the *second* dword
+            // of the structure and then read `offset` from `+ 8` — one dword
+            // too far for the first and right for the second by accident, so
+            // the BAR came out as the padding and the region's length as the
+            // offset.  QEMU's virtio-blk publishes `bar = 1, offset = 0x0800,
+            // length = 0`, and reading them shifted gave a capability pointing
+            // at nothing.
+            let region_dword = (offset >> 2) + 1;
+            let bar = (config.read_dword(device.address, region_dword) & 0xFF) as u8;
             let region_offset = config.read_dword(device.address, (offset >> 2) + 2);
             let region_length = config.read_dword(device.address, (offset >> 2) + 3);
 

@@ -91,15 +91,23 @@ _start:
     msr vbar_el1, x1
     isb
 
+    /* The device tree pointer, recorded before anything reads it.
+     *
+     * `protofire_entry` takes no arguments: `bootloader` is the protocol and it
+     * must not learn which register held what.  So the machine keeps the value
+     * and the module above asks for it — the same arrangement the trap sink
+     * uses, and for the same reason.
+     *
+     * `x19` holds what `x0` did on entry; the clear of `.bss` above did not
+     * touch it because it is callee-saved. */
+    mov x0, x19
+    bl aarch64_set_device_tree
+
     /* The protocol's entry, not the kernel's: `bootloader` is where "a loader
        put us here, so start the kernel" lives, and this file is the machine.
        The two meet at a symbol rather than at a crate edge, because `arch` is
        below `bootloader` and an upward import is the one thing the layering
-       gate forbids.
-
-       `x0` is the device tree pointer, which is what the machine handed over
-       and what `boot_info` will read. */
-    mov x0, x19
+       gate forbids. */
     bl protofire_entry
 
 3:  /* Nowhere left to go. */

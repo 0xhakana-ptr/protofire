@@ -36,6 +36,7 @@ pub mod process;
 pub mod syscall;
 
 pub use boot::BootInfo;
+pub use boot::DeviceTreeSummary;
 pub use boot::Loader;
 pub use error::Error;
 pub use error::Result;

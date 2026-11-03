@@ -5,7 +5,7 @@ rewrite and not a copy: each subsystem moves in as a crate of its own, with its
 tests, once it can be built and exercised on its own.  This document is the
 count.
 
-**The number that matters: about 14% of the previous tree is here.**  What is
+**The number that matters: about 17% of the previous tree is here.**  What is
 here is the part that proves the architecture — a boot, a heap, a bus, a driver,
 a filesystem and a syscall — and the rest is being moved a crate at a time.
 
@@ -14,17 +14,17 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | Subsystem | Previous tree | Here | What is in |
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 7,657 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011 — eight of a hundred |
+| `arch` | 95,361 | 8,102 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011, the device-tree handshake — nine of a hundred |
 | `crypto` | 4,606 | 4,850 | all of it, one module per algorithm — counted under `libs` below |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
 | `kernel` | 39,704 | 1,536 | the boot sequence, the syscall table, device discovery |
 | `memory` | 9,649 | 1,865 | the frame pool and the region pools |
 | `network` | 39,240 | 1 | nothing |
-| `drivers` | 18,828 | 3,772 | PCI, and virtio block |
+| `drivers` | 18,828 | 3,990 | PCI (ports and ECAM), and virtio block |
 | `syscall` | 15,647 | 253 | the context, the validators, three handlers |
 | `user` | 19,145 | — | nothing; `apps/` holds three skeletons |
-| `libs` | — | 14,625 | allocator, audit, cell, crypto, irq, paging, profiler, rights, sync, unicode |
-| **total** | **312,131** | **~51,000** | |
+| `libs` | — | 16,291 | allocator, audit, cell, crypto, fdt, irq, paging, profiler, rights, sync, unicode |
+| **total** | **312,131** | **~53,500** | |
 
 The `libs` crates have no previous-tree column because most of them were modules
 under `src/kernel/` or `src/memory/` there; their lines are counted in those
@@ -92,9 +92,72 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
-x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
-device-tree parse, which is what would give aarch64 a PCI bus and a PL011
-address that is not a constant.
+x86_64 — the port I/O the PCI bus is reached through.  What comes next is PCI
+**enumeration**: QEMU's `virt` machine has a PCIe host bridge and every BAR
+comes up "not mapped", because on a bare-metal boot no firmware has assigned
+addresses.  Reading a capability is possible now; reaching the device behind it
+needs a boot that sizes each BAR, allocates from the bridge's `ranges` window
+and writes the address back.
+
+### The device tree, and the four bugs it exposed
+
+`libs/fdt` is the format — header, structure block, strings block, and the walks
+over them — and `arch/aarch64` is what records the pointer firmware left in
+`x0`.  The split is the tree's own rule: a format is not a machine, and the same
+bytes are read by a host test that has neither.
+
+Parsing it turned four things from constants into questions, and each question
+found a defect:
+
+1. **The console's address.**  `serial` now asks the tree for
+   `arm,pl011` and falls back to `0x0900_0000` for a boot whose blob did not
+   parse.  The boot line says which path ran, which is how the two states are
+   told apart in a log.
+
+2. **The device windows.**  `paging::device_windows` was a constant range.  It
+   now asks the tree where **memory** is and treats everything else as a
+   device — the complement, not a list, because a list has to grow before the
+   device it is missing can work and its failure is an intermittently stale
+   register read.
+
+3. **The PCIe ECAM window.**  `pci::EcamConfig` is a second `ConfigSpace`: the
+   port mechanism is x86_64's and a device-tree machine has a memory window
+   instead.  Everything above — enumeration, capability walks, BAR decoding —
+   is unchanged, which is what the trait was for.
+
+4. **`TCR_EL1.IPS`.**  `ips_for_parange` mapped `PARange` to `IPS` as if the two
+   registers numbered sizes differently.  They do not: the encoding is the
+   identity.  A machine reporting 40 bits was programmed with 36, and the first
+   access to a PCIe ECAM window at `0x40_1000_0000` — 275 GiB — faulted with
+   `DFSC = 0b000010`, *address size fault, level 2*.  The test that had been
+   asserting the wrong mapping is now the table a reader can check.
+
+Five more defects fell out of making the machine reach further, and none of them
+was the device tree's:
+
+- **`all_compatible` used a fixed stack of 32.** QEMU's tree has 51 children
+  under its root, so it found 28 of the 32 `virtio,mmio` transports and every
+  fixture-based test passed.  The walk is a cursor over the structure block now,
+  which is the order the format already stores, with a depth stack only for the
+  cell widths.
+- **A node's `#address-cells` governs its children, not itself.**  Its own `reg`
+  is decoded with its parent's.  The first version got this backwards and read
+  the PCIe bridge's `reg` as three cells: `0x0040_1000_0000_0000`, a number, so
+  nothing failed.
+- **Capability structures were read one dword too far.**  `bar` is at `+4`,
+  `offset` at `+8`, `length` at `+12`; the first version read them from `+4`,
+  `+8` and `+12` as if `bar` were a dword of its own.
+- **`(word >> (shift + 8))` overflowed at `shift = 24`**, which panicked the boot
+  on a capability structure at offset `0x1C`.
+- **A panic printed nothing.**  `bootloader`'s handler called `arch::halt()` and
+  stopped.  A boot that ended mid-log looked identical to one that finished, and
+  this cost a session: the shift-overflow panic above happened after the scan
+  line with no message at all.  The handler now prints.
+
+`qemu-virt.dtb` in the parser's test assets is firmware's own bytes, not `dtc`'s
+rendering of a source file — a generator and a parser written from one reading
+of a specification agree with each other, and only firmware disagrees when that
+reading is wrong.  It is what caught the stack bound.
 
 ### Translation is on, and how it was found not to be
 

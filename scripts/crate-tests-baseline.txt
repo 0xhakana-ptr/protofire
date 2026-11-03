@@ -13,28 +13,29 @@
 # Recording is `sh scripts/check-crate-tests.sh --record`.  A row whose crate
 # has left the workspace is refused, so the file describes the tree.
 
-abi                  3488   56
+abi                  3514   56
 allocator            2508   13
-arch                 4332    1
-arch_aarch64         1547   19
-arch_riscv64         1051   16
-arch_x86_64          1620   21
+arch                 5220    1
+arch_aarch64         2245   23
+arch_riscv64         1128   16
+arch_x86_64          1714   21
 async_io             1302   24
 audit                 595    8
 block                1220   10
-bootloader             82    0 # exempt: entry symbols, a panic handler and an assembly stub; a test of those is a boot
+bootloader            119    0 # exempt: entry symbols, a panic handler and an assembly stub; a test of those is a boot
 cell                  217    4
 crypto               4850   64
 e1000                   2    0
+fdt                  1661   30
 fs                  14683  113
 init                   68    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 ipc                   335    9
 irq                   411   10
-kernel               2107   18
+kernel               2394   21
 memory               1865   27
 net                     2    0
-paging                717   13
-pci                   919   16
+paging                727   13
+pci                  1114   19
 power                 321   12
 profiler              312    2
 rights                 78    3
@@ -47,5 +48,5 @@ syscall               255    4
 unicode              4630   31
 virt                   55    0
 virtio_block         1106   13
-virtio_core          1760   24
-xtask                 589    9
+virtio_core          1782   24
+xtask                 604    9

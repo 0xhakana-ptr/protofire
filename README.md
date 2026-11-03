@@ -24,27 +24,35 @@ protofire: /cdrom/README.TXT reads back from the disc
 protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label protofire
 ```
 
-The same boot on aarch64, which has no PCI bus until the device tree is parsed
-and so falls back to the in-memory image:
+The same boot on aarch64.  The device tree is firmware's, and the console's
+address, the memory map and the PCIe window all come out of it:
 
 ```
 protofire 0.1.0: entered via dtb, console up, stage 1
+protofire: device tree v17, 1 memory region(s), uart at 0x9000000
 protofire: page table built and installed, 4 KiB granule
 protofire: interrupt table installed, interrupts on
-protofire: heap at 0x408e7790..0x448e7790
-protofire: pci scan found 0 device(s) on 1 bus
+protofire: heap at 0x408ed100..0x448ed100
+protofire: pcie ecam at 0x4010000000, window 262144 KiB, mapped
+protofire: pci scan found 2 device(s) on 1 bus
 protofire: block device from memory (no virtio-blk on the bus)
 protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)
 protofire: /cdrom/README.TXT reads back from the disc
 protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label protofire
 ```
 
+That machine has no disk yet, and the reason is a measurement: QEMU's `virt`
+brings every BAR up "not mapped", because on a bare-metal boot no firmware has
+assigned addresses.  Reading a PCI capability is possible now — the scan finds
+the devices and their capability lists — and reaching the device behind one needs
+PCI enumeration, which is the change after this one.
+
 Two handshakes on x86_64 (PVH and multiboot2) and a device-tree boot on aarch64,
-a serial console on all three machines, a TLSF heap, a PCI bus scan, a virtio
-block driver over a real virtqueue, a page table with a permission per region
-that aarch64 actually translates through, an exception path that saves and
-restores FP/SIMD state, a mount table with three filesystems on it, and three
-syscalls that read a file off the disk.
+a serial console on all three machines, a TLSF heap, a PCI bus scan over either
+ports or ECAM, a virtio block driver over a real virtqueue, a page table with a
+permission per region that aarch64 actually translates through, an exception path
+that saves and restores FP/SIMD state, a mount table with three filesystems on
+it, and three syscalls that read a file off the disk.
 
 On aarch64 the interrupt line is a stronger claim than its wording suggests:
 `install_interrupt_table` raises a supervisor call after writing `VBAR_EL1` and
@@ -61,7 +69,7 @@ through the table.  Set `TCR_T0SZ` back to its wrong value and the boot stops
 after `protofire: page table`.  `docs/migration.md` has the three fixes and the
 exception log that named each.
 
-**That is roughly a seventh of the kernel this replaces.**  The rest — the other
+**That is roughly a sixth of the kernel this replaces.**  The rest — the other
 ten filesystems, the network stack, the scheduler, the process layer, most of
 the architecture modules — is being moved in a crate at a time, and a crate
 arrives only when its tests arrive with it.  `docs/migration.md` counts what is
@@ -69,9 +77,9 @@ in and what is not.
 
 | | |
 |---|---|
-| crates | 36 |
-| source | ~51,000 lines |
-| tests | 564, all runnable with `cargo test -p <crate>` |
+| crates | 37 |
+| source | ~53,500 lines |
+| tests | 597, all runnable with `cargo test -p <crate>` |
 | machines that boot | 2 of 3 (`riscv64` builds, and has no entry yet) |
 
 ## Building and running

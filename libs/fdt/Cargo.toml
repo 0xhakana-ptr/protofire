@@ -1,0 +1,11 @@
+[package]
+name = "fdt"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Nothing.  A device tree is a byte layout and the arithmetic that walks it;
+# naming a machine here would put the format below the machine and the machine
+# below the format at once.  It is tested against blobs built in its own tests.
+[dependencies]

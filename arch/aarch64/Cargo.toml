@@ -10,6 +10,11 @@ abi.workspace = true
 # The page-table types and the walk arithmetic.  A machine encodes an entry and
 # installs a table; what a table is, and how one is walked, is `paging`'s.
 paging = { path = "../../libs/paging" }
+# The device tree firmware hands over.  The *format* is this crate's dependency
+# and not the kernel's: what arrives in `x0` is a machine's business, and a
+# machine that reads nothing out of it still has to know whether the pointer is
+# a tree before it trusts one.
+fdt = { path = "../../libs/fdt" }
 
 # The three crates only a bare-metal build names.
 #

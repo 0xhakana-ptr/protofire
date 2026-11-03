@@ -23,3 +23,22 @@ pub fn boot_info() -> abi::BootInfo {
         loader: abi::Loader::DeviceTree,
     }
 }
+
+/// What the device tree said: nothing yet.
+///
+/// This machine's firmware does hand over a tree in `a1`, and nothing records
+/// it — the boot entry is not written, so there is no point at which the
+/// register is read.  `None` is the honest answer until that entry exists, and
+/// the function exists now so the kernel's line does not need a machine
+/// condition.
+pub fn device_tree_summary() -> Option<abi::DeviceTreeSummary> {
+    None
+}
+
+/// The machine's PCIe configuration window: none yet.
+///
+/// A riscv64 board's ECAM comes from the device tree, and this machine's boot
+/// entry does not read one.  `None` says so rather than guessing an address.
+pub fn pcie_ecam_window() -> Option<(usize, usize)> {
+    None
+}

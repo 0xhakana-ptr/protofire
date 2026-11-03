@@ -68,3 +68,23 @@ pub fn boot_info() -> abi::BootInfo {
     };
     abi::BootInfo { loader }
 }
+
+/// What the device tree said: nothing, because this machine has none.
+///
+/// x86_64's loaders hand over a multiboot2 structure or a PVH start info block,
+/// not a flattened tree.  The function exists on every machine so the kernel
+/// asks one question and prints one line, and an answer of `None` here is the
+/// answer rather than a gap.
+pub fn device_tree_summary() -> Option<abi::DeviceTreeSummary> {
+    None
+}
+
+/// The machine's PCIe configuration window: none, because x86_64 does not have
+/// one.
+///
+/// Its configuration space is reached through the `0xCF8`/`0xCFC` ports, which
+/// a `PortConfig` drives.  The function exists on every machine so the kernel
+/// asks one question and gets an answer rather than a machine condition.
+pub fn pcie_ecam_window() -> Option<(usize, usize)> {
+    None
+}

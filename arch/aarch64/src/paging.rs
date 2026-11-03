@@ -36,6 +36,7 @@
 //! the console uses: the arm that needs the machine is the machine's, and the
 //! arithmetic is everyone's.
 
+use fdt::Node;
 use paging::Entry;
 use paging::EntryEncoding;
 use paging::Level;
@@ -254,25 +255,41 @@ pub const fn tcr_el1(ips: u64) -> u64 {
 
 /// The `TCR_EL1.IPS` value for a `ID_AA64MMFR0_EL1.PARange` encoding.
 ///
-/// `PARange` names how many physical address bits the machine has, and `IPS`
-/// says how many the table may use.  The two encodings are not the same
-/// numbering — `IPS` is `0b010` for 40 bits and `PARange` reports it as
-/// `0b001` — which is exactly the kind of table a kernel should not restate
-/// from memory.
+/// The two registers number the same sizes the same way, so this is the
+/// identity — and the version of this function that was not the identity is the
+/// bug that stopped the boot on its first ECAM access.
 ///
-/// This maps by *size*, so an unrecognised `PARange` falls back to the largest
-/// value it can justify rather than to zero: a machine reporting more range
-/// than this tree knows about is one where the safest read is "use 32 bits",
-/// because a table naming physical bits the CPU does not have is a fault and a
-/// table naming fewer is merely a smaller address space.
+/// | encoding | size | in |
+/// |---|---|---|
+/// | `0b000` | 32 bits | 4 GiB |
+/// | `0b001` | 36 bits | 64 GiB |
+/// | `0b010` | 40 bits | 1 TiB |
+/// | `0b011` | 42 bits | 4 TiB |
+/// | `0b100` | 44 bits | 16 TiB |
+/// | `0b101` | 48 bits | 256 TiB |
+/// | `0b110` | 52 bits | 4 PiB |
+///
+/// `PARange` says how many physical address bits the machine has and `IPS` says
+/// how many the table may use; because the encodings agree, "use what the
+/// machine has" is a copy.
+///
+/// ## What the non-identity version did
+///
+/// It swapped the two low pairs on the belief that the registers disagreed —
+/// `0b001` to `0b010` and back — which is a belief no table supports.  On a
+/// machine reporting `PARange = 0b010` (40 bits, 1 TiB) it programmed
+/// `IPS = 0b001` (36 bits, **64 GiB**), and the first access above 64 GiB was a
+/// fault: a PCIe ECAM window at `0x40_1000_0000` is 275 GiB, so the walk
+/// reported `DFSC = 0b000010`, *address size fault, level 2*, at an address
+/// that is inside the machine's physical memory and outside the range the table
+/// claimed.
+///
+/// An unrecognised `PARange` — `0b110` and above are sizes this tree does not
+/// name — falls back to 32 bits, because a table naming physical bits the CPU
+/// does not have is a fault and naming fewer is only a smaller address space.
 pub const fn ips_for_parange(parange: u64) -> u64 {
     match parange {
-        0b000 => 0b000, // 32 bits, 4 GiB
-        0b001 => 0b010, // 36 bits, 64 GiB
-        0b010 => 0b001, // 40 bits, 1 TiB
-        0b011 => 0b011, // 42 bits, 4 TiB
-        0b100 => 0b100, // 44 bits, 16 TiB
-        0b101 => 0b101, // 48 bits, 256 TiB
+        0b000..=0b110 => parange,
         _ => 0b000,
     }
 }
@@ -294,39 +311,152 @@ fn physical_address_range() -> u64 {
 
 /// The address ranges on this machine that are *not* ordinary memory.
 ///
-/// One range: `0x0000_0000..0x4000_0000`, everything below RAM.
+/// One range on each side of RAM, and the split is the device tree's answer.
 ///
-/// This exists because turning the MMU on changes what an unmapped-looking
-/// address *means*.  With translation off, every access is device-like: no
-/// caching, no speculation through it, the access arrives.  With translation on
-/// and no rule of its own, the same address becomes Normal memory — cached,
-/// reordered, and prefetchable — and the PL011's status register read out of a
-/// stale cache line is a console that prints nothing for reasons that look like
-/// a dead UART.
+/// ## Why the complement rather than a list of devices
 ///
-/// The range is `qemu-system-aarch64 -machine virt`'s memory map, which is the
-/// machine this tree boots: RAM begins at `0x4000_0000`, so everything below it
-/// is a peripheral —
+/// The tree could be enumerated: a GIC at `0x0800_0000`, a PL011 at
+/// `0x0900_0000`, thirty-two `virtio_mmio` windows, a PCIe ECAM at
+/// `0x40_1000_0000`.  That list would be precise and it would be a list that
+/// has to grow before the device it is missing can work — and the failure of a
+/// missing entry is not a visible one.  It is a cached read of a register,
+/// which returns whatever was true when the line was fetched.
 ///
-/// | address | device |
-/// |---|---|
-/// | `0x0800_0000` | the GIC |
-/// | `0x0900_0000` | the PL011 the console writes through |
-/// | `0x0A00_0000` | the virtio-mmio transports |
-/// | `0x3F00_0000` | the PCIe ECAM window |
+/// So the question is inverted: the tree says where **memory** is, and
+/// everything else is a device.  That is correct in the safe direction.  An
+/// ordinary page marked `Device` is uncached and slow, which nothing breaks on;
+/// a device register marked Normal is the defect this whole function exists to
+/// prevent.
 ///
-/// Naming the whole span rather than those four is deliberate.  A rule per
-/// device would be a list that has to grow before the device it is missing can
-/// work, and the failure of a missing entry — a cached read of a register — is
-/// intermittent.  Below RAM there is nothing a cache could usefully hold.
+/// ## Why it is cheap
 ///
-/// **This is the part that a device tree replaces.**  The constant is the
-/// statement "this is the machine the boot gates run on"; a board that put RAM
-/// or a UART elsewhere gets the wrong answer, and the way it learns that is by
-/// reading this function.  Parsing the tree is what turns the constant into a
-/// query, and it is the same change that gives this machine a PCI bus.
-pub const fn device_windows() -> &'static [(usize, usize)] {
-    &[(0x0000_0000, 0x4000_0000)]
+/// Two ranges, not forty.  [`build`](crate) asks this once and then asks
+/// the kernel's permission lookup per page of a four-gigabyte identity map; a
+/// list of forty device windows would make that a million times forty
+/// comparisons at boot.
+///
+/// ## What turning the MMU on changed
+///
+/// With translation off every access is device-like: no caching, no
+/// speculation, the access arrives.  With it on and no rule, the same address
+/// becomes Normal memory — cached, reordered, prefetchable — and the PL011's
+/// status register read out of a stale cache line is a console that prints
+/// nothing for a reason that looks like a dead UART.
+///
+/// A boot whose tree did not parse keeps the emulated platform's answer, which
+/// is the state a machine with a broken blob is in: it has a console because
+/// `PL011_FALLBACK` is what `serial` uses, and the window below RAM is what
+/// makes that console's registers uncached.
+pub fn device_windows() -> Windows {
+    let mut windows = Windows::new();
+    let Some(tree) = crate::boot::device_tree() else {
+        // No tree: the constant, which is `virt`'s memory map.
+        windows.push(0, VIRT_RAM_START);
+        return windows;
+    };
+
+    let Some(root) = tree.root().ok() else {
+        windows.push(0, VIRT_RAM_START);
+        return windows;
+    };
+
+    // Every `memory` node, which a machine may have several of.  A memory node
+    // is identified by `device_type`, not by `compatible`: the specification
+    // says so, and QEMU's tree has no `compatible` on `memory@40000000` at all.
+    let mut ram: [(u64, u64); MAX_MEMORY_NODES] = [(0, 0); MAX_MEMORY_NODES];
+    let mut memory_nodes = 0;
+    collect_memory(root, &mut ram, &mut memory_nodes);
+
+    if memory_nodes == 0 {
+        windows.push(0, VIRT_RAM_START);
+        return windows;
+    }
+
+    // The lowest memory start and the highest memory end define the gap.  A
+    // machine with two discontiguous RAM banks has a device range between them,
+    // and treating that as memory is the unsafe direction — but so is *not*
+    // treating it as a device, which is what a single gap cannot express.
+    // Sorting the banks and emitting a window between each pair is the general
+    // answer; this machine has one bank and the loop below is written so a
+    // second would still be correct for the range below the first and above the
+    // last.
+    let mut lowest = ram[0].0;
+    let mut highest = ram[0].1;
+    for node in &ram[..memory_nodes] {
+        lowest = lowest.min(node.0);
+        highest = highest.max(node.1);
+    }
+    windows.push(0, lowest as usize);
+    windows.push(highest as usize, usize::MAX);
+    windows
+}
+
+/// The most `memory` nodes this function reads.
+const MAX_MEMORY_NODES: usize = 4;
+
+/// Where `qemu-system-aarch64 -machine virt` puts its RAM.
+const VIRT_RAM_START: usize = 0x4000_0000;
+
+/// Collect the `device_type = "memory"` regions under `node`.
+pub(crate) fn collect_memory(
+    node: Node<'_>,
+    out: &mut [(u64, u64); MAX_MEMORY_NODES],
+    count: &mut usize,
+) {
+    if node.property("device_type").and_then(|p| p.as_str()) == Some("memory") {
+        for region in node.reg() {
+            if *count < MAX_MEMORY_NODES {
+                out[*count] = (region.address, region.address.saturating_add(region.size));
+                *count += 1;
+            }
+        }
+    }
+    for child in node.children() {
+        if *count < MAX_MEMORY_NODES {
+            collect_memory(child, out, count);
+        }
+    }
+}
+
+/// A small set of address ranges.
+///
+/// A fixed array rather than a slice because the ranges come from a device
+/// tree, which is data: a `const fn` returning `&'static [(usize, usize)]`
+/// could only ever describe a constant, and the point of this change is that it
+/// no longer does.
+#[derive(Debug, Clone, Copy)]
+pub struct Windows {
+    entries: [(usize, usize); 4],
+    length: usize,
+}
+
+impl Windows {
+    /// No windows: every address keeps its rule.
+    pub const fn new() -> Windows {
+        Windows {
+            entries: [(0, 0); 4],
+            length: 0,
+        }
+    }
+
+    /// Add one range.  A full set drops it rather than growing.
+    pub fn push(&mut self, start: usize, end: usize) {
+        if self.length < self.entries.len() {
+            self.entries[self.length] = (start, end);
+            self.length += 1;
+        }
+    }
+
+    /// The ranges, in the order they were added.
+    pub fn as_slice(&self) -> &[(usize, usize)] {
+        &self.entries[..self.length]
+    }
+}
+
+impl Default for Windows {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Read the address of the table the machine is translating through, at EL1.
@@ -528,26 +658,39 @@ mod tests {
         assert_eq!(tcr & (1 << 7), 0, "EPD0 clear: walks through TTBR0 are on");
     }
 
-    /// The physical address size mapping is by *size*, not by sharing the
-    /// encoding.
+    /// `PARange` and `IPS` number the same sizes the same way, so the
+    /// translation is a copy.
     ///
-    /// `PARange` and `IPS` number the same sizes differently — 40 bits is
-    /// `0b010` as `PARange` and `0b001` as `IPS` — so a kernel that copied one
-    /// number into the other would claim a 1 TiB physical address space on a
-    /// machine with 4 GiB.  The test names both sides of that pair.
+    /// The test this replaced asserted the opposite — it claimed 40 bits was
+    /// `0b010` as `PARange` and `0b001` as `IPS`, and that a kernel copying one
+    /// into the other would be wrong.  Copying is exactly right; the test was
+    /// encoding a belief rather than the architecture, and the boot proved it:
+    /// `IPS` came out at 36 bits on a 40-bit machine, and an ECAM window at
+    /// 275 GiB faulted with *address size fault, level 2*.
+    ///
+    /// So the assertions below are the table a reader can check against the
+    /// architecture manual, and the `0b010` row is the one the bug was in.
     #[test]
-    fn the_physical_range_is_translated_rather_than_copied() {
-        assert_eq!(super::ips_for_parange(0b000), 0b000, "32 bits");
-        assert_eq!(super::ips_for_parange(0b001), 0b010, "36 bits");
-        assert_eq!(super::ips_for_parange(0b010), 0b001, "40 bits");
-        assert_eq!(super::ips_for_parange(0b011), 0b011, "42 bits");
-        assert_eq!(super::ips_for_parange(0b100), 0b100, "44 bits");
-        assert_eq!(super::ips_for_parange(0b101), 0b101, "48 bits");
-        // A machine reporting more range than this table knows about gets the
-        // most conservative answer, because a table naming physical bits the
-        // CPU does not have is a fault and naming fewer is only a smaller
-        // space.
-        assert_eq!(super::ips_for_parange(0b1110), 0b000);
+    fn the_physical_range_uses_the_same_encoding_as_ips() {
+        // The encodings are the identity for every size this tree names.
+        for encoding in 0b000..=0b110_u64 {
+            assert_eq!(
+                super::ips_for_parange(encoding),
+                encoding,
+                "encoding {encoding:#05b} is its own IPS value"
+            );
+        }
+        // Spelled out, so a change to the loop cannot make the point silently.
+        assert_eq!(super::ips_for_parange(0b000), 0b000, "32 bits, 4 GiB");
+        assert_eq!(super::ips_for_parange(0b001), 0b001, "36 bits, 64 GiB");
+        assert_eq!(super::ips_for_parange(0b010), 0b010, "40 bits, 1 TiB");
+        assert_eq!(super::ips_for_parange(0b101), 0b101, "48 bits, 256 TiB");
+
+        // A machine reporting a size this tree does not name gets the most
+        // conservative answer: a table naming physical bits the CPU does not
+        // have is a fault, and naming fewer is only a smaller space.
+        assert_eq!(super::ips_for_parange(0b111), 0b000);
+        assert_eq!(super::ips_for_parange(0b1111), 0b000);
     }
 
     /// `T0SZ` names a virtual address space whose top level is the level the

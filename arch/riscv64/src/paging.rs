@@ -215,8 +215,38 @@ pub const SATP_MODE_SV39: u64 = 8 << 60;
 /// A `const fn` returning an empty slice rather than an absent function, so the
 /// kernel asks one question of three machines and does not need to know which
 /// one answered.
-pub const fn device_windows() -> &'static [(usize, usize)] {
-    &[]
+pub fn device_windows() -> Windows {
+    Windows::new()
+}
+
+/// A small set of address ranges that are a device's rather than memory's.
+///
+/// Empty on this machine, and the type is shared with the ones whose answer is
+/// not: `kernel::address_space` asks every machine the same question and gets
+/// the same shape back, which is what keeps the caller from knowing which
+/// machine answered.
+#[derive(Debug, Clone, Copy)]
+pub struct Windows {
+    length: usize,
+}
+
+impl Windows {
+    /// No windows.
+    pub const fn new() -> Windows {
+        Windows { length: 0 }
+    }
+
+    /// The ranges, in no order.  Empty here.
+    pub fn as_slice(&self) -> &[(usize, usize)] {
+        let _ = self.length;
+        &[]
+    }
+}
+
+impl Default for Windows {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Read the address of the table the machine is translating through.
