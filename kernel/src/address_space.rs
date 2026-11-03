@@ -190,26 +190,61 @@ fn permissions_at(rules: &[Rule], address: usize) -> Permissions {
     Permissions::KERNEL_READ_WRITE
 }
 
-/// The rules this image's linker script produces.
+/// The rules this image's linker script produces, plus the machine's device
+/// windows.
+///
+/// The two halves come from different places on purpose.  Where this image's
+/// sections begin and end is the linker script's answer, and the rules for them
+/// are this kernel's policy.  Which addresses are a device's registers is the
+/// **machine's** answer — `arch::paging::device_windows` — because an x86_64
+/// finds its devices on a bus and a device-tree machine knows their addresses
+/// from the platform, and a kernel that spelled either would be naming a
+/// machine.
 #[cfg(target_os = "none")]
-fn image_rules() -> [Rule; 2] {
-    [
-        Rule {
-            start: symbol(Symbol::TextStart),
-            end: symbol(Symbol::TextEnd),
-            permissions: Permissions::KERNEL_READ_EXECUTE,
-        },
-        Rule {
-            start: symbol(Symbol::RodataStart),
-            end: symbol(Symbol::RodataEnd),
-            permissions: Permissions {
-                writable: false,
-                executable: false,
-                user: false,
-                cache: paging::Cache::Normal,
+fn image_rules() -> ([Rule; 2], &'static [(usize, usize)]) {
+    (
+        [
+            Rule {
+                start: symbol(Symbol::TextStart),
+                end: symbol(Symbol::TextEnd),
+                permissions: Permissions::KERNEL_READ_EXECUTE,
             },
-        },
-    ]
+            Rule {
+                start: symbol(Symbol::RodataStart),
+                end: symbol(Symbol::RodataEnd),
+                permissions: Permissions {
+                    writable: false,
+                    executable: false,
+                    user: false,
+                    cache: paging::Cache::Normal,
+                },
+            },
+        ],
+        arch::paging::device_windows(),
+    )
+}
+
+/// The permission an address has, given the image's rules and the machine's
+/// device windows.
+///
+/// A device window wins over an image rule, and the order is not arbitrary: an
+/// image overlapping a device's registers would be an image the firmware had
+/// loaded on top of a device, which is not a state a permission rule could
+/// repair.  A rule that won there would map a register as ordinary memory, and
+/// the failure would appear inside whatever device it was.
+///
+/// A free function over two slices for the reason [`permissions_at`] is: the
+/// machine's windows and the image's rules are both values a host test can
+/// supply, and a version that read `arch` could not be tested where `arch` is
+/// not the machine being built.
+#[cfg(any(target_os = "none", test))]
+fn permissions_for(rules: &[Rule], windows: &[(usize, usize)], address: usize) -> Permissions {
+    for &(start, end) in windows {
+        if (start..end).contains(&address) {
+            return Permissions::DEVICE;
+        }
+    }
+    permissions_at(rules, address)
 }
 
 /// Build the kernel's table and install it.
@@ -242,14 +277,16 @@ pub unsafe fn install() -> bool {
 /// kernel chose.
 #[cfg(target_os = "none")]
 fn build(tables: &mut Tables) {
-    let rules = image_rules();
+    let (rules, windows) = image_rules();
     // The index of each level of the walk, hoisted: a loop that recomputed them
     // per page would be arithmetic on every one of a million pages.
     let root_index = index(Level::Root, 0);
     let second_index = index(Level::Second, 0);
 
     let root_entry = Entry::table(tables.second.as_ptr() as usize);
-    tables.root.set_entry(root_index, encode(root_entry));
+    tables
+        .root
+        .set_entry(root_index, encode(root_entry, Level::Root));
 
     // One 1 GiB span per third-level table; the identity map is four of them.
     //
@@ -261,7 +298,7 @@ fn build(tables: &mut Tables) {
     for (third_slot, third) in tables.third.iter().enumerate() {
         let span = third_slot * (512 * 512 * GRANULE);
         let second_entry = Entry::table(third.address());
-        tables.second[second_index].set_entry(third_slot, encode(second_entry));
+        tables.second[second_index].set_entry(third_slot, encode(second_entry, Level::Second));
 
         // Within a 1 GiB span, one page table per 2 MiB.
         for (leaf_slot, leaf) in tables.leaf[third_slot * 512..(third_slot + 1) * 512]
@@ -270,7 +307,7 @@ fn build(tables: &mut Tables) {
         {
             let leaf_span = span + leaf_slot * (512 * GRANULE);
             let third_entry = Entry::table(leaf.address());
-            third.set_entry(leaf_slot, encode(third_entry));
+            third.set_entry(leaf_slot, encode(third_entry, Level::Third));
 
             // And one entry per 4 KiB page.
             for page in 0..512 {
@@ -278,8 +315,8 @@ fn build(tables: &mut Tables) {
                 if address >= IDENTITY_LIMIT {
                     break;
                 }
-                let entry = Entry::page(address, permissions_at(&rules, address));
-                leaf.set_entry(page, encode(entry));
+                let entry = Entry::page(address, permissions_for(&rules, windows, address));
+                leaf.set_entry(page, encode(entry, Level::Leaf));
             }
         }
     }
@@ -332,7 +369,7 @@ fn map_region(start: usize, length: usize, permissions: Permissions) -> bool {
             break;
         }
         if let Some(leaf) = leaf_for(&tables.root, address) {
-            let word = encode(Entry::page(address, permissions));
+            let word = encode(Entry::page(address, permissions), Level::Leaf);
             if leaf.entry(index(Level::Leaf, address)) != word {
                 changed = true;
             }
@@ -359,20 +396,28 @@ fn leaf_for(root: &PageTable, address: usize) -> Option<&'static PageTable> {
     Some(table)
 }
 
-/// The machine's entry encoding.
+/// The machine's entry encoding, for an entry going into a table at `level`.
 ///
 /// Reached through `arch` rather than named here: what an entry's bits mean is
 /// the machine's, and this module is the one that decides *which* mapping, not
 /// how to write it down.
+///
+/// The level is passed through rather than defaulted.  aarch64 writes a 4 KiB
+/// page descriptor and a 1 GiB block descriptor with different bits, and the
+/// version of this function that took only the entry had `arch` assume
+/// `Level::Third` — which turned every page in this four-level table into a
+/// block, and the first fetch after the MMU came on faulted in a region the
+/// walk believed covered a gigabyte.
 #[cfg(target_os = "none")]
-fn encode(entry: Entry) -> u64 {
-    arch::paging::encode(entry)
+fn encode(entry: Entry, level: Level) -> u64 {
+    arch::paging::encode(entry, level)
 }
 
 #[cfg(test)]
 mod tests {
     use super::Rule;
     use super::permissions_at;
+    use super::permissions_for;
     use paging::Cache;
     use paging::Permissions;
 
@@ -453,5 +498,72 @@ mod tests {
     #[test]
     fn no_rules_means_no_changes() {
         assert_eq!(permissions_at(&[], 0x1000), Permissions::KERNEL_READ_WRITE);
+    }
+
+    /// A device window makes its range uncached, and everything else keeps the
+    /// rule it would have had.
+    ///
+    /// This is the rule the aarch64 boot needed the moment translation went
+    /// on: with no entry of its own, the PL011 at `0x0900_0000` is Normal
+    /// memory, and a cached read of a status register is a console that stops
+    /// printing for a reason that looks like a dead UART.
+    ///
+    /// The two addresses either side of the boundary are the test's point: a
+    /// window owns its start and not its end, so `0x0800_0000` is a device and
+    /// `0x4000_0000` — where RAM begins — is not.
+    #[test]
+    fn a_device_window_is_uncached_and_ends_where_it_ends() {
+        let windows: &[(usize, usize)] = &[(0x0000_0000, 0x4000_0000)];
+
+        let uart = permissions_for(&RULES, windows, 0x0900_0000);
+        assert_eq!(uart, Permissions::DEVICE);
+        assert_eq!(uart.cache, Cache::Device);
+        assert!(uart.writable && !uart.executable);
+
+        assert_eq!(
+            permissions_for(&RULES, windows, 0x3FFF_F000),
+            Permissions::DEVICE,
+            "the last page below RAM is still a device"
+        );
+        assert_eq!(
+            permissions_for(&RULES, windows, 0x4000_0000),
+            Permissions::KERNEL_READ_WRITE,
+            "RAM itself is ordinary memory again"
+        );
+    }
+
+    /// A device window wins over an image rule.
+    ///
+    /// The two overlap only if the firmware loaded the image on top of a
+    /// device, which is not a state a permission rule can repair — but the
+    /// ordering has to be decided rather than left to whichever loop runs
+    /// first, and the decision is that a register is a register.
+    #[test]
+    fn a_device_window_beats_an_image_rule() {
+        let windows: &[(usize, usize)] = &[(TEXT as usize, TEXT_END as usize)];
+        let in_text = permissions_for(&RULES, windows, TEXT as usize);
+        assert!(
+            !in_text.executable,
+            "the window's answer, not the text rule"
+        );
+        assert_eq!(in_text.cache, Cache::Device);
+    }
+
+    /// A machine with no device windows behaves exactly as it did before the
+    /// question was asked.
+    ///
+    /// x86_64 answers with an empty slice — it has no fixed peripheral
+    /// window — so this is that machine's case, and the assertion is that
+    /// introducing the question changed nothing for it.
+    #[test]
+    fn no_windows_leaves_the_rules_alone() {
+        assert_eq!(
+            permissions_for(&RULES, &[], TEXT as usize),
+            permissions_at(&RULES, TEXT as usize)
+        );
+        assert_eq!(
+            permissions_for(&RULES, &[], 0x0900_0000),
+            Permissions::KERNEL_READ_WRITE
+        );
     }
 }

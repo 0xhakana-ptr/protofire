@@ -41,15 +41,25 @@ protofire: filesystem mounted and read /greeting.txt through syscall open/read/c
 
 Two handshakes on x86_64 (PVH and multiboot2) and a device-tree boot on aarch64,
 a serial console on all three machines, a TLSF heap, a PCI bus scan, a virtio
-block driver over a real virtqueue, a page table with a permission per region, an
-exception path that saves and restores FP/SIMD state, a mount table with three
-filesystems on it, and three syscalls that read a file off the disk.
+block driver over a real virtqueue, a page table with a permission per region
+that aarch64 actually translates through, an exception path that saves and
+restores FP/SIMD state, a mount table with three filesystems on it, and three
+syscalls that read a file off the disk.
 
 On aarch64 the interrupt line is a stronger claim than its wording suggests:
 `install_interrupt_table` raises a supervisor call after writing `VBAR_EL1` and
 answers `true` only if it arrived at the entry it should have and returned.  A
 register written and never exercised is the recurring defect here, so the line
 means the save, the restore and the `eret` all ran.
+
+The page-table line is the same kind of claim, and for a while it was not.
+`arch_aarch64` wrote `TTBR0_EL1` and never set `SCTLR_EL1.M`, so the boot said
+"installed" about a table no access went through.  It now writes `TCR_EL1`,
+`MAIR_EL1` and the `M` bit, reads `M` back, and every line after it — the
+console, the heap, the image build, the exception path — is an access that went
+through the table.  Set `TCR_T0SZ` back to its wrong value and the boot stops
+after `protofire: page table`.  `docs/migration.md` has the three fixes and the
+exception log that named each.
 
 **That is roughly a seventh of the kernel this replaces.**  The rest — the other
 ten filesystems, the network stack, the scheduler, the process layer, most of
@@ -60,8 +70,8 @@ in and what is not.
 | | |
 |---|---|
 | crates | 36 |
-| source | ~50,400 lines |
-| tests | 557, all runnable with `cargo test -p <crate>` |
+| source | ~51,000 lines |
+| tests | 564, all runnable with `cargo test -p <crate>` |
 | machines that boot | 2 of 3 (`riscv64` builds, and has no entry yet) |
 
 ## Building and running

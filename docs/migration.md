@@ -14,7 +14,7 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | Subsystem | Previous tree | Here | What is in |
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 7,215 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011 — eight of a hundred |
+| `arch` | 95,361 | 7,657 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011 — eight of a hundred |
 | `crypto` | 4,606 | 4,850 | all of it, one module per algorithm — counted under `libs` below |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
 | `kernel` | 39,704 | 1,536 | the boot sequence, the syscall table, device discovery |
@@ -24,7 +24,7 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | `syscall` | 15,647 | 253 | the context, the validators, three handlers |
 | `user` | 19,145 | — | nothing; `apps/` holds three skeletons |
 | `libs` | — | 14,625 | allocator, audit, cell, crypto, irq, paging, profiler, rights, sync, unicode |
-| **total** | **312,131** | **~50,400** | |
+| **total** | **312,131** | **~51,000** | |
 
 The `libs` crates have no previous-tree column because most of them were modules
 under `src/kernel/` or `src/memory/` there; their lines are counted in those
@@ -93,9 +93,62 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
 x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
-memory-management unit actually *on* (aarch64 builds and installs a table with
-`sctlr_el1.M` still clear, which is the next change), and the device-tree parse
-that would give aarch64 a PCI bus and a real PL011 address.
+device-tree parse, which is what would give aarch64 a PCI bus and a PL011
+address that is not a constant.
+
+### Translation is on, and how it was found not to be
+
+Until this change `arch_aarch64::paging::install` wrote `MAIR_EL1` and
+`TTBR0_EL1` and returned `true`, and the boot printed "page table built and
+installed, 4 KiB granule" about a table no access went through: `SCTLR_EL1.M`
+was never set.  That is the defect this file keeps recording — written, wired,
+never executed — and it was found by reading the function rather than by a
+gate, because the line it printed was true about the register and false about
+the machine.
+
+Turning translation on took three fixes, and each was found by QEMU's exception
+log rather than by reasoning:
+
+1. **The table descriptors carried leaf fields.**  `encode_at` set `AF`, `AP`,
+   the attribute index and `UXN`/`PXN` on every descriptor; the architecture
+   calls those bits Ignored in a table descriptor.  Invisible while nothing read
+   a descriptor.  A table descriptor is now its address and its type.
+2. **`EntryEncoding::encode` had no level.**  aarch64 writes a 4 KiB page
+   descriptor and a 1 GiB block descriptor with different low bits, so the
+   implementation hard-coded `Level::Third` — and the kernel builds four
+   levels, so every page became a block.  The trait takes a level in both
+   directions now, and the other two machines accept and ignore it with the
+   reason written down.
+3. **`TCR_EL1.T0SZ` was 25.**  That is a 39-bit space, which is a three-level
+   table; this kernel's root is a level 0 table and needs 16 (48 bits).  With
+   25, the machine indexed `TTBR0_EL1` as a level 1 table, never read entry 0,
+   and the first fetch faulted with `DFSC = 0b000101`,
+   *translation fault, level 1* — the log line that named the constant.
+
+The aarch64 boot now prints the same nine lines with the MMU on.  Setting
+`TCR_T0SZ` back to 25 stops it after `protofire: page table`, so those lines are
+evidence that translation is in use rather than a coincidence.  A test,
+`the_address_size_matches_the_table_depth`, derives the required value from
+`Level::Root::shift()` instead of restating it.
+
+### Device windows
+
+Turning the MMU on changes what an unruled address *means*.  With translation
+off every access is device-like; with it on, an address with no rule is Normal
+memory — cached and prefetchable — and the PL011's status register read from a
+stale cache line is a console that prints nothing for a reason that looks like a
+dead UART.
+
+`arch::paging::device_windows()` is the machine's answer: aarch64 returns
+`0x0000_0000..0x4000_0000` — everything below `virt`'s RAM — and x86_64 returns
+an empty slice, because it learns its device addresses from a bus and re-maps
+them one BAR at a time.  `kernel::address_space` turns that answer into a
+permission, which is the division the tree already has: `arch` says what the
+machine is, the kernel says what to do about it.
+
+The aarch64 range is a constant of `qemu-system-aarch64 -machine virt`.  It is
+the honest form of "this is the machine the boot gates run on", and the parse of
+the device tree is what turns it into a query.
 
 ### The aarch64 boot, and what it cost
 

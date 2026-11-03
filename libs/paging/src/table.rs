@@ -177,7 +177,7 @@ pub enum Translation {
 /// machine's.  This trait is the seam: [`PageTable`] holds entries as values,
 /// and the machine encodes them for the register that installs the table.
 ///
-/// ## Why `decode` takes a level
+/// ## Why both directions take a level
 ///
 /// Whether an entry is a leaf — a mapping rather than a pointer to the next
 /// table — is not a property of the word.  On x86_64 bit 7 means "this entry
@@ -186,11 +186,21 @@ pub enum Translation {
 /// at different levels, so a decoder that only saw the word would call a 4 KiB
 /// page a table.
 ///
-/// So the level is part of the question.  A caller walking a table knows which
-/// level it is at, and that is the caller's knowledge to supply.
+/// **Encoding needs the level for the same reason, and the version of this
+/// trait that took only the entry was wrong.**  aarch64 writes a 4 KiB page
+/// descriptor and a 1 GiB block descriptor with different bits at `[1:0]`, so
+/// an encoder with no level has to pick one and is wrong about the other.
+/// `arch_aarch64`'s implementation hard-coded `Level::Third` to fill the gap;
+/// the kernel builds four levels, so every 4 KiB page came out as a block
+/// descriptor and the first instruction fetch after the MMU came on was a
+/// section fault at an address the walk had just been told was a 1 GiB region.
+///
+/// The level is therefore part of the question in both directions.  A caller
+/// writing an entry knows which table it is writing into, and that is the
+/// caller's knowledge to supply.
 pub trait EntryEncoding {
-    /// Encode an entry as the word the machine reads.
-    fn encode(entry: Entry) -> u64;
+    /// Encode an entry for a table at `level`, as the word the machine reads.
+    fn encode(entry: Entry, level: crate::index::Level) -> u64;
 
     /// Decode the word the machine wrote at `level`.
     fn decode(word: u64, level: crate::index::Level) -> Entry;

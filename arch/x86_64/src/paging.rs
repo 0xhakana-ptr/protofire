@@ -68,7 +68,13 @@ pub const FLAG_UNCACHED: u64 = FLAG_PAGE_WRITE_THROUGH | FLAG_PAGE_CACHE_DISABLE
 pub const PHYSICAL_ADDRESS_MASK: u64 = ((1u64 << 52) - 1) & !0xFFFu64;
 
 /// Encode an entry as the word the machine reads.
-pub fn encode(entry: Entry) -> u64 {
+///
+/// The level is accepted and unused, so that all three machines answer the same
+/// signature: x86_64's word does not vary by level — the `PS` bit that makes a
+/// 2 MiB mapping is the caller's to set — while aarch64's page and block
+/// descriptors differ in their low bits.  A kernel that had to pass a level on
+/// one machine and not another would need to know which one it was running on.
+pub fn encode(entry: Entry, _level: Level) -> u64 {
     if !entry.present {
         return 0;
     }
@@ -122,13 +128,40 @@ pub fn decode(word: u64, level: Level) -> Entry {
 pub struct Encoding;
 
 impl EntryEncoding for Encoding {
-    fn encode(entry: Entry) -> u64 {
-        encode(entry)
+    /// x86_64's word is the same at every level, so the level is not used.
+    ///
+    /// The one bit that differs — `PS`, bit 7, which says "this entry covers
+    /// 2 MiB" — is set by whoever builds a large-page mapping, not by the
+    /// encoder: a `Entry::page` at a page-directory level with `FLAG_PAGE_SIZE`
+    /// already in its address is how this tree writes one.  aarch64 needs the
+    /// level because its page and block descriptors differ in bits `[1:0]`;
+    /// this machine does not, and an ignored parameter says so better than a
+    /// second entry point that pretends to be level-aware.
+    fn encode(entry: Entry, level: Level) -> u64 {
+        encode(entry, level)
     }
 
     fn decode(word: u64, level: Level) -> Entry {
         decode(word, level)
     }
+}
+
+/// The address ranges on this machine that are *not* ordinary memory.
+///
+/// Empty, and that is a fact about the machine rather than a gap.  x86_64 has
+/// no fixed peripheral window: a device's registers arrive as a PCI BAR, whose
+/// address the bus reports, and `map_device` re-maps that range once it is
+/// known.  What the firmware's identity map covers is ordinary memory
+/// everywhere, which is what this says.
+///
+/// The contrast is the machine that answers differently.  A device-tree
+/// platform puts its UART and its interrupt controller at addresses fixed by
+/// the platform — before anything has been discovered — so "everything is
+/// ordinary memory" is false there and the answer is a range.  That difference
+/// is the machine's, which is why the question is asked here and not in the
+/// code that builds a table.
+pub const fn device_windows() -> &'static [(usize, usize)] {
+    &[]
 }
 
 /// Read the address of the table the machine is translating through.
@@ -181,7 +214,7 @@ mod tests {
     #[test]
     fn a_page_entry_round_trips() {
         let entry = Entry::page(0x1234_5000, Permissions::KERNEL_READ_WRITE);
-        let word = encode(entry);
+        let word = encode(entry, Level::Leaf);
         let decoded = decode(word, Level::Leaf);
         assert_eq!(decoded.address, 0x1234_5000);
         assert!(decoded.present);
@@ -194,11 +227,17 @@ mod tests {
     /// The flags land in the bits the machine reads.
     #[test]
     fn the_flags_are_in_the_machines_bits() {
-        let read_write = encode(Entry::page(0x1000, Permissions::KERNEL_READ_WRITE));
+        let read_write = encode(
+            Entry::page(0x1000, Permissions::KERNEL_READ_WRITE),
+            Level::Leaf,
+        );
         assert_eq!(read_write & 0b111, 0b011, "present and writable");
         assert_ne!(read_write & (1 << 63), 0, "no-execute is bit 63");
 
-        let read_execute = encode(Entry::page(0x1000, Permissions::KERNEL_READ_EXECUTE));
+        let read_execute = encode(
+            Entry::page(0x1000, Permissions::KERNEL_READ_EXECUTE),
+            Level::Leaf,
+        );
         assert_eq!(read_execute & 0b111, 0b001, "present only");
         assert_eq!(
             read_execute & (1 << 63),
@@ -216,15 +255,17 @@ mod tests {
     #[test]
     fn a_device_mapping_disables_the_cache() {
         let device = Entry::page(0xFE00_0000, Permissions::DEVICE);
-        let word = encode(device);
+        let word = encode(device, Level::Leaf);
         assert_ne!(word & super::FLAG_PAGE_CACHE_DISABLE, 0, "PCD is set");
         assert_ne!(word & super::FLAG_PAGE_WRITE_THROUGH, 0, "PWT is set");
         assert_eq!(decode(word, Level::Leaf).permissions.cache, Cache::Device);
 
         let ordinary = Entry::page(0x1000, Permissions::KERNEL_READ_WRITE);
-        assert_eq!(encode(ordinary) & super::FLAG_UNCACHED, 0);
+        assert_eq!(encode(ordinary, Level::Leaf) & super::FLAG_UNCACHED, 0);
         assert_eq!(
-            decode(encode(ordinary), Level::Leaf).permissions.cache,
+            decode(encode(ordinary, Level::Leaf), Level::Leaf)
+                .permissions
+                .cache,
             Cache::Normal
         );
     }
@@ -233,7 +274,7 @@ mod tests {
     /// "nothing here".
     #[test]
     fn an_absent_entry_is_zero() {
-        assert_eq!(encode(Entry::EMPTY), 0);
+        assert_eq!(encode(Entry::EMPTY, Level::Leaf), 0);
         assert_eq!(decode(0, Level::Leaf), Entry::default());
     }
 
@@ -242,7 +283,7 @@ mod tests {
     #[test]
     fn the_address_does_not_reach_the_flags() {
         let entry = Entry::page(0xABC0_0000, Permissions::KERNEL_READ_EXECUTE);
-        let word = encode(entry);
+        let word = encode(entry, Level::Leaf);
         assert_eq!(word & 0xFFF, 0b001, "only present, no address bits");
     }
 
@@ -256,7 +297,7 @@ mod tests {
     #[test]
     fn no_execute_does_not_leak_into_the_address() {
         let entry = Entry::page(0x1234_5000, Permissions::KERNEL_READ_WRITE);
-        let word = encode(entry);
+        let word = encode(entry, Level::Leaf);
         assert_ne!(word >> 63, 0, "the entry is non-executable");
         let decoded = decode(word, Level::Leaf);
         assert_eq!(decoded.address, 0x1234_5000);
@@ -275,9 +316,12 @@ mod tests {
                 cache: Cache::Normal,
             },
         );
-        assert_ne!(encode(user) & 0b100, 0);
+        assert_ne!(encode(user, Level::Leaf) & 0b100, 0);
         assert_eq!(
-            encode(Entry::page(0x1000, Permissions::KERNEL_READ_WRITE)) & 0b100,
+            encode(
+                Entry::page(0x1000, Permissions::KERNEL_READ_WRITE),
+                Level::Leaf
+            ) & 0b100,
             0
         );
     }

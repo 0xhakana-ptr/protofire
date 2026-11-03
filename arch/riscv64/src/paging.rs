@@ -129,7 +129,10 @@ pub fn encode_at(entry: Entry, level: Level) -> u64 {
 }
 
 /// Encode an entry with no level context: a table entry.
-pub fn encode(entry: Entry) -> u64 {
+/// The level is accepted and unused, so that all three machines answer the same
+/// signature.  Sv39 decides "leaf or not" from the `R`/`W`/`X` bits in the
+/// entry itself, so no level changes this word; aarch64's does.
+pub fn encode(entry: Entry, _level: Level) -> u64 {
     encode_at(entry, Level::Third)
 }
 
@@ -185,8 +188,10 @@ impl core::fmt::Display for CrossMachine {
 pub struct Encoding;
 
 impl EntryEncoding for Encoding {
-    fn encode(entry: Entry) -> u64 {
-        encode(entry)
+    /// Sv39's word is the same at every level: a leaf is a combination of its
+    /// `R`/`W`/`X` bits, and there is no page-versus-block encoding to choose.
+    fn encode(entry: Entry, level: Level) -> u64 {
+        encode(entry, level)
     }
 
     fn decode(word: u64, level: Level) -> Entry {
@@ -199,6 +204,20 @@ impl EntryEncoding for Encoding {
 /// `satp` names it in bits 60..63; eight is Sv39 and nine is Sv48.  This tree
 /// uses Sv39.
 pub const SATP_MODE_SV39: u64 = 8 << 60;
+
+/// The address ranges on this machine that are *not* ordinary memory.
+///
+/// Empty, and it says nothing about the machine: riscv64 has no entry yet, so
+/// there is no platform this crate can name a window for.  When the boot
+/// arrives it will be the board's, and a board's window is a fact the device
+/// tree states rather than one a constant can hold.
+///
+/// A `const fn` returning an empty slice rather than an absent function, so the
+/// kernel asks one question of three machines and does not need to know which
+/// one answered.
+pub const fn device_windows() -> &'static [(usize, usize)] {
+    &[]
+}
 
 /// Read the address of the table the machine is translating through.
 #[cfg(target_os = "none")]
@@ -262,7 +281,7 @@ mod tests {
     #[test]
     fn the_address_is_a_page_number() {
         let entry = Entry::page(0x1234_5000, Permissions::KERNEL_READ_WRITE);
-        let word = encode(entry);
+        let word = encode(entry, Level::Leaf);
         // The flags are bits 0..9 and the page number starts at bit 10, so the
         // mask is 0x3FF and not 0xFFF: a page number whose low bits are set
         // spills into bits 8 and 9, and a wider mask would read them as flags.
@@ -305,12 +324,18 @@ mod tests {
     /// touches.
     #[test]
     fn every_leaf_sets_accessed_and_dirty() {
-        let word = encode(Entry::page(0x1000, Permissions::KERNEL_READ_WRITE));
+        let word = encode(
+            Entry::page(0x1000, Permissions::KERNEL_READ_WRITE),
+            Level::Leaf,
+        );
         assert_ne!(word & ACCESSED, 0);
         assert_ne!(word & DIRTY, 0);
         // Even a read-only page sets D: a page that is never written costs
         // nothing for the bit, and a fault on a write is a boot that dies.
-        let read_only = encode(Entry::page(0x1000, Permissions::KERNEL_READ_EXECUTE));
+        let read_only = encode(
+            Entry::page(0x1000, Permissions::KERNEL_READ_EXECUTE),
+            Level::Leaf,
+        );
         assert_ne!(read_only & DIRTY, 0);
     }
 
@@ -331,7 +356,7 @@ mod tests {
                 cache: paging::Cache::Normal,
             },
         );
-        let word = encode(execute_only);
+        let word = encode(execute_only, Level::Leaf);
         assert_ne!(word & super::EXECUTABLE, 0, "execute is set");
         assert_eq!(word & super::READABLE, 0, "read is the permission's answer");
         assert_ne!(word & super::LEAF_BITS, 0, "X alone is enough to be a leaf");
@@ -351,9 +376,12 @@ mod tests {
                 cache: paging::Cache::Normal,
             },
         );
-        assert_ne!(encode(user) & USER, 0);
+        assert_ne!(encode(user, Level::Leaf) & USER, 0);
         assert_eq!(
-            encode(Entry::page(0x1000, Permissions::KERNEL_READ_WRITE)) & USER,
+            encode(
+                Entry::page(0x1000, Permissions::KERNEL_READ_WRITE),
+                Level::Leaf
+            ) & USER,
             0
         );
     }
@@ -368,7 +396,7 @@ mod tests {
     #[test]
     fn a_device_mapping_has_nowhere_to_say_so() {
         let device = Entry::page(0xFE00_0000, Permissions::DEVICE);
-        let word = encode(device);
+        let word = encode(device, Level::Leaf);
         assert_eq!(word >> 61, 0, "the Svpbmt field is not used");
         assert_eq!(
             decode(word, Level::Leaf).permissions.cache,
@@ -380,7 +408,7 @@ mod tests {
     /// An absent entry is zero.
     #[test]
     fn an_absent_entry_is_zero() {
-        assert_eq!(encode(Entry::EMPTY), 0);
+        assert_eq!(encode(Entry::EMPTY, Level::Leaf), 0);
         assert_eq!(decode(0, Level::Leaf), Entry::default());
     }
 }
