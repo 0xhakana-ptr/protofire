@@ -91,6 +91,34 @@ impl Entry {
         }
     }
 
+    /// An entry naming the table at `address`, reachable from a user program.
+    ///
+    /// ## Why a table entry needs this
+    ///
+    /// x86_64 checks the user bit at **every** level of the walk, not only at
+    /// the leaf: an access from ring 3 to an address under a supervisor-only
+    /// table entry is refused with a protection fault even when the leaf is
+    /// marked user.  So a program's pages need their whole path — root, second,
+    /// third and leaf — to carry the bit, and a table entry built by
+    /// [`Entry::table`] would break every mapping under it.
+    ///
+    /// aarch64 ignores the permission bits of a table descriptor entirely, so
+    /// this entry and [`Entry::table`] produce the same word there.  The name
+    /// says what the entry is *for* rather than which machine needs it.
+    pub const fn user_table(address: usize) -> Entry {
+        Entry {
+            address,
+            permissions: Permissions {
+                writable: true,
+                executable: true,
+                user: true,
+                cache: crate::index::Cache::Normal,
+            },
+            is_leaf: false,
+            present: true,
+        }
+    }
+
     /// An entry naming the page at `address`.
     pub const fn page(address: usize, permissions: Permissions) -> Entry {
         Entry {

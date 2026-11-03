@@ -14,17 +14,17 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | Subsystem | Previous tree | Here | What is in |
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 9,493 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011, the device-tree handshake, the GIC — ten of a hundred |
+| `arch` | 95,361 | 13,838 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the GDT and TSS, the local APIC and its timer, the 8259, the PL011, the device-tree handshake, the GIC, ring 3 on both bootable machines |
 | `crypto` | 4,606 | 4,850 | all of it, one module per algorithm — counted under `libs` below |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
-| `kernel` | 39,704 | 1,536 | the boot sequence, the syscall table, device discovery |
+| `kernel` | 39,704 | 4,625 | the boot sequence, the syscall table, the scheduler, device discovery |
 | `memory` | 9,649 | 1,865 | the frame pool and the region pools |
 | `network` | 39,240 | 1 | nothing |
 | `drivers` | 18,828 | 5,422 | PCI (ports, ECAM, BAR enumeration, MSI-X), and virtio block |
 | `syscall` | 15,647 | 253 | the context, the validators, three handlers |
 | `user` | 19,145 | — | nothing; `apps/` holds three skeletons |
 | `libs` | — | 16,291 | allocator, audit, cell, crypto, fdt, irq, paging, profiler, rights, sync, unicode |
-| **total** | **312,131** | **~56,500** | |
+| **total** | **312,131** | **~63,000** | |
 
 The `libs` crates have no previous-tree column because most of them were modules
 under `src/kernel/` or `src/memory/` there; their lines are counted in those
@@ -91,11 +91,21 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 `syscall_trap`, `ptrace` and more.
 
 What is here is what a boot needs before anything else: the entry, the console,
-the interrupt flag, the page-table encoding, the exception path, and — on
-x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
-**x86_64** half of everything above: ring 3 needs a TSS with an `RSP0` and a
-DPL-3 gate, and its timer is the local APIC's.  Then `wait`, `sleep` and a
-blocking `read`, which need a process to park.
+the interrupt flag, the page-table encoding, the exception path, the port I/O
+the PCI bus is reached through, and — on both bootable machines — ring 3, a
+timer and a preempting scheduler.
+
+Both machines now reach a program at ring 3, and the two halves differ enough
+to say where.  x86_64 needed a descriptor table with a DPL-3 code and data
+segment, a task state segment whose `RSP0` names the stack every ring-3
+interrupt lands on, a call gate at `DPL` 3, and a `cr3` write to switch
+address spaces.  Its timer is the local APIC's, calibrated against the PIT, and
+its monotonic clock is the TSC — the APIC's own count runs *down* and reloads,
+which is not a deadline and cost a boot its wakes.
+
+What comes next is the blocking `read`, which needs a pipe to park a reader on
+that `sleep` does not — `sleep` has a deadline and a wake, and a pipe has a
+writer and no clock.
 
 ### The timer, and three reasons it looked broken
 
@@ -228,6 +238,98 @@ stops the machine, because there is no scheduler to run next and no address
 space to switch to.  The page is in the kernel's own table with `user: true`;
 that protects the kernel from the program and does not protect one program from
 another.
+
+### x86_64 at ring 3, and the four pieces it needed
+
+    protofire: descriptor tables installed, TSS loaded
+    protofire: interrupt from the controller delivered to the timer's handler
+    protofire: program 1 mapped at 0x8040000000
+    protofire: program 2 mapped at 0x8080000000
+    protofire: entering ring 3
+    program 1 says hello
+    program 2 says hello
+    protofire: every program exited, 2 exit(s), 6 tick(s), 3 switch(es)
+    protofire: the timer preempted, 2 switch(es) from ticks
+
+`enter_user` was `unreachable!` and its comment named what was missing: a TSS
+with an `RSP0`, a DPL-3 segment and a DPL-3 gate.  Each is a separate thing and
+each failed differently before it was right.
+
+**The descriptor bits were in the wrong half of the word.**  The type byte,
+`S`, the DPL and `P` are the descriptor's second byte as the processor reads
+it — bits 40..47 — and the first version wrote them at bits 8..15, which is the
+limit's low half.  The processor refused the first `mov ds` with a general
+protection fault carrying selector index 2.  What found it was `-d int`: the
+fault was `v=0d e=0010` at the `mov %ax,%ds` one instruction after a `lgdt`
+that had *already succeeded*, which is only possible if the table loaded and
+the descriptor in it was wrong.  The table's words are now asserted against the
+boot's own literals, which is the oracle that was missing.
+
+**The gate's DPL was 0 on every vector.**  A gate at DPL 0 refuses `int $0x80`
+from ring 3 with a protection fault.  The system call vector is now the one
+gate at DPL 3, and the boot raises it from ring 0 to prove the stub and the
+frame before any program runs.
+
+**The frame held nine registers.**  The nine a Rust function may clobber is all
+a *handler* needs; a *switch* needs every register, because the frame is copied
+and the callee-saved eight are what a compiled program keeps its locals in.
+The stub now saves fifteen, and `context.rs` asserts the fifteen offsets
+against the assembly.
+
+**The timer's count is not a clock.**  x86_64's first `sleep` never woke:
+`timer_counter()` answered the APIC's current count, which runs *down* and
+reloads on every fire, so `now >= deadline` was never true.  It is the TSC now,
+measured against the PIT the same way the APIC's rate is, and the two rates are
+kept separately because an APIC count is not a TSC count.
+
+### A race in `enter_user`, found at four thousand ticks a second
+
+A short time slice — twenty microseconds instead of a hundred — made aarch64
+fail about one boot in three, at a kernel address, from EL0, with `spsr 0x340`.
+The baseline at that commit failed six times in fifteen, so the defect predated
+the change that exposed it.
+
+The address was inside `enter_user`'s own asm block, and that is the whole
+explanation.  The three `msr`s and the `eret` are one transaction, and
+`enter_user` ran with interrupts enabled.  A tick in that window is taken at
+EL1, so `entry.S` saves the interrupted `ELR_EL1`/`SPSR_EL1` **and restores them
+on the way out** — clobbering the entry that had just been written.  The `eret`
+then returned to whatever the tick interrupted, which is inside `enter_user`,
+at EL0, because the `spsr` had been rewritten to EL0t again.
+
+`daifset #2` around the window is the fix, and `eret` needs no matching unmask:
+it loads PSTATE from `SPSR_EL1`, which names EL0t with `I` clear.  Fifteen
+boots at the same slice after the fix, zero failures.  x86_64's `iretq` entry
+had the same shape — five pushes and an `iretq` — and got the same `cli`.
+
+### Sleeping, and the two ways to be not-runnable
+
+    protofire: a program sleeps until counter 632293560
+    protofire: a program sleeps until counter 633478228
+    protofire: every program is asleep, waiting
+    program 2 says hello
+    protofire: a program woke, 1 of them
+    program 1 says hello
+
+A task now has three states rather than a `finished` flag: runnable, sleeping
+until a counter reading, finished.  The third is not "finished with a
+timestamp" — a sleeping task is runnable *later*, and a scheduler that could
+not tell the two apart would either wake a dead program or never wake a live
+one.
+
+`Sleep` is the first call that does not answer immediately, and its handler is
+the only place the two meanings of `Exit` are distinguished.  `advance` answers
+`Exit` when nothing is selectable, which happens both when every task has
+finished and when every task is asleep; the first means stop the machine and
+the second means wait for a tick.  So the handler asks `has_other_runnable` and
+`has_sleeping`, and the waiting case idles in `wfi`/`sti;hlt` until the timer
+turns a deadline into a runnable task.
+
+The deadline is a counter reading, not a duration, and it is the same counter
+`wake_expired` compares — which is why the platform with a countdown timer
+needed the TSC.  The wake check runs in the timer's handler **before** the
+preemption hook, because a task that has finished sleeping is runnable now and
+a pass that ran first would find nothing and stop the machine with work left.
 
 ### The frame allocator, and the loop it breaks
 

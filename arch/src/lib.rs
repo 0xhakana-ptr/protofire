@@ -57,11 +57,11 @@ pub use arch_aarch64::set_interrupt_dispatch;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::set_interrupt_dispatch;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub use arch_x86_64::InterruptFrame;
+pub use arch_x86_64::idt::InterruptFrame;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub use arch_x86_64::idt_descriptor;
+pub use arch_x86_64::idt::loaded as idt_descriptor;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub use arch_x86_64::set_interrupt_dispatch;
+pub use arch_x86_64::idt::set_dispatch as set_interrupt_dispatch;
 
 // `install_interrupt_table` is re-exported for every machine: each answers
 // whether it has one, and a machine whose entry is not written says `false`
@@ -71,7 +71,25 @@ pub use arch_aarch64::install_interrupt_table;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::install_interrupt_table;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub use arch_x86_64::install_interrupt_table;
+pub use arch_x86_64::idt::install as install_interrupt_table;
+
+// The descriptor table and the TSS.  Every machine answers; only x86_64 has
+// one, and `false` from the others is an answer rather than a gap.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::install_descriptor_tables;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::install_descriptor_tables;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::install_descriptor_tables;
+
+// Where an interrupt from ring 3 lands.  Every machine answers; only a machine
+// with a TSS uses the answer.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::interrupt_stack_top;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::interrupt_stack_top;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::interrupt_stack_top;
 
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::boot::boot_info;
@@ -136,12 +154,123 @@ pub use arch_x86_64::CallOutcome;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::Context;
 
+// What a context is *asked*, rather than how its fields are laid out.  A
+// scheduler that read `context.elr` would be written against aarch64; these
+// are the questions every machine answers about its own frame.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::install_context;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::install_context;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::install_context;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::is_user_context;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::is_user_context;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::is_user_context;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::resume_address;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::resume_address;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::resume_address;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::set_resume_address;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::set_resume_address;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::set_resume_address;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::return_state;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::return_state;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::return_state;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::return_value;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::return_value;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::return_value;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::set_return_value;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::set_return_value;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::set_return_value;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::stack_pointer;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::stack_pointer;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::stack_pointer;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::starting_context;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::starting_context;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::starting_context;
+
+// The program a boot runs.  Machine code, so each machine supplies its own:
+// a kernel holding one array for three architectures would have two of them
+// wrong, and the failure would be a fault at an address the kernel chose.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::PROGRAM_LEN;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::PROGRAM_LEN;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::PROGRAM_LEN;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::program_bytes;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::program_bytes;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::program_bytes;
+
+// The idle a scheduler uses when every program is asleep.  `halt` masks
+// interrupts and is the final stop; this leaves them on and returns.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::wait_for_a_wakeup;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::wait_for_a_wakeup;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::wait_for_a_wakeup;
+
+// How long the boot's programs sleep.  The duration is part of what the program
+// is — it is an immediate in its machine code — so it lives with the program
+// and not with the boot that reports it.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::SLEEP_MICROSECONDS;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::SLEEP_MICROSECONDS;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::SLEEP_MICROSECONDS;
+
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::enter_user;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::enter_user;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::enter_user;
+
+// Entering with a whole context, which is what a scheduler has: a first program
+// needs an entry and a stack, and a resumed one needs every register it left.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::enter_user_with_context;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::enter_user_with_context;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::enter_user_with_context;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::switch_address_space;
@@ -159,9 +288,9 @@ pub use arch_riscv64::set_call_sink;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::set_preempt_sink;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub use arch_x86_64::set_call_sink;
+pub use arch_x86_64::trap::set_call_sink;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
-pub use arch_x86_64::set_preempt_sink;
+pub use arch_x86_64::trap::set_preempt_sink;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::interrupt_line_enabled;
@@ -173,10 +302,16 @@ pub use arch_x86_64::interrupt_line_enabled;
 // The timer.  Every machine names the four operations; only aarch64 drives one.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::arm_timer;
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::disarm_timer;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::arm_timer;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::disarm_timer;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::arm_timer;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::disarm_timer;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::timer_control;
@@ -203,6 +338,16 @@ pub use arch_aarch64::timer_fired;
 pub use arch_riscv64::timer_fired;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::timer_fired;
+
+// Converting a duration to a counter reading.  A scheduler that makes a
+// deadline asks this, and the machine answers because its counter's rate is
+// the machine's.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::ticks_for_microseconds;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::ticks_for_microseconds;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::ticks_for_microseconds;
 
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::timer_interrupt;

@@ -231,6 +231,49 @@ impl Machine {
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,
                 ),
+                // The descriptor table and the TSS, before anything can enter
+                // ring 3.
+                //
+                // `RSP0` is the stack the first ring-3 interrupt lands on, and
+                // an `iretq` without one takes a triple fault rather than
+                // printing anything.  The line is the only evidence that
+                // `lgdt`/`ltr` were executed rather than planned.
+                ("protofire: descriptor tables installed, TSS loaded", true),
+                // The system call gate, exercised from ring 0.
+                //
+                // A gate at the wrong DPL is a program's `int $0x80` arriving
+                // as a protection fault, which reads as a fault in the program.
+                // The boot raises the vector itself and requires the dispatch's
+                // own answer, so the line means the stub, the frame and the
+                // `iretq` all ran.
+                (
+                    "protofire: interrupt from the controller delivered to the timer's handler",
+                    true,
+                ),
+                // Two programs in ring 3, each in an address space of its own.
+                //
+                // `1` and `2` are the programs' own numbers: one program
+                // twice reads exactly the same as two programs once, so the
+                // value comes from the program and not from a kernel counter.
+                ("program 1 says hello", true),
+                ("program 2 says hello", true),
+                ("protofire: every program exited, ", false),
+                // Sleeping, and the wake that ended it.
+                //
+                // Two lines, because they are two facts: a program asked for a
+                // deadline, and one was woken by the timer.  A boot that slept
+                // and never woke prints the first and not the second, and the
+                // program's second "says hello" — which is what the wake
+                // produced — is what the exit line counts.
+                ("protofire: a program sleeps until counter ", false),
+                ("protofire: a program woke, ", false),
+                // And the timer moved the CPU between them.
+                //
+                // The switch count depends on QEMU's speed, so the line that
+                // has to hold is that any switch came from a tick.  A boot
+                // whose preempt sink was not installed prints "did not
+                // preempt".
+                ("protofire: the timer preempted, ", false),
             ],
             // The device-tree machine takes the same path, minus the disk: it
             // has no virtio-mmio driver yet, so the boot falls back to its

@@ -13,32 +13,77 @@
 #[cfg(not(target_os = "none"))]
 extern crate alloc;
 
+pub mod apic;
 pub mod boot;
+pub mod context;
+pub mod gdt;
 pub mod idt;
 pub mod interrupts;
 pub mod paging;
 pub mod pic;
-
-// The entry encoding, re-exported by name: `kernel::address_space` builds a
-// mapping and asks the machine how to write it down, and asking through `arch`
-// is what keeps the answer a machine's business.
-pub use paging::install;
-
-// The interrupt table, by name: the kernel installs one and hands it a sink,
-// and both are this crate's decisions about the machine.  Bare-metal only: a
-// host has no IDT to load and no vector to take, and the types are gated the
-// same way for the same reason.
-#[cfg(target_os = "none")]
-pub use idt::InterruptFrame;
-#[cfg(target_os = "none")]
-pub use idt::install as install_interrupt_table;
-#[cfg(target_os = "none")]
-pub use idt::loaded as idt_descriptor;
-#[cfg(target_os = "none")]
-pub use idt::set_dispatch as set_interrupt_dispatch;
-
 pub mod port;
 pub mod serial;
+pub mod trap;
+
+/// The local APIC, by name: the boot asks the machine whether it has one, and
+/// the answer decides whether a timer exists at all.
+pub use apic::Apic;
+/// The calibration, by name: it is the one measurement a boot reports.
+pub use apic::calibrate as calibrate_timer;
+
+/// The descriptor table, by name.
+///
+/// Bare metal only on the `install` half — a host has no `lgdt` — so the arm is
+/// gated here rather than making the module's name differ per build.  A caller
+/// that named this on a host would be a caller entering ring 3, which a host
+/// has no way to do.
+/// The stack an interrupt from ring 3 lands on: the boot's.
+///
+/// Published by `boot-x86-64.S` as `kstack_top`, and not a second stack
+/// declared for the purpose — see `gdt::kernel_stack_top`.
+#[cfg(target_os = "none")]
+pub fn interrupt_stack_top() -> usize {
+    gdt::kernel_stack_top()
+}
+
+/// Load the descriptor table and the task state segment.
+///
+/// Answers whether the machine kept both.  `interrupt_stack_top` is what `RSP0`
+/// names, so it must be a live kernel stack.
+///
+/// # Safety
+///
+/// Called once, with the console up and before anything enters ring 3.  A
+/// second call reloads the selectors under code that has already cached them.
+#[cfg(target_os = "none")]
+pub unsafe fn install_descriptor_tables(interrupt_stack_top: usize) -> bool {
+    // SAFETY: the caller's contract is this function's — once, before ring 3.
+    unsafe { gdt::install(interrupt_stack_top) }
+}
+
+/// A program's saved state, and the operations a scheduler asks about it.
+///
+/// The type is this crate's, and the kernel reaches the fields through the
+/// free functions below rather than by name: what a frame looks like is the
+/// machine's, and a kernel that read `context.elr` would be a kernel written
+/// against one machine.
+pub use context::Context;
+pub use context::PROGRAM_LEN;
+pub use context::SLEEP_MICROSECONDS;
+pub use context::install_context;
+pub use context::is_user_context;
+pub use context::program_bytes;
+pub use context::resume_address;
+pub use context::return_state;
+pub use context::return_value;
+pub use context::set_resume_address;
+pub use context::set_return_value;
+pub use context::stack_pointer;
+pub use context::starting_context;
+
+/// Enter ring 3: bare metal only, because a host has no ring 3 to enter.
+#[cfg(target_os = "none")]
+pub use context::enter_user_with;
 
 // The machine's entry, assembled from `src/boot-x86-64.S`.
 //
@@ -67,36 +112,13 @@ pub fn halt() -> ! {
     }
 }
 
-/// Enable one of the machine's interrupt lines.
-///
-/// False: this machine has no controller this crate drives yet.  The function
-/// exists on every machine so a driver asks one question, and `false` is an
-/// answer a caller reports rather than a gap it works around.
-///
-/// # Safety
-///
-/// As the aarch64 arm: after [`install_interrupt_table`], once per line.
-#[cfg(target_os = "none")]
-pub unsafe fn enable_interrupt_line(number: usize) -> bool {
-    let _ = number;
-    false
-}
-
-/// Raise one interrupt from the controller: this machine has none to raise.
-///
-/// False, as [`enable_interrupt_line`] is — the machine has no controller this
-/// crate drives, so there is nothing to ask.
-///
-/// # Safety
-///
-/// As the aarch64 arm.
-#[cfg(target_os = "none")]
-pub unsafe fn raise_interrupt(number: usize) -> bool {
-    let _ = number;
-    false
-}
-
 /// The machine's message-signalled interrupt frame: none this crate drives.
+///
+/// x86_64's is an MSI capability's address and data pair, which
+/// `drivers/bus/pci` writes directly; the frame itself is the local APIC's, not
+/// a separate window the way GICv2m is.  So there is nothing for this crate to
+/// probe and `None` is the honest answer — a caller treats it as "no frame",
+/// not as a failure.
 ///
 /// # Safety
 ///
@@ -108,181 +130,349 @@ pub unsafe fn message_frame() -> Option<()> {
 
 /// What a supervisor call's handler answers.
 ///
-/// Shared shape with the aarch64 crate so the kernel names one type: a machine
-/// without an entry still has to answer what a call would mean, and
-/// `unreachable` in `enter_user` is what makes the answer untested rather than
-/// wrong.
-#[derive(Debug, Clone, Copy)]
-pub struct CallFrame {
-    /// The number the program put in its syscall register.
-    pub number: usize,
-    /// The six arguments.
-    pub arguments: [usize; 6],
-    /// Where the program resumes.
-    pub resume: usize,
-}
+/// Re-exported from `trap` rather than defined here: the call path and the
+/// interrupt path are one dispatch on this machine, and a second definition in
+/// this file would be a second description of one decision.
+pub use trap::CallFrame;
+pub use trap::CallOutcome;
 
-/// What a call's handler answers.
-#[derive(Debug, Clone, Copy)]
-pub enum CallOutcome {
-    /// Resume the program with this value.
-    Return(usize),
-    /// The program has ended.  The handler has already chosen what runs next.
-    Exit,
-}
-
-/// The function a supervisor call is handed to.
-#[cfg(target_os = "none")]
-pub type CallSink = fn(CallFrame, &mut Context) -> CallOutcome;
-
-/// Install the function that serves a program's supervisor call: no-op here.
+/// Enter ring 3 at `entry` with the stack at `stack_top`.
+///
+/// ## What had to exist first
+///
+/// The earlier version of this function was `unreachable!`, and its comment
+/// named the three things it needed: a TSS with an `RSP0`, a user-accessible
+/// GDT segment, and a gate at `DPL` 3.  All three exist now — `gdt` builds the
+/// descriptors and loads the TSS, `idt` installs the call gate at `DPL` 3, and
+/// `enter_user_with` builds the five words `iretq` pops — so this is a thin
+/// wrapper that gives the caller the aarch64 signature.
+///
+/// The context it builds has no registers set, which is correct for an entry:
+/// a program's first instruction runs with whatever the kernel mapped, and
+/// `starting_context` is where a boot sets them if it wants to.
 ///
 /// # Safety
 ///
-/// As the aarch64 arm: once, before any program can run.
+/// `entry` must be a virtual address mapped `user` and executable, `stack_top`
+/// must be a `user`-accessible page's end, and the caller must have loaded the
+/// descriptor table with [`install_descriptor_tables`] and chosen the address
+/// space with [`switch_address_space`].
 #[cfg(target_os = "none")]
-pub unsafe fn set_call_sink(sink: CallSink) {
-    let _ = sink;
+pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
+    let context = Context::user(entry, stack_top);
+    // SAFETY: the caller's contract is this function's.
+    unsafe { enter_user_with(&context) }
 }
 
-/// Enter ring 3: this machine has no path yet.
-///
-/// The pieces exist — ring 3 needs a TSS with an RSP0, a user-accessible GDT
-/// segment, and a gate with DPL 3, and `idt.rs` installs every gate at DPL 0
-/// because nothing has ever entered ring 3 on this machine.  Declaring this
-/// `unreachable` rather than stopping the machine is the honest thing: a caller
-/// that reached it would be a caller whose boot assumed a capability this crate
-/// does not have.
+/// Enter ring 3 with a context, which is the form a scheduler has.
 ///
 /// # Safety
 ///
-/// As the aarch64 arm.
+/// As [`enter_user`].
 #[cfg(target_os = "none")]
-pub unsafe fn enter_user(_entry: usize, _stack_top: usize) -> ! {
-    unreachable!("ring 3 is not implemented on x86_64 yet")
+pub unsafe fn enter_user_with_context(context: &Context) -> ! {
+    // SAFETY: the caller's contract is `enter_user`'s.
+    unsafe { enter_user_with(context) }
 }
 
-/// Translate through a different root table: this machine has no such path yet.
+/// Translate through a different root table from now on.
 ///
-/// x86_64's equivalent is a `cr3` write, which this crate does have for
-/// installation and does not yet have for switching; riscv64's is `satp`.  Both
-/// need a per-process root to switch to, which is what the kernel builds for
-/// the machine that has one.
+/// `cr3` is the register, and writing it is the whole of the switch — the
+/// processor discards the TLB for the new address space on the next walk.
+/// Reading it back is what makes the answer a fact rather than a claim: a `cr3`
+/// whose low bits held flags would read back as a different number, and the
+/// low twelve bits are cleared by `current_root_table` for that reason.
+///
+/// ## What this does not do
+///
+/// It does not make the new table's pages reachable.  The **caller** must run
+/// through a mapping both tables share, because the next instruction fetch
+/// happens through the new one.  This kernel's program roots copy the kernel's
+/// entry 0 for exactly that reason, the same as aarch64's copy the kernel's
+/// second-level table.
 ///
 /// # Safety
 ///
-/// As the aarch64 arm.
+/// `root` must be a page-aligned root table whose entry 0 maps every address
+/// the kernel is running on — its text, its stack and the interrupt table —
+/// because the next fetch happens through it.
 #[cfg(target_os = "none")]
-pub unsafe fn switch_address_space(_root: usize) -> bool {
-    false
+pub unsafe fn switch_address_space(root: usize) -> bool {
+    // SAFETY: the caller promises the new root covers the code performing this
+    // call.
+    unsafe { paging::install(root) };
+
+    // An install that answered `false` means the root was already installed;
+    // either way the question is what the register holds now, which is what
+    // this reads.
+    paging::current_root_table() == root
 }
 
-/// A program's saved context.
+/// The timer's frequency, as measured against the PIT.
 ///
-/// The machine's own trap frame, which this crate does not have: a task switch
-/// copies one of these into the frame the trap path restores, and this machine
-/// has no such path yet.  The type exists so the scheduler names one thing on
-/// every machine.
-///
-/// It is the aarch64 frame's shape because that is the one written; a real
-/// frame here would be the registers an interrupt from ring 3 pushed.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Context {
-    /// The general registers.
-    pub registers: [u64; 30],
-    /// The link register.
-    pub link_register: u64,
-    /// Where to resume.
-    pub elr: u64,
-    /// The state to resume in.
-    pub spsr: u64,
-    /// The syndrome.
-    pub esr: u64,
-    /// The fault address.
-    pub far: u64,
-    /// The vector.
-    pub vector: u64,
-    /// The SIMD registers.
-    pub simd: [u128; 32],
-}
-
-/// The timer's frequency: this machine's timer is not driven yet.
-///
-/// x86_64's is the local APIC's, programmed through the APIC's timer divide and
-/// initial-count registers; riscv64's is `time`/`stimecmp`.  Neither is wired,
-/// so `None` is the honest answer — and a caller treats it as "no timer" rather
-/// than as a frequency of zero.
+/// `None` when the machine reports no local APIC, or when the calibration did
+/// not produce a number.  A caller treats that as "no timer" rather than as a
+/// frequency of zero, which would be a timer that fires immediately and
+/// forever.
 ///
 /// # Safety
 ///
-/// As the aarch64 arm.
+/// Called once, after the page table mapped the APIC's page as device memory
+/// and interrupts are still disabled.  The calibration programs the PIT, which
+/// nothing else in this kernel uses.
 #[cfg(target_os = "none")]
 pub unsafe fn timer_frequency() -> Option<u64> {
-    None
+    // Calibrated once and remembered.
+    //
+    // ## Why this is cached and not measured per call
+    //
+    // The kernel's interrupt handler re-arms the timer on every tick, and it
+    // asks for the frequency when it does.  A `timer_frequency` that measured
+    // each time would program the PIT for fifty-five milliseconds and disarm
+    // the timer it was asked about — so the boot took exactly one tick, and
+    // every tick spent its whole slice re-measuring the clock.  The log showed
+    // it as `1 tick(s)` after programs that had run long enough for hundreds.
+    //
+    // aarch64's answers from `CNTFRQ_EL0` and costs an MSR, which is why the
+    // same shape was correct there and wrong here.  The step that is expensive
+    // on one machine is the step that has to be remembered.
+    if let Some(frequency) = measured_frequency() {
+        return Some(frequency);
+    }
+
+    // SAFETY: the caller's contract is this function's.
+    let apic = unsafe { Apic::probe() }?;
+    // SAFETY: as above — the APIC is mapped and interrupts are off.
+    unsafe { apic.enable() };
+    // SAFETY: as above.
+    let frequency = unsafe { calibrate_timer(&apic) }?;
+    // SAFETY: the calibration disarmed the timer; this records the controller
+    // for the handlers that will use it.
+    unsafe { trap::set_timer_controller(apic) };
+    set_measured_frequency(frequency);
+    Some(frequency)
 }
 
-/// Arm the timer: this machine's timer is not driven yet.
+/// The APIC timer's rate, measured once.
 ///
-/// # Safety
-///
-/// As the aarch64 arm.
+/// Separate from [`CALIBRATED`] because the two clocks differ: an APIC count is
+/// not a TSC count, and a conversion that used one for the other would make a
+/// time slice wrong by the ratio of the bus clock to the core clock.
 #[cfg(target_os = "none")]
-pub unsafe fn arm_timer(_frequency: u64, _milliseconds: u64) -> u64 {
-    0
+static APIC_RATE: cell::SyncUnsafeCell<Option<u64>> = cell::SyncUnsafeCell::new(None);
+
+/// The frequency this boot measured, once.
+///
+/// A `SyncUnsafeCell` rather than an atomic because the value is written once
+/// with interrupts off and read afterwards; the write happens before any timer
+/// can fire, which is what makes the read on the handler's path sound.
+#[cfg(target_os = "none")]
+static CALIBRATED: cell::SyncUnsafeCell<Option<u64>> = cell::SyncUnsafeCell::new(None);
+
+/// The frequency this boot measured, if it has measured one.
+#[cfg(target_os = "none")]
+fn measured_frequency() -> Option<u64> {
+    // SAFETY: written once by `timer_frequency` before any timer can fire, and
+    // read after that.
+    unsafe { *CALIBRATED.get() }
 }
 
-/// Whether the timer has fired: it has not, because it is not armed.
+/// Record the measured frequency.
+#[cfg(target_os = "none")]
+fn set_measured_frequency(frequency: u64) {
+    // SAFETY: as above — the only write, and it happens before any tick.
+    unsafe { *CALIBRATED.get() = Some(frequency) };
+}
+
+/// Arm the timer to fire every `microseconds`.
+///
+/// Answers the count it loaded, so a boot line can report a number rather than
+/// a claim.
 ///
 /// # Safety
 ///
-/// As the aarch64 arm.
+/// Called after [`timer_frequency`], which is what enabled the APIC and
+/// recorded it.
+#[cfg(target_os = "none")]
+pub unsafe fn arm_timer(frequency: u64, microseconds: u64) -> u64 {
+    let Some(apic) = (unsafe { trap::timer_controller() }) else {
+        return 0;
+    };
+    // The APIC's own rate, not the TSC's: `frequency` is the argument the
+    // caller has, and the count this arms with is in APIC ticks.
+    // SAFETY: written once by `timer_frequency`, read after.
+    let rate = unsafe { *APIC_RATE.get() }.unwrap_or(frequency);
+    let count = apic::ticks_for_microseconds(rate, microseconds);
+    // SAFETY: the caller's contract is this function's.
+    unsafe { apic.arm_timer(count) };
+    count as u64
+}
+
+/// The timer's control register: the LVTTL, read back.
+///
+/// A timer "armed" whose LVTTL has the mask bit set is a timer that never
+/// fires, and the register is the only thing that says which happened.
+///
+/// # Safety
+///
+/// Has no side effect; reads the APIC's page.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_control() -> u64 {
+    let Some(apic) = (unsafe { trap::timer_controller() }) else {
+        return 0;
+    };
+    // SAFETY: the APIC was probed and mapped by `timer_frequency`.
+    unsafe { apic.timer_vector() as u64 }
+}
+
+/// Stop the timer.
+///
+/// # Safety
+///
+/// Called after [`arm_timer`]; disarming a timer that is already disarmed has
+/// no effect beyond clearing a mask bit that was already set.
+#[cfg(target_os = "none")]
+pub unsafe fn disarm_timer() {
+    let Some(apic) = (unsafe { trap::timer_controller() }) else {
+        return;
+    };
+    // SAFETY: the APIC was probed and mapped by `timer_frequency`.
+    unsafe { apic.disarm_timer() };
+}
+
+/// How many of this machine's timer ticks are `microseconds` long.
+///
+/// The same question aarch64 answers from its generic counter, so a scheduler
+/// that needs a deadline asks one function whichever machine it is on.  The
+/// machine's answer is a `u32` because that is what its counter register takes,
+/// and widening it here is what keeps the two signatures equal.
+pub const fn ticks_for_microseconds(frequency: u64, microseconds: u64) -> u64 {
+    apic::ticks_for_microseconds(frequency, microseconds) as u64
+}
+
+/// The timer's counter, which counts down.
+///
+/// # Safety
+///
+/// As [`timer_control`].
+#[cfg(target_os = "none")]
+pub unsafe fn timer_counter() -> u64 {
+    // The timestamp counter, not the APIC's count.
+    //
+    // ## Why this is the TSC and not the timer
+    //
+    // `CNTPCT_EL0` on aarch64 counts **up** from boot and never resets, which
+    // is what makes `now >= deadline` a deadline.  The APIC's current count is
+    // the opposite in both respects: it counts **down**, and it reloads every
+    // time the timer fires.  A deadline computed from it is a number that will
+    // never be reached, and a scheduler that waited on one waited forever —
+    // which is exactly what a boot whose programs slept showed: 76,000 ticks
+    // with one task asleep and none of them waking it.
+    //
+    // `rdtsc` is the machine's monotonic counter and the only one it has that
+    // behaves like the register aarch64 reads.
+    //
+    // SAFETY: `rdtsc` reads the counter; it is unprivileged and has no side
+    // effect.  `lfence` orders it after any earlier instruction so two reads
+    // cannot appear out of order — the same reason `CPUID` was needed before it
+    // on older machines.
+    unsafe { apic::read_tsc() }
+}
+
+/// Whether the timer has fired: the counter reaching zero is not observable
+/// after the fact, so this answers what the boot's tick count is not needed
+/// for.
+///
+/// The local APIC's status is a bit in the LVTTL that the processor clears when
+/// the interrupt is delivered, so a read after the fact answers "delivered",
+/// not "fired".  The count of ticks is what a boot reports, and it is the
+/// kernel's.
+///
+/// # Safety
+///
+/// As [`timer_control`].
 #[cfg(target_os = "none")]
 pub unsafe fn timer_fired() -> bool {
     false
 }
 
-/// The timer's interrupt number: this machine's is not wired.
+/// The timer's interrupt as a vector.
 pub const fn timer_interrupt() -> usize {
-    0
+    apic::TIMER_VECTOR as usize
 }
 
-/// The timer's counter: this machine's timer is not driven yet.
+/// Whether an interrupt line is enabled: this machine's controller has no
+/// per-line enable, so a line is enabled when the controller is.
+///
+/// The local APIC delivers every unmasked vector and has no mask register per
+/// line; masking is an IOAPIC concept for lines that arrive through it, and
+/// this kernel's only line is the timer's, which the APIC owns.
 ///
 /// # Safety
 ///
-/// As the aarch64 arm.
-#[cfg(target_os = "none")]
-pub unsafe fn timer_counter() -> u64 {
-    0
-}
-
-/// The timer's control register: this machine's timer is not driven yet.
-///
-/// # Safety
-///
-/// As the aarch64 arm.
-#[cfg(target_os = "none")]
-pub unsafe fn timer_control() -> u64 {
-    0
-}
-
-/// Whether an interrupt line is enabled: this machine's controller is not
-/// driven.
-///
-/// # Safety
-///
-/// As the aarch64 arm.
+/// As [`timer_control`].
 #[cfg(target_os = "none")]
 pub unsafe fn interrupt_line_enabled(_number: usize) -> bool {
-    false
+    // SAFETY: the answer is the controller's existence, which the probe gives.
+    unsafe { Apic::probe() }.is_some()
 }
 
-/// The function called at an interrupt, for a scheduler that preempts: none.
+/// Stop the core until an interrupt arrives, leaving interrupts enabled.
+///
+/// `sti; hlt` is the pair a kernel idles with: `sti` takes effect after the
+/// next instruction, so the `hlt` cannot miss the interrupt it is about to
+/// wait for — the order matters, and `hlt; sti` would sleep through it.
+///
+/// A host has no `hlt`, so its arm returns immediately.
+#[cfg(target_os = "none")]
+pub fn wait_for_a_wakeup() {
+    // SAFETY: `sti` sets `RFLAGS.IF` and `hlt` stops the core until an
+    // interrupt is pending.  Interrupts are on by the time this is called —
+    // every program runs with `IF` set — so the `hlt` returns.
+    unsafe { core::arch::asm!("sti; hlt", options(nomem, nostack)) };
+}
+
+/// The host build: nothing to wait for.
+#[cfg(not(target_os = "none"))]
+pub fn wait_for_a_wakeup() {}
+
+/// Enable one of the machine's interrupt lines.
+///
+/// True when the machine reports a local APIC: this machine enables lines by
+/// enabling the controller, which [`timer_frequency`] does.  A machine with no
+/// APIC answers `false`, and a caller reports that rather than working around
+/// it.
 ///
 /// # Safety
 ///
-/// As the aarch64 arm.
+/// Called after [`install_interrupt_table`], once per line.
 #[cfg(target_os = "none")]
-pub unsafe fn set_preempt_sink(sink: fn(&mut Context)) {
-    let _ = sink;
+pub unsafe fn enable_interrupt_line(_number: usize) -> bool {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { Apic::probe() }.is_some()
+}
+
+/// Raise one interrupt from the controller: the local APIC can raise any
+/// vector to itself, and this asks for the boot's test vector.
+///
+/// ## Why this is a software interrupt
+///
+/// A device raises its line when it has something to say and cannot be asked
+/// to say it on demand.  The local APIC's ICR can send an interrupt to a CPU —
+/// including this one — with a vector of the caller's choosing, which is the
+/// same instrument aarch64's `GICD_SGIR` is, and it drives the identical
+/// delivery path a timer tick does.
+///
+/// # Safety
+///
+/// Called after [`install_interrupt_table`] with a sink that will claim the
+/// vector.
+#[cfg(target_os = "none")]
+pub unsafe fn raise_interrupt(number: usize) -> bool {
+    // SAFETY: the caller's contract.
+    let Some(apic) = (unsafe { Apic::probe() }) else {
+        return false;
+    };
+    // SAFETY: `probe` answered a base address and the boot mapped it.
+    unsafe { apic.raise_to_self(number as u8) }
 }

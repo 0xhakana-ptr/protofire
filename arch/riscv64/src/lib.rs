@@ -224,6 +224,66 @@ pub struct Context {
     pub simd: [u128; 32],
 }
 
+/// Where a context resumes.
+///
+/// The same accessor shape the other two machines answer, over the aarch64
+/// frame this type still borrows: a scheduler asks one question and every
+/// machine answers it, which is what keeps the kernel from naming a field.
+pub fn resume_address(context: &Context) -> usize {
+    context.elr as usize
+}
+
+/// Point a context at another address.
+pub fn set_resume_address(context: &mut Context, address: usize) {
+    context.elr = address as u64;
+}
+
+/// The stack pointer a context runs on.
+pub fn stack_pointer(context: &Context) -> usize {
+    context.registers[0] as usize
+}
+
+/// The word a program reads a call's answer from.
+pub fn return_value(context: &Context) -> usize {
+    context.registers[0] as usize
+}
+
+/// Put a call's answer where a program reads it.
+pub fn set_return_value(context: &mut Context, value: usize) {
+    context.registers[0] = value as u64;
+}
+
+/// Whether a context is a program's rather than the kernel's.
+pub fn is_user_context(context: &Context) -> bool {
+    context.spsr & 0b1111 == 0
+}
+
+/// The state the trap path will restore.
+pub fn return_state(context: &Context) -> u64 {
+    context.spsr
+}
+
+/// Write `context` over the frame the trap path will restore.
+pub fn install_context(frame: &mut Context, context: &Context) {
+    *frame = *context;
+}
+
+/// The context a program begins with.
+pub fn starting_context(entry: usize, stack_top: usize) -> Context {
+    let mut context = Context {
+        registers: [0; 30],
+        link_register: 0,
+        elr: entry as u64,
+        spsr: 0x340,
+        esr: 0,
+        far: 0,
+        vector: 0,
+        simd: [0; 32],
+    };
+    context.registers[0] = stack_top as u64;
+    context
+}
+
 /// The timer's frequency: this machine's timer is not driven yet.
 ///
 /// x86_64's is the local APIC's, programmed through the APIC's timer divide and
@@ -248,6 +308,14 @@ pub unsafe fn timer_frequency() -> Option<u64> {
 pub unsafe fn arm_timer(_frequency: u64, _milliseconds: u64) -> u64 {
     0
 }
+
+/// Stop the timer: this machine's is not driven.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn disarm_timer() {}
 
 /// Whether the timer has fired: it has not, because it is not armed.
 ///
@@ -304,3 +372,65 @@ pub unsafe fn interrupt_line_enabled(_number: usize) -> bool {
 pub unsafe fn set_preempt_sink(sink: fn(&mut Context)) {
     let _ = sink;
 }
+
+/// There is no descriptor table on this machine, and no boot entry to load one
+/// from.
+///
+/// # Safety
+///
+/// Called once, with the console up.  Nothing is touched.
+#[cfg(target_os = "none")]
+pub unsafe fn install_descriptor_tables(_interrupt_stack_top: usize) -> bool {
+    false
+}
+
+/// Where an interrupt from a lower exception level lands.
+///
+/// This machine has no TSS: an exception taken from EL0 uses the kernel stack
+/// the exception was taken on, and the vector table needs no stack pointer of
+/// its own.  `0` is the answer a caller that checks it will find unremarkable.
+#[cfg(target_os = "none")]
+pub fn interrupt_stack_top() -> usize {
+    0
+}
+
+/// How long a program's image is: this machine has no program.
+///
+/// Zero, and it is an answer rather than a gap: riscv64 has no boot entry, so
+/// no program can run and a caller that asked would be a caller whose boot
+/// assumed a capability this crate does not have.
+pub const PROGRAM_LEN: usize = 0;
+
+/// A program's bytes: none, because this machine has no entry to run one from.
+pub fn program_bytes(_number: u16) -> [u8; PROGRAM_LEN] {
+    []
+}
+
+/// Enter a lower privilege level with a context: this machine has no boot
+/// entry, so nothing can reach this and the answer is the honest one.
+///
+/// # Safety
+///
+/// As [`enter_user`].
+#[cfg(target_os = "none")]
+pub unsafe fn enter_user_with_context(_context: &Context) -> ! {
+    unreachable!("riscv64 has no boot entry, so ring 3 is unreachable")
+}
+
+/// How many timer ticks are `microseconds` long: this machine's timer is not
+/// driven, so the answer is the duration itself.
+pub const fn ticks_for_microseconds(_frequency: u64, microseconds: u64) -> u64 {
+    microseconds
+}
+
+/// How long the boot's programs sleep: this machine runs none.
+pub const SLEEP_MICROSECONDS: u64 = 0;
+
+/// Stop the core until an interrupt arrives: this machine has no boot entry, so
+/// nothing can reach this and there is no interrupt to wait for.
+#[cfg(target_os = "none")]
+pub fn wait_for_a_wakeup() {}
+
+/// The host build: nothing to wait for.
+#[cfg(not(target_os = "none"))]
+pub fn wait_for_a_wakeup() {}

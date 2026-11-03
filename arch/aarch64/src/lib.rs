@@ -48,10 +48,23 @@ pub mod trap;
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
 pub use trap::Context;
+pub use trap::PROGRAM_LEN;
+pub use trap::SLEEP_MICROSECONDS;
+#[cfg(target_os = "none")]
+pub use trap::install_context;
+pub use trap::is_user_context;
+pub use trap::program_bytes;
+pub use trap::resume_address;
+pub use trap::return_state;
+pub use trap::return_value;
 #[cfg(target_os = "none")]
 pub use trap::set_call_sink;
 #[cfg(target_os = "none")]
 pub use trap::set_preempt_sink;
+pub use trap::set_resume_address;
+pub use trap::set_return_value;
+pub use trap::stack_pointer;
+pub use trap::starting_context;
 pub mod vbar;
 
 /// Stop this CPU until an interrupt arrives.
@@ -82,6 +95,27 @@ pub fn halt() -> ! {
 pub fn halt() -> ! {
     panic!("halt() called on a host: this is the kernel's stop, not a test's")
 }
+
+/// Stop the core until an interrupt arrives, leaving interrupts enabled.
+///
+/// `wfi` is the wait-for-interrupt hint.  `halt` masks interrupts first and is
+/// the machine's final stop; this one is the idle a scheduler uses when every
+/// program is asleep, so it returns as soon as the timer has something to say.
+///
+/// A host has no `wfi` and no interrupt to wait for, so the host arm returns
+/// immediately; a test that called it in a loop would spin, which is the one
+/// thing its caller must not rely on.
+#[cfg(target_os = "none")]
+pub fn wait_for_a_wakeup() {
+    // SAFETY: `wfi` is a hint that permits the core to enter a low-power state
+    // until an interrupt is pending.  Interrupts are unmasked by this kernel's
+    // `SPSR_EL0T` and its handler, so a pending one wakes the core.
+    unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
+}
+
+/// The host build: nothing to wait for.
+#[cfg(not(target_os = "none"))]
+pub fn wait_for_a_wakeup() {}
 
 /// Install the exception vector table, and prove it delivers.
 ///
@@ -198,13 +232,71 @@ pub const SPSR_EL0T: u64 = 0x340;
 /// must be a `user`-accessible page's end, and the caller must have no live
 /// state on the kernel stack that an exception could not restore — the trap
 /// path builds its own frame and resumes through it.
+/// Enter EL0 with a context, which is the form a scheduler has.
+///
+/// `enter_user` takes the two numbers a first program needs; this takes the
+/// whole frame, which is what a scheduler builds and what `eret` restores.
+///
+/// # Safety
+///
+/// As [`enter_user`].
+///  ## Why interrupts are masked across this
+///
+///  The three `msr`s and the `eret` are one transaction, and a timer tick
+///  between them destroys it.  An exception taken here is taken at EL1, so
+///  `entry.S` saves the interrupted `ELR_EL1`/`SPSR_EL1` **and restores them
+///  on the way out** — clobbering the entry this function just wrote.  The
+///  `eret` then returns to whatever address the tick interrupted, which is
+///  inside this very function, and it does so at EL0 because the `spsr` was
+///  rewritten to EL0t again.  The machine takes an instruction abort on a
+///  kernel address from ring 3.
+///
+///  That is not hypothetical: it is what `unhandled exception 8 (ec 32,
+///  instruction abort) at 0x400c92a0` was, at one to four thousand ticks a
+///  second, and the address moved with whichever `msr` the tick landed after.
+///
+///  `daifset` masks IRQ, and `eret` needs no matching unmask: it loads PSTATE
+///  from `SPSR_EL1`, which names EL0t with `I` clear, so the program is
+///  entered with interrupts enabled again.  The mask covers this window and
+///  nothing else.
+#[cfg(target_os = "none")]
+pub unsafe fn enter_user_with_context(context: &Context) -> ! {
+    // SAFETY: the caller's contract is `enter_user`'s.
+    unsafe {
+        core::arch::asm!(
+            "msr daifset, #2",
+            "msr elr_el1, {entry}",
+            "msr sp_el0, {stack}",
+            "msr spsr_el1, {spsr}",
+            "isb",
+            "eret",
+            entry = in(reg) context.elr,
+            stack = in(reg) context.registers[0],
+            spsr = in(reg) context.spsr,
+            options(noreturn)
+        )
+    }
+}
+
+/// Enter EL0 at `entry` with the stack at `stack_top`.
+///
+/// # Safety
+///
+/// `entry` must be a virtual address mapped `user` and executable, `stack_top`
+/// must be a `user`-accessible page's end, and the caller must have no live
+/// state on the kernel stack that an exception could not restore — the trap
+/// path builds its own frame and resumes through it.
 #[cfg(target_os = "none")]
 pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
     // SAFETY: the caller promises the two addresses are mapped for EL0.  The
     // `eret` is the architecture's own return-to-lower-EL instruction, and
     // `isb` is what makes the system-register writes visible to it.
+    // Interrupts masked for the three `msr`s and the `eret`; see
+    // `enter_user_with_context` for why a tick in this window sends the program
+    // to a kernel address.  `eret` restores the mask from `SPSR_EL1`.
     unsafe {
         core::arch::asm!(
+            "msr daifset, #2",
             "msr elr_el1, {entry}",
             "msr sp_el0, {stack}",
             "msr spsr_el1, {spsr}",
@@ -295,6 +387,26 @@ pub unsafe fn arm_timer(frequency: u64, microseconds: u64) -> u64 {
     // SAFETY: the caller's contract is this function's.
     unsafe { timer::arm(ticks) };
     ticks
+}
+
+/// Stop the timer.
+///
+/// # Safety
+///
+/// As [`arm_timer`].
+#[cfg(target_os = "none")]
+pub unsafe fn disarm_timer() {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { timer::disarm() };
+}
+
+/// How many of this machine's timer ticks are `microseconds` long.
+///
+/// The same question x86_64 answers for its APIC timer: a deadline is a counter
+/// reading, and the conversion from a duration is the machine's because the
+/// counter's rate is.
+pub const fn ticks_for_microseconds(frequency: u64, microseconds: u64) -> u64 {
+    timer::ticks_for_microseconds(frequency, microseconds)
 }
 
 /// The timer's control register, as it reads after arming.
@@ -408,4 +520,29 @@ pub unsafe fn set_interrupt_dispatch(sink: fn(irq::Frame) -> bool) {
     // SAFETY: passed through to the module that owns the static; the caller's
     // promise is the same one that function states.
     unsafe { trap::set_sink(sink) };
+}
+
+/// There is no descriptor table on this machine.
+///
+/// A vector table is an address in `VBAR_EL1`, not a table of descriptors plus
+/// a task state segment: the architecture has no ring transition that needs a
+/// stack the CPU finds for itself, so `false` is the honest answer and a boot
+/// that reports it is reporting a fact about the machine.
+///
+/// # Safety
+///
+/// Called once, with the console up.  Nothing is touched.
+#[cfg(target_os = "none")]
+pub unsafe fn install_descriptor_tables(_interrupt_stack_top: usize) -> bool {
+    false
+}
+
+/// Where an interrupt from a lower exception level lands.
+///
+/// This machine has no TSS: an exception taken from EL0 uses the kernel stack
+/// the exception was taken on, and the vector table needs no stack pointer of
+/// its own.  `0` is the answer a caller that checks it will find unremarkable.
+#[cfg(target_os = "none")]
+pub fn interrupt_stack_top() -> usize {
+    0
 }

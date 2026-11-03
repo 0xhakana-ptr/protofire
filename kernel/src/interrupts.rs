@@ -41,6 +41,18 @@ pub fn handle(frame: irq::Frame) -> bool {
     #[cfg(target_os = "none")]
     if vector == arch::timer_interrupt() {
         crate::TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Release);
+
+        // Wake whatever slept past its deadline, *before* the preemption hook
+        // asks who can run: a task that has finished sleeping is runnable now,
+        // and a pass that ran first would find nothing and stop the machine
+        // with work left.
+        let woken = crate::scheduler::wake_expired();
+        if woken > 0 {
+            arch::serial::write_str("protofire: a program woke, ");
+            arch::serial::write_u32(woken as u32);
+            arch::serial::write_str(" of them\n");
+        }
+
         // SAFETY: the line is enabled, so this is a timer that can fire again.
         if let Some(frequency) = unsafe { arch::timer_frequency() } {
             // SAFETY: as above.

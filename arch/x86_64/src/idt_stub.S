@@ -17,15 +17,19 @@
 
    ## The frame
 
-   After a stub, the stack holds:
+   After the fifteen pushes, the stack holds (lowest address first):
 
-       [rsp + 0]  error code     (pushed by the CPU, or by the stub as a zero)
-       [rsp + 8]  vector number  (pushed by the stub)
-       [rsp + 16] rip            (pushed by the CPU)
-       [rsp + 24] cs
-       [rsp + 32] rflags
-       [rsp + 40] rsp            (the interrupted one)
-       [rsp + 48] ss
+       [rsp + 0]   rax .. r15   fifteen registers, `rax` lowest
+       [rsp + 120] error code   (pushed by the CPU, or by the stub as a zero)
+       [rsp + 128] vector number (pushed by the stub)
+       [rsp + 136] rip           (pushed by the CPU)
+       [rsp + 144] cs
+       [rsp + 152] rflags
+       [rsp + 160] rsp           (the interrupted one)
+       [rsp + 168] ss
+
+   That is `arch_x86_64::Context`, 176 bytes, and `context.rs` asserts every
+   offset above so the two files cannot drift.
 
    The stubs push the vector *last* because the Rust side reads the frame from
    the lowest address up, and a structure whose field order disagreed with the
@@ -41,35 +45,72 @@
 .text
 .code64
 
-/* The common path: save what the calling convention lets a handler clobber,
-   pass the frame, call Rust, restore, and return through `iretq`. */
+/* The common path: save every general-purpose register, pass the frame, call
+   Rust, restore, and return through `iretq`.
+
+   ## Why all fifteen and not the caller-saved nine
+
+   The first version of this saved the nine registers a Rust function may
+   clobber, which is all a handler needs: the callee-saved eight survive the
+   call on their own.
+
+   A *task switch* needs more.  The scheduler copies one frame over another and
+   `iretq`s, so a register that is live in the program but absent from the frame
+   is a register the next program inherits from the one that ran before it.  The
+   callee-saved eight are exactly the registers a compiled program keeps its
+   locals in, so leaving them out hands every program the previous program's
+   variables — a defect that would look like a compiler bug rather than a
+   scheduler one.
+
+   ## Why the stack is realigned before the call
+
+   The ABI requires `rsp` to be 16-byte aligned at a `call`, and a trap arrives
+   with whatever alignment the interrupted code had.  `and rsp, -16` makes the
+   alignment this file's decision instead of the program's, and `rbp` holds the
+   frame's address across it — `rbp` is already in the frame, so using it as
+   scratch costs nothing. */
 common_stub:
-    /* The caller-saved registers: an `extern "C"` function may overwrite all of
-       them, so a stub that did not save them would hand an interrupted function
-       back a machine state it does not expect. */
-    push rax
-    push rcx
-    push rdx
-    push rsi
-    push rdi
-    push r8
-    push r9
-    push r10
+    /* Pushed in reverse index order, so `rax` ends up at the lowest address —
+       which is where `Context::registers[0]` is asserted to be. */
+    push r15
+    push r14
+    push r13
+    push r12
     push r11
+    push r10
+    push r9
+    push r8
+    push rbp
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push rbx
+    push rax
 
-    /* The frame starts above the nine pushes. */
-    lea rdi, [rsp + 72]
+    /* The frame starts at `rsp`, and `rbp` keeps that address across the
+       alignment below. */
+    mov rdi, rsp
+    mov rbp, rsp
+    and rsp, -16
     call x86_64_interrupt_dispatch
+    mov rsp, rbp
 
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdi
-    pop rsi
-    pop rdx
-    pop rcx
     pop rax
+    pop rbx
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rbp
+    pop r8
+    pop r9
+    pop r10
+    pop r11
+    pop r12
+    pop r13
+    pop r14
+    pop r15
 
     /* Drop the vector number and the error code. */
     add rsp, 16

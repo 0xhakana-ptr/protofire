@@ -431,9 +431,13 @@ impl AddressSpace {
             let address = frame as usize;
             // SAFETY: `self.root` is a live root frame; writing one of its
             // entries is what installing a table is.
+            //
+            // `user_table` and not `table`: x86_64 checks the user bit at every
+            // level, so a supervisor-only entry here would refuse ring 3 access
+            // to everything below it even with user leaves.
             unsafe {
                 (&*(self.root as *const PageTable))
-                    .set_entry(root_index, encode(Entry::table(address), Level::Root))
+                    .set_entry(root_index, encode(Entry::user_table(address), Level::Root))
             };
             address
         } else {
@@ -532,7 +536,9 @@ fn walk_or_create(
             Level::Second => Level::Root,
             _ => Level::Third,
         };
-        table.set_entry(slot, encode(Entry::table(created), kind));
+        // `user_table` for the reason `AddressSpace::map` gives: every level of
+        // a user mapping's path carries the user bit on x86_64.
+        table.set_entry(slot, encode(Entry::user_table(created), kind));
         current = created;
     }
     // SAFETY: the walk ended at the level above a leaf table, and that table

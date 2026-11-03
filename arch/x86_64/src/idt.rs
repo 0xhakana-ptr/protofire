@@ -228,31 +228,15 @@ impl Descriptor {
 #[cfg(target_os = "none")]
 core::arch::global_asm!(include_str!("idt_stub.S"));
 
-/// The frame a stub hands to Rust.
+/// The frame a stub hands to Rust: `arch_x86_64::Context`.
 ///
-/// The order is the stack's, from the lowest address up: the vector is what the
-/// stub pushed **last**, so it is at the lowest address, then the error code,
-/// then the five the CPU pushed.  A structure written in the order the stub
-/// pushes them would be reversed, and a handler would read its vector from the
-/// error code's word.
+/// Kept as a re-export rather than a second structure.  The frame's layout is
+/// asserted against the assembly in `context.rs`, and a type here that
+/// described the same words would be a second description of one layout — the
+/// state `idt_stub.S` and `Context` already agree about, and the reason the
+/// offsets are `const` assertions instead of comments.
 #[cfg(target_os = "none")]
-#[repr(C)]
-pub struct InterruptFrame {
-    /// The vector, pushed by the stub last and therefore at the lowest address.
-    pub vector: u64,
-    /// The error code, pushed by the CPU or by the stub as a zero.
-    pub error_code: u64,
-    /// The interrupted instruction's address.
-    pub instruction_pointer: u64,
-    /// The interrupted code segment.
-    pub code_segment: u64,
-    /// The interrupted flags.
-    pub flags: u64,
-    /// The interrupted stack pointer.
-    pub stack_pointer: u64,
-    /// The interrupted stack segment.
-    pub stack_segment: u64,
-}
+pub use crate::context::Context as InterruptFrame;
 
 /// What the machine does with a vector: hand it to whoever asked.
 ///
@@ -264,8 +248,13 @@ pub struct InterruptFrame {
 #[cfg(target_os = "none")]
 type Sink = fn(irq::Frame) -> bool;
 
+/// The sink a non-call vector goes to.
+///
+/// `pub(crate)` because `trap.rs` reads it: the dispatch is one function that
+/// decides what a vector means, and it lives there beside the call path rather
+/// than being split across two modules that would each need half of it.
 #[cfg(target_os = "none")]
-static DISPATCH: cell::SyncUnsafeCell<Option<Sink>> = cell::SyncUnsafeCell::new(None);
+pub(crate) static DISPATCH: cell::SyncUnsafeCell<Option<Sink>> = cell::SyncUnsafeCell::new(None);
 
 /// Install the function that handles a frame.
 ///
@@ -311,13 +300,21 @@ pub const KERNEL_CODE_SELECTOR: u16 = 0x08;
 #[cfg(target_os = "none")]
 static TABLE: cell::SyncUnsafeCell<Table> = cell::SyncUnsafeCell::new(Table::new());
 
-/// Build the table, install it, and enable interrupts.
+/// Build the table and install it.
 ///
 /// Every vector gets a gate.  The architectural ones — the faults and traps the
 /// CPU raises — are interrupt gates, so a handler cannot be re-entered by the
 /// same line.  The rest are interrupt gates too, because a device's vector is
 /// what they will be, and a trap gate there would let a second request arrive
 /// while the first was being served.
+///
+/// ## What "installed" means
+///
+/// The answer is not "`lidt` executed".  A table loaded and never exercised is
+/// the recurring defect this tree records, so after installing, this raises the
+/// system call vector from ring 0 with `int` and requires that the dispatch saw
+/// it — the same shape as aarch64's `svc` self-test, for the same reason.  The
+/// bare-metal arm only: a host has no table to load and no vector to take.
 ///
 /// # Safety
 ///
@@ -335,11 +332,22 @@ pub unsafe fn install() -> bool {
     // address; the link is what makes the two agree.
     let stubs = unsafe { &*stubs };
 
+    let mut gates = 0;
     for (vector, stub) in stubs.iter().enumerate() {
+        // The system call vector is the one gate a program may raise, so it is
+        // the one gate at DPL 3.  Every other gate stays at DPL 0: a program
+        // that could raise, say, the page fault vector deliberately would be
+        // one able to enter the kernel's fault handler with a frame it chose.
+        let dpl = if vector == crate::trap::SYSCALL_VECTOR {
+            crate::trap::USER_DPL
+        } else {
+            0
+        };
         table.set(
             vector,
-            Gate::new(*stub, KERNEL_CODE_SELECTOR, GATE_INTERRUPT, 0),
+            Gate::new(*stub, KERNEL_CODE_SELECTOR, GATE_INTERRUPT, dpl),
         );
+        gates += 1;
     }
 
     // `lidt` takes the address of a six-byte-plus-base structure, and the
@@ -354,17 +362,21 @@ pub unsafe fn install() -> bool {
     unsafe {
         core::arch::asm!("lidt [{}]", in(reg) address, options(readonly, nostack));
     }
-    true
+
+    gates > 0 && loaded().base() == table as *const Table as u64 && self_test()
 }
 
 /// The address the last fault named, or zero for a vector that did not fault.
-#[cfg(target_os = "none")]
 ///
 /// `cr2` holds the faulting address for a page fault and is not meaningful for
 /// any other vector; reading it unconditionally is what the CPU's own manuals
 /// describe, because the register is only *written* by the vectors that fault.
+///
+/// # Safety
+///
+/// Reads a control register; no side effect, and not privileged at ring 0.
 #[cfg(target_os = "none")]
-fn fault_address() -> usize {
+pub(crate) unsafe fn fault_address() -> usize {
     let value: usize;
     // SAFETY: reading `cr2` has no side effect and is not privileged at ring 0.
     unsafe {
@@ -435,44 +447,37 @@ pub fn gates_installed() -> usize {
     table.installed()
 }
 
-/// The dispatch the assembly calls.
+/// Raise the system call vector from ring 0 and require that it arrived.
 ///
-/// # Safety
+/// The gate's `DPL` is 3 and this runs at ring 0, so the processor allows it:
+/// a gate's `DPL` is the *highest* ring number that may raise it, and ring 0
+/// is below it.  What this proves is the stub, the frame, the dispatch and the
+/// `iretq` back — everything except the ring transition, which is the one part
+/// a ring-0 `int` cannot exercise and which the boot exercises for real when it
+/// enters a program.
 ///
-/// `extern "C"` because the assembly calls it, with a pointer to the frame it
-/// built on the stack.  That pointer must name a live `InterruptFrame`, which
-/// is the stub's contract — and it does not unwind: a frame that arrives has no
-/// context to unwind into.
+/// The answer is compared against a sentinel rather than against zero, because
+/// zero is what `rax` already holds in a freshly built frame: a boot that
+/// raised nothing and one that raised and got zero back would print the same
+/// line.
 #[cfg(target_os = "none")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn x86_64_interrupt_dispatch(frame: *mut InterruptFrame) {
-    // SAFETY: the stub passes the address of the frame it built on the stack,
-    // and nothing else holds it.
-    let frame = unsafe { &*frame };
-
-    // The machine's frame becomes the shared one: the vector it arrived on, and
-    // the address a fault named.  What the registers were is this crate's, and
-    // a handler that wants them asks here rather than receiving a union of
-    // three machines' conventions.
-    let shared = irq::Frame::fault(frame.vector as usize, fault_address());
-
-    // SAFETY: the sink is installed once before any vector can be raised, and
-    // this read happens after.
-    let sink = unsafe { *DISPATCH.get() };
-    let handled = match sink {
-        Some(sink) => sink(shared),
-        None => false,
-    };
-
-    if !handled {
-        // No handler: a fault or a spurious interrupt.  Stopping leaves the
-        // frame in a register set a debugger can read, which is the honest
-        // answer to a vector this kernel has no business receiving.
-        crate::serial::write_str("protofire: unhandled interrupt ");
-        crate::serial::write_u32(frame.vector as u32);
-        crate::serial::write_str("\n");
-        crate::halt()
+fn self_test() -> bool {
+    let answer: usize;
+    // SAFETY: the table is installed and its system call gate is present, so
+    // the processor has somewhere to go; `rax` is set to a value no syscall
+    // returns and the dispatch answers with `SYSCALL_SELF_TEST_ANSWER` for a
+    // call from ring 0.
+    unsafe {
+        core::arch::asm!(
+            "mov rax, {vector}",
+            "int {vector}",
+            "mov {answer}, rax",
+            vector = const crate::trap::SYSCALL_VECTOR,
+            answer = out(reg) answer,
+            options(nostack)
+        );
     }
+    answer == crate::trap::SYSCALL_SELF_TEST_ANSWER
 }
 
 #[cfg(test)]

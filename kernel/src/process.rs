@@ -4,87 +4,38 @@
 //!
 //! ## What this is
 //!
-//! The smallest thing that makes the trap path real: a frame of machine code
-//! mapped into the kernel's own table with `user: true`, an `eret` that enters
-//! EL0 at it, and a supervisor-call handler that answers.  Nothing here
-//! schedules, and nothing is preempted — there is one program and it runs until
-//! it exits.
+//! What the kernel does with a program's supervisor call: three calls are
+//! served — `Write`, `Exit` and `Sleep` — and everything else answers
+//! `NotImplemented`.
 //!
-//! ## Why the kernel's table holds a user page
+//! ## Why the program is not here
 //!
-//! A program needs its own address space, and giving it one means a second root
-//! table plus a `TTBR0_EL1` swap on every entry and exit.  That is the next
-//! change; today the program's page lives in the kernel's table with
-//! `user: true`, and the kernel's own pages have `user: false`.  So the
-//! protection is real — a program that read a kernel address faults — and the
-//! isolation of one program from another is not, because there is one.
+//! The image a program runs is machine code, so it lives in `arch` and this
+//! file asks for it.  An array here would have to be right for three
+//! architectures, and there is no array that is: `svc` and `x8` are aarch64's,
+//! `int $0x80` and `eax` are x86_64's.  The two moved to their machines in the
+//! change that added the second machine's ring 3, and the comment that
+//! described them stayed behind for a while afterwards.
 //!
-//! ## The program
+//! ## Sleeping
 //!
-//! Twenty-eight bytes of AArch64, written as words rather than assembled, so a
-//! reader can check it against the architecture:
-//!
-//! | word | encoding | meaning |
-//! |---|---|---|
-//! | `0xD2800021` | `movz x1, #1` | which program this is |
-//! | `0xD28000C8` | `movz x8, #6` | syscall 6, which is `Write` |
-//! | `0xD4000001` | `svc #0` | call the kernel |
-//! | `0xD2800000` | `movz x0, #0` | exit status zero |
-//! | `0xD2800068` | `movz x8, #3` | syscall 3, which is `Exit` |
-//! | `0xD4000001` | `svc #0` | call the kernel |
-//! | `0x14000000` | `b .` | never reached |
-//!
-//! `x1` is the only word that differs between the two programs: it is the
-//! number the kernel prints, so a boot log says *which* program ran and in what
-//! order.  Two programs that printed the same thing would be indistinguishable
-//! from one running twice.
-//!
-//! The bytes were disassembled by `llvm-objdump` before they were written here,
-//! which is the check that they are the instructions this table says they are.
-
-/// One program's words: its number, then the same three calls.
-///
-/// Built rather than stored so the number is a parameter: a table of two
-/// constants would be two things to keep in step with the encoding.
-const fn program_words(number: u16) -> [u32; 13] {
-    [
-        // A busy loop, so a program outlives a time slice.
-        //
-        // Without it a program finishes in microseconds, no tick arrives, and a
-        // boot that never preempted is indistinguishable from one that could
-        // not.  The loop is nested because one register's 16-bit immediate is
-        // about twelve microseconds — the first version was one register and
-        // the count was zero.
-        0xD280_0803, // movz x3, #64      (outer)
-        0xD280_2002, // movz x2, #256     (inner)
-        0xF100_0442, // subs x2, x2, #1
-        0x54FF_FFE1, /* b.ne -1            (inner, to the
-                      * subs) */
-        0xF100_0463, // subs x3, x3, #1
-        0x54FF_FF81, /* b.ne -4            (outer, to the
-                      * inner reload) */
-        0xD280_0000 | ((number as u32 & 0xFFFF) << 5) | 1, // movz x1, #number
-        0xD280_00C8,                                       // movz x8, #6  (Write)
-        0xD400_0001,                                       // svc #0
-        0xD280_0000,                                       // movz x0, #0
-        0xD280_0068,                                       // movz x8, #3  (Exit)
-        0xD400_0001,                                       // svc #0
-        0x1400_0000,                                       // b .
-    ]
-}
+//! `Sleep` is the first call that does not answer immediately.  It records a
+//! deadline in the scheduler and answers `Exit`-shaped — not because the
+//! program has ended, but because the frame the handler holds must describe
+//! what runs next, and what runs next is another task.  The program resumes
+//! when the timer wakes it, with its context exactly as the trap saved it.
 
 /// A program's bytes, for a caller that writes them into a frame.
-pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
-    let words = program_words(number);
-    let mut bytes = [0u8; PROGRAM_LEN];
-    for (index, word) in words.iter().enumerate() {
-        bytes[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
-    }
-    bytes
+///
+/// Asked of the machine: a program is machine code, and the array is this
+/// architecture's — `svc` and `x8` on aarch64, `int $0x80` and `eax` on x86_64.
+/// The kernel names one function and gets whichever machine answered.
+pub fn program_bytes(number: u16) -> [u8; arch::PROGRAM_LEN] {
+    arch::program_bytes(number)
 }
 
 /// A program's length in bytes.
-pub const PROGRAM_LEN: usize = 13 * 4;
+pub const PROGRAM_LEN: usize = arch::PROGRAM_LEN;
 
 /// Where the `n`th program's pages go.
 ///
@@ -157,13 +108,6 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
     if number == SyscallNumber::Write as usize {
-        // The interrupt mask as the program left it.  A program that ran with
-        // IRQ masked never receives a tick, and the trap frame carries the
-        // `SPSR` the exception was taken with — so this reads what the machine
-        // actually had, not what the kernel meant to set.
-        arch::serial::write_str("protofire: program spsr ");
-        arch::serial::write_u32((frame.spsr & 0x3C0) as u32);
-        arch::serial::write_str("\n");
         // The program's number is the one value it passes, and it is what makes
         // two programs distinguishable in one log.
         arch::serial::write_str("program ");
@@ -181,6 +125,55 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // program that made a call and got its answer has no reason to lose the
         // CPU, and nothing here preempts.
         return CallOutcome::Return(PROGRAM_OUTPUT);
+    }
+
+    if number == SyscallNumber::Sleep as usize {
+        // `Sleep(microseconds)`.
+        //
+        // The argument is a duration and the scheduler wants a deadline, so the
+        // conversion happens once, in the machine's own clock.  A call with no
+        // scheduler behind it answers `NotImplemented` rather than pretending
+        // to sleep: a host build has no timer, and a program told it slept
+        // would be a program whose timing lied.
+        let microseconds = call.arguments[0] as u64;
+        match crate::scheduler::sleep_for_microseconds(microseconds) {
+            Some(until) => {
+                arch::serial::write_str("protofire: a program sleeps until counter ");
+                arch::serial::write_u32(until as u32);
+                arch::serial::write_str("\n");
+                // The program is asleep, so the frame must describe whatever
+                // runs next.
+                //
+                // ## Why this is not `advance(frame, false)` unconditionally
+                //
+                // `advance` saves the frame it was given into the *current*
+                // task before choosing the next one — and the current task is
+                // the one that just went to sleep, whose context was saved by
+                // `sleep_for_microseconds`.  Saving again is harmless; what is
+                // not is that `advance` answers `Exit` when nothing else is
+                // runnable, and `Exit` tells the trap path to resume the frame
+                // it has — a sleeping program.
+                //
+                // So the two cases are separate.  With another task runnable,
+                // `advance` installs its context and the trap path resumes it.
+                // With every task asleep, the boot waits for the tick that
+                // wakes one; the timer's handler turns a deadline into a
+                // runnable task, and `idle_until_woken` returns when it has.
+                if crate::scheduler::has_other_runnable() || !crate::scheduler::has_sleeping() {
+                    return crate::scheduler::advance(frame, false);
+                }
+                crate::scheduler::advance(frame, false);
+                arch::serial::write_str("protofire: every program is asleep, waiting\n");
+                crate::idle_until_woken();
+                // A task woke, so the scheduler has something to install.  The
+                // frame from this call is the sleeper's, and `advance` replaces
+                // it with the woken task's.
+                return crate::scheduler::advance(frame, false);
+            }
+            None => {
+                return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented));
+            }
+        }
     }
 
     // Everything else is a call this boot does not serve.  `encode_error` is
@@ -206,116 +199,6 @@ const PROGRAM_OUTPUT: usize = 21;
 
 #[cfg(test)]
 mod tests {
-    use super::program_bytes;
-    use super::program_words;
-
-    /// The program's bytes are the words in little-endian order.
-    ///
-    /// A program built by writing bytes in the wrong order is one the machine
-    /// fetches as different instructions, and it would fault at an address the
-    /// kernel chose rather than at anything in the program.
-    #[test]
-    fn the_program_is_little_endian() {
-        let bytes = program_bytes(1);
-        assert_eq!(bytes.len(), super::PROGRAM_LEN);
-        assert_eq!(bytes.len(), 13 * 4);
-        assert_eq!(&bytes[0..4], &0xD280_0803u32.to_le_bytes());
-        assert_eq!(&bytes[48..52], &0x1400_0000u32.to_le_bytes());
-    }
-
-    /// The loop is a real nested countdown, decoded from the encoding.
-    ///
-    /// A program that ran to its `svc` in a few microseconds never sees a tick,
-    /// and the boot then reports a timer that "did not preempt" whether or not
-    /// preemption works.  So the shape of the loop is part of what the program
-    /// is, and the branch targets are what makes it a loop rather than a
-    /// straight line.
-    #[test]
-    fn the_busy_loop_branches_back_to_itself() {
-        let words = program_words(1);
-
-        // movz x3, #64 — the outer count.
-        assert_eq!(words[0], 0xD280_0000 | (64 << 5) | 3);
-        // movz x2, #256 — the inner count.
-        assert_eq!(words[1], 0xD280_0000 | (256 << 5) | 2);
-
-        // subs x2, x2, #1
-        assert_eq!(words[2], 0xF100_0000 | (1 << 10) | (2 << 5) | 2);
-        // b.ne -1, conditional on `subs` having left the zero flag clear.
-        // imm19 is signed, so the field has to be sign-extended: reading it
-        // as an unsigned 19-bit number turns -1 into 524287.
-        let inner = (((words[3] >> 5) & 0x7FFFF) as i32) << 13 >> 13;
-        assert_eq!(inner, -1, "the inner branch loops on itself");
-        assert_eq!(
-            words[3] & 0xF,
-            0b0001,
-            "and it is `ne`, not another condition"
-        );
-
-        // subs x3, x3, #1
-        assert_eq!(words[4], 0xF100_0000 | (1 << 10) | (3 << 5) | 3);
-        // b.ne -4: back to the inner reload, so the inner loop runs again.
-        let outer = (((words[5] >> 5) & 0x7FFFF) as i32) << 13 >> 13;
-        assert_eq!(outer, -4, "the outer branch reloads the inner count");
-        assert_eq!(words[5] & 0xF, 0b0001, "and it is `ne` too");
-    }
-
-    /// Every word after the loop is the instruction it claims to be.
-    #[test]
-    fn every_word_is_the_instruction_it_claims() {
-        let words = program_words(1);
-
-        // movz x1, #1 — `movz xD, #imm16`: 0xD2800000 | imm16 << 5 | D
-        assert_eq!(words[6], 0xD280_0000 | (1 << 5) | 1, "movz x1, #1");
-        assert_eq!(words[7], 0xD280_0000 | (6 << 5) | 8, "movz x8, #6");
-
-        assert_eq!(words[8], 0xD400_0001, "svc #0");
-        assert_eq!(words[11], 0xD400_0001, "svc #0");
-
-        assert_eq!(words[9], 0xD280_0000, "movz x0, #0");
-        assert_eq!(words[10], 0xD280_0000 | (3 << 5) | 8, "movz x8, #3");
-
-        // b . is a branch with offset zero.
-        assert_eq!(words[12] & 0xFC00_0000, 0x1400_0000, "b");
-        assert_eq!(words[12] & 0x03FF_FFFF, 0, "to itself");
-    }
-
-    /// The number is the only word that differs.
-    ///
-    /// Two programs whose code differed in more than their number would be two
-    /// programs, and the test that says "they differ by the number" is the one
-    /// that says the log line identifies which one ran.
-    #[test]
-    fn the_number_is_the_only_word_that_differs() {
-        let one = program_words(1);
-        let two = program_words(2);
-        let differing: alloc::vec::Vec<usize> = (0..one.len())
-            .filter(|index| one[*index] != two[*index])
-            .collect();
-        assert_eq!(differing, alloc::vec![6], "only `movz x1` differs");
-
-        assert_eq!((one[6] >> 5) & 0xFFFF, 1);
-        assert_eq!((two[6] >> 5) & 0xFFFF, 2);
-    }
-
-    /// The two syscall numbers the program uses are the ABI's own.
-    #[test]
-    fn the_program_calls_write_and_exit() {
-        let words = program_words(1);
-        let write = (words[7] >> 5) & 0xFFFF;
-        let exit = (words[10] >> 5) & 0xFFFF;
-        assert_eq!(
-            write as usize,
-            syscall::SyscallNumber::Write as usize,
-            "the first svc is Write"
-        );
-        assert_eq!(
-            exit as usize,
-            syscall::SyscallNumber::Exit as usize,
-            "the second svc is Exit"
-        );
-    }
-
     /// A program's pages are in its own window, and two windows do not overlap.
     ///
     /// The spacing is what makes an overrun visible: two programs at one

@@ -220,4 +220,11 @@ boot_pd:
 .align 16
 boot_stack_bottom:
     .skip 65536
+/* The kernel stack's top, published: the TSS names it as `RSP0`, so every
+   interrupt from ring 3 lands on this stack.  A local label would have left
+   `gdt.rs` unable to name it, and a second stack declared there would be a
+   second stack — one the boot is not running on, whose contents nothing
+   unwinds. */
+.global kstack_top
+kstack_top:
 boot_stack_top:

@@ -42,6 +42,7 @@ use core::sync::atomic::AtomicUsize;
 #[cfg(target_os = "none")]
 use core::sync::atomic::Ordering;
 
+use crate::SPSR_EL0T;
 use crate::vbar::ENTRIES;
 use crate::vbar::ENTRY_STRIDE;
 
@@ -437,6 +438,72 @@ pub type CallSink = fn(CallFrame, &mut ExceptionFrame) -> CallOutcome;
 /// one of these into the frame the trap path already has on the stack.
 pub type Context = ExceptionFrame;
 
+/// The context a program begins with.
+///
+/// Every register zero except the two that decide where it runs: `ELR_EL1`
+/// names the entry and `SPSR_EL1` names EL0t.  A program that started with a
+/// kernel value in a register would be one whose first instruction ran on it.
+///
+/// `SP_EL0` is not in the frame — the assembly does not save it, because a trap
+/// never changes it — so the stack pointer travels in `x0` and the install path
+/// writes it to the register before the `eret`.
+pub fn starting_context(entry: usize, stack_top: usize) -> Context {
+    let mut context = ExceptionFrame {
+        registers: [0; 30],
+        link_register: 0,
+        elr: entry as u64,
+        spsr: SPSR_EL0T,
+        esr: 0,
+        far: 0,
+        vector: 0,
+        simd: [0; 32],
+    };
+    context.registers[0] = stack_top as u64;
+    context
+}
+
+/// Where a context resumes: the instruction the `eret` will return to.
+pub fn resume_address(context: &Context) -> usize {
+    context.elr as usize
+}
+
+/// Point a context at another address, for a caller building one by hand.
+pub fn set_resume_address(context: &mut Context, address: usize) {
+    context.elr = address as u64;
+}
+
+/// The stack pointer a context runs on.
+///
+/// `SP_EL0` is not in the frame — the assembly does not save it, because a trap
+/// never changes it — so it travels in `x0` and the install path writes it to
+/// the register.  This is that convention, named.
+pub fn stack_pointer(context: &Context) -> usize {
+    context.registers[0] as usize
+}
+
+/// The word a program reads a call's answer from.
+pub fn return_value(context: &Context) -> usize {
+    context.registers[0] as usize
+}
+
+/// Put a call's answer where a program reads it.
+pub fn set_return_value(context: &mut Context, value: usize) {
+    context.registers[0] = value as u64;
+}
+
+/// Whether a context is a program's rather than the kernel's.
+///
+/// `SPSR_EL1`'s `M` field names the exception level an `eret` returns to, and
+/// `0b0000` is EL0t — the only state a program runs in.
+pub fn is_user_context(context: &Context) -> bool {
+    context.spsr & 0b1111 == 0
+}
+
+/// The state the trap path will restore, for a boot line that reports it.
+pub fn return_state(context: &Context) -> u64 {
+    context.spsr
+}
+
 /// Write `context` over the frame the trap path will restore.
 ///
 /// That is the whole of a task switch: the epilogue restores every register,
@@ -732,5 +799,156 @@ mod tests {
             vector: 0,
             simd: [0; 32],
         }
+    }
+}
+
+// The program a boot runs, as this machine's machine code.
+//
+// A program is machine code, so the array lives with the machine that executes
+// it: `svc` is the call, `x8` is the number and `x1` holds this program's own
+// number because `Write` prints its second argument.  The kernel names
+// `arch::program_bytes` and gets whichever machine answered.
+
+/// How long a program's image is, in bytes.
+pub const PROGRAM_LEN: usize = 18 * 4;
+
+/// How long the program sleeps, in microseconds.
+///
+/// Long enough to span several time slices, so the wake is observably later
+/// than the request rather than inside the same tick.  A sleep the timer could
+/// not distinguish from "did not sleep" would be a call that ran and proved
+/// nothing.
+pub const SLEEP_MICROSECONDS: u64 = 20_000;
+
+/// One program's words: its number, a busy loop, and four calls.
+///
+/// Built rather than stored so the number is a parameter: a table of two
+/// constants would be two things to keep in step with the encoding.
+///
+/// ## Why the order is loop, Write, Sleep, Write, Exit
+///
+/// The first `Write` says which program ran.  `Sleep` then takes it out of the
+/// rotation for [`SLEEP_MICROSECONDS`], during which the *other* program runs —
+/// so a log that shows two "says hello" lines before the second program's is a
+/// log where sleeping worked.  The second `Write` after the sleep is what makes
+/// the wake visible: a program that never woke prints one line, not two.
+const fn program_words(number: u16) -> [u32; 18] {
+    [
+        // A busy loop, so a program outlives a time slice.
+        //
+        // Without it a program finishes in microseconds, no tick arrives, and a
+        // boot that never preempted is indistinguishable from one that could
+        // not.  The loop is nested because one register's 16-bit immediate is
+        // about twelve microseconds — the first version was one register and
+        // the count was zero.
+        0xD280_0803, // movz x3, #64      (outer)
+        0xD280_2002, // movz x2, #256     (inner)
+        0xF100_0442, // subs x2, x2, #1
+        0x54FF_FFE1, /* b.ne -1            (inner, to the
+                      * subs) */
+        0xF100_0463, // subs x3, x3, #1
+        0x54FF_FF81, /* b.ne -4            (outer, to the
+                      * inner reload) */
+        0xD280_0000 | ((number as u32 & 0xFFFF) << 5) | 1, // movz x1, #number
+        0xD280_00C8,                                       // movz x8, #6  (Write)
+        0xD400_0001,                                       // svc #0
+        0xD289_C400,                                       /* movz x0, #20000   (the sleep's
+                                                            * microseconds) */
+        0xD280_0628, // movz x8, #49      (Sleep)
+        0xD400_0001, // svc #0
+        0xD280_00C8, // movz x8, #6       (Write, after the wake)
+        0xD400_0001, // svc #0
+        0xD280_0000, // movz x0, #0
+        0xD280_0068, // movz x8, #3       (Exit)
+        0xD400_0001, // svc #0
+        0x1400_0000, // b .
+    ]
+}
+
+/// A program's bytes, for a caller that writes them into a frame.
+pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
+    let words = program_words(number);
+    let mut bytes = [0u8; PROGRAM_LEN];
+    for (index, word) in words.iter().enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(test)]
+mod program_tests {
+    use super::program_bytes;
+    use super::program_words;
+
+    /// The program's bytes are the words in little-endian order.
+    #[test]
+    fn the_program_is_little_endian() {
+        let bytes = program_bytes(1);
+        assert_eq!(bytes.len(), super::PROGRAM_LEN);
+        assert_eq!(&bytes[0..4], &0xD280_0803u32.to_le_bytes());
+        assert_eq!(&bytes[68..72], &0x1400_0000u32.to_le_bytes());
+    }
+
+    /// The loop is a real nested countdown, decoded from the encoding.
+    #[test]
+    fn the_busy_loop_branches_back_to_itself() {
+        let words = program_words(1);
+        assert_eq!(words[0], 0xD280_0000 | (64 << 5) | 3);
+        assert_eq!(words[1], 0xD280_0000 | (256 << 5) | 2);
+
+        let inner = (((words[3] >> 5) & 0x7FFFF) as i32) << 13 >> 13;
+        assert_eq!(inner, -1, "the inner branch loops on itself");
+        assert_eq!(words[3] & 0xF, 0b0001, "and it is `ne`");
+
+        let outer = (((words[5] >> 5) & 0x7FFFF) as i32) << 13 >> 13;
+        assert_eq!(outer, -4, "the outer branch reloads the inner count");
+        assert_eq!(words[5] & 0xF, 0b0001, "and it is `ne` too");
+    }
+
+    /// Every syscall number the program uses is the ABI's own.
+    ///
+    /// Four calls: `Write`, `Sleep`, `Write`, `Exit`.  A program compiled
+    /// against a number this build does not serve would print its first line
+    /// and then fail silently, which is the one failure a sleep program could
+    /// have and still look healthy.
+    #[test]
+    fn the_program_calls_write_sleep_write_and_exit() {
+        let words = program_words(1);
+        assert_eq!(
+            ((words[7] >> 5) & 0xFFFF) as usize,
+            abi::SyscallNumber::Write as usize,
+            "the first call is Write"
+        );
+        assert_eq!(
+            ((words[10] >> 5) & 0xFFFF) as usize,
+            abi::SyscallNumber::Sleep as usize,
+            "then Sleep"
+        );
+        assert_eq!(
+            ((words[12] >> 5) & 0xFFFF) as usize,
+            abi::SyscallNumber::Write as usize,
+            "then Write again, after the wake"
+        );
+        assert_eq!(
+            ((words[15] >> 5) & 0xFFFF) as usize,
+            abi::SyscallNumber::Exit as usize,
+            "and Exit"
+        );
+
+        // The sleep's duration is the immediate in `movz x0`.
+        assert_eq!(((words[9] >> 5) & 0xFFFF) as u64, super::SLEEP_MICROSECONDS);
+    }
+
+    /// The number is the only word that differs.
+    #[test]
+    fn the_number_is_the_only_word_that_differs() {
+        let one = program_words(1);
+        let two = program_words(2);
+        let differing: alloc::vec::Vec<usize> = (0..one.len())
+            .filter(|index| one[*index] != two[*index])
+            .collect();
+        assert_eq!(differing, alloc::vec![6], "only `movz x1` differs");
+        assert_eq!((one[6] >> 5) & 0xFFFF, 1);
+        assert_eq!((two[6] >> 5) & 0xFFFF, 2);
     }
 }

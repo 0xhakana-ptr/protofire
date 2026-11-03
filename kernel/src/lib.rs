@@ -286,6 +286,22 @@ pub fn kernel_main() -> ! {
     // which machine it is running on.
     #[cfg(target_os = "none")]
     {
+        // The descriptor table and the task state segment, before the interrupt
+        // table.  On a machine that needs a TSS, the `RSP0` it names is the
+        // stack every interrupt from ring 3 lands on, and a table installed
+        // without one would take its first ring-3 interrupt as a triple fault.
+        //
+        // A machine with no such table answers `false`, and that is not a
+        // failure: aarch64's vector table needs no descriptor and its answer
+        // says so.
+        //
+        // SAFETY: called once, with the console up and before any program can
+        // run.  The stack it names as `RSP0` is the kernel's, which is live.
+        let descriptors = unsafe { arch::install_descriptor_tables(kernel_interrupt_stack_top()) };
+        if descriptors {
+            arch::serial::write_str("protofire: descriptor tables installed, TSS loaded\n");
+        }
+
         // SAFETY: called once, with the console up.  The sink answers "not
         // handled" for everything, so a vector that arrives stops the machine
         // with its number on the console rather than jumping into nothing.
@@ -757,7 +773,11 @@ fn run_programs() {
     // SAFETY: the timer's line is enabled, so a fire is a delivered interrupt,
     // and the sink and the scheduler are both installed.
     if let Some(frequency) = unsafe { arch::timer_frequency() } {
+        // SAFETY: the line is enabled, the sink is installed and the scheduler
+        // is installed, so a tick is a delivered interrupt that can switch.
         unsafe { arch::arm_timer(frequency, TIME_SLICE_US) };
+    } else {
+        arch::serial::write_str("protofire: no timer to arm for the programs\n");
     }
 
     arch::serial::write_str("protofire: entering ring 3\n");
@@ -765,7 +785,7 @@ fn run_programs() {
     // task's root is not yet installed, so this switches to it as it enters.
     unsafe {
         arch::switch_address_space(crate::scheduler_first_root());
-        arch::enter_user(context.elr as usize, context.registers[0] as usize)
+        arch::enter_user_with_context(&context)
     }
 }
 
@@ -889,21 +909,37 @@ const BOOT_GREETING_PATH: &str = "/greeting.txt";
 
 /// The timer's interrupt, as the machine reports it.
 ///
-/// 30 is the architecture's private timer interrupt and what QEMU's `virt`
-/// uses.  A machine that put it elsewhere says so in its device tree; this
-/// kernel reads the tree for the controller but not yet for this number, so the
-/// constant is the statement "this is the machine the gate runs on".
+/// Asked of the machine and not written here: 30 is aarch64's private timer
+/// interrupt and `0x20` is x86_64's local APIC vector, and a constant in this
+/// file would be one machine's answer installed on the other.  The two are one
+/// number apart in nobody's arithmetic, which is why the machine says it.
 #[cfg(target_os = "none")]
-const TIMER_INTERRUPT: usize = 30;
+fn timer_interrupt() -> usize {
+    arch::timer_interrupt()
+}
 
-/// How long a time slice is, in milliseconds.
+/// The stack an interrupt from a program lands on.
 ///
-/// Ten is long enough that a program gets work done between ticks and short
-/// enough that two programs interleave visibly in a log.  It is not a quantum a
-/// scheduler chose by weighing anything — this kernel has no load to weigh —
-/// and saying so is more useful than a table of weights that decides nothing.
+/// Asked of the machine rather than chosen here: on x86_64 it is the boot's own
+/// stack, published as a symbol, and on a machine with no TSS the answer is
+/// unused.  A constant in this file would be a second stack whose address the
+/// kernel guessed.
 #[cfg(target_os = "none")]
-const TIME_SLICE_US: u64 = 100;
+fn kernel_interrupt_stack_top() -> usize {
+    arch::interrupt_stack_top()
+}
+
+/// How long a time slice is, in microseconds.
+///
+/// A twenty-microsecond slice at about a gigahertz is twenty thousand ticks,
+/// which is long enough that a program gets work done between ticks and short
+/// enough that two programs interleave visibly in a log even under an emulator
+/// whose trap cost dwarfs the work.  The first value, a hundred, produced a
+/// boot whose programs finished inside a single slice; the number is set by
+/// that measurement and not by a scheduler weighing anything, because this
+/// kernel has no load to weigh.
+#[cfg(target_os = "none")]
+pub const TIME_SLICE_US: u64 = 20;
 
 /// How many times the timer has fired.
 pub static TIMER_TICKS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
@@ -914,7 +950,8 @@ fn start_timer() {
     // SAFETY: the controller is enabled and the vector table is installed by
     // the time this runs; the line is the architecture's private timer
     // interrupt.
-    if !unsafe { arch::enable_interrupt_line(TIMER_INTERRUPT) } {
+    let line = timer_interrupt();
+    if !unsafe { arch::enable_interrupt_line(line) } {
         arch::serial::write_str("protofire: timer line not enabled\n");
         return;
     }
@@ -935,18 +972,27 @@ fn start_timer() {
     TIMER_TICKS.store(0, core::sync::atomic::Ordering::Release);
 
     // SAFETY: read-only; reports what the controller kept.
-    let kept = unsafe { arch::interrupt_line_enabled(TIMER_INTERRUPT) };
+    let kept = unsafe { arch::interrupt_line_enabled(line) };
     arch::serial::write_str("protofire: timer line enabled = ");
     arch::serial::write_u32(usize::from(kept) as u32);
     arch::serial::write_str("\n");
 
-    // The counter, twice, to show it is running.  A timer armed against a
-    // counter that does not count fires never, and the two states look the same
-    // from the outside.
+    // The counter, read while the timer is armed and running.
+    //
+    // This has to happen here and not before: a counter that is not running
+    // reads the same value twice, so a probe that armed nothing would report
+    // `0 ticks apart` on a machine whose timer works.  The first version read
+    // the counter after the calibration had already disarmed it, and printed
+    // exactly that.
+    //
+    // Arming a slice here and disarming it immediately leaves no interrupt to
+    // take: the count is far larger than the spin below, so nothing fires
+    // during it.
+    //
+    // SAFETY: the APIC is enabled and recorded by `timer_frequency`.
+    unsafe { arch::arm_timer(frequency, TIME_SLICE_US * 1000) };
     // SAFETY: read-only.
     let first = unsafe { arch::timer_counter() };
-    // SAFETY: read-only.  A short spin so the two readings differ if the
-    // counter runs.
     let mut spin = 0u64;
     while spin < 100_000 {
         spin += 1;
@@ -954,16 +1000,41 @@ fn start_timer() {
     // SAFETY: read-only.
     let second = unsafe { arch::timer_counter() };
     arch::serial::write_str("protofire: timer counter ");
-    arch::serial::write_u32((second - first) as u32);
+    arch::serial::write_u32(first.saturating_sub(second) as u32);
     arch::serial::write_str(" ticks apart\n");
 
     arch::serial::write_str("protofire: timer control ");
     arch::serial::write_u32(unsafe { arch::timer_control() } as u32);
     arch::serial::write_str("\n");
 
+    // Disarmed again: the code that enters a program arms it, so the boot does
+    // not spend its remaining work taking traps at ring 0.
+    //
+    // SAFETY: as above; this is the end of the boot's own use of the timer.
+    unsafe { arch::disarm_timer() };
+
     arch::serial::write_str("protofire: timer armed at ");
     arch::serial::write_u32((frequency / 1000) as u32);
     arch::serial::write_str(" ticks/ms\n");
+
+    // And the delivery path, proved rather than assumed: the same vector the
+    // timer uses, sent by the controller to this CPU.  If this line is missing
+    // from a boot log, an interrupt from ring 3 never arrives and the timer is
+    // not the thing to investigate.
+    //
+    // SAFETY: the table is installed, the APIC is enabled by `timer_frequency`,
+    // and the sink counts the timer's vector.
+    let delivered = unsafe { arch::raise_interrupt(timer_interrupt()) };
+    let seen = TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire);
+    arch::serial::write_str("protofire: interrupt from the controller ");
+    if !delivered {
+        arch::serial::write_str("not raised (this machine cannot send one to itself)");
+    } else if seen > 0 {
+        arch::serial::write_str("delivered to the timer's handler");
+    } else {
+        arch::serial::write_str("raised but not delivered");
+    }
+    arch::serial::write_str("\n");
 }
 
 /// The label the boot's volume carries.
@@ -1086,6 +1157,43 @@ fn read_greeting_through_syscall() -> bool {
 fn write_to_console(text: &str) {
     arch::serial::write_str(text);
     arch::serial::write_str("\n");
+}
+
+/// Wait here until a sleeping program's deadline passes.
+///
+/// ## What this replaces
+///
+/// A `halt` loop.  When every program is asleep the scheduler has nothing to
+/// resume, and the trap path's `eret` would return to a program that is not
+/// runnable.  The choices are to stop the machine or to wait for the tick that
+/// wakes one; stopping is the boot ending with work left.
+///
+/// ## How the wake happens
+///
+/// The timer keeps firing, and its handler calls `scheduler::wake_expired` —
+/// which is what turns a deadline into a runnable task.  The loop below takes
+/// the interrupt, the handler wakes a task, and `wait_for_a_wakeup` returns
+/// once one is runnable.  The scheduler is then asked for a context and the
+/// trap path resumes it.
+///
+/// ## Why this is safe with the frame
+///
+/// `idle` runs *after* the handler returned `Exit`, so the frame this function
+/// never touches was already saved by `advance`.  The loop does not return a
+/// context: it returns to `serve`, which returns `Exit`, which lets the trap
+/// path restore whatever the last preemption installed — and the preemption
+/// inside the tick is what installs the woken task.
+///
+/// A boot with no timer would spin here forever.  That is the honest state: a
+/// machine that cannot count cannot wake a sleeper, and the line the boot
+/// printed said so.
+pub fn idle_until_woken() {
+    while crate::scheduler::has_sleeping() && !crate::scheduler::has_runnable() {
+        // `arch::halt` disables interrupts and stops the core, so it would
+        // never return; `wait_for_a_wakeup` is the machine's "stop counting
+        // until something happens", with interrupts left on.
+        arch::wait_for_a_wakeup();
+    }
 }
 
 /// Stop this CPU.
