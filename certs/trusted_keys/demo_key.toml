@@ -1,0 +1,20 @@
+# A placeholder, and deliberately not a key.
+#
+# No certificate is in this file.  An image built from this tree trusts nothing
+# yet, and the honest way to say that is a file with no `pem` in it rather than
+# a certificate generated for the tree: a key made to be committed is a key
+# anyone reading the repository holds, and a machine that trusts it trusts
+# every one of them.
+#
+# What goes here when the boot-integrity check arrives:
+#
+#   # <whose root this is>, and why this machine trusts it.
+#   pem = """
+#   -----BEGIN CERTIFICATE-----
+#   ...
+#   -----END CERTIFICATE-----
+#   """
+#
+# The `pem` field is the whole of the format.  `certs/README.md` says why the
+# anchor is a file rather than a `const`, and what "trusting it" would mean for
+# the image this file is built into.
