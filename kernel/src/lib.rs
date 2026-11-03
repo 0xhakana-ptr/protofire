@@ -254,17 +254,45 @@ pub fn kernel_main() -> ! {
         }
     };
 
+    // The namespace: two filesystems, mounted by prefix.
+    //
+    // The boot's volume owns `/` — it is where `/greeting.txt` lives, and it is
+    // what the disk was formatted with.  A tmpfs owns `/tmp`, which is a second
+    // filesystem answering for a prefix of the same namespace and the reason
+    // the mount table exists: a path is answered by the volume whose prefix is
+    // longest, so `/tmp/x` belongs to the tmpfs while everything else belongs
+    // to PyroFS.
+    //
+    // Nothing reads `/tmp` on this boot.  It is mounted anyway, because a
+    // mount table with one entry has never resolved anything, and the line
+    // below is where the two volumes are named.
+    let mut namespace = fs::MountTable::new();
+    namespace
+        .mount(
+            "/",
+            "pyrofs",
+            BOOT_VOLUME_LABEL,
+            alloc::sync::Arc::new(volume),
+        )
+        .unwrap_or_else(|_| halt());
+    let scratch = fs::TmpFsVolume::new("tmpfs", TMPFS_BYTES);
+    namespace
+        .mount("/tmp", "tmpfs", "memory", alloc::sync::Arc::new(scratch))
+        .unwrap_or_else(|_| halt());
+
+    arch::serial::write_str("protofire: namespace: ");
+    arch::serial::write_str(&fs::mount::describe(&namespace));
+    arch::serial::write_str("\n");
+
     // The read happens through a syscall, not through the filesystem.
     //
-    // The registry is handed the mounted volume and is then the only thing
-    // that can reach it: every later step names a descriptor and a number, and
-    // the only code that reaches a `VNode` is the handler `open` leads to.
-    // That is what makes this a boot of the syscall path rather than a boot
-    // that happens to have one compiled in — and it is the step the previous
-    // version of this function skipped, which is why the table was written and
-    // never executed.
+    // The registry is handed the namespace and is then the only thing that can
+    // reach it: every later step names a descriptor and a number, and the only
+    // code that reaches a `VNode` is the handler `open` leads to.  That is what
+    // makes this a boot of the syscall path rather than a boot that happens to
+    // have one compiled in.
     let mut table = crate::syscall::SyscallTable::new();
-    table.set_volume(alloc::sync::Arc::new(volume));
+    table.set_namespace(alloc::sync::Arc::new(namespace));
     table.register(::syscall::SyscallNumber::Open, crate::syscall::open);
     table.register(::syscall::SyscallNumber::Read, crate::syscall::read);
     table.register(::syscall::SyscallNumber::Close, crate::syscall::close);
@@ -293,6 +321,13 @@ const BOOT_VOLUME_LABEL: &str = "protofire";
 /// A constant rather than a string compare against a literal in two places:
 /// the boot line and the probe's condition are one fact.
 const SOURCE_VIRTIO: &str = "virtio-blk on pci";
+
+/// The tmpfs mounted at `/tmp`, sized to what a boot's scratch space is worth.
+///
+/// A megabyte, and a bound rather than a promise: the volume refuses a write
+/// past it, which is what stops a scratch filesystem from being a heap leak
+/// with a path.
+const TMPFS_BYTES: usize = 1024 * 1024;
 
 /// The sector the driver's probe writes and reads back.
 ///

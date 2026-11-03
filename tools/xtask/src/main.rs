@@ -125,7 +125,12 @@ impl Machine {
     /// open/read/close` are what distinguish the two, and they are the whole
     /// claim this line makes.
     ///
-    /// The fourth names where the block device came from.  The boot falls back
+    /// The fourth names every mounted filesystem and the prefix it owns.  A
+    /// mount table with one entry has never resolved anything, so the line is
+    /// required to name two: the volume the disk was formatted with, and a
+    /// tmpfs at `/tmp` that only exists if the namespace works.
+    ///
+    /// The fifth names where the block device came from.  The boot falls back
     /// to its in-memory image when the bus has no disk, so "the filesystem
     /// mounted" alone would pass on a machine where the driver never ran —
     /// `virtio-blk on pci` is the line that says it did.
@@ -138,6 +143,10 @@ impl Machine {
                 ),
                 ("protofire: heap at ", false),
                 ("protofire: block device from virtio-blk on pci", true),
+                (
+                    "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory)",
+                    true,
+                ),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",

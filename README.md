@@ -18,12 +18,13 @@ protofire: pci scan found 4 device(s) on 1 bus
 protofire: block device from virtio-blk on pci
 protofire: virtio-blk wrote and read back sector 63
 protofire: formatting the disk with the boot image
+protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory)
 protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label protofire
 ```
 
 PVH and multiboot2 handshakes, a serial console on all three machines, a TLSF
-heap, a PCI bus scan, a virtio block driver over a real virtqueue, PyroFS, and
-three syscalls that read a file off the disk.
+heap, a PCI bus scan, a virtio block driver over a real virtqueue, a mount table
+with two filesystems on it, and three syscalls that read a file off the disk.
 
 **That is roughly an eighth of the kernel this replaces.**  The rest — the other
 ten filesystems, the network stack, the scheduler, the process layer, most of
@@ -34,8 +35,8 @@ in and what is not.
 | | |
 |---|---|
 | crates | 36 |
-| source | ~42,000 lines |
-| tests | 427, all runnable with `cargo test -p <crate>` |
+| source | ~44,000 lines |
+| tests | 447, all runnable with `cargo test -p <crate>` |
 
 ## Building and running
 

@@ -16,7 +16,7 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
 | `arch` | 95,361 | 1,697 | boot, interrupts, serial, port I/O — four modules of a hundred |
 | `crypto` | 4,606 | 4,832 | all of it, one module per algorithm |
-| `fs` | 68,494 | 11,025 | PyroFS and the VFS contract; ten filesystems are not here |
+| `fs` | 68,494 | 12,400 | PyroFS, tmpfs, the mount table and the VFS contract; nine filesystems are not here |
 | `kernel` | 39,704 | 1,157 | the boot sequence, the syscall table, device discovery |
 | `memory` | 9,649 | 1,860 | the frame pool and the region pools |
 | `network` | 39,240 | 1 | nothing |
@@ -46,20 +46,23 @@ rows.
 | btrfs | 2,108 | no |
 | squashfs | 1,849 | no |
 | the VFS layer | 1,723 | contract only — see below |
-| tmpfs | 1,072 | no |
+| tmpfs | 1,072 | **yes** |
 | FUSE | 876 | no |
 
-**The VFS row is the one that needs reading.**  `fs/src/vnode.rs` and
-`fs/src/filesystem.rs` carry the *contract* — what a node is, what a filesystem
-answers — and the tests here exercise it with a mock.  What is not here is the
-*namespace*: the mount table, the path walk and the handle table.  `PyroFS` is
-mounted directly, not through a VFS, and the difference shows the moment a second
-filesystem arrives.
+**The VFS row has moved.**  `fs/src/vnode.rs` and `fs/src/filesystem.rs` carry
+the *contract* — what a node is, what a filesystem answers — and the namespace
+is now `fs/src/mount.rs` and `fs/src/path.rs`: a mount table, longest-prefix
+resolution, and path normalization.  What is still not here is the *handle
+table*, which arrives with the process layer because a handle belongs to a
+process.
 
-The order the rest come in is by what they prove rather than by size: tmpfs next
-(it needs no disk, so it exercises the VFS without a device), then the FAT
-family (shared structure, three formats), then the read-only formats, then NTFS
-and ext4, which are where a mistake costs data.
+Two filesystems are mounted on a boot: PyroFS at `/` and tmpfs at `/tmp`.  The
+second is what proved the namespace — a table with one entry has never resolved
+anything.
+
+The order the rest come in is by what they prove rather than by size: the FAT
+family next (shared structure, three formats), then the read-only formats, then
+NTFS and ext4, which are where a mistake costs data.
 
 ## Network
 

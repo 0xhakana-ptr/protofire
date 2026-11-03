@@ -55,7 +55,7 @@ use alloc::sync::Arc;
 use abi::Error;
 use abi::Result;
 use abi::fs as fs_abi;
-use fs::FileSystem;
+use fs::MountTable;
 use fs::VNode;
 use syscall::SyscallContext;
 use syscall::SyscallDispatch;
@@ -146,7 +146,7 @@ struct Descriptor {
 pub struct SyscallTable {
     slots: [Handler; MAX_SYSCALLS],
     descriptors: [Option<Descriptor>; MAX_DESCRIPTORS],
-    volume: Option<Arc<dyn FileSystem>>,
+    namespace: Option<Arc<MountTable>>,
 }
 
 impl SyscallTable {
@@ -155,13 +155,19 @@ impl SyscallTable {
         Self {
             slots: [Handler::Unimplemented; MAX_SYSCALLS],
             descriptors: [const { None }; MAX_DESCRIPTORS],
-            volume: None,
+            namespace: None,
         }
     }
 
-    /// Mount a volume for `open` to look paths up in.
-    pub fn set_volume(&mut self, volume: Arc<dyn FileSystem>) {
-        self.volume = Some(volume);
+    /// Install the namespace `open` resolves paths against.
+    ///
+    /// A namespace rather than a volume: a path names a mount, the mount names
+    /// a filesystem, and the handler never learns which one it reached.  A
+    /// table that held a single volume would have made `/tmp/x` a path the
+    /// filesystem was asked about directly, which is the arrangement this
+    /// replaced.
+    pub fn set_namespace(&mut self, namespace: Arc<MountTable>) {
+        self.namespace = Some(namespace);
     }
 
     /// Register a handler for `number`.
@@ -203,9 +209,9 @@ impl SyscallTable {
             .count()
     }
 
-    /// The mounted volume, if a boot set one.
-    fn volume(&self) -> Option<&Arc<dyn FileSystem>> {
-        self.volume.as_ref()
+    /// The namespace, if a boot installed one.
+    fn namespace(&self) -> Option<&Arc<MountTable>> {
+        self.namespace.as_ref()
     }
 
     /// Put one descriptor in a free slot and answer its index.
@@ -275,7 +281,11 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     validate_known_flags(flags, fs_abi::OPEN_KNOWN_FLAGS)?;
     validate_zeroed_args(arguments.context, 2)?;
 
-    let node = table.volume().ok_or(Error::NotFound)?.lookup(path)?;
+    // Through the namespace: the table resolves the path to a mount and a path
+    // relative to it, and the filesystem answers for that.  `open` names no
+    // filesystem, which is what lets a second one be mounted without this
+    // handler changing.
+    let node = table.namespace().ok_or(Error::NotFound)?.lookup(path)?;
 
     let descriptor = table.insert(Descriptor {
         node,
@@ -339,7 +349,11 @@ mod tests {
             &[("/greeting.txt", NodeKind::File, b"hello from a syscall")],
         );
         let mut table = SyscallTable::new();
-        table.set_volume(Arc::new(volume));
+        let mut namespace = MountTable::new();
+        namespace
+            .mount("/", "pyrofs", "boot", Arc::new(volume))
+            .expect("mount");
+        table.set_namespace(Arc::new(namespace));
         table.register(SyscallNumber::Open, open);
         table.register(SyscallNumber::Read, read);
         table.register(SyscallNumber::Close, close);

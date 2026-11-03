@@ -35,9 +35,12 @@ extern crate alloc;
 
 pub mod block_cache;
 pub mod filesystem;
+pub mod mount;
+pub mod path;
 pub mod profiler;
 pub mod pyrofs;
 pub mod stats;
+pub mod tmpfs;
 pub mod types;
 pub mod vnode;
 
@@ -47,9 +50,12 @@ pub mod vnode;
 // first version of this file left `SecurityDescriptor` out of it — which the
 // tests caught, and which is the reason the re-export is a glob.
 pub use filesystem::*;
+pub use mount::MountInfo;
+pub use mount::MountTable;
 pub use profiler::FsProfiler;
 pub use profiler::FsProfilerSnapshot;
 pub use stats::CacheStats;
+pub use tmpfs::TmpFsVolume;
 pub use types::*;
 pub use vnode::VNode;
 
