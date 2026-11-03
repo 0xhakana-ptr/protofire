@@ -42,6 +42,7 @@ pub mod interrupts;
 pub mod paging;
 pub mod port;
 pub mod serial;
+pub mod timer;
 pub mod trap;
 
 pub use trap::CallFrame;
@@ -49,6 +50,8 @@ pub use trap::CallOutcome;
 pub use trap::Context;
 #[cfg(target_os = "none")]
 pub use trap::set_call_sink;
+#[cfg(target_os = "none")]
+pub use trap::set_preempt_sink;
 pub mod vbar;
 
 /// Stop this CPU until an interrupt arrives.
@@ -169,7 +172,7 @@ pub const USER_EXCEPTION_LEVEL: u64 = 0;
 /// clear at EL0, a program's debug exception would arrive on a vector the
 /// kernel installed for something else.  This kernel has no debugger to attach,
 /// so the mask is the honest setting.
-pub const SPSR_EL0T: u64 = 0x3C0;
+pub const SPSR_EL0T: u64 = 0x340;
 
 /// Enter EL0 at `entry` with the stack at `stack_top`.
 ///
@@ -257,6 +260,74 @@ pub unsafe fn switch_address_space(root: usize) -> bool {
     paging::current_root_table() == root
 }
 
+/// The generic timer's frequency, or `None` when the machine does not report
+/// one.
+///
+/// # Safety
+///
+/// Reads a system register; no side effects.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_frequency() -> Option<u64> {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { timer::frequency() }
+}
+
+/// The counter's current value.
+///
+/// # Safety
+///
+/// Reads a system register; no side effects.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_counter() -> u64 {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { timer::counter() }
+}
+
+/// Arm the timer to fire `milliseconds` from now.
+///
+/// # Safety
+///
+/// Called after the timer's interrupt line is enabled in the controller: a
+/// timer whose line is not enabled counts and tells nobody.
+#[cfg(target_os = "none")]
+pub unsafe fn arm_timer(frequency: u64, microseconds: u64) -> u64 {
+    let ticks = timer::ticks_for_microseconds(frequency, microseconds);
+    // SAFETY: the caller's contract is this function's.
+    unsafe { timer::arm(ticks) };
+    ticks
+}
+
+/// The timer's control register, as it reads after arming.
+///
+/// A timer that was "armed" and never fires is one whose control register did
+/// not keep the write, and the register is the only thing that says which
+/// happened.
+///
+/// # Safety
+///
+/// Reads a system register; no side effects.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_control() -> u64 {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { timer::control() }
+}
+
+/// Whether the timer has fired since it was last armed.
+///
+/// # Safety
+///
+/// Reads a system register; no side effects.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_fired() -> bool {
+    // SAFETY: as `timer_frequency`.
+    unsafe { timer::has_fired() }
+}
+
+/// The timer's interrupt as a private interrupt number.
+pub const fn timer_interrupt() -> usize {
+    timer::TIMER_INTERRUPT
+}
+
 /// Raise one interrupt from the controller, as a device would.
 ///
 /// Answers whether this machine has a controller that can do it.  It is the
@@ -276,6 +347,25 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
     let gic = gic::Gic::new(distributor, cpu);
     // SAFETY: the caller's contract is this function's.
     unsafe { gic.raise(number) }
+}
+
+/// Whether the controller kept the enable bit for `number`.
+///
+/// Reads the distributor back rather than trusting the write: a line enabled in
+/// a register that did not keep it is a line that never arrives, and the two
+/// states are indistinguishable from the caller's side.
+///
+/// # Safety
+///
+/// As [`enable_interrupt_line`].
+#[cfg(target_os = "none")]
+pub unsafe fn interrupt_line_enabled(number: usize) -> bool {
+    let Some((distributor, _)) = boot::interrupt_controller() else {
+        return false;
+    };
+    let gic = gic::Gic::new(distributor, distributor);
+    // SAFETY: the caller's contract is this function's.
+    unsafe { gic.line_is_enabled(number) }
 }
 
 /// Enable one of the machine's interrupt lines.

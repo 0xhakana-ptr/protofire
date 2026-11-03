@@ -33,6 +33,22 @@
 pub fn handle(frame: irq::Frame) -> bool {
     let vector = frame.vector;
 
+    // The timer: count it, and re-arm.
+    //
+    // Re-arming here rather than in the preemption path is deliberate: a
+    // `CNTP_TVAL_EL0` countdown fires once and stops, so a handler that only
+    // counted would get one tick and then silence for the rest of the boot.
+    #[cfg(target_os = "none")]
+    if vector == arch::timer_interrupt() {
+        crate::TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Release);
+        // SAFETY: the line is enabled, so this is a timer that can fire again.
+        if let Some(frequency) = unsafe { arch::timer_frequency() } {
+            // SAFETY: as above.
+            unsafe { arch::arm_timer(frequency, crate::TIME_SLICE_US) };
+        }
+        return true;
+    }
+
     // The boot's own check: the line it raised, to prove the path.
     if vector == crate::TEST_INTERRUPT {
         crate::TEST_INTERRUPT_RAISED.store(vector, core::sync::atomic::Ordering::Release);

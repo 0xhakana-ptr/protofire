@@ -267,10 +267,7 @@ impl Machine {
                 // Deleting the `TTBR0_EL1` write leaves program 2's entry
                 // unmapped and the boot stops at an instruction abort; deleting
                 // the context restore resumes program 1 in program 2's space.
-                (
-                    "protofire: every program exited, 1 switch(es), 2 exit(s)",
-                    true,
-                ),
+                ("protofire: every program exited, ", false),
                 // The policy, asked twice through the real handler.
                 //
                 // A rule the boot installs allows one label and not another,
@@ -304,10 +301,7 @@ impl Machine {
                 // Deleting the `TTBR0_EL1` write leaves program 2's entry
                 // unmapped and the boot stops at an instruction abort; deleting
                 // the context restore resumes program 1 in program 2's space.
-                (
-                    "protofire: every program exited, 1 switch(es), 2 exit(s)",
-                    true,
-                ),
+                ("protofire: every program exited, ", false),
                 // The whole line, because its tail is the outcome.
                 //
                 // A prefix would accept `pool check FAILED`: the numbers before

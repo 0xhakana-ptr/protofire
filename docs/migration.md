@@ -92,10 +92,63 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
-x86_64 — the port I/O the PCI bus is reached through.  What comes next is
-preemption: the scheduler switches only when a program calls, and switching one
-that did not ask needs the timer.  That is the timer's job and the timer is not
-programmed.
+x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
+**x86_64** half of everything above: ring 3 needs a TSS with an `RSP0` and a
+DPL-3 gate, and its timer is the local APIC's.  Then `wait`, `sleep` and a
+blocking `read`, which need a process to park.
+
+### The timer, and three reasons it looked broken
+
+    protofire: timer armed at 1000000 ticks/ms
+    protofire: every program exited, 2 exit(s), 5 tick(s), 5 switch(es)
+    protofire: the timer preempted, 4 switch(es) from ticks
+
+`arch/aarch64/src/timer.rs` is the generic timer: `CNTFRQ_EL0` for the
+frequency, `CNTPCT_EL0` for the counter, `CNTP_TVAL_EL0` for a countdown.  The
+countdown and not the compare value, because a deadline computed from a counter
+read that arrived one tick late is a deadline in the past — which fires
+immediately and looks like a timer that ignores its interval.
+
+Four things were wrong before it worked, and each looked like the previous one's
+symptom:
+
+1. **The interrupt was in group 1 and QEMU did not deliver it.**  Every register
+   read back correct — enabled, group 1, priority `0x80`, edge-triggered, both
+   CPU-interface groups on, `PMR = 0xff` — and `GICD_ISPENDR0` showed bit 30
+   **pending** while `GICC_IAR` answered `1022` (spurious) forever.  The same
+   interrupt in group 0 delivers.  That is written down in `gic.rs` at the
+   place it is decided, because a reader who finds a PPI in group 0 will want
+   to know it is not an oversight.
+
+2. **`SPSR_EL1` masked IRQ at EL0.**  The constant was `0x3C0`, which sets
+   `D`, `A`, `I` and `F`; a program running with `I` set never takes a tick, so
+   preemption would have been a scheduler the kernel believes in and the
+   machine never invokes.  It is `0x340` — the same three masks and `I` clear.
+
+3. **The timer was armed before the boot finished.**  Every tick during the
+   remaining EL1 setup took a full 800-byte trap, and the boot stopped in the
+   middle of a console line: `program 1 mappe`.  It is armed at the last moment
+   before `eret` into EL0.
+
+4. **A console write was not atomic.**  `write_str` is dozens of byte writes and
+   a tick between two of them ran another program that printed — so one line
+   came out interleaved with another's.  It now masks IRQs for its duration and
+   restores what was there, which is what `sync` already does for every other
+   piece of kernel state.
+
+**The first check could not fail, twice.**  The timer's line was reported as
+firing from a counter the boot incremented itself; it now counts what the
+handler sees.  And the boot's total said `1 switch(es)` — one, from the first
+exit — whatever the timer did, so a scheduler that never preempted printed
+exactly what one that did printed.  The boot now says which happened: with the
+preemption sink removed it prints `the timer did not preempt`, and the gate
+requires the other line.
+
+Three mutations were run and all three are visible in a boot: removing the
+preempt sink leaves the ticks and drops the switches to one; masking IRQ at EL0
+drops the ticks; and the program's busy loop had to be lengthened because one
+register's 16-bit immediate is twelve microseconds, which is shorter than a
+slice.
 
 ### Two programs, two address spaces
 

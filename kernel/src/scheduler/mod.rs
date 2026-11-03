@@ -129,7 +129,7 @@ pub fn starting_context(entry: usize, stack_top: usize) -> Context {
         registers: [0; 30],
         link_register: 0,
         elr: entry as u64,
-        spsr: 0x3C0,
+        spsr: 0x340,
         esr: 0,
         far: 0,
         vector: 0,
@@ -273,6 +273,18 @@ impl Scheduler {
         None
     }
 
+    /// Whether a task other than the current one can run.
+    ///
+    /// A preemption with only one program is a timer tick, not a switch: the
+    /// frame would be replaced with the same task's context and the total would
+    /// count ticks instead of switches.
+    pub fn has_other_runnable(&self) -> bool {
+        self.tasks
+            .iter()
+            .enumerate()
+            .any(|(index, task)| index != self.current && !task.finished)
+    }
+
     /// Whether any task is still runnable.
     pub fn has_runnable(&self) -> bool {
         self.tasks.iter().any(|task| !task.finished)
@@ -369,6 +381,48 @@ pub fn has_runnable() -> bool {
     scheduler.is_some_and(Scheduler::has_runnable)
 }
 
+/// Preempt: put the next task's context in `frame` and switch to its space.
+///
+/// ## Why this is different from `advance`
+///
+/// `advance` answers a call: the frame it is given belongs to a task that asked
+/// for something, and the caller does something with the answer.  This is
+/// called from an interrupt, where the frame belongs to whatever the program
+/// was doing — so there is no call, no answer, and nothing to report to anyone.
+/// The only thing that matters is that the frame the epilogue restores is the
+/// next task's.
+///
+/// ## Why it does not count a switch when nothing else can run
+///
+/// A timer that fires in a system with one runnable task is a timer, not a
+/// switch.  Counting it would make the boot's switch total depend on how long
+/// the program ran, and the number would stop describing the scheduler.
+pub fn preempt(frame: &mut arch::Context) {
+    // Only from a program.
+    //
+    // A timer fires at EL1 as well as at EL0 — the kernel's own boot code takes
+    // ticks, and its saved context is a kernel one.  Installing a program's
+    // context over it would resume a ring-3 program from inside a kernel stack
+    // that nothing will ever unwind, and the boot stops mid-line: the first run
+    // of this printed `program 1 mappe` and nothing more.
+    //
+    // `SPSR_EL1`'s low bits name the exception level the frame returns to; a
+    // kernel frame's are not EL0t.
+    if frame.spsr & 0b1111 != 0 {
+        return;
+    }
+
+    // SAFETY: the scheduler is written once before any program runs.
+    let scheduler = unsafe { (*SCHEDULER.get()).as_mut() };
+    let Some(scheduler) = scheduler else {
+        return;
+    };
+    if !scheduler.has_other_runnable() {
+        return;
+    }
+    let _ = scheduler.schedule(frame, false);
+}
+
 /// Whether a call means the program has finished.
 pub fn is_exit(call: &CallFrame) -> bool {
     call.number == syscall::SyscallNumber::Exit as usize
@@ -394,7 +448,7 @@ mod tests {
     fn a_task_starts_at_its_entry_and_nothing_else() {
         let context = starting_context(0x80_0000_1000, 0x80_0000_2000);
         assert_eq!(context.elr, 0x80_0000_1000);
-        assert_eq!(context.spsr, 0x3C0, "EL0t with DAIF masked");
+        assert_eq!(context.spsr, 0x340, "EL0t, IRQ unmasked, D/A/F masked");
         assert_eq!(context.link_register, 0);
         assert!(context.simd.iter().all(|slot| *slot == 0));
         assert!(

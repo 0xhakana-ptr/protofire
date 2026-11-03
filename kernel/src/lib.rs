@@ -641,6 +641,17 @@ pub fn kernel_main() -> ! {
     }
     arch::serial::write_str("\n");
 
+    // The timer, and the preemption it makes possible.
+    //
+    // A scheduler that switches only when a program calls is a scheduler that
+    // cannot stop a program that does not.  The timer is what makes the other
+    // kind possible, and the boot proves it by arming one and reporting whether
+    // an interrupt arrived — the same shape as the software-interrupt check
+    // above, for the same reason: a mechanism nobody saw fire is a mechanism
+    // nobody knows works.
+    #[cfg(target_os = "none")]
+    start_timer();
+
     // A program, at EL0, calling back.
     //
     // Everything above runs at EL1 and talks to the kernel directly.  This is
@@ -672,8 +683,11 @@ fn run_programs() {
     use crate::scheduler::Scheduler;
     use crate::scheduler::Task;
 
-    // SAFETY: the sink is installed once, before EL0 is entered.
-    unsafe { arch::set_call_sink(process::serve) };
+    // SAFETY: both sinks are installed once, before EL0 is entered.
+    unsafe {
+        arch::set_call_sink(process::serve);
+        arch::set_preempt_sink(crate::scheduler::preempt);
+    }
 
     let mut scheduler = Scheduler::new();
     for number in [1u16, 2] {
@@ -737,6 +751,14 @@ fn run_programs() {
         arch::serial::write_str("protofire: no program to run\n");
         return;
     };
+
+    // Now, and not before: everything that runs at EL1 is done.
+    //
+    // SAFETY: the timer's line is enabled, so a fire is a delivered interrupt,
+    // and the sink and the scheduler are both installed.
+    if let Some(frequency) = unsafe { arch::timer_frequency() } {
+        unsafe { arch::arm_timer(frequency, TIME_SLICE_US) };
+    }
 
     arch::serial::write_str("protofire: entering ring 3\n");
     // SAFETY: the entry is mapped `user` in the installed space — the first
@@ -864,6 +886,85 @@ fn open_as(identity: u32) -> bool {
 
 /// The path the boot reads, and the one the policy is asked about.
 const BOOT_GREETING_PATH: &str = "/greeting.txt";
+
+/// The timer's interrupt, as the machine reports it.
+///
+/// 30 is the architecture's private timer interrupt and what QEMU's `virt`
+/// uses.  A machine that put it elsewhere says so in its device tree; this
+/// kernel reads the tree for the controller but not yet for this number, so the
+/// constant is the statement "this is the machine the gate runs on".
+#[cfg(target_os = "none")]
+const TIMER_INTERRUPT: usize = 30;
+
+/// How long a time slice is, in milliseconds.
+///
+/// Ten is long enough that a program gets work done between ticks and short
+/// enough that two programs interleave visibly in a log.  It is not a quantum a
+/// scheduler chose by weighing anything — this kernel has no load to weigh —
+/// and saying so is more useful than a table of weights that decides nothing.
+#[cfg(target_os = "none")]
+const TIME_SLICE_US: u64 = 100;
+
+/// How many times the timer has fired.
+pub static TIMER_TICKS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Enable the timer's line, arm it, and say what the machine reported.
+#[cfg(target_os = "none")]
+fn start_timer() {
+    // SAFETY: the controller is enabled and the vector table is installed by
+    // the time this runs; the line is the architecture's private timer
+    // interrupt.
+    if !unsafe { arch::enable_interrupt_line(TIMER_INTERRUPT) } {
+        arch::serial::write_str("protofire: timer line not enabled\n");
+        return;
+    }
+
+    // SAFETY: as above, and the line being enabled is what makes a fire a
+    // delivered interrupt rather than a silent status bit.
+    let Some(frequency) = (unsafe { arch::timer_frequency() }) else {
+        arch::serial::write_str("protofire: timer has no frequency, not armed\n");
+        return;
+    };
+
+    // The line is enabled here; the timer is armed by the code that enters EL0.
+    //
+    // Arming now would fire during the rest of the boot — which runs at EL1,
+    // takes a full trap per tick, and cannot be preempted — and the boot would
+    // spend its time in trap entry rather than in starting.  The first version
+    // armed here and the log stopped in the middle of a line.
+    TIMER_TICKS.store(0, core::sync::atomic::Ordering::Release);
+
+    // SAFETY: read-only; reports what the controller kept.
+    let kept = unsafe { arch::interrupt_line_enabled(TIMER_INTERRUPT) };
+    arch::serial::write_str("protofire: timer line enabled = ");
+    arch::serial::write_u32(usize::from(kept) as u32);
+    arch::serial::write_str("\n");
+
+    // The counter, twice, to show it is running.  A timer armed against a
+    // counter that does not count fires never, and the two states look the same
+    // from the outside.
+    // SAFETY: read-only.
+    let first = unsafe { arch::timer_counter() };
+    // SAFETY: read-only.  A short spin so the two readings differ if the
+    // counter runs.
+    let mut spin = 0u64;
+    while spin < 100_000 {
+        spin += 1;
+    }
+    // SAFETY: read-only.
+    let second = unsafe { arch::timer_counter() };
+    arch::serial::write_str("protofire: timer counter ");
+    arch::serial::write_u32((second - first) as u32);
+    arch::serial::write_str(" ticks apart\n");
+
+    arch::serial::write_str("protofire: timer control ");
+    arch::serial::write_u32(unsafe { arch::timer_control() } as u32);
+    arch::serial::write_str("\n");
+
+    arch::serial::write_str("protofire: timer armed at ");
+    arch::serial::write_u32((frequency / 1000) as u32);
+    arch::serial::write_str(" ticks/ms\n");
+}
 
 /// The label the boot's volume carries.
 const BOOT_VOLUME_LABEL: &str = "protofire";

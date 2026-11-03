@@ -205,3 +205,84 @@ pub struct Context {
     /// The SIMD registers.
     pub simd: [u128; 32],
 }
+
+/// The timer's frequency: this machine's timer is not driven yet.
+///
+/// x86_64's is the local APIC's, programmed through the APIC's timer divide and
+/// initial-count registers; riscv64's is `time`/`stimecmp`.  Neither is wired,
+/// so `None` is the honest answer — and a caller treats it as "no timer" rather
+/// than as a frequency of zero.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_frequency() -> Option<u64> {
+    None
+}
+
+/// Arm the timer: this machine's timer is not driven yet.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn arm_timer(_frequency: u64, _milliseconds: u64) -> u64 {
+    0
+}
+
+/// Whether the timer has fired: it has not, because it is not armed.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_fired() -> bool {
+    false
+}
+
+/// The timer's interrupt number: this machine's is not wired.
+pub const fn timer_interrupt() -> usize {
+    0
+}
+
+/// The timer's counter: this machine's timer is not driven yet.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_counter() -> u64 {
+    0
+}
+
+/// The timer's control register: this machine's timer is not driven yet.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn timer_control() -> u64 {
+    0
+}
+
+/// Whether an interrupt line is enabled: this machine's controller is not
+/// driven.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn interrupt_line_enabled(_number: usize) -> bool {
+    false
+}
+
+/// The function called at an interrupt, for a scheduler that preempts: none.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn set_preempt_sink(sink: fn(&mut Context)) {
+    let _ = sink;
+}

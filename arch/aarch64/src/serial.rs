@@ -193,9 +193,22 @@ pub fn init() {}
 
 /// Write a string, one byte at a time.
 pub fn write_str(text: &str) {
+    // Mask IRQs for the duration, and restore what was there.
+    //
+    // A line is not one write but dozens, and a timer tick between two of them
+    // runs a trap handler that may print — or, worse, switch to another program
+    // that prints.  The first boot with preemption on printed `program 1 mappe`
+    // and then a different program's line.  The console's own state — its
+    // FIFO, its place in a line — is kernel state like any other, and a handler
+    // that reached it mid-line would be the same defect in a smaller form.
+    //
+    // `save_and_disable` rather than a bare disable: a caller that entered with
+    // interrupts already masked (a trap handler) must not leave them unmasked.
+    let enabled = crate::interrupts::save_and_disable();
     for byte in text.bytes() {
         write_byte(byte);
     }
+    crate::interrupts::restore(enabled);
 }
 
 /// Write a `u32` as decimal, without allocating.

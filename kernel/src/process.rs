@@ -46,8 +46,23 @@
 ///
 /// Built rather than stored so the number is a parameter: a table of two
 /// constants would be two things to keep in step with the encoding.
-const fn program_words(number: u16) -> [u32; 7] {
+const fn program_words(number: u16) -> [u32; 13] {
     [
+        // A busy loop, so a program outlives a time slice.
+        //
+        // Without it a program finishes in microseconds, no tick arrives, and a
+        // boot that never preempted is indistinguishable from one that could
+        // not.  The loop is nested because one register's 16-bit immediate is
+        // about twelve microseconds — the first version was one register and
+        // the count was zero.
+        0xD280_0803, // movz x3, #64      (outer)
+        0xD280_2002, // movz x2, #256     (inner)
+        0xF100_0442, // subs x2, x2, #1
+        0x54FF_FFE1, /* b.ne -1            (inner, to the
+                      * subs) */
+        0xF100_0463, // subs x3, x3, #1
+        0x54FF_FF81, /* b.ne -4            (outer, to the
+                      * inner reload) */
         0xD280_0000 | ((number as u32 & 0xFFFF) << 5) | 1, // movz x1, #number
         0xD280_00C8,                                       // movz x8, #6  (Write)
         0xD400_0001,                                       // svc #0
@@ -69,7 +84,7 @@ pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
 }
 
 /// A program's length in bytes.
-pub const PROGRAM_LEN: usize = 7 * 4;
+pub const PROGRAM_LEN: usize = 13 * 4;
 
 /// Where the `n`th program's pages go.
 ///
@@ -110,16 +125,45 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let outcome = crate::scheduler::advance(frame, true);
         if !crate::scheduler::has_runnable() {
             let (switches, exited) = crate::scheduler::statistics();
+            let ticks = crate::TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire) as u32;
             arch::serial::write_str("protofire: every program exited, ");
-            arch::serial::write_u32(switches as u32);
-            arch::serial::write_str(" switch(es), ");
             arch::serial::write_u32(exited as u32);
-            arch::serial::write_str(" exit(s)\n");
+            arch::serial::write_str(" exit(s), ");
+            arch::serial::write_u32(ticks);
+            arch::serial::write_str(" tick(s), ");
+            arch::serial::write_u32(switches as u32);
+            arch::serial::write_str(" switch(es)\n");
+
+            // Whether the timer preempted, as a fact and not a number.
+            //
+            // The switch count depends on how fast the emulator runs the
+            // program's loop, so a line that required a particular count would
+            // be a gate on the host's speed.  What does not depend on that is
+            // whether *any* switch came from a tick rather than from an exit:
+            // with two programs and two exits, more than one switch means the
+            // timer moved the CPU.
+            //
+            // A boot whose preemption sink was not installed prints
+            // `1 switch(es)` — one, from the first exit — and says so.
+            if switches > 1 && ticks > 0 {
+                arch::serial::write_str("protofire: the timer preempted, ");
+                arch::serial::write_u32((switches - 1) as u32);
+                arch::serial::write_str(" switch(es) from ticks\n");
+            } else {
+                arch::serial::write_str("protofire: the timer did not preempt\n");
+            }
             arch::halt()
         }
         return outcome;
     }
     if number == SyscallNumber::Write as usize {
+        // The interrupt mask as the program left it.  A program that ran with
+        // IRQ masked never receives a tick, and the trap frame carries the
+        // `SPSR` the exception was taken with — so this reads what the machine
+        // actually had, not what the kernel meant to set.
+        arch::serial::write_str("protofire: program spsr ");
+        arch::serial::write_u32((frame.spsr & 0x3C0) as u32);
+        arch::serial::write_str("\n");
         // The program's number is the one value it passes, and it is what makes
         // two programs distinguishable in one log.
         arch::serial::write_str("program ");
@@ -174,37 +218,71 @@ mod tests {
     fn the_program_is_little_endian() {
         let bytes = program_bytes(1);
         assert_eq!(bytes.len(), super::PROGRAM_LEN);
-        assert_eq!(bytes.len(), 28);
-        assert_eq!(&bytes[0..4], &0xD280_0021u32.to_le_bytes());
-        assert_eq!(&bytes[24..28], &0x1400_0000u32.to_le_bytes());
+        assert_eq!(bytes.len(), 13 * 4);
+        assert_eq!(&bytes[0..4], &0xD280_0803u32.to_le_bytes());
+        assert_eq!(&bytes[48..52], &0x1400_0000u32.to_le_bytes());
     }
 
-    /// Every word is the instruction it claims to be.
+    /// The loop is a real nested countdown, decoded from the encoding.
     ///
-    /// A typo in a constant here is a program the machine runs as something
-    /// else, and the failure would look like a trap at a plausible address.
+    /// A program that ran to its `svc` in a few microseconds never sees a tick,
+    /// and the boot then reports a timer that "did not preempt" whether or not
+    /// preemption works.  So the shape of the loop is part of what the program
+    /// is, and the branch targets are what makes it a loop rather than a
+    /// straight line.
+    #[test]
+    fn the_busy_loop_branches_back_to_itself() {
+        let words = program_words(1);
+
+        // movz x3, #64 — the outer count.
+        assert_eq!(words[0], 0xD280_0000 | (64 << 5) | 3);
+        // movz x2, #256 — the inner count.
+        assert_eq!(words[1], 0xD280_0000 | (256 << 5) | 2);
+
+        // subs x2, x2, #1
+        assert_eq!(words[2], 0xF100_0000 | (1 << 10) | (2 << 5) | 2);
+        // b.ne -1, conditional on `subs` having left the zero flag clear.
+        // imm19 is signed, so the field has to be sign-extended: reading it
+        // as an unsigned 19-bit number turns -1 into 524287.
+        let inner = (((words[3] >> 5) & 0x7FFFF) as i32) << 13 >> 13;
+        assert_eq!(inner, -1, "the inner branch loops on itself");
+        assert_eq!(
+            words[3] & 0xF,
+            0b0001,
+            "and it is `ne`, not another condition"
+        );
+
+        // subs x3, x3, #1
+        assert_eq!(words[4], 0xF100_0000 | (1 << 10) | (3 << 5) | 3);
+        // b.ne -4: back to the inner reload, so the inner loop runs again.
+        let outer = (((words[5] >> 5) & 0x7FFFF) as i32) << 13 >> 13;
+        assert_eq!(outer, -4, "the outer branch reloads the inner count");
+        assert_eq!(words[5] & 0xF, 0b0001, "and it is `ne` too");
+    }
+
+    /// Every word after the loop is the instruction it claims to be.
     #[test]
     fn every_word_is_the_instruction_it_claims() {
         let words = program_words(1);
 
         // movz x1, #1 — `movz xD, #imm16`: 0xD2800000 | imm16 << 5 | D
-        assert_eq!(words[0], 0xD280_0000 | (1 << 5) | 1, "movz x1, #1");
-        assert_eq!(words[1], 0xD280_0000 | (6 << 5) | 8, "movz x8, #6");
+        assert_eq!(words[6], 0xD280_0000 | (1 << 5) | 1, "movz x1, #1");
+        assert_eq!(words[7], 0xD280_0000 | (6 << 5) | 8, "movz x8, #6");
 
-        assert_eq!(words[2], 0xD400_0001, "svc #0");
-        assert_eq!(words[5], 0xD400_0001, "svc #0");
+        assert_eq!(words[8], 0xD400_0001, "svc #0");
+        assert_eq!(words[11], 0xD400_0001, "svc #0");
 
-        assert_eq!(words[3], 0xD280_0000, "movz x0, #0");
-        assert_eq!(words[4], 0xD280_0000 | (3 << 5) | 8, "movz x8, #3");
+        assert_eq!(words[9], 0xD280_0000, "movz x0, #0");
+        assert_eq!(words[10], 0xD280_0000 | (3 << 5) | 8, "movz x8, #3");
 
         // b . is a branch with offset zero.
-        assert_eq!(words[6] & 0xFC00_0000, 0x1400_0000, "b");
-        assert_eq!(words[6] & 0x03FF_FFFF, 0, "to itself");
+        assert_eq!(words[12] & 0xFC00_0000, 0x1400_0000, "b");
+        assert_eq!(words[12] & 0x03FF_FFFF, 0, "to itself");
     }
 
-    /// The program's number is the only word that differs.
+    /// The number is the only word that differs.
     ///
-    /// Two programs whose code differed in more than the number would be two
+    /// Two programs whose code differed in more than their number would be two
     /// programs, and the test that says "they differ by the number" is the one
     /// that says the log line identifies which one ran.
     #[test]
@@ -214,23 +292,18 @@ mod tests {
         let differing: alloc::vec::Vec<usize> = (0..one.len())
             .filter(|index| one[*index] != two[*index])
             .collect();
-        assert_eq!(differing, alloc::vec![0], "only `movz x1` differs");
+        assert_eq!(differing, alloc::vec![6], "only `movz x1` differs");
 
-        // And the difference is the number, decoded from the encoding.
-        assert_eq!((one[0] >> 5) & 0xFFFF, 1);
-        assert_eq!((two[0] >> 5) & 0xFFFF, 2);
+        assert_eq!((one[6] >> 5) & 0xFFFF, 1);
+        assert_eq!((two[6] >> 5) & 0xFFFF, 2);
     }
 
     /// The two syscall numbers the program uses are the ABI's own.
-    ///
-    /// Read from the encoding rather than compared to a literal, because a
-    /// number that moved would still decode and the program would call
-    /// something else.
     #[test]
     fn the_program_calls_write_and_exit() {
         let words = program_words(1);
-        let write = (words[1] >> 5) & 0xFFFF;
-        let exit = (words[4] >> 5) & 0xFFFF;
+        let write = (words[7] >> 5) & 0xFFFF;
+        let exit = (words[10] >> 5) & 0xFFFF;
         assert_eq!(
             write as usize,
             syscall::SyscallNumber::Write as usize,

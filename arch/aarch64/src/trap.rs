@@ -392,6 +392,36 @@ pub enum CallOutcome {
     Exit,
 }
 
+/// The function called at an interrupt, for a scheduler that preempts.
+///
+/// Separate from the IRQ sink because the two answer different questions.  The
+/// sink says whether the line was claimed; this decides whether the CPU moves
+/// to another task, and it is called only for a claimed line — an interrupt
+/// nobody handled is not a reason to switch programs.
+#[cfg(target_os = "none")]
+pub type PreemptSink = fn(&mut ExceptionFrame);
+
+#[cfg(target_os = "none")]
+static PREEMPT_SINK: cell::SyncUnsafeCell<Option<PreemptSink>> = cell::SyncUnsafeCell::new(None);
+
+/// Install the function called after a handled interrupt.
+///
+/// # Safety
+///
+/// Called once, before any line is unmasked.
+#[cfg(target_os = "none")]
+pub unsafe fn set_preempt_sink(sink: PreemptSink) {
+    // SAFETY: the caller promises this is the only write and that it happens
+    // before an interrupt can arrive.
+    unsafe { *PREEMPT_SINK.get() = Some(sink) };
+}
+
+#[cfg(target_os = "none")]
+fn preempt_sink() -> Option<PreemptSink> {
+    // SAFETY: written once before any line is unmasked, read here after.
+    unsafe { *PREEMPT_SINK.get() }
+}
+
 /// The function a supervisor call is handed to.
 ///
 /// It takes the frame itself, not a copy of the few fields a call names,
@@ -488,7 +518,7 @@ fn serve_user_call(frame: &mut ExceptionFrame) {
 /// more device.  The line is finished and the arrival is reported; a sink that
 /// wants to treat it as fatal can answer `false` and stop.
 #[cfg(target_os = "none")]
-fn finish_irq(frame: &ExceptionFrame) {
+fn finish_irq(frame: &mut ExceptionFrame) {
     // SAFETY: the static is written once before any line is unmasked.
     let controller = unsafe { *GIC.get() };
     let Some(controller) = controller else {
@@ -516,6 +546,21 @@ fn finish_irq(frame: &ExceptionFrame) {
 
     // SAFETY: `interrupt` is the number `acknowledge` returned.
     unsafe { controller.finish(interrupt) };
+
+    // A preemption point, after the interrupt is finished.
+    //
+    // The timer's handler has just said "handled"; whether the CPU now goes to
+    // another program is the scheduler's decision and not the controller's, so
+    // it is a separate call the kernel installs.  It runs *after* the `EOIR`
+    // because a switch that happened before would leave the line active in a
+    // task that may not run again for a while.
+    //
+    // The frame is the machine's, not the call's: this exception interrupted
+    // whatever the program was doing, so its saved state is the whole context
+    // and the scheduler can install another program's over it.
+    if handled && let Some(preempt) = preempt_sink() {
+        preempt(frame);
+    }
 
     if !handled {
         crate::serial::write_str("protofire: unhandled interrupt ");

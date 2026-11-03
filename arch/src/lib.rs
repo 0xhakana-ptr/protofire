@@ -152,10 +152,64 @@ pub use arch_x86_64::switch_address_space;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::set_call_sink;
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::set_preempt_sink;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::set_call_sink;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::set_preempt_sink;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::set_call_sink;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::set_preempt_sink;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::interrupt_line_enabled;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::interrupt_line_enabled;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::interrupt_line_enabled;
+
+// The timer.  Every machine names the four operations; only aarch64 drives one.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::arm_timer;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::arm_timer;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::arm_timer;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::timer_control;
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::timer_counter;
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::timer_frequency;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::timer_control;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::timer_counter;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::timer_frequency;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::timer_control;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::timer_counter;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::timer_frequency;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::timer_fired;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::timer_fired;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::timer_fired;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::timer_interrupt;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::timer_interrupt;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::timer_interrupt;
 
 // How much memory this machine has, for a frame allocator that must clamp to
 // what is really there.  `None` means "use the pool's own span".

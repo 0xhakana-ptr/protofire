@@ -132,6 +132,15 @@ impl Distributor {
         number >= 32
     }
 
+    /// Whether an interrupt number is a private (per-CPU) one.
+    ///
+    /// `0..32`.  The generic timer's interrupt is 30 and the maintenance
+    /// interrupt is 25; both are private and both are enabled through the first
+    /// array entries rather than through a target.
+    pub const fn is_private_interrupt(number: usize) -> bool {
+        number < 32
+    }
+
     /// Whether an interrupt number is a software-generated one.
     ///
     /// `0..16`, and the only range `GICD_SGIR` can raise.  A device line is
@@ -308,15 +317,71 @@ impl Gic {
     ///    reads zero.  The interrupt never existed rather than never arrived.
     /// 5. `ISENABLER` — the enable bit.
     ///
-    /// A number below 32 is a per-CPU interrupt: its enable bit is read-only in
-    /// the distributor, and its target byte does not exist.  So this refuses
-    /// one rather than writing registers that are not there.
+    /// ## Per-CPU interrupts
+    ///
+    /// A number below 32 is a **private** interrupt: the generic timer's is 30.
+    /// Its registers are the low bits of the *first* array entries —
+    /// `ISENABLER0`, `IGROUPR0`, `ICFGR0` — and it has **no** `ITARGETSR` byte,
+    /// because a private interrupt always goes to the CPU that raised it.  A
+    /// driver that wrote a target byte for one would be writing another
+    /// interrupt's target.
+    ///
+    /// So the two cases are separate paths and not a range check at the end.
     ///
     /// # Safety
     ///
     /// As [`enable`]: the addresses must be the machine's GIC, mapped uncached.
     #[cfg(target_os = "none")]
     pub unsafe fn enable_interrupt(&self, number: usize) -> bool {
+        if !Distributor::is_private_interrupt(number) {
+            return unsafe { self.enable_shared_interrupt(number) };
+        }
+        // SAFETY: a private interrupt's registers are the first entries of each
+        // array, which every GIC has, and the caller promises the addresses are
+        // the GIC's.
+        unsafe {
+            // Group 0, and the reason is measured rather than chosen: on QEMU's
+            // GICv2 a private interrupt left in group 1 is reported as pending
+            // and never handed out — `GICC_IAR` answers 1022 forever — with the
+            // distributor enable, the priority, the trigger and both CPU groups
+            // all reading back correct.  Group 0 delivers.
+            let group = self.distributor.array_address(DIST_IGROUPR, number, 32);
+            let current = read(group);
+            write(group, current & !Distributor::enable_bit(number));
+
+            let priority = self.distributor.array_address(DIST_IPRIORITYR, number, 4);
+            let current = read(priority);
+            let shift = Distributor::priority_shift(number);
+            write(
+                priority,
+                (current & !(0xFF << shift)) | (u32::from(DEVICE_PRIORITY) << shift),
+            );
+
+            // Edge-triggered, for the same reason a message-signalled interrupt
+            // is: the timer asserts for an instant when it fires, and a
+            // level-sensitive line is pending for no time at all.
+            let config = self.distributor.array_address(DIST_ICFGR, number, 16);
+            let current = read(config);
+            write(
+                config,
+                current | (1 << (Distributor::config_shift(number) + 1)),
+            );
+
+            // No target: a private interrupt belongs to this CPU by definition.
+            let enable = self.distributor.array_address(DIST_ISENABLER, number, 32);
+            write(enable, Distributor::enable_bit(number));
+            core::arch::asm!("dsb sy", options(nostack));
+        }
+        true
+    }
+
+    /// Enable a shared peripheral interrupt, which has a target byte.
+    ///
+    /// # Safety
+    ///
+    /// As [`enable_interrupt`](Self::enable_interrupt).
+    #[cfg(target_os = "none")]
+    unsafe fn enable_shared_interrupt(&self, number: usize) -> bool {
         if !Distributor::is_device_interrupt(number) {
             return false;
         }
@@ -404,6 +469,18 @@ impl Gic {
         true
     }
 
+    /// Whether the distributor's enable bit for `number` is set.
+    ///
+    /// # Safety
+    ///
+    /// As [`enable`]: the window must be the GIC's, mapped uncached.
+    #[cfg(target_os = "none")]
+    pub unsafe fn line_is_enabled(&self, number: usize) -> bool {
+        // SAFETY: the caller promises the window is the GIC's.
+        let word = unsafe { read(self.distributor.array_address(DIST_ISENABLER, number, 32)) };
+        word & Distributor::enable_bit(number) != 0
+    }
+
     /// Acknowledge an interrupt, answering its number.
     ///
     /// `None` when the reading is spurious, which the specification reports in
@@ -439,8 +516,19 @@ impl Gic {
     }
 }
 
-/// `GICC_CTLR` bit 0: the CPU interface is enabled.
-pub const CPU_CTLR_ENABLE: u32 = 1;
+/// `GICC_CTLR` bits 0 and 1: the CPU interface is enabled for **both groups**.
+///
+/// Bit 0 is `EnableGrp0` and bit 1 is `EnableGrp1`, and they are separate
+/// switches over separate groups of interrupts.  This kernel puts every line it
+/// uses in group 1 — that is the non-secure group, the only one deliverable at
+/// non-secure EL1 — so a CPU interface enabled with bit 0 alone receives
+/// nothing, however well the distributor is configured.
+///
+/// The symptom is exact and was lived through here: `GICD_ISPENDR0` showed the
+/// timer's interrupt as **pending**, `GICD_ISENABLER0` showed it enabled, and
+/// the CPU took no interrupt — because the one register that gates delivery of
+/// that group was off.
+pub const CPU_CTLR_ENABLE: u32 = 0b11;
 
 #[cfg(test)]
 mod tests {
