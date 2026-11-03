@@ -117,6 +117,100 @@ pub fn pcie_ecam_window() -> Option<(usize, usize)> {
     Some((region.address as usize, region.size as usize))
 }
 
+/// The memory window a PCIe host bridge assigns device BARs from.
+///
+/// `(base, size)` of the first entry in the bridge's `ranges` whose space code
+/// says **32-bit non-prefetchable memory** (`0x0200_0000`) or **64-bit memory**
+/// (`0x0300_0000`).  That is where a device's BAR can be placed so the CPU can
+/// reach it; the I/O window (`0x0100_0000`) is a range of port numbers and a
+/// machine with no port space has no use for it.
+///
+/// ## Why this is read rather than assumed
+///
+/// On a machine with firmware, a PCI bus comes up already assigned and this
+/// function is never needed.  A device-tree machine booted directly has no
+/// firmware to run that pass, so every BAR reads zero and nothing behind one is
+/// reachable — the registers, the queues, and the MSI-X table, which lives in a
+/// BAR.
+///
+/// The window is a property of the *machine*, so it comes from the machine's
+/// tree.  A `ranges` entry is
+/// `(child address, parent address, length)` where the child address's first
+/// cell is the space code and the num ber of cells is the node's own
+/// `#address-cells` and the parent's — which for this tree's `virt` machine is
+/// three and two.
+pub fn pcie_memory_window() -> Option<(u64, u64)> {
+    let tree = device_tree()?;
+    let node = tree.find_compatible("pci-host-ecam-generic")?;
+    let property = node.property("ranges")?;
+
+    // The child side is the bridge's own `#address-cells`; the parent side is
+    // the widths the bridge's parent declared, which is what its `ranges` are
+    // stated in.
+    let (child, _) = node.child_cells();
+    let (parent, _) = node.reg_cells();
+    let child = child as usize;
+    let parent = parent as usize;
+    // A `ranges` entry is at least space + address + length, and the bridge
+    // this tree drives declares three and two.
+    if child < 2 || parent == 0 {
+        return None;
+    }
+
+    let mut cells = [0_u32; MAX_RANGES_CELLS];
+    let mut length = 0;
+    for cell in property.as_cells()? {
+        if length == MAX_RANGES_CELLS {
+            return None;
+        }
+        cells[length] = cell;
+        length += 1;
+    }
+
+    let entry = child + 2 * parent;
+    let mut at = 0;
+    while at + entry <= length {
+        let space = cells[at];
+        let mut address: u64 = 0;
+        for cell in &cells[at + 1..at + child] {
+            address = (address << 32) | u64::from(*cell);
+        }
+        let mut size: u64 = 0;
+        for cell in &cells[at + child + parent..at + entry] {
+            size = (size << 32) | u64::from(*cell);
+        }
+
+        // `0x0200_0000` is 32-bit non-prefetchable memory and `0x0300_0000` is
+        // 64-bit memory.  Both are places a BAR may go; the I/O window is a
+        // range of port numbers, which a machine with no port space cannot
+        // use.
+        if (space == 0x0200_0000 || space == 0x0300_0000) && size != 0 {
+            return Some((address, size));
+        }
+        at += entry;
+    }
+    None
+}
+
+/// The most cells a `ranges` property's entries are read through.
+///
+/// Sixteen entries of two address cells and two size cells is sixty-four; a
+/// bridge that described more windows than this has a layout this tree does not
+/// read, and the answer is "no window" rather than the first one of a
+/// truncated list.
+const MAX_RANGES_CELLS: usize = 64;
+
+/// Where the tree said the console is, for a boot line.
+///
+/// Kept beside the window queries because it is the same kind of answer: a fact
+/// about this machine that a reader can compare against a machine.
+pub fn console_address() -> usize {
+    device_tree()
+        .and_then(|tree| tree.find_compatible("arm,pl011"))
+        .and_then(|node| node.region())
+        .map_or(0, |region| region.address as usize)
+}
+
 /// What the tree said, for a boot line and for a reader comparing a log against
 /// a machine.
 ///

@@ -50,4 +50,5 @@ pub use pci_transport::RegisterFile;
 pub use queue::VirtQueue;
 pub use queue::VirtQueueError;
 pub use status::Status;
+pub use transport::Capability;
 pub use transport::Transport;

@@ -41,15 +41,22 @@ protofire: /cdrom/README.TXT reads back from the disc
 protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label protofire
 ```
 
-That machine has no disk yet, and the reason is a measurement: QEMU's `virt`
-brings every BAR up "not mapped", because on a bare-metal boot no firmware has
-assigned addresses.  Reading a PCI capability is possible now — the scan finds
-the devices and their capability lists — and reaching the device behind one needs
-PCI enumeration, which is the change after this one.
+That boot has a disk, and reaching it is what the BAR assignment pass is for.
+QEMU's `virt` brings every BAR up "not mapped" — no firmware has assigned
+addresses — so the boot sizes each BAR, allocates from the host bridge's
+`ranges` window and writes the address back.  The two lines after it are the
+driver running on the device it found:
+
+```
+protofire: pci bars assigned 4, kept 0, no room 0, refused 0
+protofire: block device from virtio-blk on pci
+protofire: virtio-blk wrote and read back sector 63
+```
 
 Two handshakes on x86_64 (PVH and multiboot2) and a device-tree boot on aarch64,
-a serial console on all three machines, a TLSF heap, a PCI bus scan over either
-ports or ECAM, a virtio block driver over a real virtqueue, a page table with a
+a serial console on all three machines, a TLSF heap, a PCI bus scanned over
+ports or ECAM with its BARs assigned by the boot itself, a virtio block driver
+over a real virtqueue that writes and reads back a sector on both machines, a page table with a
 permission per region that aarch64 actually translates through, an exception path
 that saves and restores FP/SIMD state, a mount table with three filesystems on
 it, and three syscalls that read a file off the disk.
@@ -78,8 +85,8 @@ in and what is not.
 | | |
 |---|---|
 | crates | 37 |
-| source | ~53,500 lines |
-| tests | 597, all runnable with `cargo test -p <crate>` |
+| source | ~54,900 lines |
+| tests | 614, all runnable with `cargo test -p <crate>` |
 | machines that boot | 2 of 3 (`riscv64` builds, and has no entry yet) |
 
 ## Building and running

@@ -146,6 +146,30 @@ impl EntryEncoding for Encoding {
     }
 }
 
+/// Make a change to the page tables visible to the walk.
+///
+/// A `cr3` write flushes the whole non-global TLB, so a change made after
+/// `install` is invisible until something invalidates.  `invlpg` on the changed
+/// address is the narrow form; this kernel's tables change rarely enough that
+/// the whole-TLB flush a `cr3` rewrite performs is the simpler answer.
+///
+/// # Safety
+///
+/// Called after a page-table change on this CPU.
+#[cfg(target_os = "none")]
+pub fn flush_translation() {
+    let root = current_root_table();
+    // SAFETY: rewriting `cr3` with the value it already holds invalidates the
+    // TLB and changes nothing else — the table it names is the one in use.
+    unsafe {
+        core::arch::asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
+    }
+}
+
+/// The host form: nothing, because a host has no address space to flush.
+#[cfg(not(target_os = "none"))]
+pub fn flush_translation() {}
+
 /// The address ranges on this machine that are *not* ordinary memory.
 ///
 /// Empty, and that is a fact about the machine rather than a gap.  x86_64 has

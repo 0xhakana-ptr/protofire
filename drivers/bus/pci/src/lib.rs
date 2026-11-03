@@ -49,6 +49,7 @@ extern crate alloc;
 pub mod bar;
 pub mod config;
 pub mod device;
+pub mod enumerate;
 
 pub use bar::Bar;
 pub use bar::BarKind;
@@ -59,3 +60,6 @@ pub use config::PortConfig;
 pub use config::VendorId;
 pub use device::Device;
 pub use device::Scan;
+pub use device::scan_all;
+pub use enumerate::Assignment;
+pub use enumerate::assign_memory_bars;

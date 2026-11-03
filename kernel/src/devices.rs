@@ -21,7 +21,6 @@
 //! [`physical_address`] is a function with its argument: when the kernel gets a
 //! real address space, this is the one place that has to learn to translate.
 
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 
 use pci::ConfigSpace;
@@ -122,7 +121,7 @@ impl RegisterFile for MappedBar {
 /// function answered "nothing here" and the boot printed `pci scan found 0
 /// device(s)`.  That was correct and it was not the machine's fault — there was
 /// no ECAM, so there was no way to ask.
-fn configuration_space() -> Box<dyn ConfigSpace> {
+fn configuration_space() -> Arc<dyn ConfigSpace> {
     if let Some((base, length)) = arch::pcie_ecam_window() {
         arch::serial::write_str("protofire: pcie ecam at ");
         arch::serial::write_hex(base as u64);
@@ -151,10 +150,18 @@ fn configuration_space() -> Box<dyn ConfigSpace> {
             ", already mapped"
         });
         arch::serial::write_str("\n");
-        return Box::new(EcamConfig::new(base, length));
+        return Arc::new(EcamConfig::new(base, length));
     }
-    Box::new(PortConfig::new())
+    Arc::new(PortConfig::new())
 }
+
+/// The most functions this boot enumerates.
+///
+/// A bus has 32 slots of 8 functions; the number that are ever populated is a
+/// handful.  64 covers every machine this tree boots and is one array rather
+/// than a growable structure, because the enumeration runs before anything has
+/// an allocator to grow.
+const MAX_FUNCTIONS: usize = 64;
 
 /// The PCI bus this boot scans.
 ///
@@ -177,7 +184,7 @@ pub struct FoundBlockDevice {
 /// that refused to boot because a disk was absent could not be debugged.
 pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     let config = configuration_space();
-    let (scan_result, found) = pci::device::scan(config.as_ref(), BUS_COUNT, |device| {
+    let (scan_result, found) = pci::device::scan(&*config, BUS_COUNT, |device| {
         let modern = device.vendor == VENDOR_REDHAT
             && device.device == DEVICE_VIRTIO_BLOCK_MODERN
             && device.class == CLASS_STORAGE;
@@ -201,6 +208,33 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     arch::serial::write_str(" bus\n");
 
     let (device, _modern) = found?;
+
+    // Give the devices their addresses before anything reads a BAR.
+    //
+    // On a machine with firmware this does nothing: every BAR already holds an
+    // address and the pass reports them as `already`.  On a device-tree machine
+    // booted directly there is no firmware to have run it, so every BAR reads
+    // zero and nothing behind one is reachable — the registers, the queues, and
+    // the MSI-X table, which lives in a BAR.
+    //
+    // The window is the host bridge's, from its `ranges` property. A machine
+    // that has no window is one where this cannot be done, and the driver below
+    // then fails with a reason.
+    if let Some((base, size)) = arch::pcie_memory_window() {
+        let mut listing = [Device::ABSENT; MAX_FUNCTIONS];
+        let found = pci::scan_all(&*config, BUS_COUNT, &mut listing);
+        let assignment =
+            pci::assign_memory_bars(&*config, &listing[..found.min(MAX_FUNCTIONS)], base, size);
+        arch::serial::write_str("protofire: pci bars assigned ");
+        arch::serial::write_u32(assignment.assigned as u32);
+        arch::serial::write_str(", kept ");
+        arch::serial::write_u32(assignment.already as u32);
+        arch::serial::write_str(", no room ");
+        arch::serial::write_u32(assignment.no_room as u32);
+        arch::serial::write_str(", refused ");
+        arch::serial::write_u32(assignment.refused as u32);
+        arch::serial::write_str("\n");
+    }
     // A transitional device (0x1001) offers the legacy interface *and* the
     // modern one: the modern capabilities are still in its capability list,
     // and `PciTransport` walks for them.  So it is not refused here — refusing
@@ -227,7 +261,11 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
         }))
     };
 
-    let transport = match PciTransport::new(Arc::new(PortConfig::new()), device, &map_bar) {
+    // The same mechanism the scan used.  A transport built on a `PortConfig`
+    // while the scan ran over ECAM reads every capability as `0xFF` — which is
+    // what a port that does not exist answers — and reports the device as
+    // having none.
+    let transport = match PciTransport::new(config, device, &map_bar) {
         Ok(transport) => transport,
         Err(error) => {
             arch::serial::write_str("protofire: virtio transport failed: ");
@@ -236,6 +274,23 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
                 virtio_core::transport::TransportError::BadCapability => "bad capability",
                 virtio_core::transport::TransportError::DeviceRefused => "device refused",
                 virtio_core::transport::TransportError::Unsupported => "unsupported",
+                virtio_core::transport::TransportError::MissingCapability(which, seen) => {
+                    arch::serial::write_str("missing ");
+                    arch::serial::write_str(match which {
+                        virtio_core::Capability::Common => "common",
+                        virtio_core::Capability::Notify => "notify",
+                        virtio_core::Capability::Device => "device",
+                        virtio_core::Capability::SharedMemory => "shared memory",
+                    });
+                    arch::serial::write_str("; the walk saw ");
+                    arch::serial::write_u32(seen.count as u32);
+                    arch::serial::write_str(" structure(s), types");
+                    for kind in seen.types.iter().take(seen.walked) {
+                        arch::serial::write_str(" ");
+                        arch::serial::write_u32(*kind as u32);
+                    }
+                    ""
+                }
             });
             arch::serial::write_str("\n");
             return None;

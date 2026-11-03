@@ -128,15 +128,19 @@ impl PciTransport {
         device: Device,
         map_bar: &dyn Fn(u8, u64, u64) -> Option<Arc<dyn RegisterFile>>,
     ) -> Result<PciTransport, TransportError> {
-        let bars = device.bars(&*config);
-        let bar_address = |index: u8| -> Option<(u64, u64)> {
-            let bar = bars[index as usize]?;
-            Some((bar.address, 0))
+        // A capability's `bar` field counts BAR *registers*, not slots: a
+        // 64-bit BAR occupies one slot and two register numbers, so indexing
+        // the slot array with a register number reaches the wrong window.
+        let bar_address = |number: u8| -> Option<(u64, u64)> {
+            device
+                .bar_register(&*config, number)
+                .map(|bar| (bar.address, 0))
         };
 
         let mut common_location = None;
         let mut notify_location = None;
         let mut device_location = None;
+        let mut seen = crate::transport::Seen::new();
 
         device.capabilities(&*config, |_id, offset, word| {
             // The structure (section 4.1.4.1) is, in order:
@@ -179,6 +183,12 @@ impl PciTransport {
             let region_offset = config.read_dword(device.address, (offset >> 2) + 2);
             let region_length = config.read_dword(device.address, (offset >> 2) + 3);
 
+            seen.count += 1;
+            if seen.walked < 8 {
+                seen.types[seen.walked] = cfg_type;
+            }
+            seen.walked += 1;
+
             let capability = match cfg_type {
                 x if x == Capability::Common as u8 => Some(Capability::Common),
                 x if x == Capability::Notify as u8 => Some(Capability::Notify),
@@ -197,9 +207,27 @@ impl PciTransport {
             None::<()>
         });
 
-        let common_location = common_location.ok_or(TransportError::BadCapability)?;
-        let notify_location = notify_location.ok_or(TransportError::BadCapability)?;
-        let device_location = device_location.ok_or(TransportError::BadCapability)?;
+        // Which of the three was missing, not just that one was.  A transport
+        // that says only "bad capability" leaves a reader to re-derive the
+        // device's capability list to find out what it actually offered — and
+        // on a machine where every BAR was just assigned, that is the question.
+        // Which capabilities the device did publish, so a failure names what
+        // was there and not only what was not.  A device that offers four
+        // structures and none of them `Common` is a different problem from one
+        // whose capability list could not be walked at all, and the two look
+        // identical from a "missing" message.
+        if common_location.is_none() {
+            return Err(TransportError::MissingCapability(Capability::Common, seen));
+        }
+        if notify_location.is_none() {
+            return Err(TransportError::MissingCapability(Capability::Notify, seen));
+        }
+        if device_location.is_none() {
+            return Err(TransportError::MissingCapability(Capability::Device, seen));
+        }
+        let common_location = common_location.unwrap_or_else(|| unreachable!());
+        let notify_location = notify_location.unwrap_or_else(|| unreachable!());
+        let device_location = device_location.unwrap_or_else(|| unreachable!());
 
         let common = map_capability(map_bar, &bar_address, common_location)?;
         let notify = map_capability(map_bar, &bar_address, notify_location)?;

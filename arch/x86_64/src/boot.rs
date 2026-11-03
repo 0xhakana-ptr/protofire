@@ -88,3 +88,12 @@ pub fn device_tree_summary() -> Option<abi::DeviceTreeSummary> {
 pub fn pcie_ecam_window() -> Option<(usize, usize)> {
     None
 }
+
+/// The window a PCIe host bridge assigns BARs from: none.
+///
+/// x86_64's firmware has already run the assignment pass by the time this
+/// kernel starts, so every BAR holds an address and nothing needs to allocate
+/// one.  The function exists on every machine so the caller asks one question.
+pub fn pcie_memory_window() -> Option<(u64, u64)> {
+    None
+}

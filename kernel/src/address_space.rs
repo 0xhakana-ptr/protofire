@@ -408,6 +408,12 @@ fn map_region(start: usize, length: usize, permissions: Permissions) -> bool {
         }
         address = address.saturating_add(GRANULE);
     }
+    if changed {
+        // A table write the machine does not observe is a write that did not
+        // happen: the TLB may hold the absence of a translation as firmly as it
+        // holds one.
+        arch::flush_translation();
+    }
     changed
 }
 
@@ -452,6 +458,9 @@ fn map_device_blocks(
         }
         slot.set_entry(slot_in_third, word);
         address = address.saturating_add(BLOCK);
+    }
+    if changed {
+        arch::flush_translation();
     }
     changed
 }

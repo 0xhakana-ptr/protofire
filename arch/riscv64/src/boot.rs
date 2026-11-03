@@ -42,3 +42,11 @@ pub fn device_tree_summary() -> Option<abi::DeviceTreeSummary> {
 pub fn pcie_ecam_window() -> Option<(usize, usize)> {
     None
 }
+
+/// The window a PCIe host bridge assigns BARs from: none yet.
+///
+/// A riscv64 board's window comes from the device tree, and this machine's boot
+/// entry does not read one.
+pub fn pcie_memory_window() -> Option<(u64, u64)> {
+    None
+}

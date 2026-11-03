@@ -68,6 +68,29 @@ pub struct Device {
 }
 
 impl Device {
+    /// A function that is not there.
+    ///
+    /// A caller that keeps a fixed list of functions — the enumeration pass
+    /// does, because it runs before anything has an allocator — fills it with
+    /// this and then the devices it found.  The vendor is `0xFFFF`, which is
+    /// what the bus answers for an address nothing decodes, so a pass that
+    /// walked the unfilled tail finds nothing to size rather than probing
+    /// address zero.
+    pub const ABSENT: Device = Device {
+        address: DeviceAddress {
+            bus: 0,
+            device: 0,
+            function: 0,
+        },
+        vendor: crate::config::NO_DEVICE,
+        device: crate::config::NO_DEVICE,
+        class: 0,
+        subclass: 0,
+        interface: 0,
+        header_type: 0,
+        multi_function: false,
+    };
+
     /// Read a device's identity and class from `config`.
     pub fn probe(config: &dyn ConfigSpace, address: DeviceAddress) -> Option<Device> {
         let identity = config.read_dword(address, REG_VENDOR_DEVICE);
@@ -123,6 +146,27 @@ impl Device {
             register += count;
         }
         bars
+    }
+
+    /// The address of the BAR whose **register** is `number`.
+    ///
+    /// `number` is the PCI capability's `bar` field, which counts BAR
+    /// registers: 0 is the register at offset `0x10`, 4 at `0x20`.  That is not
+    /// the slot [`Self::bars`] uses — a 64-bit BAR occupies one register pair
+    /// and therefore one slot but two register numbers — so a caller that
+    /// indexed the slot array with a register number reaches the wrong window.
+    ///
+    /// ## The defect this exists for
+    ///
+    /// A virtio capability naming BAR 4 on a device whose BARs are `0`..`3` was
+    /// read as slot 4, which holds nothing, and the transport reported "bad
+    /// capability" for a device that was offering exactly what it asked for.
+    pub fn bar_register(self, config: &dyn ConfigSpace, number: u8) -> Option<Bar> {
+        if number >= 6 {
+            return None;
+        }
+        let (bar, _) = crate::bar::decode(config, self.address, REG_BAR0 + number);
+        bar.is_assigned().then_some(bar)
     }
 
     /// Walk the capability list, calling `visit` for each entry.
@@ -192,6 +236,51 @@ pub struct Scan {
 ///
 /// `visit` returning `Some` stops the scan and yields that value, which is what
 /// a caller looking for one device wants: the first match, not every match.
+/// Every function on `bus_count` buses.
+///
+/// The enumeration pass needs the whole set: a BAR is allocated from one window
+/// shared by every device, so a pass that only saw the devices a caller asked
+/// about would place two devices on one address.
+///
+/// `out` is written in place and its length returned, so a caller on a machine
+/// with no allocator can size the list itself.  A bus with more functions than
+/// the slice holds reports the count it would have written.
+pub fn scan_all(config: &dyn ConfigSpace, bus_count: u8, out: &mut [Device]) -> usize {
+    let mut found = 0;
+    for bus in 0..bus_count {
+        for device in 0..32u8 {
+            for function in 0..8u8 {
+                if function > 0 {
+                    let check = DeviceAddress {
+                        bus,
+                        device,
+                        function: 0,
+                    };
+                    let header = config.read_dword(check, REG_HEADER);
+                    if (header >> 16) & 0x80 == 0 {
+                        break;
+                    }
+                }
+                let address = DeviceAddress {
+                    bus,
+                    device,
+                    function,
+                };
+                if let Some(probed) = Device::probe(config, address) {
+                    if let Some(slot) = out.get_mut(found) {
+                        *slot = probed;
+                    }
+                    found += 1;
+                } else if function == 0 {
+                    // Nothing at function 0 means nothing at this slot at all.
+                    break;
+                }
+            }
+        }
+    }
+    found
+}
+
 pub fn scan<T>(
     config: &dyn ConfigSpace,
     bus_count: u8,

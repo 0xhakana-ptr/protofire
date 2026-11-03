@@ -5,7 +5,7 @@ rewrite and not a copy: each subsystem moves in as a crate of its own, with its
 tests, once it can be built and exercised on its own.  This document is the
 count.
 
-**The number that matters: about 17% of the previous tree is here.**  What is
+**The number that matters: about 18% of the previous tree is here.**  What is
 here is the part that proves the architecture — a boot, a heap, a bus, a driver,
 a filesystem and a syscall — and the rest is being moved a crate at a time.
 
@@ -14,17 +14,17 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | Subsystem | Previous tree | Here | What is in |
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 8,102 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011, the device-tree handshake — nine of a hundred |
+| `arch` | 95,361 | 8,313 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011, the device-tree handshake — nine of a hundred |
 | `crypto` | 4,606 | 4,850 | all of it, one module per algorithm — counted under `libs` below |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
 | `kernel` | 39,704 | 1,536 | the boot sequence, the syscall table, device discovery |
 | `memory` | 9,649 | 1,865 | the frame pool and the region pools |
 | `network` | 39,240 | 1 | nothing |
-| `drivers` | 18,828 | 3,990 | PCI (ports and ECAM), and virtio block |
+| `drivers` | 18,828 | 5,029 | PCI (ports, ECAM, BAR enumeration), and virtio block |
 | `syscall` | 15,647 | 253 | the context, the validators, three handlers |
 | `user` | 19,145 | — | nothing; `apps/` holds three skeletons |
 | `libs` | — | 16,291 | allocator, audit, cell, crypto, fdt, irq, paging, profiler, rights, sync, unicode |
-| **total** | **312,131** | **~53,500** | |
+| **total** | **312,131** | **~54,900** | |
 
 The `libs` crates have no previous-tree column because most of them were modules
 under `src/kernel/` or `src/memory/` there; their lines are counted in those
@@ -92,12 +92,70 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
-x86_64 — the port I/O the PCI bus is reached through.  What comes next is PCI
-**enumeration**: QEMU's `virt` machine has a PCIe host bridge and every BAR
-comes up "not mapped", because on a bare-metal boot no firmware has assigned
-addresses.  Reading a capability is possible now; reaching the device behind it
-needs a boot that sizes each BAR, allocates from the bridge's `ranges` window
-and writes the address back.
+x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
+interrupt controller: a GIC on aarch64 and the IOAPIC on x86_64, because a
+device that has been given an address can be driven by polling and cannot be
+driven well.
+
+### PCI enumeration, and the six defects that were hiding behind "not mapped"
+
+QEMU's `virt` has a PCIe host bridge and no firmware, so every BAR comes up
+unaddressed.  Reading a capability was possible after the device tree arrived;
+reaching the device behind it needed the assignment pass a firmware would have
+run — size each BAR, allocate from the bridge's `ranges` window, write it back,
+verify.
+
+The aarch64 boot now writes a sector and reads it back:
+
+```
+protofire: pci bars assigned 4, kept 0, no room 0, refused 0
+protofire: block device from virtio-blk on pci
+protofire: virtio-blk wrote and read back sector 63
+```
+
+Six things were wrong, and only one of them was the feature:
+
+1. **`bar::size` treated a zero register as "no BAR".**  An unaddressed BAR
+   reads zero.  On a machine with firmware that is unusual; on a device-tree
+   machine it is the *normal* state, so the early return turned every device
+   into no device.  The current value cannot answer whether a BAR exists — only
+   the device can, and the way to ask is a sizing write.
+
+2. **The 32-bit mask was not widened.**  A 32-bit BAR's mask came out as
+   `0x0000_0000_FFFF_F000`, whose complement plus one is
+   `0xFFFF_FFFF_0000_1000` — not a power of two, so every 32-bit BAR sized as
+   absent.  The mechanism's answer is a 64-bit mask whatever the BAR's width.
+
+3. **The type bits were read from the register, not the mask.**  Those bits are
+   wires: they survive a sizing write and do not survive an address write.  A
+   decoder that used the current value called every unassigned 64-bit BAR 32-bit
+   and tried to place it below four gigabytes.
+
+4. **Nothing above four gigabytes was mappable.**  The identity map stopped
+   there, so a PCIe ECAM window at `0x40_1000_0000` had nowhere to go.
+   `map_region` now creates a 2 MiB block table for a region above the limit.
+
+5. **A mapping was made and the TLB was not told.**  `flush_translation` is now
+   part of `map_region`, and each machine spells it: `tlbi vmalle1` on aarch64,
+   a `cr3` rewrite on x86_64, `sfence.vma` on riscv64.
+
+6. **The transport was built on a `PortConfig` while the scan ran over ECAM.**
+   A port that does not exist answers `0xFFFF_FFFF`, so the capability walk
+   visited forty-eight structures whose type was `0xFF` and reported the device
+   as having no `Common` capability.  The scan and the transport must agree
+   about the mechanism, and now they are handed the same one.
+
+The sixth is the one worth keeping: it was introduced by *this* change, in the
+same function that added the mechanism choice.  A diagnostic line — `the walk
+saw 48 structure(s), types 255 255 …` — is what named it, and that line is now
+part of the error rather than a probe.
+
+Two smaller things fell out.  `Device::bars` returns **slots**, and a PCI
+capability's `bar` field counts **registers**; a 64-bit BAR occupies one slot
+and two register numbers, so indexing the slot array with a register number
+reaches the wrong window.  `Device::bar_register` is the lookup that matches.
+And a capability's `bar` field is at `+4`, `offset` at `+8`, `length` at `+12` —
+the previous version read them one dword too far.
 
 ### The device tree, and the four bugs it exposed
 

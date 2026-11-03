@@ -30,6 +30,12 @@
 
 use crate::config::ConfigSpace;
 use crate::config::DeviceAddress;
+use crate::device::REG_COMMAND_STATUS;
+
+/// Command register bit 1: the function responds to memory accesses.
+pub const COMMAND_MEMORY_SPACE: u32 = 1 << 1;
+/// Command register bit 2: the function may master the bus.
+pub const COMMAND_BUS_MASTER: u32 = 1 << 2;
 
 /// Which kind of window a BAR names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,53 +117,291 @@ pub fn decode(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) ->
 /// The size of the window `register` names, by writing all ones and reading
 /// back.
 ///
-/// The register's original value is restored before this returns: the write is
-/// a real request, and leaving the BAR holding all ones leaves the device
-/// unmapped.
+/// ## Why the current value says nothing
 ///
-/// Returns `None` for a BAR the device says it does not have (all zero) and for
-/// a size that is not a power of two, which would be a device answering a
-/// question it does not understand.
-pub fn size(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) -> Option<u64> {
+/// The version of this function that returned early when the register read zero
+/// was wrong, and it was wrong in exactly the state a bare-metal boot is in.
+/// **An unaddressed BAR reads zero.**  On a machine with firmware — a PC, or a
+/// UEFI board — that is unusual; on this tree's device-tree machines it is the
+/// normal state before anything assigns an address, so the early return turned
+/// "there is a device here asking for a window" into "there is nothing here".
+/// The boot then fell back to its in-memory image and said the disk was absent.
+///
+/// The current value cannot answer whether a BAR exists.  Only the device can,
+/// and the way to ask is to write all ones and see what it clears.
+///
+/// ## Why memory decoding is turned off first
+///
+/// Writing all ones into a live BAR is a request the device acts on: until the
+/// restore, it decodes a window at an address nothing chose.  A device that
+/// responds to a bus cycle there conflicts with whatever is really at that
+/// address.  On a single-master machine with no other traffic this is a window
+/// of a few instructions and shipping code has done it for decades; turning the
+/// command register's memory bit off for the duration costs one read and one
+/// write and removes the conflict.
+///
+/// ## The restore
+///
+/// Every path restores the register, including the failure paths.  A probe that
+/// left a BAR holding all ones would have left the device unmapped, and the
+/// caller would see a device it could not tell from a broken one.
+pub fn probe(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) -> Option<BarProbe> {
     let original = config.read_dword(address, register);
-    if original == 0 {
-        return None;
+    let original_upper = config.read_dword(address, register + 1);
+
+    let command = config.read_dword(address, REG_COMMAND_STATUS) & 0xFFFF;
+    let decoding = command & COMMAND_MEMORY_SPACE != 0;
+    if decoding {
+        let quiet = command & !COMMAND_MEMORY_SPACE;
+        let status = config.read_dword(address, REG_COMMAND_STATUS) & 0xFFFF_0000;
+        config.write_dword(address, REG_COMMAND_STATUS, status | quiet);
     }
-    let is_64_bit = (original >> 1) & 0b11 == 0b10;
-    let original_upper = if is_64_bit {
-        Some(config.read_dword(address, register + 1))
-    } else {
-        None
-    };
 
     config.write_dword(address, register, 0xFFFF_FFFF);
     let low = config.read_dword(address, register);
-    let mask_low = low & !0b1111;
 
-    let mut mask = mask_low as u64;
+    let restore = |config: &dyn ConfigSpace| {
+        config.write_dword(address, register, original);
+        config.write_dword(address, register + 1, original_upper);
+        if decoding {
+            let status = config.read_dword(address, REG_COMMAND_STATUS) & 0xFFFF_0000;
+            config.write_dword(address, REG_COMMAND_STATUS, status | command);
+        }
+    };
+
+    // A register that answers all ones, or that answers zero, has nothing
+    // behind it.
+    //
+    // Both answers mean the same thing and they arrive from different
+    // implementations: a function with no BAR there returns the write
+    // unchanged (`0xFFFF_FFFF`), and one whose register is hardwired to zero
+    // returns zero.  The zero case is the one that is easy to forget, and
+    // forgetting it is not a silent omission: with `low == 0` the 64-bit mask
+    // below becomes `0xFFFF_FFFF_0000_0000`, whose complement plus one is four
+    // gigabytes — a power of two, so the size check passes and the allocator
+    // reports "no room" for a BAR that does not exist.
+    //
+    // The check is on the *low* dword before any widening, because the widening
+    // would make an absent register look like a large window.
+    if low == 0 || low == 0xFFFF_FFFF {
+        restore(config);
+        return None;
+    }
+
+    // The type bits come from the *mask*, not from the register's current
+    // value, and this is the whole reason the probe exists.  An unaddressed BAR
+    // reads zero, which is indistinguishable from a memory BAR of unknown type
+    // — so a caller that decoded `is_64_bit` from the current value would treat
+    // every unassigned 64-bit BAR as 32-bit and place it below four gigabytes,
+    // where its window does not fit.
+    let kind = if low & 1 != 0 {
+        BarKind::Io
+    } else {
+        BarKind::Memory
+    };
+    let is_64_bit = kind == BarKind::Memory && (low >> 1) & 0b11 == 0b10;
+
+    let mut mask = (low & if kind == BarKind::Io { !0b11 } else { !0b1111 }) as u64;
     if is_64_bit {
         config.write_dword(address, register + 1, 0xFFFF_FFFF);
         let high = config.read_dword(address, register + 1);
         mask |= (high as u64) << 32;
-        config.write_dword(address, register + 1, original_upper.unwrap_or(0));
+    } else if kind == BarKind::Memory {
+        // A 32-bit BAR has no upper half to hold ones, so its window cannot
+        // exceed four gigabytes — and the mask the mechanism produces is
+        // **64-bit**, so the top half is all ones.
+        //
+        // Getting this wrong is invisible above and fatal below: the mask came
+        // out as `0x0000_0000_FFFF_F000`, whose complement plus one is
+        // `0xFFFF_FFFF_0000_1000` — not a power of two, so every 32-bit BAR
+        // sized as absent.
+        mask |= 0xFFFF_FFFF_0000_0000;
     }
-    config.write_dword(address, register, original);
+
+    restore(config);
 
     if mask == 0 {
         return None;
     }
-    // The size is one more than the mask: a 4 KiB window answers 0xFFFF_F000.
     let size = (!mask).wrapping_add(1);
     if !size.is_power_of_two() {
         return None;
     }
-    Some(size)
+    Some(BarProbe {
+        size,
+        kind,
+        is_64_bit,
+        address: original as u64 & 0xFFFF_FFF0,
+    })
+}
+
+/// What a BAR says about itself, asked by writing all ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BarProbe {
+    /// The size of the window the BAR asks for, in bytes.
+    pub size: u64,
+    /// Memory or I/O, from the mask's hardwired bit 0.
+    pub kind: BarKind,
+    /// Whether this BAR takes two registers, from the mask's type bits.
+    pub is_64_bit: bool,
+    /// What the register held before the probe.
+    pub address: u64,
+}
+
+/// The size of the window `register` names.
+///
+/// [`probe`] answers this and two questions beside it; this is the form a
+/// caller that only wants the number uses.
+pub fn size(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) -> Option<u64> {
+    probe(config, address, register).map(|probe| probe.size)
+}
+
+/// Give a memory BAR an address, and verify the device took it.
+///
+/// Writes both halves of a 64-bit BAR.  A 32-bit BAR's address must fit in
+/// thirty-two bits, because the register has no upper half to put the rest in —
+/// a caller that ignored that would program the low thirty-two bits of an
+/// address above four gigabytes and get a device at the wrong address.
+///
+/// Returns whether the device reads back what was written.  A BAR that does not
+/// take an address is a device that would decode somebody else's window if the
+/// write were believed, so the answer is checked rather than assumed.
+pub fn assign(config: &dyn ConfigSpace, address: DeviceAddress, register: u8, window: u64) -> bool {
+    let is_64_bit = {
+        let value = config.read_dword(address, register);
+        (value >> 1) & 0b11 == 0b10
+    };
+    if !is_64_bit && window > u32::MAX as u64 {
+        return false;
+    }
+
+    let low = (window & 0xFFFF_FFF0) as u32;
+    config.write_dword(address, register, low);
+    if is_64_bit {
+        config.write_dword(address, register + 1, (window >> 32) as u32);
+    }
+
+    let read_back = {
+        let low = config.read_dword(address, register) as u64 & 0xFFFF_FFF0;
+        if is_64_bit {
+            low | ((config.read_dword(address, register + 1) as u64) << 32)
+        } else {
+            low
+        }
+    };
+    read_back == window
+}
+
+/// Turn on a function's memory decoding and bus-mastering bits.
+///
+/// Without the first a device's BAR decodes nothing, and without the second it
+/// cannot read or write memory on its own — which is what a virtqueue is.  Both
+/// are in the command register, which is the low half of
+/// [`REG_COMMAND_STATUS`].
+pub fn enable_memory_and_bus_master(config: &dyn ConfigSpace, address: DeviceAddress) {
+    let current = config.read_dword(address, REG_COMMAND_STATUS);
+    let status = current & 0xFFFF_0000;
+    let command = (current & 0xFFFF) | COMMAND_MEMORY_SPACE | COMMAND_BUS_MASTER;
+    config.write_dword(address, REG_COMMAND_STATUS, status | command);
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::Bar;
     use super::BarKind;
+    use super::COMMAND_MEMORY_SPACE;
+    use super::assign;
+    use super::size;
+    use crate::config::ConfigSpace;
+    use crate::config::DeviceAddress;
+
+    /// A configuration space with one BAR, modelled the way a device behaves.
+    ///
+    /// Writing all ones returns the size mask, because that is the mechanism a
+    /// probe is *defined* against — a fake that stored the write would answer
+    /// `0xFFFF_FFFF` and call every BAR nonexistent.  A fake that only stored
+    /// values would let a broken probe pass.
+    struct FakeBar {
+        bar: std::sync::Mutex<u32>,
+        upper: std::sync::Mutex<u32>,
+        command: std::sync::Mutex<u32>,
+        /// The size mask this device answers a sizing write with.
+        ///
+        /// A real device clears the bits below its window size; the fake does
+        /// the same, because a fake that merely stored the write would answer
+        /// `0xFFFF_FFFF` and call every BAR nonexistent — and a probe bug would
+        /// pass.
+        mask: u32,
+    }
+
+    const ADDRESS: DeviceAddress = DeviceAddress {
+        bus: 0,
+        device: 1,
+        function: 0,
+    };
+
+    impl ConfigSpace for FakeBar {
+        fn read_dword(&self, _address: DeviceAddress, register: u8) -> u32 {
+            match register {
+                // A register holding all ones is mid-probe: the device answers
+                // with the mask it derived from its window size.
+                4 if *self.bar.lock().unwrap() == 0xFFFF_FFFF => self.mask,
+                4 => *self.bar.lock().unwrap(),
+                5 if *self.upper.lock().unwrap() == 0xFFFF_FFFF => self.mask,
+                5 => *self.upper.lock().unwrap(),
+                crate::device::REG_COMMAND_STATUS => *self.command.lock().unwrap(),
+                _ => 0,
+            }
+        }
+
+        fn write_dword(&self, _address: DeviceAddress, register: u8, value: u32) {
+            match register {
+                // A sizing write is answered with the mask, not stored.
+                4 if value == 0xFFFF_FFFF => {
+                    *self.bar.lock().unwrap() = value;
+                }
+                4 => *self.bar.lock().unwrap() = value,
+                5 if value == 0xFFFF_FFFF => {}
+                5 => *self.upper.lock().unwrap() = value,
+                crate::device::REG_COMMAND_STATUS => *self.command.lock().unwrap() = value,
+                _ => {}
+            }
+        }
+    }
+
+    impl FakeBar {
+        /// A device whose BAR at register 4 asks for `size` bytes.
+        ///
+        /// `base` is what the register holds; zero is unaddressed, which is the
+        /// state before anything has programmed it.  The type bits come from
+        /// `base`, so `0b100` there makes it a 64-bit memory BAR.
+        fn new(base: u32, size: u32) -> FakeBar {
+            // A size of zero is "no window", and its mask is all ones — which
+            // is what a register with no BAR behind it answers, and what
+            // `size` reports as `None`.  `saturating_sub` rather than `-` so
+            // the test helper does not panic on the input it is given.
+            let mask = !size.saturating_sub(1);
+            FakeBar {
+                bar: std::sync::Mutex::new(base),
+                upper: std::sync::Mutex::new(0),
+                command: std::sync::Mutex::new(COMMAND_MEMORY_SPACE),
+                mask,
+            }
+        }
+    }
+
+    /// A **failing** fake: one that answers all ones to every write, which is
+    /// what a device with no BAR there does.
+    struct NoBar;
+
+    impl ConfigSpace for NoBar {
+        fn read_dword(&self, _address: DeviceAddress, _register: u8) -> u32 {
+            0xFFFF_FFFF
+        }
+        fn write_dword(&self, _address: DeviceAddress, _register: u8, _value: u32) {}
+    }
 
     /// A memory BAR's address is the value with the type bits masked, and bit
     /// 0 clear says memory.
@@ -195,6 +439,140 @@ mod tests {
     fn an_unassigned_bar_is_not_a_window() {
         assert!(!Bar::decode(4, 0).is_assigned());
         assert!(Bar::decode(4, 0x1000_0000).is_assigned());
+    }
+
+    /// A 4 KiB window answers `0xFFFF_F000` and sizes as 4096.
+    #[test]
+    fn a_sized_bar_answers_its_mask() {
+        let config = FakeBar::new(0, 4096);
+        assert_eq!(size(&config, ADDRESS, 4), Some(4096));
+    }
+
+    /// **An unaddressed BAR still has a size.**
+    ///
+    /// This is the bug the previous version of `size` carried, and it is the
+    /// state every device-tree machine is in before anything assigns an
+    /// address: the register reads zero, and a probe that treated zero as "no
+    /// BAR here" reported no device at all.  QEMU's `virt` brings all of them
+    /// up that way.
+    #[test]
+    fn an_unaddressed_bar_still_sizes() {
+        let config = FakeBar::new(0, 4096);
+        let found = size(&config, ADDRESS, 4);
+        assert_eq!(found, Some(4096), "zero is unaddressed, not absent");
+    }
+
+    /// A register that answers all ones has no BAR, and that is different from
+    /// one that answers zero.
+    #[test]
+    fn a_register_that_answers_all_ones_has_no_bar() {
+        assert_eq!(size(&NoBar, ADDRESS, 4), None);
+    }
+
+    /// The probe restores the register it wrote.
+    ///
+    /// A probe that left all ones behind would leave the device unmapped, and
+    /// the caller could not tell that from a device that was already broken.
+    #[test]
+    fn the_probe_restores_the_register() {
+        let config = FakeBar::new(0x1000_0000, 4096);
+        let _ = size(&config, ADDRESS, 4);
+        assert_eq!(config.read_dword(ADDRESS, 4), 0x1000_0000);
+    }
+
+    /// Memory decoding is off during the probe and back on afterwards.
+    ///
+    /// While the BAR holds all ones the device would decode a window at an
+    /// address nothing chose, and a device responding there conflicts with
+    /// whatever is really at that address.
+    #[test]
+    fn decoding_is_off_while_the_bar_holds_all_ones() {
+        struct Watching {
+            bar: std::sync::Mutex<u32>,
+            command: std::sync::Mutex<u32>,
+            saw_decoding_off: std::sync::Mutex<bool>,
+        }
+
+        /// A 4 KiB window's mask, which this device answers with.
+        const MASK: u32 = 0xFFFF_F000;
+
+        impl ConfigSpace for Watching {
+            fn read_dword(&self, _address: DeviceAddress, register: u8) -> u32 {
+                match register {
+                    4 if *self.bar.lock().unwrap() == 0xFFFF_FFFF => MASK,
+                    4 => *self.bar.lock().unwrap(),
+                    crate::device::REG_COMMAND_STATUS => *self.command.lock().unwrap(),
+                    _ => 0,
+                }
+            }
+
+            fn write_dword(&self, _address: DeviceAddress, register: u8, value: u32) {
+                match register {
+                    // Writing all ones is the probe's request; record whether
+                    // decoding was already off when it arrived.
+                    4 if value == 0xFFFF_FFFF => {
+                        let command = *self.command.lock().unwrap();
+                        if command & COMMAND_MEMORY_SPACE == 0 {
+                            *self.saw_decoding_off.lock().unwrap() = true;
+                        }
+                        *self.bar.lock().unwrap() = value;
+                    }
+                    4 => *self.bar.lock().unwrap() = value,
+                    crate::device::REG_COMMAND_STATUS => *self.command.lock().unwrap() = value,
+                    _ => {}
+                }
+            }
+        }
+
+        let config = Watching {
+            bar: std::sync::Mutex::new(0),
+            command: std::sync::Mutex::new(COMMAND_MEMORY_SPACE),
+            saw_decoding_off: std::sync::Mutex::new(false),
+        };
+        assert_eq!(size(&config, ADDRESS, 4), Some(4096));
+        assert!(
+            *config.saw_decoding_off.lock().unwrap(),
+            "decoding must be off before the all-ones write, not after"
+        );
+        assert_ne!(
+            config.read_dword(ADDRESS, crate::device::REG_COMMAND_STATUS) & COMMAND_MEMORY_SPACE,
+            0,
+            "and back on afterwards"
+        );
+    }
+
+    /// An address is written to both halves of a 64-bit BAR and read back.
+    #[test]
+    fn a_64_bit_bar_takes_an_address_above_four_gigabytes() {
+        // 0b100 says a 64-bit memory BAR.
+        let config = FakeBar::new(0b100, 1 << 14);
+        assert!(assign(&config, ADDRESS, 4, 0x40_1000_0000));
+        assert_eq!(config.read_dword(ADDRESS, 4) & 0xFFFF_FFF0, 0x1000_0000);
+        assert_eq!(config.read_dword(ADDRESS, 5), 0x40);
+    }
+
+    /// A 32-bit BAR refuses an address it cannot hold, rather than programming
+    /// the low half of it and leaving the device at the wrong address.
+    #[test]
+    fn a_32_bit_bar_refuses_an_address_it_cannot_hold() {
+        let config = FakeBar::new(0, 4096);
+        assert!(!assign(&config, ADDRESS, 4, 0x1_0000_0000));
+        assert_eq!(
+            config.read_dword(ADDRESS, 4),
+            0,
+            "and it did not write a truncated address"
+        );
+    }
+
+    /// The command register's two bits are set and the status half is left
+    /// alone.
+    #[test]
+    fn enabling_a_function_sets_memory_and_bus_master() {
+        let config = FakeBar::new(0, 4096);
+        super::enable_memory_and_bus_master(&config, ADDRESS);
+        let value = config.read_dword(ADDRESS, crate::device::REG_COMMAND_STATUS);
+        assert_ne!(value & super::COMMAND_MEMORY_SPACE, 0);
+        assert_ne!(value & super::COMMAND_BUS_MASTER, 0);
     }
 
     /// A prefetchable memory BAR (type bits 0b01) is decoded as memory and as

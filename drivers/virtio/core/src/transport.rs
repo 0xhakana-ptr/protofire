@@ -103,10 +103,49 @@ pub enum TransportError {
     NoDevice,
     /// The device's configuration space is not the shape it should be.
     BadCapability,
+    /// The device did not publish one of the three capabilities a transport
+    /// needs.  Which one is the whole question: a device missing `Common`
+    /// offers no registers at all, and one missing only `Device` still has a
+    /// queue.
+    MissingCapability(Capability, Seen),
     /// A queue operation raced with the device's own state.
     DeviceRefused,
     /// The transport has no configuration source on this build.
     Unsupported,
+}
+
+/// What a capability walk actually saw.
+///
+/// The `cfg_type` of each structure, in walk order, plus how many it visited.
+/// A transport that reports only "no common capability" leaves a reader to
+/// re-derive the list from the device, and the list is exactly what the answer
+/// depends on — a device whose structures are all there under different type
+/// numbers is not missing anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Seen {
+    /// How many structures the walk visited.
+    pub count: usize,
+    /// The first eight `cfg_type` bytes, in order.
+    pub types: [u8; 8],
+    /// How many of `types` are meaningful.
+    pub walked: usize,
+}
+
+impl Seen {
+    /// An empty record.
+    pub const fn new() -> Seen {
+        Seen {
+            count: 0,
+            types: [0; 8],
+            walked: 0,
+        }
+    }
+}
+
+impl Default for Seen {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Where a virtio device's registers are, and how to reach them.

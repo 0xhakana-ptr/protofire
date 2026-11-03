@@ -92,8 +92,27 @@ pub use arch_x86_64::boot::device_tree_summary;
 pub use arch_aarch64::boot::pcie_ecam_window;
 #[cfg(target_arch = "riscv64")]
 pub use arch_riscv64::boot::pcie_ecam_window;
+
+// The window a host bridge assigns BARs from.  `None` is an answer: x86_64's
+// firmware has already assigned them.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::boot::pcie_memory_window;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::boot::pcie_memory_window;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::boot::pcie_memory_window;
+
+// Making a page-table change visible.  Every machine has an instruction for
+// it, and a caller that changed a table without one changed nothing the CPU
+// observes.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::paging::flush_translation;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::paging::flush_translation;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::boot::pcie_ecam_window;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::paging::flush_translation;
 
 #[cfg(target_arch = "riscv64")]
 pub use arch_riscv64::boot::boot_info;

@@ -100,20 +100,23 @@ impl Machine {
                 "-drive".to_string(),
                 format!("file={},format=raw,if=none,id=blk0", disk.display()),
                 "-device".to_string(),
-                "virtio-blk-pci,drive=blk0".to_string(),
+                // `disable-legacy=on` asks for the modern interface only.
+                //
+                // The default is a *transitional* device, which offers both a
+                // legacy and a modern interface and — this is the part that
+                // costs a boot — a capability list whose virtio structures a
+                // modern-only parser does not read the way it expects.  This
+                // tree implements the modern transport, so it asks for the
+                // device that has only that.  On x86_64 the same flag is
+                // unnecessary because `q35`'s default is already modern.
+                "virtio-blk-pci,drive=blk0,disable-legacy=on".to_string(),
             ],
-            // The device-tree machine.  No disk yet, and the reason is a
-            // measurement rather than caution.
+            // The device-tree machine, with a disk on its PCIe bus.
             //
-            // QEMU's `virt` machine has a PCIe host bridge but nothing to
-            // enumerate it: every BAR comes up "not mapped", because on a
-            // bare-metal boot no firmware has assigned addresses.  A boot that
-            // wants the disk has to size each BAR, allocate its address from
-            // the bridge's `ranges` window and write it back — PCI enumeration,
-            // which is the change after this one.  Handing the boot a disk now
-            // would add a device it can see on the bus and cannot reach, and
-            // the driver would fail with "bad capability" for a reason that is
-            // not its own.
+            // The disk is what makes the driver path runnable rather than only
+            // its fallback.  It needs the BAR assignment pass the boot now
+            // runs: QEMU's `virt` has a host bridge and no firmware, so every
+            // BAR comes up unaddressed until something allocates one.
             Self::Aarch64 => vec![
                 "-machine".to_string(),
                 "virt".to_string(),
@@ -121,6 +124,19 @@ impl Machine {
                 "max".to_string(),
                 "-m".to_string(),
                 "512M".to_string(),
+                "-drive".to_string(),
+                format!("file={},format=raw,if=none,id=blk0", disk.display()),
+                "-device".to_string(),
+                // `disable-legacy=on` asks for the modern interface only.
+                //
+                // The default is a *transitional* device, which offers both a
+                // legacy and a modern interface and — this is the part that
+                // costs a boot — a capability list whose virtio structures a
+                // modern-only parser does not read the way it expects.  This
+                // tree implements the modern transport, so it asks for the
+                // device that has only that.  On x86_64 the same flag is
+                // unnecessary because `q35`'s default is already modern.
+                "virtio-blk-pci,drive=blk0,disable-legacy=on".to_string(),
             ],
             Self::Riscv64 => Vec::new(),
         }

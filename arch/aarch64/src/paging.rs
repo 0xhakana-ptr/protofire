@@ -459,6 +459,42 @@ impl Default for Windows {
     }
 }
 
+/// Make a change to the page tables visible to the walk.
+///
+/// ## Why a write to a table is not enough
+///
+/// The machine caches translations in the TLB, and a table changed underneath a
+/// cached translation is a change nothing observes.  A newly created mapping is
+/// the case that bites hardest: the TLB holds no entry for the address, but the
+/// **absence** of one is cached too on an implementation that remembers a
+/// fault, and a device window mapped for the first time reads as all ones.
+///
+/// That is exactly how this was found: the PCIe ECAM window was mapped, the
+/// mapping was correct, and every read through it returned `0xFFFF_FFFF` — the
+/// value a faulted load returns — while QEMU's monitor read the same physical
+/// addresses perfectly.  `diff`ing the two answers is what named the TLB.
+///
+/// `DSB` before the invalidate ensures the table writes are visible, and `ISB`
+/// after ensures the invalidation has taken effect before the next instruction
+/// fetches or loads.
+///
+/// # Safety
+///
+/// Called after a page-table change on this CPU.  A second CPU translating
+/// through the same table would need a broadcast invalidate, which this kernel
+/// does not yet have — it runs on one core.
+#[cfg(target_os = "none")]
+pub fn flush_translation() {
+    // SAFETY: both are architectural maintenance operations with no memory
+    // operand of their own.
+    unsafe {
+        core::arch::asm!("dsb sy", options(nostack));
+        core::arch::asm!("tlbi vmalle1", options(nostack));
+        core::arch::asm!("dsb sy", options(nostack));
+        core::arch::asm!("isb", options(nostack));
+    }
+}
+
 /// Read the address of the table the machine is translating through, at EL1.
 #[cfg(target_os = "none")]
 pub fn current_root_table() -> usize {

@@ -205,6 +205,27 @@ impl EntryEncoding for Encoding {
 /// uses Sv39.
 pub const SATP_MODE_SV39: u64 = 8 << 60;
 
+/// Make a change to the page tables visible to the walk.
+///
+/// `sfence.vma` is the instruction the architecture requires after a table
+/// change, and with no operands it invalidates every entry.
+///
+/// # Safety
+///
+/// Called after a page-table change on this hart.
+#[cfg(target_os = "none")]
+pub fn flush_translation() {
+    // SAFETY: an architectural fence with no memory operand of its own.
+    unsafe { core::arch::asm!("sfence.vma", options(nostack)) };
+}
+
+/// The host form: nothing, because a host has no address space to flush.
+///
+/// The function exists so the kernel asks one question of three machines; on a
+/// host the answer is that there is no table, which is the state a test is in.
+#[cfg(not(target_os = "none"))]
+pub fn flush_translation() {}
+
 /// The address ranges on this machine that are *not* ordinary memory.
 ///
 /// Empty, and it says nothing about the machine: riscv64 has no entry yet, so
