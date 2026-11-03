@@ -295,11 +295,14 @@ dependencies = [
  "async_io",
  "block",
  "fs",
+ "pci",
  "security",
  "sound",
  "spin",
  "sync",
  "syscall",
+ "virtio_block",
+ "virtio_core",
 ]
 
 [[package]]
@@ -340,6 +343,7 @@ name = "pci"
 version = "0.1.0"
 dependencies = [
  "abi",
+ "arch",
 ]
 
 [[package]]
@@ -542,6 +546,10 @@ dependencies = [
 [[package]]
 name = "virtio_core"
 version = "0.1.0"
+dependencies = [
+ "abi",
+ "pci",
+]
 
 [[package]]
 name = "volatile"

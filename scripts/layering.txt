@@ -149,16 +149,24 @@
 # `virtio` crate that also held a driver would make the others depend on that
 # driver's code to reach a queue.
 #
-# It names nothing of this tree: the queue is arithmetic over memory the caller
-# provides, and the transport is a trait the device crate implements.  That is
-# why it is at layer 4 beside `block` and `arch` rather than at 5 with the
-# drivers: a framework is *named by* the drivers, so it has to be under them.
-4 virtio_core
+# It sits at layer 5, beside `pci` and under `virtio_block`, and that is the
+# narrowest slice its two facts allow.  It is *named by* the drivers, so it
+# must be under them — but it also names `pci`, because a virtio PCI device is
+# found through a capability walk and the walk is the bus's.  `pci` is at 5
+# because it names `arch`; a framework below the bus would have to do the walk
+# itself.
+#
+# The alternative was moving `PciTransport` out of the framework and into
+# `virtio_block`, which would put a second device in the position of copying a
+# transport the third would also need.  The transport is the framework's and
+# the framework is above the bus — layer 6.
+6 virtio_core
 
 # `virtio_block` is the block device on that framework: a request header, a
 # data buffer, a status byte, and the two block traits over them.  It names
-# `virtio_core` for the queue and `block` for the interface it answers.
-5 virtio_block
+# `virtio_core` for the queue and `block` for the interface it answers, so it
+# has to be above the framework — layer 7, beside `fs`.
+7 virtio_block
 5 e1000
 
 # `sound` and `virt` are laid out but not filled.  Their ranks are the ones their

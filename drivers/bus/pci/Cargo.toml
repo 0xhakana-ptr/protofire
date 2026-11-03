@@ -5,5 +5,9 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# `arch` for the port mechanism: `in` and `out` are instructions, and only
+# x86_64 has an I/O space.  The other two machines' arms report "no such port",
+# so this crate has one code path rather than three.
 [dependencies]
 abi.workspace = true
+arch = { path = "../../../arch" }

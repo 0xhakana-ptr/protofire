@@ -25,10 +25,9 @@ extracted yet.
   9-10   integration_tests, protofire (root), xtask     not shipped
      8   bootloader                                    the image
      7   kernel                                        the core
-   5-6   syscall, pci, virtio_block, e1000, sound, virt, fs, net,
-         security, allocator
-     4   arch, block, virtio_core                      the route, the disk interface,
-                                                       and the virtio framework
+  5-7   syscall, pci, e1000, sound, virt, fs, net,
+         security, allocator, virtio_core, virtio_block
+     4   arch, block                                   the route, and the disk interface
      3   arch_x86_64, arch_aarch64, arch_riscv64       the machines
      2   crypto, async_io, power, ipc                  algorithms and rings
      1   abi                                           the wire format
@@ -202,9 +201,16 @@ devices behind it.  A network driver and a GPU driver submit through the same
 queue and negotiate features the same way; a `virtio` crate that also held the
 block driver would make them depend on block code to reach a queue.
 
-**The framework sits at layer 4, with `block` and `arch`.**  A framework is
-named by the drivers, so it has to be under them — the same argument that put
-`block` there.  `virtio_block` stays at layer 5 with the other drivers.
+**The framework sits at layer 6, and the bus it walks at 5.**  The chain is the
+narrowest one its facts allow: `arch` (4) gives `pci` (5) the port mechanism,
+`pci` walks a capability list so `virtio_core` (6) sits above it, and
+`virtio_block` (7) is the device on top.
+
+A framework belongs under the drivers that name it — the same argument that put
+`block` at 4.  What moved it up is that it also *names* the bus: a virtio PCI
+device is found through a capability walk, and the walk is `pci`'s.  The
+alternative was moving `PciTransport` into `virtio_block`, which would make the
+second virtio device copy a transport the third would also need.
 
 **What is testable on a host, and what is not.**  A virtqueue is arithmetic over
 three rings in memory, so a host test builds one over a `Vec` and stands in for

@@ -36,6 +36,7 @@
 // error, and an allocator nobody allocates from is a heap with no caller.
 extern crate alloc;
 
+pub mod devices;
 pub mod scheduler;
 pub mod syscall;
 
@@ -152,11 +153,96 @@ pub fn kernel_main() -> ! {
         }
     };
 
-    // The device the volume mounts on.  `MemoryBlockDevice::from_image` takes
-    // the bytes a builder produced, which is the same shape a driver's device
-    // has once it has read its first sectors.
-    let device: alloc::sync::Arc<dyn block::QueuedBlockDevice> =
-        block::MemoryBlockDevice::new(BOOT_VOLUME_LABEL, image, false);
+    // The device the volume mounts on: a real one if the machine has it, and
+    // the image above if it does not.
+    //
+    // The order is deliberate.  A boot that only knew the disk could not say
+    // anything on a machine without one; a boot that only knew the image would
+    // never run a driver.  Trying the bus first means the driver path is the
+    // one a machine with a disk exercises, and the image is the fallback that
+    // keeps a machine without one bootable.
+    let (device, source): (alloc::sync::Arc<dyn block::QueuedBlockDevice>, &str) =
+        match devices::find_virtio_block() {
+            Some(found) => {
+                let transport: alloc::sync::Arc<dyn virtio_core::Transport> =
+                    found.transport.clone();
+                match virtio_block::VirtioBlock::new(transport) {
+                    Ok(device) => (device, SOURCE_VIRTIO),
+                    Err(_) => {
+                        let memory =
+                            block::MemoryBlockDevice::new(BOOT_VOLUME_LABEL, image.clone(), false);
+                        (memory, "memory (the virtio driver refused the device)")
+                    }
+                }
+            }
+            None => {
+                let memory = block::MemoryBlockDevice::new(BOOT_VOLUME_LABEL, image.clone(), false);
+                (memory, "memory (no virtio-blk on the bus)")
+            }
+        };
+
+    arch::serial::write_str("protofire: block device from ");
+    arch::serial::write_str(source);
+    arch::serial::write_str("\n");
+
+    // A write and a read back, before the filesystem touches the device.
+    //
+    // The mount below would exercise the same path and would fail on an empty
+    // disk for a reason that says nothing about the driver.  This is the
+    // driver's own check: one sector written, the same sector read back, and
+    // the bytes compared.  It runs only when a real device answered — the
+    // in-memory fallback has no disk to write.
+    if source == SOURCE_VIRTIO {
+        let mut probe_sector = [0u8; 512];
+        probe_sector[..BOOT_DISK_PROBE.len()].copy_from_slice(BOOT_DISK_PROBE);
+        let mut read_back = [0u8; 512];
+        let written = device.write_blocks(BOOT_DISK_PROBE_SECTOR, &probe_sector);
+        let read = device.read_blocks(BOOT_DISK_PROBE_SECTOR, &mut read_back);
+        arch::serial::write_str("protofire: virtio-blk ");
+        if written.is_ok() && read.is_ok() && read_back == probe_sector {
+            arch::serial::write_str("wrote and read back sector ");
+            arch::serial::write_u32(BOOT_DISK_PROBE_SECTOR as u32);
+        } else {
+            arch::serial::write_str("FAILED the write-and-read-back probe: write=");
+            match written {
+                Ok(()) => arch::serial::write_str("ok"),
+                Err(error) => arch::serial::write_str(error.as_str()),
+            }
+            arch::serial::write_str(" read=");
+            match read {
+                Ok(()) => arch::serial::write_str("ok"),
+                Err(error) => arch::serial::write_str(error.as_str()),
+            }
+            arch::serial::write_str(" first=");
+            arch::serial::write_hex(read_back[0] as u64);
+        }
+        arch::serial::write_str("\n");
+    }
+
+    // A disk that is not a PyroFS volume gets one written to it.
+    //
+    // The image the boot built is the volume this machine's boot wants, and a
+    // real disk is where it should live.  QEMU's disk starts empty, so the
+    // first boot writes the image and every later step reads it back through
+    // the driver — which is what makes the mount below a read from a device
+    // rather than from a `Vec`.
+    //
+    // The check is the mount itself: a volume that opens is one to use, and one
+    // that does not is a disk to format.  Trying to open first is what keeps a
+    // second boot from overwriting what the first wrote.
+    let needs_format = fs::pyrofs::PyroFs::open(device.clone(), true).is_err();
+    if needs_format {
+        if source != SOURCE_VIRTIO {
+            // The in-memory device already holds exactly this image; rebuilding
+            // it would be the same bytes twice.
+        } else {
+            arch::serial::write_str("protofire: formatting the disk with the boot image\n");
+            if device.write_blocks(0, &image).is_err() {
+                arch::serial::write_str("protofire: writing the image to the disk FAILED\n");
+                halt()
+            }
+        }
+    }
 
     let volume = match fs::pyrofs::PyroFs::open(device, true) {
         Ok(volume) => fs::pyrofs::PyroFsVolume::new(volume),
@@ -201,6 +287,25 @@ pub fn kernel_main() -> ! {
 
 /// The label the boot's volume carries.
 const BOOT_VOLUME_LABEL: &str = "protofire";
+
+/// Where the block device came from, when it came from the bus.
+///
+/// A constant rather than a string compare against a literal in two places:
+/// the boot line and the probe's condition are one fact.
+const SOURCE_VIRTIO: &str = "virtio-blk on pci";
+
+/// The sector the driver's probe writes and reads back.
+///
+/// A sector no filesystem structure uses — the mount below reads sector 0 for
+/// the superblock — so the probe cannot corrupt what it is about to mount.
+const BOOT_DISK_PROBE_SECTOR: u64 = 63;
+
+/// The bytes the probe writes.
+///
+/// A string no other file in the tree contains, for the same reason the volume
+/// content is: a comparison against a constant that the device never received
+/// would pass on a device that was never written.
+const BOOT_DISK_PROBE: &[u8] = b"protofire writes this sector";
 
 /// What the boot writes into its volume and reads back.
 ///

@@ -39,11 +39,14 @@
 extern crate alloc;
 
 pub mod features;
+pub mod pci_transport;
 pub mod queue;
 pub mod status;
 pub mod transport;
 
 pub use features::Features;
+pub use pci_transport::PciTransport;
+pub use pci_transport::RegisterFile;
 pub use queue::VirtQueue;
 pub use queue::VirtQueueError;
 pub use status::Status;

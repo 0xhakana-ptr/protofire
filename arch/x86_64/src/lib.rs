@@ -15,6 +15,7 @@ extern crate alloc;
 
 pub mod boot;
 pub mod interrupts;
+pub mod port;
 pub mod serial;
 
 // The machine's entry, assembled from `src/boot-x86-64.S`.

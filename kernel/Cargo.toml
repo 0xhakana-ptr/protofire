@@ -23,3 +23,9 @@ sound.workspace = true
 arch = { path = "../arch" }
 fs = { path = "../fs" }
 block = { path = "../block" }
+# The bus, and the virtio framework over it.  The kernel is where a scan's
+# policy lives: which bus, what is worth keeping, and what a machine without
+# the device still does.
+pci = { path = "../drivers/bus/pci" }
+virtio_core = { path = "../drivers/virtio/core" }
+virtio_block = { path = "../drivers/virtio/block" }

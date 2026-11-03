@@ -83,11 +83,26 @@ impl Machine {
     /// than a guess: a machine whose boot has not been written is not a machine
     /// whose boot can be asserted, and inventing arguments for it would be a
     /// gate that passes because it never ran anything.
-    fn qemu_arguments(self) -> &'static [&'static str] {
+    fn qemu_arguments(self, disk: &Path) -> Vec<String> {
         match self {
-            Self::X8664 => &["-machine", "q35", "-cpu", "max", "-m", "512M"],
-            Self::Aarch64 => &[],
-            Self::Riscv64 => &[],
+            // A disk is part of the machine the gate boots: the boot prefers a
+            // real device over its in-memory image, and a machine with no disk
+            // would exercise the fallback instead of the driver.  The image is
+            // a raw file QEMU creates, because the driver writes to it and a
+            // read-only disk would be a different test.
+            Self::X8664 => vec![
+                "-machine".to_string(),
+                "q35".to_string(),
+                "-cpu".to_string(),
+                "max".to_string(),
+                "-m".to_string(),
+                "512M".to_string(),
+                "-drive".to_string(),
+                format!("file={},format=raw,if=none,id=blk0", disk.display()),
+                "-device".to_string(),
+                "virtio-blk-pci,drive=blk0".to_string(),
+            ],
+            Self::Aarch64 | Self::Riscv64 => Vec::new(),
         }
     }
 
@@ -109,6 +124,11 @@ impl Machine {
     /// printed the same bytes and the same label; the words `through syscall
     /// open/read/close` are what distinguish the two, and they are the whole
     /// claim this line makes.
+    ///
+    /// The fourth names where the block device came from.  The boot falls back
+    /// to its in-memory image when the bus has no disk, so "the filesystem
+    /// mounted" alone would pass on a machine where the driver never ran —
+    /// `virtio-blk on pci` is the line that says it did.
     fn required_lines(self) -> &'static [(&'static str, bool)] {
         match self {
             Self::X8664 => &[
@@ -117,6 +137,8 @@ impl Machine {
                     true,
                 ),
                 ("protofire: heap at ", false),
+                ("protofire: block device from virtio-blk on pci", true),
+                ("protofire: virtio-blk wrote and read back sector ", false),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,
@@ -185,6 +207,10 @@ fn main() -> Result<()> {
     }
 }
 
+/// The disk a boot is given: 1 MiB, which is more than the boot reads and
+/// enough that the driver's first writes cannot fail for want of space.
+const DISK_BYTES: usize = 1024 * 1024;
+
 /// Where cargo puts the image for a target and profile.
 fn image_path(machine: Machine, profile: &str) -> PathBuf {
     PathBuf::from("target")
@@ -225,7 +251,20 @@ fn run(machine: Machine, profile: &str, timeout: u64, log: Option<&Path>) -> Res
     build(machine, profile)?;
 
     let image = image_path(machine, profile);
-    let machine_arguments = machine.qemu_arguments();
+
+    // The disk the machine boots with.  A file rather than a constant buffer:
+    // the driver writes to it, and QEMU refuses a `raw` drive over a file that
+    // does not exist unless it is told to create one — so the file is created
+    // here, sized to what a boot's writes can reach.
+    let disk = std::env::temp_dir().join(format!(
+        "protofire-{}-{}.disk",
+        machine.triple(),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&disk);
+    std::fs::write(&disk, vec![0u8; DISK_BYTES])
+        .with_context(|| format!("creating the disk at {}", disk.display()))?;
+    let machine_arguments = machine.qemu_arguments(&disk);
     if machine_arguments.is_empty() {
         bail!(
             "{} has no boot arguments yet: its image cannot be booted, so there is \
@@ -251,7 +290,7 @@ fn run(machine: Machine, profile: &str, timeout: u64, log: Option<&Path>) -> Res
 
     let mut command = Command::new(machine.qemu());
     command
-        .args(machine_arguments)
+        .args(&machine_arguments)
         .arg("-kernel")
         .arg(&image)
         .args(["-display", "none", "-no-reboot", "-no-shutdown"])
