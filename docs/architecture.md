@@ -27,7 +27,7 @@ extracted yet.
      7   kernel                                        the core
    5-6   syscall, pci, virtio, e1000, sound, virt, fs, net,
          security, allocator
-     4   arch                                          the route to the machine
+     4   arch, block                                   the route, and the disk interface
      3   arch_x86_64, arch_aarch64, arch_riscv64       the machines
      2   crypto, async_io, power, ipc                  algorithms and rings
      1   abi                                           the wire format
@@ -187,6 +187,35 @@ exception nobody argues for is what the gate is for.
 and a bitmap, and the one place it needs the machine — "make this range writable"
 — is an injected function.  That is what keeps the page table out of a data
 structure, and it is why the frame pool's arithmetic can be tested on a host.
+
+### `block`: an interface at the drivers' layer
+
+`block` is at layer 4, below the drivers that implement it, and it is in the
+root rather than under `libs/`.  Both facts are the same argument.
+
+A crate under `libs/` is a tool with no client shape: a cell, a set of flags,
+a `Vec`-with-a-lock, an allocator.  `block` defines a *role* — what a disk
+driver is — and a role is the thing `drivers/` and `fs/` share rather than
+something either one owns.  That is the position `abi` and `fs` are in, which
+is why they are siblings of it; filing `block` under `libs/` made the tree say
+it was a toolbox when it was a contract.
+
+It sits at layer 4 because the drivers have to name it to implement it.  With
+`block` at layer 6 and `virtio` at layer 5, the trait was one no driver could
+implement — an upward edge — and that is why `drivers/block/virtio` was an
+empty file for as long as it was.  The layer was wrong, not the driver.
+
+The price of layer 4 is that `block` cannot name `sync`, which is at layer 5
+because closing a spinlock's interrupt window needs the machine.  So `block`
+holds a `spin` lock, and the argument is in its header: the devices there are
+in-memory ones touched from ordinary context, and a real driver takes its own
+lock where the interrupt question is its own.
+
+The crate holds two traits.  `BlockDevice` is what every device is;
+`QueuedBlockDevice` is what a device that can be ahead of its caller is.  They
+are separate because `submit_read` is `unsafe` — the caller's buffer has to
+stay put until the device is done — and an interface every device implements
+should not carry a borrow contract only some of them need.
 
 ### The subsystems and the core
 

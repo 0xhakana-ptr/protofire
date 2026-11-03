@@ -15,7 +15,11 @@ use alloc::vec::Vec;
 
 use abi::Error;
 use abi::Result;
-use sync::Mutex;
+
+use crate::queue::QueuedBlockDevice;
+use crate::queue::RequestState;
+use crate::queue::Ticket;
+use spin::Mutex;
 
 pub const BLOCK_SIZE: usize = 512;
 
@@ -207,7 +211,7 @@ pub fn device_io_snapshot() -> DeviceIo {
 /// driver's published disk, and the in-memory and sliced volumes the boot
 /// installs.  A slice delegates to its parent, so a read through a slice is
 /// counted once — at the slice, which is the device the filesystem was handed.
-pub fn counting_device(device: Arc<dyn BlockDevice>) -> Arc<dyn BlockDevice> {
+pub fn counting_device(device: Arc<dyn QueuedBlockDevice>) -> Arc<dyn QueuedBlockDevice> {
     #[cfg(feature = "perf_baseline")]
     {
         Arc::new(CountingDevice {
@@ -271,6 +275,27 @@ impl BlockDevice for CountingDevice {
         self.inner.read_blocks(lba, buffer)
     }
 
+    fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
+        io_counters::count_write(data.len() as u64);
+        let _in_flight = io_counters::InFlight::enter(io_counters::Direction::Write);
+        self.inner.write_blocks(lba, data)
+    }
+
+    fn flush(&self) -> Result<()> {
+        self.inner.flush()
+    }
+
+    fn device_health(&self) -> DeviceHealth {
+        self.inner.device_health()
+    }
+}
+
+#[cfg(feature = "perf_baseline")]
+impl QueuedBlockDevice for CountingDevice {
+    fn as_block_device(&self) -> &dyn BlockDevice {
+        self
+    }
+
     fn queue_depth(&self) -> u16 {
         self.inner.queue_depth()
     }
@@ -325,20 +350,6 @@ impl BlockDevice for CountingDevice {
         }
         state
     }
-
-    fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
-        io_counters::count_write(data.len() as u64);
-        let _in_flight = io_counters::InFlight::enter(io_counters::Direction::Write);
-        self.inner.write_blocks(lba, data)
-    }
-
-    fn flush(&self) -> Result<()> {
-        self.inner.flush()
-    }
-
-    fn device_health(&self) -> DeviceHealth {
-        self.inner.device_health()
-    }
 }
 
 /// Health classification for block devices so callers can distinguish
@@ -353,50 +364,6 @@ pub enum DeviceHealth {
     /// The device has suffered a permanent failure and should not be
     /// retried.
     Failed,
-}
-
-/// A read a device has accepted but not yet completed.
-///
-/// The ticket is opaque — a device hands one back from
-/// [`BlockDevice::submit_read`] and the caller gives it to
-/// [`BlockDevice::poll`].  [`Ticket::DONE`] is the ticket a device
-/// returns when it completed the read in place, which is what a device of
-/// depth one does: the caller's buffer is already filled and there is nothing
-/// left to wait for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ticket(u64);
-
-impl Ticket {
-    /// The ticket for a read that finished before its submit returned.
-    pub const DONE: Ticket = Ticket(u64::MAX);
-
-    /// A device's own name for a request it has queued.
-    ///
-    /// `id` is never `u64::MAX`: that value is what [`Ticket::DONE`]
-    /// means, and a device that used it for a real request would be unable to
-    /// say it had finished in place.
-    pub const fn new(id: u64) -> Self {
-        Self(id)
-    }
-
-    /// The device's own name for the request.
-    pub const fn id(self) -> u64 {
-        self.0
-    }
-
-    /// Whether the read finished in place, before the submit returned.
-    pub const fn is_done(self) -> bool {
-        self.0 == u64::MAX
-    }
-}
-
-/// How a submitted request is doing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RequestState {
-    /// The device has not completed it yet.
-    Pending,
-    /// It finished; the answer is the request's own result.
-    Done(Result<()>),
 }
 
 pub trait BlockDevice: Send + Sync {
@@ -414,81 +381,6 @@ pub trait BlockDevice: Send + Sync {
     /// device that answered only the first block would leave the rest of the
     /// buffer as it found it.
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()>;
-
-    /// The most requests this device can hold at once.
-    ///
-    /// One — the default — means the device finishes a request before its
-    /// submit returns, so a caller has nothing to be ahead of.  A driver whose
-    /// hardware queues answers with what its queue holds, and a caller that
-    /// wants to overlap asks this *before* it pipelines: a caller that
-    /// pipelines without asking holds a queue open that the device does not
-    /// have, and then pays for it with `Busy`.
-    fn queue_depth(&self) -> u16 {
-        1
-    }
-
-    /// Hand the device a read of one or more blocks, and name it with a
-    /// ticket.
-    ///
-    /// `buffer.len()` is a whole number of blocks and the request covers them
-    /// all: a run is one request, not one request per block.  A device that
-    /// queues **may refuse** a run it cannot hold — `InvalidArgument`, refused
-    /// rather than split behind the caller's back — so a caller that wants a
-    /// run has to be prepared to fall back.  The waiting call,
-    /// [`BlockDevice::read_blocks`], takes any size and splits it into runs the
-    /// device can take.
-    ///
-    /// The default performs the read at once and answers
-    /// [`Ticket::DONE`] — which is what a device of depth one can do, and
-    /// leaves every device that does not queue exactly as it was.  A device
-    /// that queues returns a ticket whose [`BlockDevice::poll`] answers
-    /// when the device has the data, and refuses with `Busy` when its queue
-    /// is full rather than blocking or dropping the request.
-    ///
-    /// # Safety
-    ///
-    /// `buffer` must stay live and must not move until a poll of the returned
-    /// ticket answers [`RequestState::Done`], and no other read may name it at
-    /// the same time.  A device that copies the data into its own memory
-    /// during the submit (the default) is free of the constraint; a device
-    /// that queues is not, and that is the price of not copying the DMA
-    /// twice.
-    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<Ticket> {
-        self.read_blocks(lba, buffer)?;
-        Ok(Ticket::DONE)
-    }
-
-    /// Hand the device a write of one or more blocks, and name it with a
-    /// ticket.
-    ///
-    /// The same run contract as [`BlockDevice::submit_read`], including the
-    /// refusal a driver may answer for a run it cannot hold.
-    ///
-    /// This is **safe**, and the asymmetry with [`BlockDevice::submit_read`]
-    /// is the point: the data travels *into* the device, so a driver copies it
-    /// out of the caller before this returns and nothing of the caller's has
-    /// to outlive the ticket.  A caller may hand over a borrow that dies on
-    /// the next line.
-    ///
-    /// The default performs the write at once and answers [`Ticket::DONE`],
-    /// which is what a device of depth one can do.
-    fn submit_write(&self, lba: u64, data: &[u8]) -> Result<Ticket> {
-        self.write_blocks(lba, data)?;
-        Ok(Ticket::DONE)
-    }
-
-    /// Ask a device whether a submitted request has finished, and with what.
-    ///
-    /// A device of depth one always answers `Done`, because its submit
-    /// already completed the request.  Polling a ticket the device does not
-    /// know answers an error rather than waiting forever: an unknown ticket is
-    /// a caller's bug, and a hang would hide it.
-    ///
-    /// One poll serves both directions: the ticket already names the request,
-    /// and whether its data moved in or out is the submit's business.
-    fn poll(&self, _ticket: Ticket) -> RequestState {
-        RequestState::Done(Ok(()))
-    }
 
     /// Write `data.len() / block_size()` blocks starting at `lba`, with the
     /// same multi-block contract as [`BlockDevice::read_blocks`].
@@ -527,7 +419,14 @@ pub struct MemoryBlockDevice {
 
 pub struct BlockSliceDevice {
     name: String,
-    parent: Arc<dyn BlockDevice>,
+    /// The device this is a window on.
+    ///
+    /// Queued rather than plain: a slice of a device that queues is a device
+    /// that queues, and a slice of one that does not is a device of depth one.
+    /// Holding the plainer type would make every slice report depth one and
+    /// silently drop a parent's queue — the parent would still queue, but the
+    /// slice in front of it would never say so.
+    parent: Arc<dyn QueuedBlockDevice>,
     start_block: u64,
     block_count: u64,
     read_only: bool,
@@ -551,7 +450,7 @@ impl MemoryBlockDevice {
 impl BlockSliceDevice {
     pub fn new(
         name: &str,
-        parent: Arc<dyn BlockDevice>,
+        parent: Arc<dyn QueuedBlockDevice>,
         start_block: u64,
         block_count: u64,
         read_only: bool,
@@ -626,6 +525,19 @@ impl BlockDevice for MemoryBlockDevice {
     }
 }
 
+/// A memory device finishes a read before its submit returns, so it is a queue
+/// of depth one.
+///
+/// Written out rather than inherited from a blanket `impl`: a blanket one would
+/// collide with the devices that really queue, and a device that queues is the
+/// whole point of the trait.  The methods are the trait's defaults; what this
+/// supplies is the upcast, which is the one thing a default cannot.
+impl QueuedBlockDevice for MemoryBlockDevice {
+    fn as_block_device(&self) -> &dyn BlockDevice {
+        self
+    }
+}
+
 impl BlockDevice for BlockSliceDevice {
     fn name(&self) -> &str {
         &self.name
@@ -657,62 +569,6 @@ impl BlockDevice for BlockSliceDevice {
         self.parent.read_blocks(parent_lba, buffer)
     }
 
-    fn queue_depth(&self) -> u16 {
-        // A slice of a device that queues is a device that queues: the slice
-        // is a window on the same hardware, not a copy of it.
-        self.parent.queue_depth()
-    }
-
-    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<Ticket> {
-        if !buffer.len().is_multiple_of(BLOCK_SIZE) {
-            return Err(Error::InvalidArgument);
-        }
-
-        let blocks = (buffer.len() / BLOCK_SIZE) as u64;
-        let end = lba.checked_add(blocks).ok_or(Error::InvalidArgument)?;
-        if end > self.block_count {
-            return Err(Error::InvalidArgument);
-        }
-
-        let parent_lba = self
-            .start_block
-            .checked_add(lba)
-            .ok_or(Error::InvalidArgument)?;
-        // SAFETY: the caller's buffer contract passes through — the slice
-        // hands the parent the same buffer, so it is the same promise.
-        unsafe { self.parent.submit_read(parent_lba, buffer) }
-    }
-
-    fn poll(&self, ticket: Ticket) -> RequestState {
-        // The ticket is the parent's own name for the request, handed back
-        // unread, so the parent is the one that can answer for it.
-        self.parent.poll(ticket)
-    }
-
-    fn submit_write(&self, lba: u64, data: &[u8]) -> Result<Ticket> {
-        if self.read_only {
-            return Err(Error::PermissionDenied);
-        }
-
-        if !data.len().is_multiple_of(BLOCK_SIZE) {
-            return Err(Error::InvalidArgument);
-        }
-
-        let blocks = (data.len() / BLOCK_SIZE) as u64;
-        let end = lba.checked_add(blocks).ok_or(Error::InvalidArgument)?;
-        if end > self.block_count {
-            return Err(Error::InvalidArgument);
-        }
-
-        let parent_lba = self
-            .start_block
-            .checked_add(lba)
-            .ok_or(Error::InvalidArgument)?;
-        // A write needs no contract with the caller: the parent copies the
-        // bytes before it returns, on the same terms this slice did.
-        self.parent.submit_write(parent_lba, data)
-    }
-
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
         if self.read_only {
             return Err(Error::PermissionDenied);
@@ -741,6 +597,71 @@ impl BlockDevice for BlockSliceDevice {
 
     fn device_health(&self) -> DeviceHealth {
         self.parent.device_health()
+    }
+}
+
+/// A slice of a device that queues is a device that queues.
+///
+/// The window is on the same hardware, not a copy of it, so every queue answer
+/// comes from the parent — including a `Busy`, which is the parent's queue
+/// being full rather than the slice's.
+impl QueuedBlockDevice for BlockSliceDevice {
+    fn as_block_device(&self) -> &dyn BlockDevice {
+        self
+    }
+
+    fn queue_depth(&self) -> u16 {
+        self.parent.queue_depth()
+    }
+
+    unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<Ticket> {
+        if !buffer.len().is_multiple_of(BLOCK_SIZE) {
+            return Err(Error::InvalidArgument);
+        }
+
+        let blocks = (buffer.len() / BLOCK_SIZE) as u64;
+        let end = lba.checked_add(blocks).ok_or(Error::InvalidArgument)?;
+        if end > self.block_count {
+            return Err(Error::InvalidArgument);
+        }
+
+        let parent_lba = self
+            .start_block
+            .checked_add(lba)
+            .ok_or(Error::InvalidArgument)?;
+        // SAFETY: the caller's buffer contract passes through — the slice hands
+        // the parent the same buffer, so it is the same promise.
+        unsafe { self.parent.submit_read(parent_lba, buffer) }
+    }
+
+    fn submit_write(&self, lba: u64, data: &[u8]) -> Result<Ticket> {
+        if self.read_only {
+            return Err(Error::PermissionDenied);
+        }
+
+        if !data.len().is_multiple_of(BLOCK_SIZE) {
+            return Err(Error::InvalidArgument);
+        }
+
+        let blocks = (data.len() / BLOCK_SIZE) as u64;
+        let end = lba.checked_add(blocks).ok_or(Error::InvalidArgument)?;
+        if end > self.block_count {
+            return Err(Error::InvalidArgument);
+        }
+
+        let parent_lba = self
+            .start_block
+            .checked_add(lba)
+            .ok_or(Error::InvalidArgument)?;
+        // A write needs no contract with the caller: the parent copies the
+        // bytes before it returns, on the same terms this slice did.
+        self.parent.submit_write(parent_lba, data)
+    }
+
+    fn poll(&self, ticket: Ticket) -> RequestState {
+        // The ticket is the parent's own name for the request, handed back
+        // unread, so the parent is the one that can answer for it.
+        self.parent.poll(ticket)
     }
 }
 
@@ -799,8 +720,9 @@ mod tests {
     use super::MemoryBlockDevice;
     use super::RequestState;
     use super::Ticket;
+    use crate::queue::QueuedBlockDevice;
     use abi::Error;
-    use sync::Mutex;
+    use spin::Mutex;
 
     /// A device that queues a fixed number of reads and finishes them only
     /// when a test says so.
@@ -859,44 +781,6 @@ mod tests {
 
         fn write_blocks(&self, _lba: u64, _data: &[u8]) -> abi::Result<()> {
             Err(Error::Unsupported)
-        }
-
-        fn queue_depth(&self) -> u16 {
-            self.depth
-        }
-
-        unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> abi::Result<Ticket> {
-            let mut outstanding = self.outstanding.lock();
-            if outstanding.len() as u16 >= self.depth {
-                return Err(Error::Busy);
-            }
-            let start = lba as usize * BLOCK_SIZE;
-            buffer.copy_from_slice(&self.storage[start..start + buffer.len()]);
-            let mut next_id = self.next_id.lock();
-            let id = *next_id;
-            *next_id += 1;
-            outstanding.push((id, lba));
-            Ok(Ticket::new(id))
-        }
-
-        fn poll(&self, ticket: Ticket) -> RequestState {
-            let mut finished = self.finished.lock();
-            if let Some(index) = finished.iter().position(|id| *id == ticket.id()) {
-                finished.swap_remove(index);
-                self.outstanding.lock().retain(|(id, _)| *id != ticket.id());
-                return RequestState::Done(Ok(()));
-            }
-            if self
-                .outstanding
-                .lock()
-                .iter()
-                .any(|(id, _)| *id == ticket.id())
-            {
-                return RequestState::Pending;
-            }
-            // The ticket is the device's own name for a request, and it has
-            // never heard of this one.
-            RequestState::Done(Err(Error::InvalidArgument))
         }
     }
 
@@ -975,7 +859,7 @@ mod tests {
     #[test]
     fn a_slice_of_a_queued_device_queues_and_maps_the_lba() {
         let parent = QueuedMock::new(4, 2);
-        let parent_device: Arc<dyn BlockDevice> = parent.clone();
+        let parent_device: Arc<dyn QueuedBlockDevice> = parent.clone();
         let slice = BlockSliceDevice::new("slice", parent_device, 2, 2, false);
         assert_eq!(
             slice.queue_depth(),
@@ -1015,7 +899,7 @@ mod tests {
 
     #[test]
     fn block_slice_device_rejects_parent_lba_overflow() {
-        let parent: alloc::sync::Arc<dyn BlockDevice> =
+        let parent: alloc::sync::Arc<dyn QueuedBlockDevice> =
             MemoryBlockDevice::new("parent", vec![0_u8; BLOCK_SIZE], false);
         let slice = BlockSliceDevice::new("slice", parent, u64::MAX, 1, false);
         let mut read_buffer = [0_u8; BLOCK_SIZE];
@@ -1044,7 +928,7 @@ mod tests {
 
     #[test]
     fn block_slice_device_flush_delegates_to_parent() {
-        let parent: alloc::sync::Arc<dyn BlockDevice> =
+        let parent: alloc::sync::Arc<dyn QueuedBlockDevice> =
             MemoryBlockDevice::new("parent", vec![0_u8; BLOCK_SIZE], false);
         let slice = BlockSliceDevice::new("slice", parent, 0, 1, false);
         assert_eq!(slice.flush(), Ok(()));
@@ -1058,7 +942,7 @@ mod tests {
         // code it is running because it cannot write the blocks it lives on;
         // `/apps` is *not* cut this way, because installing writes it and the
         // gate for that is the zone's security descriptor.
-        let parent: alloc::sync::Arc<dyn BlockDevice> =
+        let parent: alloc::sync::Arc<dyn QueuedBlockDevice> =
             MemoryBlockDevice::new("parent", vec![0x5a_u8; BLOCK_SIZE], false);
         let slice = BlockSliceDevice::new("slice", parent, 0, 1, true);
         let mut buffer = [0_u8; BLOCK_SIZE];
@@ -1067,5 +951,49 @@ mod tests {
         assert_eq!(slice.write_blocks(0, &buffer), Err(Error::PermissionDenied));
         assert_eq!(slice.read_blocks(0, &mut buffer), Ok(()));
         assert_eq!(buffer, [0x5a_u8; BLOCK_SIZE]);
+    }
+
+    impl QueuedBlockDevice for QueuedMock {
+        fn as_block_device(&self) -> &dyn BlockDevice {
+            self
+        }
+
+        fn queue_depth(&self) -> u16 {
+            self.depth
+        }
+
+        unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> abi::Result<Ticket> {
+            let mut outstanding = self.outstanding.lock();
+            if outstanding.len() as u16 >= self.depth {
+                return Err(Error::Busy);
+            }
+            let start = lba as usize * BLOCK_SIZE;
+            buffer.copy_from_slice(&self.storage[start..start + buffer.len()]);
+            let mut next_id = self.next_id.lock();
+            let id = *next_id;
+            *next_id += 1;
+            outstanding.push((id, lba));
+            Ok(Ticket::new(id))
+        }
+
+        fn poll(&self, ticket: Ticket) -> RequestState {
+            let mut finished = self.finished.lock();
+            if let Some(index) = finished.iter().position(|id| *id == ticket.id()) {
+                finished.swap_remove(index);
+                self.outstanding.lock().retain(|(id, _)| *id != ticket.id());
+                return RequestState::Done(Ok(()));
+            }
+            if self
+                .outstanding
+                .lock()
+                .iter()
+                .any(|(id, _)| *id == ticket.id())
+            {
+                return RequestState::Pending;
+            }
+            // The ticket is the device's own name for a request, and it has
+            // never heard of this one.
+            RequestState::Done(Err(Error::InvalidArgument))
+        }
     }
 }

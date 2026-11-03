@@ -16,7 +16,7 @@ use abi::Result;
 
 use crate::NodeKind;
 use block::BLOCK_SIZE;
-use block::BlockDevice;
+use block::QueuedBlockDevice;
 use block::RequestState;
 use block::Ticket;
 
@@ -32,7 +32,7 @@ use super::types::*;
 const MOUNT_READ_POLL_LIMIT: u32 = 50_000_000;
 
 /// Wait for one queued read, bounded.
-fn wait_for_read(device: &dyn BlockDevice, ticket: Ticket) -> Result<()> {
+fn wait_for_read(device: &dyn QueuedBlockDevice, ticket: Ticket) -> Result<()> {
     let mut polls = 0u32;
     loop {
         match device.poll(ticket) {
@@ -347,7 +347,7 @@ pub(crate) fn validate_dir_entry_name_for_format(
 }
 
 pub(crate) fn load_current_runtime_state(
-    device: &dyn BlockDevice,
+    device: &dyn QueuedBlockDevice,
     case_sensitive: bool,
     mount_policy: PyroFsRuntimeMountPolicy,
 ) -> Result<(
@@ -385,7 +385,7 @@ pub(crate) fn load_current_runtime_state(
 }
 
 pub(crate) fn readable_superblock_candidates(
-    device: &dyn BlockDevice,
+    device: &dyn QueuedBlockDevice,
 ) -> Vec<(String, ParsedSuperblock)> {
     let mut candidates = Vec::with_capacity(2);
 
@@ -428,7 +428,7 @@ pub(crate) fn readable_superblock_candidates(
 }
 
 pub(crate) fn load_runtime_state_from_superblock(
-    device: &dyn BlockDevice,
+    device: &dyn QueuedBlockDevice,
     parsed_superblock: ParsedSuperblock,
     case_sensitive: bool,
     mount_policy: PyroFsRuntimeMountPolicy,
@@ -512,7 +512,7 @@ pub(crate) fn load_runtime_state_from_superblock(
 }
 
 pub(crate) fn read_superblock_record(
-    device: &dyn BlockDevice,
+    device: &dyn QueuedBlockDevice,
     block_index: usize,
 ) -> Result<(String, ParsedSuperblock)> {
     let mut superblock = [0_u8; BLOCK_SIZE];

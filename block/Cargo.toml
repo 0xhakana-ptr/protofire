@@ -1,0 +1,22 @@
+[package]
+name = "block"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+abi.workspace = true
+# A lock, and an external one on purpose: this crate is at layer 4, below
+# `sync`, and a device interface that reached up for the kernel's interrupt-
+# aware lock would be an upward edge.  `spin` is what `sync` itself is built
+# on, and the devices here are in-memory ones whose storage is only ever
+# touched from ordinary context — a real driver takes its own lock, in
+# `drivers/`, where the interrupt question is its own to answer.
+spin.workspace = true
+
+[features]
+# The device-command counters, under the name the previous tree uses.  Off by
+# default: with it off every increment is compiled out, so a boot that does not
+# want the measurement does not pay for it.
+perf_baseline = []

@@ -103,10 +103,17 @@
 5 sync
 
 # `block` is the disk interface: what a driver implements and what a filesystem
-# reads.  It is below both so that neither has to name the other.  The driver
-# list grows with every machine and the filesystem list does not, so a trait
-# owned by the filesystem would make each new driver depend on it.
-6 block
+# reads.  It sits at layer 4, below the drivers, because a driver has to name
+# the trait to implement it and must not have to name anything above it to do
+# that — and below `sync` (layer 5) as well, which is why it holds a `spin`
+# lock rather than the kernel's interrupt-aware one.
+#
+# Two traits, one crate: `BlockDevice` is what a device is, and
+# `QueuedBlockDevice` is what a device that can be ahead of a caller is.  The
+# split is not tidiness — `submit_read` is `unsafe`, and an interface every
+# device must implement should not carry a borrow contract only some of them
+# need.
+4 block
 
 # `memory` is the frame pool and the region pools: a range and a bitmap, plus one
 # injected hook for "make this range writable".  It does *not* name `arch` — the

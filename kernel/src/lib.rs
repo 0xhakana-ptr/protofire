@@ -155,7 +155,7 @@ pub fn kernel_main() -> ! {
     // The device the volume mounts on.  `MemoryBlockDevice::from_image` takes
     // the bytes a builder produced, which is the same shape a driver's device
     // has once it has read its first sectors.
-    let device: alloc::sync::Arc<dyn block::BlockDevice> =
+    let device: alloc::sync::Arc<dyn block::QueuedBlockDevice> =
         block::MemoryBlockDevice::new(BOOT_VOLUME_LABEL, image, false);
 
     let volume = match fs::pyrofs::PyroFs::open(device, true) {

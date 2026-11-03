@@ -21,12 +21,12 @@ arch_riscv64          423    4
 arch_x86_64           528    5
 async_io             1302   24
 audit                 595    8
-block                1118   10
+block                1219   10
 bootloader             82    0 # exempt: entry symbols, a panic handler and an assembly stub; a test of those is a boot
 cell                  217    4
 crypto               4850   64
 e1000                   2    0
-fs                  11026   54
+fs                  11052   54
 init                   68    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 integration_tests       2    0
 ipc                   335    9

@@ -22,4 +22,4 @@ sound.workspace = true
 # other two machines unbuildable from here.
 arch = { path = "../arch" }
 fs = { path = "../fs" }
-block = { path = "../libs/block" }
+block = { path = "../block" }

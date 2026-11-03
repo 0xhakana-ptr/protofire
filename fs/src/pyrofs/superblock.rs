@@ -18,8 +18,8 @@ use crate::profiler::FsProfiler;
 use crate::profiler::FsProfilerSnapshot;
 use crate::stats::CacheStats;
 use block::BLOCK_SIZE;
-use block::BlockDevice;
 use block::DeviceHealth;
+use block::QueuedBlockDevice;
 
 use super::PyroFs;
 use super::PyroFsState;
@@ -31,12 +31,12 @@ use super::types::*;
 impl PyroFs {
     /// Mount a SimpleFS image from `device`, exposing the read/write API used
     /// by the host integration-test suite (and the unified filesystem layer).
-    pub fn open(device: Arc<dyn BlockDevice>, case_sensitive: bool) -> Result<Arc<Self>> {
+    pub fn open(device: Arc<dyn QueuedBlockDevice>, case_sensitive: bool) -> Result<Arc<Self>> {
         Self::open_with_runtime_policy(device, case_sensitive, PyroFsRuntimeMountPolicy::Public)
     }
 
     pub(crate) fn open_with_runtime_policy(
-        device: Arc<dyn BlockDevice>,
+        device: Arc<dyn QueuedBlockDevice>,
         case_sensitive: bool,
         mount_policy: PyroFsRuntimeMountPolicy,
     ) -> Result<Arc<Self>> {
@@ -341,7 +341,7 @@ impl PyroFs {
 /// carry a non-zero `name_len` and deleted records carry `status ==
 /// XATTR_STATUS_DELETED`.
 pub(crate) fn read_xattr_records(
-    device: &dyn BlockDevice,
+    device: &dyn QueuedBlockDevice,
     format_version: PyroFsFormatVersion,
     table_block: usize,
     capacity: usize,

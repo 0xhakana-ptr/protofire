@@ -35,6 +35,7 @@ use abi::Error;
 use abi::Result;
 use block::BlockDevice;
 use block::MemoryBlockDevice;
+use block::QueuedBlockDevice;
 use sync::Mutex;
 
 use super::ImageEntry;
@@ -66,7 +67,7 @@ fn build_v4_test_device(name: &str, seed: &[u8]) -> Arc<MemoryBlockDevice> {
 }
 
 /// Open the V4 image writable (public runtime mount policy).
-fn open_writable_v4_for_test(device: Arc<dyn BlockDevice>) -> Arc<PyroFs> {
+fn open_writable_v4_for_test(device: Arc<dyn QueuedBlockDevice>) -> Arc<PyroFs> {
     PyroFs::open(device, true).expect("open writable v4 pyrofs")
 }
 
@@ -151,6 +152,12 @@ impl BlockDevice for WriteCountingBlockDevice {
     fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
         *self.blocks_written.lock() += data.len() / block::BLOCK_SIZE;
         self.parent.write_blocks(lba, data)
+    }
+}
+
+impl QueuedBlockDevice for WriteCountingBlockDevice {
+    fn as_block_device(&self) -> &dyn BlockDevice {
+        self
     }
 }
 
@@ -267,6 +274,12 @@ impl BlockDevice for MetadataFailingBlockDevice {
             }
             None => self.parent.write_blocks(lba, data),
         }
+    }
+}
+
+impl QueuedBlockDevice for MetadataFailingBlockDevice {
+    fn as_block_device(&self) -> &dyn BlockDevice {
+        self
     }
 }
 

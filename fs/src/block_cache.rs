@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 
 use abi::Result;
 use block::BLOCK_SIZE;
-use block::BlockDevice;
+use block::QueuedBlockDevice;
 use block::RequestState;
 use block::Ticket;
 use sync::Mutex;
@@ -134,7 +134,7 @@ impl CacheEntry {
 }
 
 pub struct BlockCache {
-    device: Arc<dyn BlockDevice>,
+    device: Arc<dyn QueuedBlockDevice>,
     entries: Mutex<Vec<CacheEntry>>,
     generation: Mutex<u64>,
     stats: Mutex<CacheStats>,
@@ -148,7 +148,7 @@ pub struct BlockCache {
 }
 
 impl BlockCache {
-    pub fn new(device: Arc<dyn BlockDevice>) -> Self {
+    pub fn new(device: Arc<dyn QueuedBlockDevice>) -> Self {
         Self {
             device,
             entries: Mutex::new(vec![CacheEntry::empty(); CACHE_CAPACITY]),
@@ -163,7 +163,7 @@ impl BlockCache {
     ///
     /// When enabled, a sequential cache miss prefetches the next two blocks
     /// so that subsequent sequential reads are hits.
-    pub fn with_read_ahead(device: Arc<dyn BlockDevice>, depth: usize) -> Self {
+    pub fn with_read_ahead(device: Arc<dyn QueuedBlockDevice>, depth: usize) -> Self {
         Self {
             read_ahead_depth: depth,
             ..Self::new(device)
@@ -843,6 +843,7 @@ impl BlockCache {
 mod tests {
     use super::*;
     use abi::Error;
+    use block::BlockDevice;
     use core::sync::atomic::AtomicU64;
     use core::sync::atomic::Ordering;
     use sync::Mutex as TestMutex;
@@ -898,6 +899,12 @@ mod tests {
             let end = start + data.len();
             storage[start..end].copy_from_slice(data);
             Ok(())
+        }
+    }
+
+    impl QueuedBlockDevice for CountingDevice {
+        fn as_block_device(&self) -> &dyn BlockDevice {
+            self
         }
     }
 
@@ -1263,6 +1270,12 @@ mod tests {
             storage[start..start + data.len()].copy_from_slice(data);
             self.writes_seen.fetch_add(1, Ordering::Relaxed);
             Ok(())
+        }
+    }
+
+    impl QueuedBlockDevice for QueuedWriteDevice {
+        fn as_block_device(&self) -> &dyn BlockDevice {
+            self
         }
 
         fn queue_depth(&self) -> u16 {

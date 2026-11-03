@@ -12,7 +12,7 @@ use sync::Mutex;
 
 use crate::block_cache::BlockCache;
 use crate::profiler::FsProfiler;
-use block::BlockDevice;
+use block::QueuedBlockDevice;
 
 #[allow(dead_code)] // wired for compilation; the read/write path consumes it later (see types.rs)
 pub(crate) mod compression;
@@ -117,7 +117,7 @@ pub(crate) struct PyroFsState {
 pub struct PyroFs {
     label: String,
     format_version: PyroFsFormatVersion,
-    device: Arc<dyn BlockDevice>,
+    device: Arc<dyn QueuedBlockDevice>,
     cache: BlockCache,
     state: Mutex<PyroFsState>,
     case_sensitive: bool,
