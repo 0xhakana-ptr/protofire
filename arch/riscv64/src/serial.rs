@@ -177,6 +177,21 @@ pub fn write_hex(value: u64) {
 
 #[cfg(test)]
 mod tests {
+
+    /// Serialise the console tests: they share one recording buffer.
+    ///
+    /// `HOST_CONSOLE` is a process-wide static, because it stands in for a
+    /// machine's one console.  Two tests that each clear it and then assert
+    /// what they wrote are therefore racing for a resource only one of them
+    /// can own, and the harness runs tests in parallel by default: the pair
+    /// passed alone and failed in a workspace run, which is the shape of a
+    /// flake that a serial run hides.  Holding this lock makes the buffer one
+    /// resource again.
+    static CONSOLE_TESTS: spin::Mutex<()> = spin::Mutex::new(());
+
+    fn serialize() -> spin::MutexGuard<'static, ()> {
+        CONSOLE_TESTS.lock()
+    }
     /// A host build records what the console was asked to write.
     ///
     /// This is the arm that makes the console testable at all: the real one
@@ -185,6 +200,7 @@ mod tests {
     #[cfg(not(target_os = "none"))]
     #[test]
     fn a_host_records_what_was_written() {
+        let _guard = serialize();
         let _ = super::host_console_take();
         super::write_str("heap");
         assert_eq!(super::host_console_take(), b"heap");
@@ -198,6 +214,7 @@ mod tests {
     #[cfg(not(target_os = "none"))]
     #[test]
     fn a_newline_is_two_bytes() {
+        let _guard = serialize();
         let _ = super::host_console_take();
         super::write_byte(b'\n');
         assert_eq!(super::host_console_take(), b"\r\n");
@@ -210,6 +227,7 @@ mod tests {
     #[cfg(not(target_os = "none"))]
     #[test]
     fn hexadecimal_has_the_shape_a_reader_expects() {
+        let _guard = serialize();
         let _ = super::host_console_take();
         super::write_hex(0);
         assert_eq!(super::host_console_take(), b"0x0");

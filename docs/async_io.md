@@ -128,17 +128,17 @@ forbids at layer 2.
 
 ## The kernel's use of it today
 
-The kernel creates a `CompletionQueue`, pushes one completion and pops it, and
-prints the result:
+Nothing yet.  This crate was moved in with its 24 tests and its own `//!` header
+says how a service is driven; the kernel has no producer for it, so there is no
+boot line and no gate that runs one.
 
-```
-protofire: completion queue ready, capacity 64
-```
-
-That is the wiring proof, and the boot gate requires the line.  It is not the
-queue's purpose — a queue with nothing producing into it is a queue that has not
-been used — but it is the difference between a crate that is written and a crate
-that is executed, and the working rules do not accept the first as a result.
+That is a deliberate state and not an oversight.  The completion queue this boot
+once drained was a wiring proof — a queue with nothing producing into it — and
+the change that made the boot read a file through the syscalls superseded it:
+that read is a real operation whose result a reader can verify, and a queue
+drained by hand proved less by showing more.  `DISK_SECTORS` and
+`COMPLETION_QUEUE_CAPACITY` went with it.
 
 The first real producer will be a driver.  When it arrives, the gate that matters
-is a boot that drains the queue after a transfer, not this line.
+is a boot that drains the queue after a transfer, not a line printed by a boot
+that pushed one completion itself.

@@ -215,6 +215,21 @@ pub fn write_hex(value: u64) {
 
 #[cfg(test)]
 mod tests {
+
+    /// Serialise the console tests: they share one recording buffer.
+    ///
+    /// `HOST_CONSOLE` is a process-wide static, because it stands in for a
+    /// machine's one console.  Two tests that each clear it and then assert
+    /// what they wrote are therefore racing for a resource only one of them
+    /// can own, and the harness runs tests in parallel by default: the pair
+    /// passed alone and failed in a workspace run, which is the shape of a
+    /// flake that a serial run hides.  Holding this lock makes the buffer one
+    /// resource again.
+    static CONSOLE_TESTS: spin::Mutex<()> = spin::Mutex::new(());
+
+    fn serialize() -> spin::MutexGuard<'static, ()> {
+        CONSOLE_TESTS.lock()
+    }
     /// The buffer in `write_u32` holds ten digits, which is the most a `u32`
     /// has; an eleventh digit would be written before the buffer's start and
     /// corrupt whatever precedes it.  The bound is checked here rather than
@@ -226,6 +241,7 @@ mod tests {
     /// the same operation rather than of a different one.
     #[test]
     fn ten_digits_hold_a_u32() {
+        let _guard = serialize();
         let mut digits = 1u32;
         let mut remaining = u32::MAX / 10;
         while remaining > 0 {
@@ -246,6 +262,7 @@ mod tests {
     #[cfg(not(target_os = "none"))]
     #[test]
     fn a_host_records_what_was_written() {
+        let _guard = serialize();
         let _ = super::host_console_take();
         super::write_str("heap");
         assert_eq!(super::host_console_take(), b"heap");
@@ -259,6 +276,7 @@ mod tests {
     #[cfg(not(target_os = "none"))]
     #[test]
     fn a_newline_is_two_bytes() {
+        let _guard = serialize();
         let _ = super::host_console_take();
         super::write_byte(b'\n');
         assert_eq!(super::host_console_take(), b"\r\n");
@@ -271,6 +289,7 @@ mod tests {
     #[cfg(not(target_os = "none"))]
     #[test]
     fn hexadecimal_has_the_shape_a_reader_expects() {
+        let _guard = serialize();
         let _ = super::host_console_take();
         super::write_hex(0);
         assert_eq!(super::host_console_take(), b"0x0");

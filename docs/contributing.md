@@ -21,7 +21,7 @@ That is the gate, and it is the whole of what "green" means.  It runs, in order:
 | `cargo build --workspace` | a crate that does not build for the host |
 | `cargo build -p kernel --target <machine>` ×3 | a machine the kernel does not build for |
 | `cargo test --workspace` | a failing test |
-| `cargo xtask check --machine x86_64` | a boot that does not reach its console, heap and completion queue |
+| `cargo xtask check --machine x86_64` | a boot that does not reach its console, its heap, and a file read through `open`/`read`/`close` |
 | `scripts/check-arch-fanout.sh` | a `target_arch` gate outside `arch/` that nothing argued for |
 | `scripts/check-layering.sh` | a dependency that points at its own layer or above |
 | `scripts/check-crate-tests.sh` | a crate with code and no tests, or one that lost tests |
