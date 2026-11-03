@@ -5,7 +5,7 @@ rewrite and not a copy: each subsystem moves in as a crate of its own, with its
 tests, once it can be built and exercised on its own.  This document is the
 count.
 
-**The number that matters: about 13% of the previous tree is here.**  What is
+**The number that matters: about 14% of the previous tree is here.**  What is
 here is the part that proves the architecture — a boot, a heap, a bus, a driver,
 a filesystem and a syscall — and the rest is being moved a crate at a time.
 
@@ -14,17 +14,17 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | Subsystem | Previous tree | Here | What is in |
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 3,300 | boot, interrupts, serial, port I/O, page tables, IDT, the 8259 — six of a hundred |
-| `crypto` | 4,606 | 4,850 | all of it, one module per algorithm |
+| `arch` | 95,361 | 7,215 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011 — eight of a hundred |
+| `crypto` | 4,606 | 4,850 | all of it, one module per algorithm — counted under `libs` below |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
-| `kernel` | 39,704 | 1,157 | the boot sequence, the syscall table, device discovery |
+| `kernel` | 39,704 | 1,536 | the boot sequence, the syscall table, device discovery |
 | `memory` | 9,649 | 1,865 | the frame pool and the region pools |
 | `network` | 39,240 | 1 | nothing |
 | `drivers` | 18,828 | 3,772 | PCI, and virtio block |
 | `syscall` | 15,647 | 253 | the context, the validators, three handlers |
 | `user` | 19,145 | — | nothing; `apps/` holds three skeletons |
-| `libs` | — | 8,442 | allocator, audit, block, cell, profiler, rights, sync, unicode |
-| **total** | **312,131** | **~42,000** | |
+| `libs` | — | 14,625 | allocator, audit, cell, crypto, irq, paging, profiler, rights, sync, unicode |
+| **total** | **312,131** | **~50,400** | |
 
 The `libs` crates have no previous-tree column because most of them were modules
 under `src/kernel/` or `src/memory/` there; their lines are counted in those
@@ -85,15 +85,41 @@ internet, then the transports — because each layer's tests need the one below 
 
 ## Architecture
 
-Four modules out of a hundred, on each machine.  The previous tree's `arch` is
+Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 95,361 lines across `x86_64` (49 files), `aarch64` (25) and `riscv64` (22), plus
 `pci`, `fdt`, `trap`, `mmu`, `percpu`, `smp`, `thread`, `user_access`,
 `syscall_trap`, `ptrace` and more.
 
 What is here is what a boot needs before anything else: the entry, the console,
-the interrupt flag, and — on x86_64 — the port I/O the PCI bus is reached
-through.  What comes next is the memory-management unit, because a driver that
-maps a BAR needs it and a kernel that faults needs it more.
+the interrupt flag, the page-table encoding, the exception path, and — on
+x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
+memory-management unit actually *on* (aarch64 builds and installs a table with
+`sctlr_el1.M` still clear, which is the next change), and the device-tree parse
+that would give aarch64 a PCI bus and a real PL011 address.
+
+### The aarch64 boot, and what it cost
+
+`entry.S` does four things before Rust: a stack, the bss clear, the drop from
+EL2 to EL1, and `CPACR_EL1.FPEN`.  The last one is there because the boot that
+did not do it **printed four lines and stopped**, and the reason took a QEMU
+exception log to find: `ESR_EL1.EC` = 7 at a `0x0E01...` word, which is a NEON
+instruction LLVM emitted for the `memcpy` inside `PyroFS::build_image`.  Every
+line before that was scalar code, which is why the failure looked like a
+filesystem problem.
+
+The lesson is the one this file keeps recording: a machine's boot is exercised
+or it is not, and building an image is not exercising it.  `scripts/verify.sh`
+now boots **every** machine with an image, so the next boot that stops early is
+a red gate rather than a line someone happened to notice.
+
+The trap path is real: `entry.S` saves `x0`..`x30`, `ELR_EL1`, `SPSR_EL1`,
+`ESR_EL1`, `FAR_EL1` and `q0`..`q31` into an 800-byte frame, calls
+`aarch64_exception_dispatch`, and `eret`s.  `install_interrupt_table` does not
+report success from writing `VBAR_EL1` — it raises a supervisor call first and
+answers `true` only if the call arrived at entry 4 and returned.  A probe that
+cannot fail is not evidence, so the probe was mutated (the expected vector
+changed to 8) and the boot line went back to "not installed".
+
 
 ## Kernel
 

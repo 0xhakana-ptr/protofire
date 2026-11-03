@@ -56,6 +56,12 @@ esac
 # the failure is cheapest to find here.
 MACHINES="x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf"
 
+# The machines with an image that boots, which is a subset of the ones that
+# build.  A machine is added here when `cargo xtask check --machine` has
+# required lines for it, and not before: `xtask` refuses a machine with no
+# expected lines rather than passing a check that asserted nothing.
+BOOTABLE_MACHINES="x86_64 aarch64"
+
 step() {
     printf '==> verify[%s]: %s\n' "$VERIFY_TIER" "$1"
 }
@@ -101,9 +107,20 @@ run_p0() {
 run_p1() {
     run_p0
 
-    step "cargo xtask check --machine x86_64"
-    cargo run --offline --quiet -p xtask -- check --machine x86_64 \
-        || fail "the x86_64 image did not reach its console"
+    # Every machine whose image this tree can boot is booted here, not just the
+    # one whose console printed first.
+    #
+    # This is the rule the tree keeps relearning: a machine's boot is either
+    # exercised or it is not, and a machine that is only built has never had an
+    # instruction fetched from it.  aarch64 printed four lines and stopped after
+    # the heap, and a gate that booted only x86_64 called that green — so p1 now
+    # boots each machine that has an image, and riscv64 is added when it has
+    # one rather than when someone remembers.
+    for machine in $BOOTABLE_MACHINES; do
+        step "cargo xtask check --machine $machine"
+        cargo run --offline --quiet -p xtask -- check --machine "$machine" \
+            || fail "the $machine image did not print its required lines"
+    done
 }
 
 run_p2() {

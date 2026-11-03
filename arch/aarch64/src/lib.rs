@@ -27,11 +27,20 @@
 #[cfg(not(target_os = "none"))]
 extern crate alloc;
 
+// The entry: the stack, the bss clear, the drop to EL1 and the vector table.
+//
+// Here rather than in `bootloader` for the reason the x86_64 entry is: every
+// instruction is a fact about this machine, and the protocol crate is not the
+// machine.
+#[cfg(target_os = "none")]
+core::arch::global_asm!(include_str!("entry.S"));
+
 pub mod boot;
 pub mod interrupts;
 pub mod paging;
 pub mod port;
 pub mod serial;
+pub mod trap;
 pub mod vbar;
 
 /// Stop this CPU until an interrupt arrives.
@@ -63,39 +72,55 @@ pub fn halt() -> ! {
     panic!("halt() called on a host: this is the kernel's stop, not a test's")
 }
 
-/// Install the exception vector table.
+/// Install the exception vector table, and prove it delivers.
 ///
-/// Returns whether a table was installed.  This machine has the table's
-/// *structure* — `vbar::Table` is the sixteen entries the architecture defines
-/// and it is tested — and not its *entry*: the boot assembly does not yet
-/// branch into a Rust trap handler, so a `VBAR_EL1` pointing at an unfilled
-/// table would be a register naming code that is not there.
+/// Returns whether this machine will now take an exception through
+/// [`trap::aarch64_exception_dispatch`].  The table itself is `entry.S`'s —
+/// sixteen entries that record their index in `x16` and branch to one common
+/// save/restore path — and this installs the register that names it.
 ///
-/// So it answers `false`, and the boot says so.  A machine's silent failure and
-/// a machine's honest gap look the same in a log unless the gap is reported,
-/// and this is the report.
+/// The answer is not "the register was written".  A register written and never
+/// exercised is the recurring defect in this tree: code that is written, wired,
+/// and never executed.  So [`trap::install_table`] raises a supervisor call
+/// from EL1 after installing, and the supervisor call has to arrive at entry 4
+/// and return.  That exercises the save, the restore, the vector numbering, the
+/// sink and the `eret` in one go, and the frame's offsets are what the return
+/// path restored — a frame laid out wrong would return into garbage instead of
+/// returning at all.
+///
+/// It runs here rather than in a separate probe because it needs nothing the
+/// boot has not done: the stack is up, the console is up, and the sink is
+/// installed by the caller immediately before.
+///
 /// # Safety
 ///
-/// A machine with an entry would make a register name an address here; this
-/// one has none, and the promise is kept by doing nothing.  The signature is
-/// unsafe on every machine so that the caller reads one contract.
+/// Called once, after [`set_interrupt_dispatch`], before the kernel enables
+/// interrupts.  It writes `VBAR_EL1` and executes one `svc`, which the machine
+/// takes as an exception; that is safe at EL1 with the kernel's stack valid and
+/// not safe anywhere else.
 #[cfg(target_os = "none")]
 pub unsafe fn install_interrupt_table() -> bool {
-    false
+    // SAFETY: the caller's contract is this function's — once, with the sink
+    // installed and the stack valid.
+    unsafe { trap::install_table() }
 }
 
 /// Install the sink a trap frame goes to.
 ///
-/// A machine with no trap entry has nothing to hand a frame to, so this records
-/// nothing and says nothing: the sink is installed by a machine that can call
-/// one, and [`install_interrupt_table`] is what reports whether that is this
-/// one.
+/// The frame reaches [`trap::aarch64_exception_dispatch`], which calls this
+/// sink and stops the machine when it answers `false`.  Installing one is what
+/// makes an exception observable rather than a silent `wfe` — which is exactly
+/// what this machine's first boot was, and why it printed four lines and
+/// stopped with nothing after them.
 ///
 /// # Safety
 ///
-/// The caller promises to call this once, before any vector can be raised.  A
-/// machine that cannot raise one keeps that promise trivially.
+/// The caller promises to call this once, before any vector can be raised.  The
+/// function must not allocate, block, or enable interrupts: it runs on the
+/// kernel stack the exception found.
 #[cfg(target_os = "none")]
 pub unsafe fn set_interrupt_dispatch(sink: fn(irq::Frame) -> bool) {
-    let _ = sink;
+    // SAFETY: passed through to the module that owns the static; the caller's
+    // promise is the same one that function states.
+    unsafe { trap::set_sink(sink) };
 }

@@ -102,7 +102,18 @@ impl Machine {
                 "-device".to_string(),
                 "virtio-blk-pci,drive=blk0".to_string(),
             ],
-            Self::Aarch64 | Self::Riscv64 => Vec::new(),
+            // The device-tree machine: a PL011 at a fixed address, RAM at
+            // 0x40000000, and no disk — this boot has no virtio driver for it
+            // yet, so a disk here would be a device nothing claims.
+            Self::Aarch64 => vec![
+                "-machine".to_string(),
+                "virt".to_string(),
+                "-cpu".to_string(),
+                "max".to_string(),
+                "-m".to_string(),
+                "512M".to_string(),
+            ],
+            Self::Riscv64 => Vec::new(),
         }
     }
 
@@ -173,7 +184,44 @@ impl Machine {
                     false,
                 ),
             ],
-            Self::Aarch64 => &[],
+            // The device-tree machine takes the same path, minus the disk: it
+            // has no virtio-mmio driver yet, so the boot falls back to its
+            // in-memory image and the `block device from` line names that.
+            //
+            // The interrupt line is required here for the same reason it is
+            // required on x86_64 — but on this machine it is a stronger claim.
+            // `install_interrupt_table` raises a supervisor call after writing
+            // `VBAR_EL1` and answers `true` only if it arrived at the entry it
+            // should have and returned, so the line means the save/restore
+            // path and the vector numbering were both executed.  A machine
+            // that reported `false` here printed that instead, and the gate
+            // refused it: this is the line that would have caught the boot that
+            // stopped after the heap.
+            Self::Aarch64 => &[
+                (
+                    "protofire 0.1.0: entered via dtb, console up, stage 1",
+                    true,
+                ),
+                (
+                    "protofire: page table built and installed, 4 KiB granule",
+                    true,
+                ),
+                ("protofire: interrupt table installed, interrupts on", true),
+                ("protofire: heap at ", false),
+                ("protofire: block device from ", false),
+                (
+                    "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
+                    true,
+                ),
+                (
+                    "protofire: /cdrom/README.TXT reads back from the disc",
+                    true,
+                ),
+                (
+                    "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
+                    false,
+                ),
+            ],
             Self::Riscv64 => &[],
         }
     }

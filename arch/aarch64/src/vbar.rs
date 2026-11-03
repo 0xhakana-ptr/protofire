@@ -8,17 +8,25 @@
 //!
 //! | offset | when |
 //! |---|---|
-//! | `0x000` | current EL, stack pointer not shared: synchronous |
-//! | `0x080` | current EL, stack pointer not shared: IRQ |
-//! | `0x100` | current EL, stack pointer not shared: FIQ |
-//! | `0x180` | current EL, stack pointer not shared: SError |
-//! | `0x200` | current EL, stack pointer shared: the same four |
+//! | `0x000` | current EL, `SP_EL0` selected: synchronous |
+//! | `0x080` | current EL, `SP_EL0` selected: IRQ |
+//! | `0x100` | current EL, `SP_EL0` selected: FIQ |
+//! | `0x180` | current EL, `SP_EL0` selected: SError |
+//! | `0x200` | current EL, `SP_ELx` selected: the same four |
 //! | `0x400` | lower EL, 64-bit: the same four |
 //! | `0x600` | lower EL, 32-bit: the same four |
 //!
-//! The kernel runs at EL1 with its own stack pointer, so the first four are the
-//! ones it takes.  The "shared" group is the same privilege with `SP_EL0`, and
-//! the lower-EL groups are what a user program's exception arrives through.
+//! The kernel runs at EL1h — EL1 with `SP_EL1` — so its own faults and its own
+//! `svc` are the **`0x200` group**, entries 4..8.  The `0x000` group is the
+//! same privilege with `SP_EL0` selected, which is where a kernel running on
+//! the user's stack would land, and the lower-EL groups are what a user
+//! program's exception arrives through.
+//!
+//! Reading the table backwards is easy and costs a boot: entry 0 and entry 4
+//! are both "something inside the kernel", and only the `PSTATE.SP` bit tells
+//! them apart.  That is why the enum names the stack pointer rather than
+//! calling one "own" and one "shared" — the words describe the state, not who
+//! the memory belongs to.
 //!
 //! ## Why each entry has a lot of room
 //!
@@ -43,17 +51,19 @@ pub const TABLE_SIZE: usize = ENTRIES * ENTRY_STRIDE;
 
 /// Which group an entry belongs to.
 ///
-/// The architecture's own division: where the exception came from, and whether
-/// the stack pointer was shared.  A handler that did not know the difference
+/// The architecture's own division: where the exception came from, and which
+/// stack pointer was selected.  A handler that did not know the difference
 /// would use the wrong stack for a user program's exception.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
-    /// The current exception level, on its own stack pointer.  What a fault
-    /// inside the kernel is.
-    CurrentOwnStack,
-    /// The current exception level, on `SP_EL0`.  What a fault inside the
-    /// kernel is when the kernel is using the user's stack.
-    CurrentSharedStack,
+    /// The current exception level with `SP_EL0` selected.  A kernel running on
+    /// the user's stack, which this one does not do — but a fault taken while
+    /// `PSTATE.SP` is 0 lands here and not at 4.
+    CurrentSp0,
+    /// The current exception level with `SP_ELx` selected.  **What this kernel
+    /// takes**: it runs at EL1h, so its own faults and its own `svc` arrive
+    /// here.
+    CurrentSpX,
     /// A 64-bit lower level.  What a system call and a user fault are.
     Lower64,
     /// A 32-bit lower level.  A case this kernel does not support, and the
@@ -86,8 +96,8 @@ impl Group {
     /// The offset of this group within the table.
     pub const fn offset(self) -> usize {
         match self {
-            Group::CurrentOwnStack => 0,
-            Group::CurrentSharedStack => 4,
+            Group::CurrentSp0 => 0,
+            Group::CurrentSpX => 4,
             Group::Lower64 => 8,
             Group::Lower32 => 12,
         }
@@ -166,23 +176,23 @@ mod tests {
     #[test]
     fn the_entries_are_128_bytes_apart() {
         assert_eq!(ENTRY_STRIDE, 128);
-        assert_eq!(entry_offset(Group::CurrentOwnStack, Kind::Synchronous), 0);
-        assert_eq!(entry_offset(Group::CurrentOwnStack, Kind::Irq), 128);
-        assert_eq!(entry_offset(Group::CurrentOwnStack, Kind::Fiq), 256);
-        assert_eq!(entry_offset(Group::CurrentOwnStack, Kind::SError), 384);
+        assert_eq!(entry_offset(Group::CurrentSpX, Kind::Synchronous), 512);
+        assert_eq!(entry_offset(Group::CurrentSpX, Kind::Irq), 640);
+        assert_eq!(entry_offset(Group::CurrentSpX, Kind::Fiq), 768);
+        assert_eq!(entry_offset(Group::CurrentSpX, Kind::SError), 896);
     }
 
     /// Each group starts where the architecture puts it.
+    ///
+    /// The kernel's own exceptions are the **4..8** group, not 0..4: it runs at
+    /// EL1h, so `PSTATE.SP` is 1 and the machine reads the `SP_ELx` row.  A
+    /// table whose numbering assumed the first row would send every kernel
+    /// fault through the entry a user-stack fault uses — the same code, but the
+    /// wrong vector in the frame a handler reads.
     #[test]
     fn the_groups_are_where_the_architecture_puts_them() {
-        assert_eq!(
-            entry_offset(Group::CurrentOwnStack, Kind::Synchronous),
-            0x000
-        );
-        assert_eq!(
-            entry_offset(Group::CurrentSharedStack, Kind::Synchronous),
-            0x200
-        );
+        assert_eq!(entry_offset(Group::CurrentSp0, Kind::Synchronous), 0x000);
+        assert_eq!(entry_offset(Group::CurrentSpX, Kind::Synchronous), 0x200);
         assert_eq!(entry_offset(Group::Lower64, Kind::Synchronous), 0x400);
         assert_eq!(entry_offset(Group::Lower32, Kind::Synchronous), 0x600);
     }

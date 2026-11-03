@@ -32,12 +32,15 @@ sh scripts/verify.sh p3
 | Tier | Adds |
 |---|---|
 | `p0` | formatting, every crate's tests, the three kernels |
-| `p1` | the boot: `cargo xtask check --machine x86_64` |
+| `p1` | the boot: `cargo xtask check --machine <each machine with an image>` |
 | `p2` | the three censuses — architecture fan-out, layering, per-crate test counts |
 | `p3` | clippy in every configuration the tree builds |
 
 The gate requires the boot for a reason no other tier can cover: every runtime
-defect this tree has had would have passed a gate that never ran an image.
+defect this tree has had would have passed a gate that never ran an image.  It
+boots every machine whose image exists, because the defect this rule was
+written for was aarch64 printing four lines and stopping while a gate that
+booted only x86_64 called it green.
 
 `just --list` is the short form of the commands.  `just` is not part of the Rust
 toolchain and has to be installed once (`cargo install just`, or a distribution

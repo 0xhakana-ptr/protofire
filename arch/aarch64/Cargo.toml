@@ -10,11 +10,24 @@ abi.workspace = true
 # The page-table types and the walk arithmetic.  A machine encodes an entry and
 # installs a table; what a table is, and how one is walked, is `paging`'s.
 paging = { path = "../../libs/paging" }
-# The frame a trap hands to the kernel's sink.  A machine that cannot take a
-# trap still names the type, because the install signature is the same on every
-# machine.
+
+# The three crates only a bare-metal build names.
+#
+# A host build has no `vbar_el1`, no sink to install and no `.bss` to put a
+# static in, so those arms do not exist there — and a dependency a build never
+# names is what `cargo` reports as unused.  Putting them behind the same
+# `cfg(target_os)` the code uses is what makes the manifest describe the build
+# rather than hoping the warning is noise.
+[target.'cfg(target_os = "none")'.dependencies]
+# The boot's tables and sinks live in `static`s the trap path writes once and
+# every dispatch reads.  `SyncUnsafeCell` is the same cell `arch_x86_64` uses for
+# its IDT and its dispatch, and the crate is at layer 1 so the machine may name
+# it.
+cell = { path = "../../libs/cell" }
+# The frame a trap hands to the kernel's sink.  The type crosses the boundary
+# between this machine and the kernel's handler table, so it belongs to neither.
 irq = { path = "../../libs/irq" }
-aarch64-cpu.workspace = true
+
 # The host arm of the console records bytes behind a lock; a host build is
 # multi-threaded in its tests, and the recording is not the kernel's single-CPU
 # boot path.  Only a host build names it.

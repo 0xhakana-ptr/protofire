@@ -15,8 +15,8 @@
 
 abi                  3488   56
 allocator            2508   13
-arch                 3876    1
-arch_aarch64         1091   15
+arch                 4332    1
+arch_aarch64         1547   19
 arch_riscv64         1051   16
 arch_x86_64          1620   21
 async_io             1302   24
@@ -48,4 +48,4 @@ unicode              4630   31
 virt                   55    0
 virtio_block         1106   13
 virtio_core          1760   24
-xtask                 547    9
+xtask                 589    9

@@ -19,17 +19,39 @@ protofire: heap at 0x97a780..0x497a780
 protofire: pci scan found 4 device(s) on 1 bus
 protofire: block device from virtio-blk on pci
 protofire: virtio-blk wrote and read back sector 63
-protofire: formatting the disk with the boot image
 protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)
 protofire: /cdrom/README.TXT reads back from the disc
 protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label protofire
 ```
 
-PVH and multiboot2 handshakes, a serial console on all three machines, a TLSF
-heap, a PCI bus scan, a virtio block driver over a real virtqueue, a mount table
-with two filesystems on it, and three syscalls that read a file off the disk.
+The same boot on aarch64, which has no PCI bus until the device tree is parsed
+and so falls back to the in-memory image:
 
-**That is roughly an eighth of the kernel this replaces.**  The rest — the other
+```
+protofire 0.1.0: entered via dtb, console up, stage 1
+protofire: page table built and installed, 4 KiB granule
+protofire: interrupt table installed, interrupts on
+protofire: heap at 0x408e7790..0x448e7790
+protofire: pci scan found 0 device(s) on 1 bus
+protofire: block device from memory (no virtio-blk on the bus)
+protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)
+protofire: /cdrom/README.TXT reads back from the disc
+protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label protofire
+```
+
+Two handshakes on x86_64 (PVH and multiboot2) and a device-tree boot on aarch64,
+a serial console on all three machines, a TLSF heap, a PCI bus scan, a virtio
+block driver over a real virtqueue, a page table with a permission per region, an
+exception path that saves and restores FP/SIMD state, a mount table with three
+filesystems on it, and three syscalls that read a file off the disk.
+
+On aarch64 the interrupt line is a stronger claim than its wording suggests:
+`install_interrupt_table` raises a supervisor call after writing `VBAR_EL1` and
+answers `true` only if it arrived at the entry it should have and returned.  A
+register written and never exercised is the recurring defect here, so the line
+means the save, the restore and the `eret` all ran.
+
+**That is roughly a seventh of the kernel this replaces.**  The rest — the other
 ten filesystems, the network stack, the scheduler, the process layer, most of
 the architecture modules — is being moved in a crate at a time, and a crate
 arrives only when its tests arrive with it.  `docs/migration.md` counts what is
@@ -38,8 +60,9 @@ in and what is not.
 | | |
 |---|---|
 | crates | 36 |
-| source | ~46,000 lines |
-| tests | 553, all runnable with `cargo test -p <crate>` |
+| source | ~50,400 lines |
+| tests | 557, all runnable with `cargo test -p <crate>` |
+| machines that boot | 2 of 3 (`riscv64` builds, and has no entry yet) |
 
 ## Building and running
 
@@ -67,7 +90,8 @@ sh scripts/verify.sh p3
 ```
 
 `p0` is formatting, every crate's tests, and the three kernels.  `p1` adds the
-boot.  `p2` adds three censuses — the architecture gates, the dependency
+boot — of every machine that has an image, not just the first one whose console
+printed.  `p2` adds three censuses — the architecture gates, the dependency
 layering, and the per-crate test counts.  `p3` adds clippy in every
 configuration.
 

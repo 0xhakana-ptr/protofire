@@ -55,7 +55,6 @@ syscall = { path = "syscall" }
 sound = { path = "sound" }
 spin = "0.9"
 x86_64 = "0.15.2"
-aarch64-cpu = "11.2.0"
 riscv = "0.16.0"
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
