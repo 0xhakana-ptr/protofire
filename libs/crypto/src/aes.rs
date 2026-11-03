@@ -1,4 +1,4 @@
-//! crypto/src/aes.rs
+//! libs/crypto/src/aes.rs
 //!
 //! AES-128 and AES-256 block ciphers (NIST FIPS 197).
 //!

@@ -38,7 +38,7 @@ in and what is not.
 | | |
 |---|---|
 | crates | 38 |
-| source | ~44,000 lines |
+| source | ~46,000 lines |
 | tests | 553, all runnable with `cargo test -p <crate>` |
 
 ## Building and running

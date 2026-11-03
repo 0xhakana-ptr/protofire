@@ -1,4 +1,4 @@
-//! crypto/src/crc.rs
+//! libs/crypto/src/crc.rs
 //!
 //! CRC-32 (IEEE 802.3) and CRC-32C (Castagnoli), table driven.
 //!

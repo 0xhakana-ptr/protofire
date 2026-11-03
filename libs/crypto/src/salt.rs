@@ -1,4 +1,4 @@
-//! crypto/src/salt.rs
+//! libs/crypto/src/salt.rs
 //!
 //! A deterministic salt for password recovery.
 //!

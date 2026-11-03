@@ -29,8 +29,8 @@ extracted yet.
          security, allocator, virtio_core, virtio_block
      4   arch, block                                   the route, and the disk interface
      3   arch_x86_64, arch_aarch64, arch_riscv64       the machines
-     2   crypto, async_io, power, ipc, paging, irq      algorithms, rings, page tables,
-                                                       the handler table
+     2   crypto, async_io, power, ipc, paging, irq      tools: algorithms, rings,
+                                                       page tables, a handler table
      1   abi                                           the wire format
      0   cell, profiler, unicode, rights, audit        core and alloc only
 ```
@@ -226,17 +226,46 @@ That last point is the reason the trait exists.  Without it the driver would be
 tested by booting, and a boot tells you that it failed, not which of the forty
 things it did was wrong.
 
+### The root and `libs/`: a role or a tool
+
+Two directories, and the difference is what a crate *is* rather than what it
+depends on:
+
+| | Root | `libs/` |
+|---|---|---|
+| What it holds | a **role** or a **subsystem** | a **tool** |
+| What a caller does with it | implements it, or asks it for its subsystem | calls it |
+| Examples | `abi`, `block`, `fs`, `net`, `memory`, `arch` | `cell`, `unicode`, `sync`, `irq`, `paging`, `crypto` |
+
+A role is a thing several crates must *be* or *answer through*: `BlockDevice`
+is what a disk driver implements, `FileSystem` is what a filesystem implements.
+A tool is a thing several crates must *use*: a cell, a hash, a page table's
+arithmetic, a handler table's lookup.  A tool's signature is one function; a
+role's is a set of methods a caller must satisfy.
+
+The test is not the dependency graph.  `crypto` names `abi` and `sync` names
+`arch`, so both depend on this tree — and both are still tools, because
+`sha256(&[u8]) -> [u8; 32]` is a function a caller calls and `SpinLock` is a
+lock a caller takes.  Filing them by dependency would put a cipher beside a
+filesystem and a lock beside the machine, which says nothing about either.
+
+**What moved, and why it is recorded.**  `crypto`, `irq` and `paging` were
+built or placed in the root, and all three are tools: a set of algorithms, a
+handler table, a page table.  That `crypto` sat in the root is a decision this
+tree inherited rather than made — a single-crate tree has no `libs/`, and the
+directory arrived with the workspace.  Moving them is the rule applied to a
+tree that now has both directories.
+
 ### `block`: an interface at the drivers' layer
 
 `block` is at layer 4, below the drivers that implement it, and it is in the
 root rather than under `libs/`.  Both facts are the same argument.
 
-A crate under `libs/` is a tool with no client shape: a cell, a set of flags,
-a `Vec`-with-a-lock, an allocator.  `block` defines a *role* — what a disk
-driver is — and a role is the thing `drivers/` and `fs/` share rather than
-something either one owns.  That is the position `abi` and `fs` are in, which
-is why they are siblings of it; filing `block` under `libs/` made the tree say
-it was a toolbox when it was a contract.
+`block` defines a *role* — what a disk driver is — and a role is the thing
+`drivers/` and `fs/` share rather than something either one owns.  That is the
+position `abi` and `fs` are in, which is why they are siblings of it; filing
+`block` under `libs/` made the tree say it was a toolbox when it was a
+contract.
 
 It sits at layer 4 because the drivers have to name it to implement it.  With
 `block` at layer 6 and `virtio` at layer 5, the trait was one no driver could

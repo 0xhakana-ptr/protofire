@@ -14,11 +14,11 @@ cell = { path = "../../libs/cell" }
 # The page-table types and the index arithmetic.  A machine encodes an entry
 # and installs a table; what a table *is*, and the arithmetic that walks one,
 # is `paging`'s — which is why this crate names it and not `memory`.
-paging = { path = "../../paging" }
+paging = { path = "../../libs/paging" }
 # The handler table.  A vector's frame is handed to whatever the kernel
 # installed as its sink; what a handler is belongs to the shared crate, because
 # every machine delivers to the same one.
-irq = { path = "../../irq" }
+irq = { path = "../../libs/irq" }
 # The host arm of the console records bytes behind a lock; a host build is
 # multi-threaded in its tests, and the recording is not the kernel's single-CPU
 # boot path.  Only a host build names it.

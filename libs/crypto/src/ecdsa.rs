@@ -1,4 +1,4 @@
-//! crypto/src/ecdsa.rs
+//! libs/crypto/src/ecdsa.rs
 //!
 //! ECDSA over P-256 (secp256r1) signature verification
 //! (NIST FIPS 186-5 / SEC 2).

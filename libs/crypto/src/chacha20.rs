@@ -1,4 +1,4 @@
-//! crypto/src/chacha20.rs
+//! libs/crypto/src/chacha20.rs
 //!
 //! ChaCha20 (RFC 8439): 256-bit key, 96-bit nonce, 32-bit counter.
 

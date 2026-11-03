@@ -9,11 +9,11 @@ license.workspace = true
 abi.workspace = true
 # The page-table types and the walk arithmetic.  A machine encodes an entry and
 # installs a table; what a table is, and how one is walked, is `paging`'s.
-paging = { path = "../../paging" }
+paging = { path = "../../libs/paging" }
 # The frame a trap hands to the kernel's sink.  A machine that cannot take a
 # trap still names the type, because the install signature is the same on every
 # machine.
-irq = { path = "../../irq" }
+irq = { path = "../../libs/irq" }
 riscv.workspace = true
 # The host arm of the console records bytes behind a lock; a host build is
 # multi-threaded in its tests, and the recording is not the kernel's single-CPU

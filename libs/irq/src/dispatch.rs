@@ -1,4 +1,4 @@
-//! irq/src/dispatch.rs
+//! libs/irq/src/dispatch.rs
 //!
 //! The handler table and the dispatch over it.
 //!

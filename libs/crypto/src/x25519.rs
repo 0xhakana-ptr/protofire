@@ -1,4 +1,4 @@
-//! crypto/src/x25519.rs
+//! libs/crypto/src/x25519.rs
 //!
 //! X25519 Diffie-Hellman (RFC 7748).
 //!

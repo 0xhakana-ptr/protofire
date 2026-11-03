@@ -1,4 +1,4 @@
-//! irq/src/frame.rs
+//! libs/irq/src/frame.rs
 //!
 //! What a machine hands its dispatch: the vector, and as much of the
 //! interrupted context as every machine agrees on.

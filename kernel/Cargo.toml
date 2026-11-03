@@ -24,9 +24,9 @@ fs = { path = "../fs" }
 block = { path = "../block" }
 # The page-table types and the walk arithmetic.  The kernel decides what its
 # address space maps; `paging` is what a table is.
-paging = { path = "../paging" }
+paging = { path = "../libs/paging" }
 # The handler table an interrupt is delivered through.
-irq = { path = "../irq" }
+irq = { path = "../libs/irq" }
 # The static holder for the page tables: a `static mut` would be the usual
 # shape and this is the crate that replaces it.
 cell = { path = "../libs/cell" }

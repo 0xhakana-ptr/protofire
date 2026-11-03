@@ -1,4 +1,4 @@
-//! crypto/src/constant_time.rs
+//! libs/crypto/src/constant_time.rs
 //!
 //! Comparison whose running time does not depend on where two byte
 //! strings first differ.

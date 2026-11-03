@@ -1,4 +1,4 @@
-//! crypto/src/lib.rs
+//! libs/crypto/src/lib.rs
 //!
 //! The cryptographic primitives the kernel uses, as a library with no kernel in
 //! it.

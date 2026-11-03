@@ -1,4 +1,4 @@
-//! crypto/src/gcm.rs
+//! libs/crypto/src/gcm.rs
 //!
 //! AES-128-GCM (NIST SP 800-38D): CTR mode with GHASH authentication.
 

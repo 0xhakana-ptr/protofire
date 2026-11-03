@@ -15,7 +15,7 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
 | `arch` | 95,361 | 3,300 | boot, interrupts, serial, port I/O, page tables, IDT, the 8259 — six of a hundred |
-| `crypto` | 4,606 | 4,832 | all of it, one module per algorithm |
+| `crypto` | 4,606 | 4,850 | all of it, one module per algorithm |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
 | `kernel` | 39,704 | 1,157 | the boot sequence, the syscall table, device discovery |
 | `memory` | 9,649 | 1,865 | the frame pool and the region pools |

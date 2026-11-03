@@ -1,4 +1,4 @@
-//! crypto/src/hkdf.rs
+//! libs/crypto/src/hkdf.rs
 //!
 //! HKDF-SHA256 (RFC 5869): extract, then expand.
 

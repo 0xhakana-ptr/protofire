@@ -1,4 +1,4 @@
-//! crypto/src/aead.rs
+//! libs/crypto/src/aead.rs
 //!
 //! ChaCha20-Poly1305 AEAD (RFC 8439).
 

@@ -1,4 +1,4 @@
-//! paging/src/table.rs
+//! libs/paging/src/table.rs
 //!
 //! A page table the kernel can fill: 512 entries of eight bytes, and the three
 //! operations that are the whole of what one needs — map an address, look one

@@ -1,4 +1,4 @@
-//! paging/src/lib.rs
+//! libs/paging/src/lib.rs
 //!
 //! Page tables: what one is, what an entry says, and the arithmetic that walks
 //! one.

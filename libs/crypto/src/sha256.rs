@@ -1,4 +1,4 @@
-//! crypto/src/sha256.rs
+//! libs/crypto/src/sha256.rs
 //!
 //! FIPS 180-4 SHA-256, and its digest as lowercase hex.
 

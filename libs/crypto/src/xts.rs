@@ -1,4 +1,4 @@
-//! crypto/src/xts.rs
+//! libs/crypto/src/xts.rs
 //!
 //! AES-XTS (IEEE 1619), the mode a full-disk encryption header uses.
 //!

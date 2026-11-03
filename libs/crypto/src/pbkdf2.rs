@@ -1,4 +1,4 @@
-//! crypto/src/pbkdf2.rs
+//! libs/crypto/src/pbkdf2.rs
 //!
 //! PBKDF2-HMAC-SHA256 (RFC 8018 section 5.2).
 

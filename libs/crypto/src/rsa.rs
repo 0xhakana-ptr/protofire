@@ -1,4 +1,4 @@
-//! crypto/src/rsa.rs
+//! libs/crypto/src/rsa.rs
 //!
 //! RSA signature verification (RFC 8017).
 //!

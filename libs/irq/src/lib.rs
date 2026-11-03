@@ -1,4 +1,4 @@
-//! irq/src/lib.rs
+//! libs/irq/src/lib.rs
 //!
 //! Where an interrupt goes: a number, a handler, and the table that joins them.
 //!

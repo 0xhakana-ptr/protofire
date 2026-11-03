@@ -1,4 +1,4 @@
-//! paging/src/index.rs
+//! libs/paging/src/index.rs
 //!
 //! Page-table structures: what a table is, what an entry says, and the
 //! arithmetic that turns an address into an index.

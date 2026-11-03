@@ -1,4 +1,4 @@
-//! crypto/src/poly1305.rs
+//! libs/crypto/src/poly1305.rs
 //!
 //! Poly1305 one-time authenticator (RFC 8439 section 2.5).
 

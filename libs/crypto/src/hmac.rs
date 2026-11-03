@@ -1,4 +1,4 @@
-//! crypto/src/hmac.rs
+//! libs/crypto/src/hmac.rs
 //!
 //! HMAC-SHA256 (RFC 2104, NIST FIPS 198-1).
 
