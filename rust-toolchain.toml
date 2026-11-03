@@ -1,5 +1,28 @@
 # rust-toolchain.toml
 # Pinned Rust toolchain, components, and targets used by this repository.
+#
+# ## One development host
+#
+# Linux, x86_64.  The three targets below are the machines this kernel runs on;
+# the host target is not listed because a target the toolchain has by default is
+# already installed, and listing it would suggest a second host is supported.
+#
+# The previous tree also carried Windows and macOS on Intel, and the cost was
+# not the code: it was that every measurement in that tree had three answers,
+# every script had a shell-difference branch, and a defect that only appeared on
+# one host was found by whoever ran the gate there.  This tree has one host, and
+# a build that does not work on it is broken rather than unsupported.
+#
+# ## The three machines
+#
+# | Target | Machine |
+# |---|---|
+# | `x86_64-unknown-none` | the PC, booted by multiboot2 or PVH |
+# | `aarch64-unknown-none` | the device-tree machine |
+# | `riscv64gc-unknown-none-elf` | the S-mode machine under OpenSBI |
+#
+# `llvm-tools-preview` is what the KASLR relocation tool and the image
+# inspection use; `clippy` and `rustfmt` are the gate.
 
 [toolchain]
 channel = "nightly-2026-11-02"
@@ -9,6 +32,4 @@ targets = [
     "x86_64-unknown-none",
     "aarch64-unknown-none",
     "riscv64gc-unknown-none-elf",
-    "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
 ]

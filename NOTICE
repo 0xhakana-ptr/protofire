@@ -3,16 +3,25 @@ Copyright 2026 Raiden Lumine
 
 This product includes software developed by Raiden Lumine.
 
-This product is licensed under the Apache License, Version 2.0 (the "License");
-you may not use this product except in compliance with the License. You may
-obtain a copy of the License at
+The **source code** in this product is licensed under the Apache License,
+Version 2.0 (the "License"); you may not use it except in compliance with the
+License.  You may obtain a copy of the License at
 
     https://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software distributed
 under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-CONDITIONS OF ANY KIND, either express or implied. See the License for the
+CONDITIONS OF ANY KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations under the License.
+
+The **prose** in this product — every Markdown document, including this one's
+own prose — is licensed under the Creative Commons Attribution-ShareAlike 4.0
+International License.  You may obtain a copy of the License at
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+`LICENSES/README.md` says which files fall on which side and why the split
+exists.
 
 ## On-disk format implementations
 
@@ -34,4 +43,5 @@ GPL-licensed project, is present in this tree.
 
 Dependencies are listed in `Cargo.lock` and each carries its own licence.  The
 kernel itself — everything under `kernel/`, `arch/`, `fs/`, `memory/`,
-`libs/`, and the crates beside them — is Apache-2.0 only.
+`libs/`, and the crates beside them — is Apache-2.0 only as code, and its
+prose is CC BY-SA 4.0.
