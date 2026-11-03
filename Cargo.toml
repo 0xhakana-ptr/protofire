@@ -38,6 +38,9 @@ members = [
     "tools/xtask",
     "tests",
     "virt",
+    "apps/init",
+    "apps/shell",
+    "apps/service_manager",
 ]
 
 [workspace.package]
