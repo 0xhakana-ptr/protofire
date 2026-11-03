@@ -1,22 +1,24 @@
 //! apps/shell/src/main.rs
 //!
-//! The interactive shell: a prompt, a line reader, and the
-//! commands the previous tree's `src/shell` carried.
+//! `shell`: the interactive shell, and a ring-3 program.
 //!
-//! ## What this file is, today
+//! ## What it is
 //!
-//! A skeleton that links and says what it will become.  It exists so the crate
-//! has the shape a program grows into: the `no_std`/`no_main` pair, a panic
-//! handler, and an entry symbol — the three things only a binary can define.
+//! A prompt, a line reader, and the commands the previous tree's `src/shell`
+//! carried — but a program, not a kernel module.  The distinction matters for
+//! what a command can do: a shell in ring 3 can only do what its user could do
+//! by writing the same syscalls, so "the shell can do it" and "the user can do
+//! it" become the same sentence.  A shell inside the kernel makes every
+//! debugging command an unprivileged bypass, which is how a system ends up
+//! with a command that is the only way to reach a capability.
 //!
-//! ## Why the body is gated
+//! It is not PID 1.  `init` starts it, and a machine whose shell crashed still
+//! has an `init`.
 //!
-//! `cargo build --workspace` builds this package for the host, where
-//! `#[panic_handler]` collides with `std`'s.  So the program half is behind
-//! `target_os = "none"` and the host build is an empty `main`: enough for the
-//! workspace to typecheck the package without claiming a program that has no
-//! kernel to run under yet. `bootloader/src/main.rs` draws the same line for
-//! the same reason.
+//! ## What is here, today
+//!
+//! The shape a program must have and nothing else.  A line reader needs a
+//! `read` on a console descriptor, and the console is not a descriptor yet.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]

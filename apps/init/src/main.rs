@@ -1,21 +1,31 @@
 //! apps/init/src/main.rs
 //!
-//! The first program a boot starts, and the parent of everything else.
+//! `init`: the first program the kernel starts, at PID 1, in ring 3.
 //!
-//! ## What this file is, today
+//! ## What PID 1 means here
 //!
-//! A skeleton that links and says what it will become.  It exists so the crate
-//! has the shape a program grows into: the `no_std`/`no_main` pair, a panic
-//! handler, and an entry symbol — the three things only a binary can define.
+//! The kernel does not start any other program before this one, and every
+//! later process descends from it.  That makes `init` the answer to "who
+//! reaps an orphan" — a program whose parent exited is reparented to PID 1, so
+//! a system that loses its `init` has no one to answer for the processes it
+//! left behind.  It is also why `init` is the program that reads the service
+//! declarations and starts what they name, rather than the kernel doing it:
+//! policy about which services a machine runs belongs to a program a policy
+//! file can be changed without a rebuild.
 //!
-//! ## Why the body is gated
+//! ## Ring 3
 //!
-//! `cargo build --workspace` builds this package for the host, where
-//! `#[panic_handler]` collides with `std`'s.  So the program half is behind
-//! `target_os = "none"` and the host build is an empty `main`: enough for the
-//! workspace to typecheck the package without claiming a program that has no
-//! kernel to run under yet. `bootloader/src/main.rs` draws the same line for
-//! the same reason.
+//! `init` runs unprivileged, on a stack and page tables the kernel built, and
+//! reaches everything through syscalls.  That is not a restriction to work
+//! around — it is the point: a bug in `init` should fault `init`, not the
+//! machine, and the kernel's authority is exactly the syscall surface it
+//! serves.
+//!
+//! That surface does not include starting a process yet, so this crate cannot
+//! do its job: `SpawnProcess` exists in the numbering and answers
+//! `NotImplemented`.  What is here is the shape a program must have, so that
+//! the change which adds the process layer has somewhere to put the first
+//! call.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]

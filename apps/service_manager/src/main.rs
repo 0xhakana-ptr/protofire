@@ -1,21 +1,26 @@
 //! apps/service_manager/src/main.rs
 //!
-//! Starting and stopping the services a boot declares.
+//! `service_manager`: starting, stopping and supervising services, as a
+//! ring-3 program.
 //!
-//! ## What this file is, today
+//! ## "Everything is a service"
 //!
-//! A skeleton that links and says what it will become.  It exists so the crate
-//! has the shape a program grows into: the `no_std`/`no_main` pair, a panic
-//! handler, and an entry symbol — the three things only a binary can define.
+//! That phrase is a direction rather than a settled design, and this crate is
+//! where the question is being asked.  The shape it implies: a service is
+//! something with a name, a program behind it, a run state, and a supervision
+//! policy (restart on exit, restart on failure, never).  `init` declares them;
+//! this program holds them.
 //!
-//! ## Why the body is gated
+//! The alternative the name also admits is narrower: this is a manager of the
+//! services in `rc.d`-shaped declarations, and the rest of the system is not
+//! modelled as services at all.  Which one this becomes is a decision the
+//! process layer will inform — a manager of processes and a manager of
+//! services are the same code until something needs a restart policy.
 //!
-//! `cargo build --workspace` builds this package for the host, where
-//! `#[panic_handler]` collides with `std`'s.  So the program half is behind
-//! `target_os = "none"` and the host build is an empty `main`: enough for the
-//! workspace to typecheck the package without claiming a program that has no
-//! kernel to run under yet. `bootloader/src/main.rs` draws the same line for
-//! the same reason.
+//! ## What is here, today
+//!
+//! The shape a program must have.  Supervising anything needs to spawn, wait
+//! and signal, and none of those are served yet.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
