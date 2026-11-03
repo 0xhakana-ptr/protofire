@@ -141,6 +141,15 @@
 
 # `sound` and `virt` are laid out but not filled.  Their ranks are the ones their
 # manifests already imply: `sound` names `sync`, `virt` names `arch`.
+#
+# `virt` is the odd one of the two, because "virtualisation" names two opposite
+# jobs — running other kernels (a hypervisor) and knowing one is running under
+# another (a guest) — and both live here.  They are one crate because they are
+# one question: what of this machine is not the machine, and who answers for
+# it.  It names `arch` because every mechanism behind that question is the
+# architecture's: the exit encoding, the hypercall instruction, the register a
+# guest's state is saved in.  `virt/src/lib.rs` states which half arrives
+# first and why.
 6 sound
 7 virt
 
