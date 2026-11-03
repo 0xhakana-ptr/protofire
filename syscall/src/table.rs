@@ -26,6 +26,20 @@ pub struct SyscallContext {
     pub number: usize,
     pub args: [usize; syscall_abi::ARG_COUNT],
     pub caller_pid: Option<u32>,
+    /// The label the caller runs as, for a policy that gates on identity.
+    ///
+    /// A plain `u32` rather than the security crate's `MacType` — which is an
+    /// alias for `u32`, so this *is* that type without this crate naming the
+    /// subsystem that defines it.  The rule this file already follows is that
+    /// `syscall` holds the operations' shared vocabulary and names no
+    /// implementation; a field typed with `security::MacType` would be the one
+    /// place it did.
+    ///
+    /// `None` means "no identity was supplied", which is a caller the kernel
+    /// made itself.  A handler that gates on identity decides what that means;
+    /// the kernel's `open` treats it as unlabelled, which the policy then
+    /// decides about like any other label.
+    pub identity: Option<u32>,
 }
 
 impl SyscallContext {
@@ -34,7 +48,18 @@ impl SyscallContext {
             number,
             args,
             caller_pid: None,
+            identity: None,
         }
+    }
+
+    /// The same context with `identity` recorded, for a caller that has one.
+    ///
+    /// A builder rather than a second constructor: every field but this one has
+    /// the same value a `new` gives, and two constructors that differed in one
+    /// field would be two places to keep in step.
+    pub const fn with_identity(mut self, identity: u32) -> Self {
+        self.identity = Some(identity);
+        self
     }
 
     /// Return the syscall argument at `index` (0-based).

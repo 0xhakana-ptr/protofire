@@ -561,8 +561,46 @@ pub fn kernel_main() -> ! {
     table.register(::syscall::SyscallNumber::Open, crate::syscall::open);
     table.register(::syscall::SyscallNumber::Read, crate::syscall::read);
     table.register(::syscall::SyscallNumber::Close, crate::syscall::close);
+    table.register(
+        ::syscall::SyscallNumber::MacGetStatus,
+        crate::syscall::mac_get_status,
+    );
+    table.register(
+        ::syscall::SyscallNumber::MacSetMode,
+        crate::syscall::mac_set_mode,
+    );
+    table.register(
+        ::syscall::SyscallNumber::MacAddRule,
+        crate::syscall::mac_add_rule,
+    );
+    let served = table.served();
 
-    let read_ok = read_greeting_through_syscall(&mut table);
+    // The registry outlives this function.
+    //
+    // Until now the table was a local: built here, used three times, dropped.
+    // That proves the handlers work and is not a syscall interface — a table
+    // that exists only inside one call is a table nothing else can reach, and
+    // the first thing that would have discovered it is the first trap that
+    // tried to serve a call.
+    //
+    // SAFETY: called once, after the namespace is set and every handler is
+    // registered, before anything can serve a call.
+    unsafe { crate::syscall::install(table) };
+
+    arch::serial::write_str("protofire: syscall table installed, ");
+    arch::serial::write_u32(served as u32);
+    arch::serial::write_str(" number(s) served\n");
+
+    // The policy, and both of its answers.
+    //
+    // Everything below is why this is not a claim about a crate that compiles.
+    // The MAC engine was complete and consulted by nothing: `open` had no
+    // identity to check and no check to run.  These two calls make it decide
+    // twice — once for a subject it allows and once for one it denies — and the
+    // second is the one that would go green if the wiring were missing.
+    exercise_mac_policy();
+
+    let read_ok = read_greeting_through_syscall();
 
     arch::serial::write_str("protofire: filesystem ");
     if read_ok {
@@ -577,6 +615,110 @@ pub fn kernel_main() -> ! {
 
     halt()
 }
+
+/// Enable the MAC policy, install one rule, and make `open` decide both ways.
+///
+/// ## Why this goes through `open` and not through `check_file`
+///
+/// The first version of this called `check_file` directly.  Deleting the check
+/// from the `open` handler changed no output at all: the probe was testing the
+/// policy, which was already known to work, and not the **wiring**, which is
+/// the only thing in question.
+///
+/// So both cases here are `open` calls through the installed registry, with the
+/// one field that differs being the caller's identity.  Deleting the check
+/// makes the untrusted open succeed, the boot prints `MISPOLICED`, and the gate
+/// goes red — which is the property the line is for.
+///
+/// The rule is installed for `MAC_TYPE_UNLABELED`, which is what
+/// `object_type_for_path` answers for a path under no labelled prefix on this
+/// boot's volume.  That is not a guess: `security/src/mac/check.rs` falls back
+/// to unlabelled for anything outside `/system`, `/apps`, `/data`, `/dev` and
+/// `/tmp`.
+fn exercise_mac_policy() {
+    use security::mac;
+
+    // One rule: the system label may read an unlabelled file.
+    {
+        let mut state = mac::policy_state().lock();
+        state.policy.add_rule(
+            mac::MacRule {
+                subject: mac::MAC_TYPE_SYSTEM,
+                object: mac::MAC_TYPE_UNLABELED,
+                class: mac::MAC_CLASS_FILE,
+                perms: mac::MAC_PERM_READ,
+            },
+            true,
+        );
+        state.policy.enabled = true;
+    }
+
+    let (rules, labels) = {
+        let state = mac::policy_state().lock();
+        (state.policy.rule_count(), state.label_count())
+    };
+    arch::serial::write_str("protofire: mac policy enabled, ");
+    arch::serial::write_u32(rules as u32);
+    arch::serial::write_str(" rule(s), ");
+    arch::serial::write_u32(labels as u32);
+    arch::serial::write_str(" label(s)\n");
+
+    // The same open twice, differing only in who is asking.
+    for (identity, expected, name) in [
+        (mac::MAC_TYPE_SYSTEM, true, "system"),
+        (mac::MAC_TYPE_UNTRUSTED, false, "untrusted"),
+    ] {
+        let outcome = open_as(identity);
+        arch::serial::write_str("protofire: mac ");
+        arch::serial::write_str(match outcome {
+            true if expected => "allowed ",
+            false if !expected => "denied ",
+            _ => "MISPOLICED ",
+        });
+        arch::serial::write_str(name);
+        arch::serial::write_str(" read of ");
+        arch::serial::write_str(BOOT_GREETING_PATH);
+        arch::serial::write_str("\n");
+    }
+}
+
+/// Open the boot's file as `identity`, answering whether it was allowed.
+///
+/// Through the installed registry and the real handler, so the answer covers
+/// the policy **and** the decision to consult it.  The descriptor is closed
+/// again, because a probe that leaked one would make the boot's own read fail
+/// for a reason that is this function's.
+fn open_as(identity: u32) -> bool {
+    use crate::syscall::Arguments;
+    use ::syscall::SyscallContext;
+
+    let mut context = SyscallContext::new(
+        ::syscall::SyscallNumber::Open as usize,
+        [0, abi::fs::OPEN_FLAG_READ, 0, 0, 0, 0],
+    )
+    .with_identity(identity);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: Some(BOOT_GREETING_PATH),
+        buffer: None,
+    };
+
+    match crate::syscall::serve(&mut arguments) {
+        Some(Ok(dispatch)) => {
+            let mut context = SyscallContext::new(
+                ::syscall::SyscallNumber::Close as usize,
+                [dispatch.value, 0, 0, 0, 0, 0],
+            );
+            let mut arguments = Arguments::plain(&mut context);
+            let _ = crate::syscall::serve(&mut arguments);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The path the boot reads, and the one the policy is asked about.
+const BOOT_GREETING_PATH: &str = "/greeting.txt";
 
 /// The label the boot's volume carries.
 const BOOT_VOLUME_LABEL: &str = "protofire";
@@ -629,21 +771,31 @@ const BOOT_VOLUME_PATH: &str = "/greeting.txt";
 /// The buffer is a local rather than a fixed address, and it reaches the
 /// handler as a borrow.  That is the whole of this function's contribution to
 /// safety: nothing here turns a number into a pointer.
-fn read_greeting_through_syscall(table: &mut crate::syscall::SyscallTable) -> bool {
+fn read_greeting_through_syscall() -> bool {
     use crate::syscall::Arguments;
     use ::syscall::SyscallContext;
 
     // open(path, flags)
+    //
+    // The identity is the boot's own: the kernel reads its volume as the system
+    // label, which is the subject the installed policy allows.  A caller with
+    // no identity is unlabelled, and the same policy denies it — which is what
+    // the boot's deny case demonstrates rather than asserts.
     let mut context = SyscallContext::new(
         ::syscall::SyscallNumber::Open as usize,
         [0, abi::fs::OPEN_FLAG_READ, 0, 0, 0, 0],
-    );
+    )
+    .with_identity(security::mac::MAC_TYPE_SYSTEM);
     let mut arguments = Arguments {
         context: &mut context,
         path: Some(BOOT_VOLUME_PATH),
         buffer: None,
     };
-    let Ok(dispatch) = table.dispatch(&mut arguments) else {
+    // Through the installed registry, not a table this function was handed.
+    // The boot's own read is the first call served by the static the boot
+    // installed, which is what makes "the registry outlives the boot" a claim
+    // with a call behind it.
+    let Some(Ok(dispatch)) = crate::syscall::serve(&mut arguments) else {
         return false;
     };
     let descriptor = dispatch.value;
@@ -659,11 +811,11 @@ fn read_greeting_through_syscall(table: &mut crate::syscall::SyscallTable) -> bo
         path: None,
         buffer: Some(&mut buffer),
     };
-    let read_ok = match table.dispatch(&mut arguments) {
-        Ok(dispatch) => {
+    let read_ok = match crate::syscall::serve(&mut arguments) {
+        Some(Ok(dispatch)) => {
             dispatch.value == BOOT_VOLUME_CONTENT.len() && buffer == *BOOT_VOLUME_CONTENT
         }
-        Err(_) => false,
+        _ => false,
     };
 
     // close(descriptor)
@@ -675,9 +827,9 @@ fn read_greeting_through_syscall(table: &mut crate::syscall::SyscallTable) -> bo
         [descriptor, 0, 0, 0, 0, 0],
     );
     let mut arguments = Arguments::plain(&mut context);
-    let close_ok = table.dispatch(&mut arguments).is_ok();
+    let close_ok = matches!(crate::syscall::serve(&mut arguments), Some(Ok(_)));
 
-    read_ok && close_ok && table.open_descriptors() == 0
+    read_ok && close_ok && crate::syscall::open_descriptors() == 0
 }
 
 /// The allocator's diagnostic sink: the console, one string at a time.

@@ -57,6 +57,7 @@ use abi::Result;
 use abi::fs as fs_abi;
 use fs::MountTable;
 use fs::VNode;
+use security::mac;
 use syscall::SyscallContext;
 use syscall::SyscallDispatch;
 use syscall::SyscallNumber;
@@ -209,6 +210,18 @@ impl SyscallTable {
             .count()
     }
 
+    /// How many numbers this table serves.
+    ///
+    /// The rest answer [`Handler::Unimplemented`], which is a fact a caller can
+    /// act on — so the count is what a boot line reports and what a test
+    /// compares against.
+    pub fn served(&self) -> usize {
+        self.slots
+            .iter()
+            .filter(|slot| matches!(slot, Handler::Served(_)))
+            .count()
+    }
+
     /// The namespace, if a boot installed one.
     fn namespace(&self) -> Option<&Arc<MountTable>> {
         self.namespace.as_ref()
@@ -268,6 +281,79 @@ impl Default for SyscallTable {
     }
 }
 
+/// The registry, once the boot has installed one.
+///
+/// ## Why a static
+///
+/// The table was a local in `kernel_main`: the boot built it, served three
+/// calls through it, and dropped it.  That is enough to prove the handlers work
+/// and not enough to be a kernel — a table that exists only inside one function
+/// is a table nothing else can ever reach, and "the syscall interface" would be
+/// a claim about a variable.
+///
+/// A `SyncUnsafeCell` for the same reason the machine's trap sink uses one:
+/// there is one table per boot, it is written once, and every later reader is a
+/// call that arrived without a context to be handed one.
+static REGISTRY: cell::SyncUnsafeCell<Option<SyscallTable>> = cell::SyncUnsafeCell::new(None);
+
+/// Install the registry the boot built.
+///
+/// Called once.  A second call replaces the table, which is harmless and is not
+/// reported: the table is rebuilt from the same boot code, so a second install
+/// is a second boot in one address space, which this kernel does not have.
+///
+/// # Safety
+///
+/// Called once, after the namespace is set and the handlers are registered.
+/// Nothing may serve a call concurrently with this write.
+pub unsafe fn install(table: SyscallTable) {
+    // SAFETY: the caller promises this is the only write and that no call is in
+    // flight.  The write is a whole-table store, so a reader either sees the
+    // old table or the new one and never a half-built one.
+    unsafe { *REGISTRY.get() = Some(table) };
+}
+
+/// Serve one call through the installed registry.
+///
+/// `None` when the boot has not installed one, which is the state before the
+/// filesystem is mounted.
+///
+/// This is the path a trap will use when there is a process to take one from.
+/// It exists now so the registry is reachable from outside the function that
+/// built it — the thing that was missing — and so the boot can serve a call
+/// through the same entry point a later trap will.
+pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
+    // SAFETY: the table is written once, before any call can arrive, and this
+    // read happens after that write.  The borrow it takes is exclusive for the
+    // length of the call, which is what the table's methods require.
+    let table = unsafe { (*REGISTRY.get()).as_mut() };
+    table.map(|table| table.dispatch(arguments))
+}
+
+/// Whether a boot installed a registry.
+pub fn has_registry() -> bool {
+    // SAFETY: as `serve`.
+    unsafe { (*REGISTRY.get()).is_some() }
+}
+
+/// How many descriptors the installed table holds open.
+pub fn open_descriptors() -> usize {
+    // SAFETY: as `serve`.
+    let table = unsafe { (*REGISTRY.get()).as_ref() };
+    table.map_or(0, SyscallTable::open_descriptors)
+}
+
+/// How many numbers the installed table serves.
+///
+/// A served number is one with a handler rather than
+/// [`Handler::Unimplemented`], and the count is what makes "the table is
+/// installed" a claim with a number beside it.
+pub fn served_numbers() -> usize {
+    // SAFETY: as `serve`.
+    let table = unsafe { (*REGISTRY.get()).as_ref() };
+    table.map_or(0, SyscallTable::served)
+}
+
 /// Open a path and return its descriptor.
 ///
 /// Arguments: the path, the flags, then two reserved slots that must be zero.
@@ -280,6 +366,27 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     let flags = arguments.context.arg(1);
     validate_known_flags(flags, fs_abi::OPEN_KNOWN_FLAGS)?;
     validate_zeroed_args(arguments.context, 2)?;
+
+    // Who is asking, before what they asked for is resolved.
+    //
+    // The check comes first because a policy decision that ran after the lookup
+    // would have already told the caller whether the path exists: a denial and
+    // a "not found" are different answers, and the one that leaks less is the
+    // one that does not distinguish them.
+    //
+    // The action decides the permission.  A descriptor opened for writing is a
+    // request to write, and asking the policy about a read would grant a write
+    // on the strength of a read rule.
+    let subject = arguments
+        .context
+        .identity
+        .unwrap_or(mac::MAC_TYPE_UNLABELED);
+    let permission = if flags & (fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE) != 0 {
+        mac::MAC_PERM_WRITE
+    } else {
+        mac::MAC_PERM_READ
+    };
+    mac::check_file(subject, path, mac::MAC_CLASS_FILE, permission, 0)?;
 
     // Through the namespace: the table resolves the path to a mount and a path
     // relative to it, and the filesystem answers for that.  `open` names no
@@ -334,6 +441,94 @@ pub fn close(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
     validate_zeroed_args(arguments.context, 1)?;
     table.close(descriptor)?;
     Ok(Dispatch::complete(0))
+}
+
+/// Report the MAC policy's state.
+///
+/// Arguments: five reserved slots that must be zero.  Answers
+/// `enabled | default_deny << 1 | rule_count << 8 | label_count << 32`.
+///
+/// A packed word rather than a struct because a syscall returns one `usize`,
+/// and a program that wanted four fields would otherwise need a second call per
+/// field.  The layout is stated here and in no other place, which is what lets
+/// it be a number.
+pub fn mac_get_status(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 0)?;
+    let state = mac::policy_state().lock();
+    let mut value = 0usize;
+    if state.policy.enabled {
+        value |= 1;
+    }
+    if state.policy.default_deny {
+        value |= 1 << 1;
+    }
+    value |= state.policy.rule_count().min(0xFF) << 8;
+    value |= state.label_count().min(0xFFFF) << 32;
+    Ok(Dispatch::complete(value))
+}
+
+/// Turn enforcement on or off.
+///
+/// Arguments: `0` disables, `1` enables, then four reserved slots that must be
+/// zero.  Answers the previous state.
+///
+/// Disabling is permitted and is not a security hole in this kernel: the policy
+/// is off at boot, so a program that can call this already runs as something
+/// the kernel trusts.  When there is a process layer, this becomes a call the
+/// policy itself gates — which is why the handler does not check `identity`
+/// today rather than because it forgot.
+pub fn mac_set_mode(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let enable = arguments.context.arg(0);
+    if enable > 1 {
+        return Err(Error::InvalidArgument);
+    }
+    validate_zeroed_args(arguments.context, 1)?;
+    let mut state = mac::policy_state().lock();
+    let previous = state.policy.enabled;
+    state.policy.enabled = enable == 1;
+    Ok(Dispatch::complete(usize::from(previous)))
+}
+
+/// Add one allow rule.
+///
+/// Arguments: `subject, object, class, permissions, replace`, then one reserved
+/// slot that must be zero.  Answers the number of rules after the addition.
+///
+/// The five values are the rule's own fields in the order
+/// [`mac::MacRule`] declares them, so a caller that read the type knows the
+/// argument order without reading this function.  An unknown class or type is
+/// refused rather than stored: a rule matching nothing is a rule that silently
+/// does nothing, and a policy is the wrong place for a silent no-op.
+pub fn mac_add_rule(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let subject = arguments.context.arg(0) as mac::MacType;
+    let object = arguments.context.arg(1) as mac::MacType;
+    let class = arguments.context.arg(2) as mac::MacClass;
+    let perms = arguments.context.arg(3) as mac::MacPermission;
+    let replace = arguments.context.arg(4);
+    if replace > 1 {
+        return Err(Error::InvalidArgument);
+    }
+    validate_zeroed_args(arguments.context, 5)?;
+
+    if !mac::is_known_type(subject) || !mac::is_known_type(object) {
+        return Err(Error::InvalidArgument);
+    }
+    if !mac::is_known_class(class) {
+        return Err(Error::InvalidArgument);
+    }
+
+    let rule = mac::MacRule {
+        subject,
+        object,
+        class,
+        perms,
+    };
+    let mut state = mac::policy_state().lock();
+    state.policy.add_rule(rule, replace == 1);
+    Ok(Dispatch::complete(state.policy.rule_count()))
 }
 
 #[cfg(test)]

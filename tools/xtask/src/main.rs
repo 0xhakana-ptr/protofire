@@ -189,6 +189,17 @@ impl Machine {
     fn required_lines(self) -> &'static [(&'static str, bool)] {
         match self {
             Self::X8664 => &[
+                // The policy, asked twice through the real handler.
+                //
+                // A rule the boot installs allows one label and not another,
+                // and both cases go through `open` rather than calling the
+                // policy directly.  That is what makes these lines a check on
+                // the *wiring*: deleting the check from `open` turns "denied"
+                // into "MISPOLICED", which the gate refuses.
+                ("protofire: mac policy enabled, ", false),
+                ("protofire: mac allowed ", false),
+                ("protofire: mac denied ", false),
+                ("protofire: syscall table installed, ", false),
                 (
                     "protofire 0.1.0: entered via pvh, console up, stage 1",
                     true,
@@ -223,6 +234,17 @@ impl Machine {
             // refused it: this is the line that would have caught the boot that
             // stopped after the heap.
             Self::Aarch64 => &[
+                // The policy, asked twice through the real handler.
+                //
+                // A rule the boot installs allows one label and not another,
+                // and both cases go through `open` rather than calling the
+                // policy directly.  That is what makes these lines a check on
+                // the *wiring*: deleting the check from `open` turns "denied"
+                // into "MISPOLICED", which the gate refuses.
+                ("protofire: mac policy enabled, ", false),
+                ("protofire: mac allowed ", false),
+                ("protofire: mac denied ", false),
+                ("protofire: syscall table installed, ", false),
                 (
                     "protofire 0.1.0: entered via dtb, console up, stage 1",
                     true,
