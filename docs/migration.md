@@ -14,11 +14,11 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | Subsystem | Previous tree | Here | What is in |
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 1,697 | boot, interrupts, serial, port I/O — four modules of a hundred |
+| `arch` | 95,361 | 2,479 | boot, interrupts, serial, port I/O, page-table encoding — five of a hundred |
 | `crypto` | 4,606 | 4,832 | all of it, one module per algorithm |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
 | `kernel` | 39,704 | 1,157 | the boot sequence, the syscall table, device discovery |
-| `memory` | 9,649 | 1,860 | the frame pool and the region pools |
+| `memory` | 9,649 | 1,865 | the frame pool and the region pools |
 | `network` | 39,240 | 1 | nothing |
 | `drivers` | 18,828 | 3,772 | PCI, and virtio block |
 | `syscall` | 15,647 | 253 | the context, the validators, three handlers |

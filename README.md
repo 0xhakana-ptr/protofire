@@ -13,7 +13,8 @@ A boot takes this path on x86_64, and every line below is required by a gate:
 
 ```
 protofire 0.1.0: entered via pvh, console up, stage 1
-protofire: heap at 0x155e00..0x4155e00
+protofire: page table built and installed, 4 KiB granule
+protofire: heap at 0x976110..0x4976110
 protofire: pci scan found 4 device(s) on 1 bus
 protofire: block device from virtio-blk on pci
 protofire: virtio-blk wrote and read back sector 63
@@ -37,7 +38,7 @@ in and what is not.
 |---|---|
 | crates | 36 |
 | source | ~44,000 lines |
-| tests | 491, all runnable with `cargo test -p <crate>` |
+| tests | 528, all runnable with `cargo test -p <crate>` |
 
 ## Building and running
 

@@ -25,6 +25,7 @@
 //! host because a shift off by one is the kind of bug a machine shows as
 //! corruption far from its cause.
 
+use paging::Cache;
 use paging::Entry;
 use paging::EntryEncoding;
 use paging::Level;
@@ -37,6 +38,21 @@ use paging::index::FLAG_WRITABLE;
 
 /// The bit that says this entry names 2 MiB rather than one page.
 pub const FLAG_PAGE_SIZE: u64 = FLAG_HUGE;
+
+/// Bit 3: page-level write-through.
+pub const FLAG_PAGE_WRITE_THROUGH: u64 = 1 << 3;
+/// Bit 4: page-level cache disable.
+pub const FLAG_PAGE_CACHE_DISABLE: u64 = 1 << 4;
+
+/// The cache-disabling bits a device mapping needs.
+///
+/// Both, and that is not belt and braces.  `PCD` alone says the CPU must not
+/// cache the page; `PWT` says a write goes through to memory rather than being
+/// buffered.  A device's registers need both: a read of a status register
+/// through a cached mapping returns whatever was true when the line was
+/// fetched, and a store that sits in a write-combining buffer is a command the
+/// device has not received.
+pub const FLAG_UNCACHED: u64 = FLAG_PAGE_WRITE_THROUGH | FLAG_PAGE_CACHE_DISABLE;
 
 /// The mask a physical address occupies in an entry.
 ///
@@ -67,10 +83,8 @@ pub fn encode(entry: Entry) -> u64 {
     if !entry.permissions.executable {
         word |= FLAG_NO_EXECUTE;
     }
-    if !entry.is_leaf {
-        // A table entry that named 2 MiB would be a leaf the caller did not
-        // ask for; the flag is only set for a leaf that covers more than a
-        // page, and this crate has none.
+    if entry.permissions.cache == Cache::Device {
+        word |= FLAG_UNCACHED;
     }
     word
 }
@@ -93,6 +107,11 @@ pub fn decode(word: u64, level: Level) -> Entry {
             writable: word & FLAG_WRITABLE != 0,
             executable: word & FLAG_NO_EXECUTE == 0,
             user: word & FLAG_USER != 0,
+            cache: if word & FLAG_UNCACHED != 0 {
+                Cache::Device
+            } else {
+                Cache::Normal
+            },
         },
         is_leaf: level == Level::Leaf || (level == Level::Third && word & FLAG_PAGE_SIZE != 0),
         present,
@@ -153,6 +172,7 @@ pub unsafe fn install(table: usize) -> bool {
 mod tests {
     use super::decode;
     use super::encode;
+    use paging::Cache;
     use paging::Entry;
     use paging::Level;
     use paging::Permissions;
@@ -184,6 +204,28 @@ mod tests {
             read_execute & (1 << 63),
             0,
             "execute is the absence of no-execute"
+        );
+    }
+
+    /// A device mapping sets both cache bits, and an ordinary one sets
+    /// neither.
+    ///
+    /// The boot's identity map set neither, so every BAR the kernel reached
+    /// was mapped as cached memory — which works on an emulator and is wrong
+    /// on hardware.
+    #[test]
+    fn a_device_mapping_disables_the_cache() {
+        let device = Entry::page(0xFE00_0000, Permissions::DEVICE);
+        let word = encode(device);
+        assert_ne!(word & super::FLAG_PAGE_CACHE_DISABLE, 0, "PCD is set");
+        assert_ne!(word & super::FLAG_PAGE_WRITE_THROUGH, 0, "PWT is set");
+        assert_eq!(decode(word, Level::Leaf).permissions.cache, Cache::Device);
+
+        let ordinary = Entry::page(0x1000, Permissions::KERNEL_READ_WRITE);
+        assert_eq!(encode(ordinary) & super::FLAG_UNCACHED, 0);
+        assert_eq!(
+            decode(encode(ordinary), Level::Leaf).permissions.cache,
+            Cache::Normal
         );
     }
 
@@ -230,6 +272,7 @@ mod tests {
                 writable: true,
                 executable: false,
                 user: true,
+                cache: Cache::Normal,
             },
         );
         assert_ne!(encode(user) & 0b100, 0);

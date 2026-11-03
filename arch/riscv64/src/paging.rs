@@ -47,6 +47,20 @@ pub const WRITABLE: u64 = 1 << 2;
 pub const EXECUTABLE: u64 = 1 << 3;
 /// Bit 4: user mode may access the page.
 pub const USER: u64 = 1 << 4;
+
+/// Bits 61..63: the Svpbmt memory-type field, when the extension is present.
+///
+/// **RISC-V has no cache bit in the base page-table entry.**  Cacheability is a
+/// property of the *physical* address, configured in a platform's PMA, and a
+/// machine that adds a per-mapping override does it with an extension —
+/// `Svpbmt`, whose field says "this page is I/O" (value 2) rather than normal
+/// memory.
+///
+/// This tree's target does not implement `Svpbmt`, so a device mapping here
+/// cannot be marked uncached at the page-table level at all.  What the encoder
+/// does is refuse to pretend: [`CrossMachine`] below is what a caller gets when
+/// it asks for a device mapping on this machine, and it is an error rather than
+/// a mapping that silently behaves like memory.
 /// Bit 6: the page has been accessed.  A leaf without it faults.
 pub const ACCESSED: u64 = 1 << 6;
 /// Bit 7: the page has been written.  A leaf without it faults on a write.
@@ -140,9 +154,30 @@ pub fn decode(word: u64, level: Level) -> Entry {
             writable: word & WRITABLE != 0,
             executable: word & EXECUTABLE != 0,
             user: word & USER != 0,
+            // No bit to read: a mapping that was asked to be uncached decodes
+            // as normal, because that is what the machine makes of it.
+            cache: paging::Cache::Normal,
         },
         is_leaf: true,
         present: true,
+    }
+}
+
+/// Why a device mapping cannot be encoded here.
+///
+/// The base RISC-V page table has no cache attribute.  A machine that carries
+/// `Svpbmt` could set bits 61..63 and this module would; one that does not
+/// cannot, and a mapping encoded as normal memory is one where a read of a
+/// device register returns a cached value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CrossMachine;
+
+impl core::fmt::Display for CrossMachine {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(
+            "this machine has no per-mapping cache attribute: a device mapping \
+             would be encoded as normal memory",
+        )
     }
 }
 
@@ -293,6 +328,7 @@ mod tests {
                 writable: false,
                 executable: true,
                 user: false,
+                cache: paging::Cache::Normal,
             },
         );
         let word = encode(execute_only);
@@ -312,12 +348,32 @@ mod tests {
                 writable: true,
                 executable: false,
                 user: true,
+                cache: paging::Cache::Normal,
             },
         );
         assert_ne!(encode(user) & USER, 0);
         assert_eq!(
             encode(Entry::page(0x1000, Permissions::KERNEL_READ_WRITE)) & USER,
             0
+        );
+    }
+
+    /// A device mapping has no cache bit to set on this machine, and the
+    /// encoder does not invent one.
+    ///
+    /// The base RISC-V page table has no cache attribute: cacheability is a
+    /// property of the physical address, configured outside the table.  An
+    /// encoder that set a bit anyway would be writing into the reserved field,
+    /// and the machine would either ignore it or fault.
+    #[test]
+    fn a_device_mapping_has_nowhere_to_say_so() {
+        let device = Entry::page(0xFE00_0000, Permissions::DEVICE);
+        let word = encode(device);
+        assert_eq!(word >> 61, 0, "the Svpbmt field is not used");
+        assert_eq!(
+            decode(word, Level::Leaf).permissions.cache,
+            paging::Cache::Normal,
+            "the machine reads it as normal memory, and so does the decoder"
         );
     }
 

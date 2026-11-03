@@ -156,8 +156,20 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     // which is where the list is actually read.
 
     let map_bar = |_bar: u8, address: u64, length: u64| -> Option<Arc<dyn RegisterFile>> {
+        let base = physical_address(address);
+        // The boot's table maps this window cached, which for a device's
+        // registers means a read returns whatever was true when the line was
+        // fetched and a store may never arrive.  Re-mapping it uncached is what
+        // makes the registers the device's rather than the cache's.
+        //
+        // SAFETY: the region is a BAR the bus reported, so it is a device's
+        // memory and nothing else.
+        #[cfg(target_os = "none")]
+        unsafe {
+            crate::address_space::map_device(base, length as usize);
+        }
         Some(Arc::new(MappedBar {
-            base: physical_address(address),
+            base,
             length: length as usize,
         }))
     };

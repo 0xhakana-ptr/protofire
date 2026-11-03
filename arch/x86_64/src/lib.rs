@@ -16,6 +16,12 @@ extern crate alloc;
 pub mod boot;
 pub mod interrupts;
 pub mod paging;
+
+// The entry encoding, re-exported by name: `kernel::address_space` builds a
+// mapping and asks the machine how to write it down, and asking through `arch`
+// is what keeps the answer a machine's business.
+pub use paging::install;
+
 pub mod port;
 pub mod serial;
 

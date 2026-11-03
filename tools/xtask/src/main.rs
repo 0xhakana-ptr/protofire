@@ -112,7 +112,13 @@ impl Machine {
     /// different code paths through the same function, so a mismatch is a real
     /// difference rather than a wording preference.
     ///
-    /// The second is the heap's own bounds.  It is here rather than treated as
+    /// The second names the page table the kernel built.  The boot assembly
+    /// maps four gigabytes identity with 2 MiB pages, every one writable and
+    /// cached; this is the kernel's own table, with a 4 KiB granule and a
+    /// permission per region.  Reaching the heap line means the swap did not
+    /// lose any address the boot was still using.
+    ///
+    /// The third is the heap's own bounds.  It is here rather than treated as
     /// a log line because reaching it means `bounds()` ran, which is what makes
     /// the allocator lay out its free lists — a boot that printed the first
     /// line and stopped before the second has a loader but no heap.  The

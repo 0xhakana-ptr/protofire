@@ -57,16 +57,35 @@ impl Entry {
             writable: false,
             executable: false,
             user: false,
+            cache: crate::index::Cache::Normal,
         },
         is_leaf: false,
         present: false,
     };
 
     /// An entry naming the table at `address`.
+    ///
+    /// The permissions are **not** a leaf's: an entry that names a table
+    /// carries the widest set, because what it permits is decided by the leaf
+    /// the walk reaches.  Giving it a leaf's permissions is not a harmless
+    /// default — on x86_64 the no-execute bit of a table entry is inherited by
+    /// every page below it, so a table entry marked non-executable makes the
+    /// whole subtree unexecutable and the next instruction fetch faults.
+    ///
+    /// This is why the permissions are `KERNEL_READ_WRITE` and not something
+    /// narrower: a table entry that said "not writable" would make every page
+    /// under it not writable on a machine that inherits the bit.
     pub const fn table(address: usize) -> Entry {
         Entry {
             address,
-            permissions: Permissions::KERNEL_READ_WRITE,
+            permissions: Permissions {
+                writable: true,
+                // Executable, so the no-execute bit is not set and cannot be
+                // inherited by the code a leaf maps.
+                executable: true,
+                user: false,
+                cache: crate::index::Cache::Normal,
+            },
             is_leaf: false,
             present: true,
         }

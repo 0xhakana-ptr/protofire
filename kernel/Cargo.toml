@@ -23,6 +23,12 @@ sound.workspace = true
 arch = { path = "../arch" }
 fs = { path = "../fs" }
 block = { path = "../block" }
+# The page-table types and the walk arithmetic.  The kernel decides what its
+# address space maps; `paging` is what a table is.
+paging = { path = "../paging" }
+# The static holder for the page tables: a `static mut` would be the usual
+# shape and this is the crate that replaces it.
+cell = { path = "../libs/cell" }
 # The bus, and the virtio framework over it.  The kernel is where a scan's
 # policy lives: which bus, what is worth keeping, and what a machine without
 # the device still does.

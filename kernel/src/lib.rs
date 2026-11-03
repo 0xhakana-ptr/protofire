@@ -36,6 +36,7 @@
 // error, and an allocator nobody allocates from is a heap with no caller.
 extern crate alloc;
 
+pub mod address_space;
 pub mod devices;
 pub mod iso_disc;
 pub mod scheduler;
@@ -114,6 +115,39 @@ pub fn kernel_main() -> ! {
     arch::serial::write_str(", console up, stage ");
     arch::serial::write_u32(BootStage::ConsoleUp as u32);
     arch::serial::write_str("\n");
+
+    // Replace the boot's page table with one this kernel built.
+    //
+    // The assembly's table maps four gigabytes identity with 2 MiB pages, every
+    // one writable and cached — the smallest thing that lets Rust run, and
+    // wrong for everything after.  This builds a second table with the same
+    // translations at a 4 KiB granule, so text is read-execute, read-only data
+    // is read, and the kernel's own state is read-write.  Every address the
+    // boot already touched translates the same, which is what makes the swap
+    // invisible; what changes is what each region is allowed to do.
+    //
+    // It runs before the heap because the table's backing is a static array
+    // rather than allocated frames — a table built from frames would have to be
+    // built before the thing that hands them out.
+    //
+    // SAFETY: called once, from the kernel's entry, with the console up so a
+    // failure past this point is visible.  The table it installs covers the
+    // code performing the install.
+    arch::serial::write_str("protofire: page table ");
+    #[cfg(target_os = "none")]
+    {
+        // SAFETY: called once, from the kernel's entry, with the console up so
+        // a failure past this point is visible.  The table it installs covers
+        // the code performing the install.
+        let installed = unsafe { address_space::install() };
+        if installed {
+            arch::serial::write_str("built and installed, 4 KiB granule\n");
+        } else {
+            arch::serial::write_str("was already installed\n");
+        }
+    }
+    #[cfg(not(target_os = "none"))]
+    arch::serial::write_str("not installed (a host has no address space to install)\n");
 
     // Initialise the heap and say where it is.
     //

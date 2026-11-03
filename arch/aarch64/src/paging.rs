@@ -46,9 +46,24 @@ pub const TYPE_TABLE_OR_PAGE: u64 = 0b11;
 /// Bits 0..1 of a descriptor: `0b01` means a block (a larger leaf).
 pub const TYPE_BLOCK: u64 = 0b01;
 
-/// Bit 2: which `MAIR_EL1` attribute entry applies.  Index 0 is normal memory
-/// with write-back caching, which is what every mapping this tree makes uses.
-pub const ATTR_NORMAL: u64 = 0 << 2;
+/// Bits 2..4: which `MAIR_EL1` attribute entry applies.
+///
+/// `MAIR_EL1` holds eight attribute bytes, and a descriptor names one by index.
+/// This tree uses two:
+///
+/// | index | attribute | for |
+/// |---|---|---|
+/// | 0 | `0xFF` — normal memory, write-back cached | the kernel's own memory |
+/// | 1 | `0x00` — device memory, gathering off | a device's registers |
+///
+/// Both are installed by `maIR` in `install`; a descriptor that named an index
+/// those bytes do not define is one the MMU treats as device memory, which is
+/// the safe direction but not what a caller asked for.
+pub const ATTR_INDEX_SHIFT: u64 = 2;
+/// `MAIR_EL1` byte 0: normal, write-back cached.
+pub const ATTR_NORMAL: u64 = 0 << ATTR_INDEX_SHIFT;
+/// `MAIR_EL1` byte 1: device, non-gathering.
+pub const ATTR_DEVICE: u64 = 1 << ATTR_INDEX_SHIFT;
 
 /// Bit 6: `AP[1]` — EL0 may access the page.
 pub const AP_USER: u64 = 1 << 6;
@@ -84,8 +99,12 @@ pub fn encode_at(entry: Entry, level: Level) -> u64 {
         TYPE_TABLE_OR_PAGE
     };
 
+    let attribute = match entry.permissions.cache {
+        paging::Cache::Normal => ATTR_NORMAL,
+        paging::Cache::Device => ATTR_DEVICE,
+    };
     let mut descriptor =
-        (entry.address as u64 & OUTPUT_ADDRESS_MASK) | kind | AF_ACCESSED | ATTR_NORMAL;
+        (entry.address as u64 & OUTPUT_ADDRESS_MASK) | kind | AF_ACCESSED | attribute;
     // AP[2] set means read-only; the permission says whether it is writable.
     if !entry.permissions.writable {
         descriptor |= AP_READ_ONLY;
@@ -125,6 +144,11 @@ pub fn decode(word: u64, level: Level) -> Entry {
             writable: word & AP_READ_ONLY == 0,
             executable: word & PXN == 0,
             user: word & AP_USER != 0,
+            cache: if word & (1 << ATTR_INDEX_SHIFT) != 0 {
+                paging::Cache::Device
+            } else {
+                paging::Cache::Normal
+            },
         },
         is_leaf: is_block || level == Level::Leaf,
         present,
@@ -175,6 +199,12 @@ pub unsafe fn install(table: usize) -> bool {
     // is what the architecture requires after writing a system register that
     // changes translation.
     unsafe {
+        // The two attributes this tree's descriptors name: byte 0 normal
+        // write-back, byte 1 device non-gathering.  A descriptor's index is a
+        // byte of this register, so a machine without it would fault with the
+        // index unset — which is why it is written before the table.
+        let mair: u64 = 0x00FF;
+        core::arch::asm!("msr mair_el1, {}", in(reg) mair, options(nostack));
         core::arch::asm!("msr ttbr0_el1, {}", in(reg) root, options(nostack));
         core::arch::asm!("dsb ish", options(nostack));
         core::arch::asm!("isb", options(nostack));
@@ -238,6 +268,7 @@ mod tests {
                 writable: true,
                 executable: true,
                 user: true,
+                cache: paging::Cache::Normal,
             },
         );
         let word = encode(user);
@@ -267,6 +298,26 @@ mod tests {
         assert_eq!(
             encode_at(entry, Level::Root) & 0b11,
             super::TYPE_TABLE_OR_PAGE
+        );
+    }
+
+    /// A device mapping names the device `MAIR` index, and an ordinary one
+    /// names the normal index.
+    #[test]
+    fn a_device_mapping_names_the_device_attribute() {
+        let device = Entry::page(0xFE00_0000, Permissions::DEVICE);
+        let word = encode(device);
+        assert_ne!(word & super::ATTR_DEVICE, 0, "the device index is named");
+        assert_eq!(
+            decode(word, Level::Leaf).permissions.cache,
+            paging::Cache::Device
+        );
+
+        let ordinary = Entry::page(0x1000, Permissions::KERNEL_READ_WRITE);
+        assert_eq!(encode(ordinary) & (0b111 << super::ATTR_INDEX_SHIFT), 0);
+        assert_eq!(
+            decode(encode(ordinary), Level::Leaf).permissions.cache,
+            paging::Cache::Normal
         );
     }
 

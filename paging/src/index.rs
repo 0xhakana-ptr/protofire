@@ -73,13 +73,33 @@ pub const FLAG_HUGE: u64 = 1 << 7;
 /// Entry flag: execution is refused.
 pub const FLAG_NO_EXECUTE: u64 = 1 << 63;
 
-/// What an entry permits.
+/// How a mapping's memory may be cached.
+///
+/// This is part of what a mapping says, and it is not decoration: a device's
+/// registers read through a cached mapping return stale values, and a store to
+/// one may never reach the device at all.  The boot's own identity map sets
+/// neither of the cache bits, so every BAR the kernel reaches today is mapped
+/// as ordinary cached memory — which works on an emulator whose MMIO happens to
+/// behave and is wrong on hardware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Cache {
+    /// Ordinary memory: the CPU may cache it, and a write may be buffered.
+    #[default]
+    Normal,
+    /// A device's registers: never cached, and a read is not reordered ahead of
+    /// one that came before it.
+    Device,
+}
+
+/// What an entry permits, and how its memory may be cached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Permissions {
     pub writable: bool,
     pub executable: bool,
     /// Whether a user-mode program may reach through this entry.
     pub user: bool,
+    /// Whether the memory behind this entry may be cached.
+    pub cache: Cache,
 }
 
 impl Permissions {
@@ -88,6 +108,7 @@ impl Permissions {
         writable: false,
         executable: true,
         user: false,
+        cache: Cache::Normal,
     };
 
     /// Read, write, no execute, supervisor only — what the kernel's data has.
@@ -95,6 +116,22 @@ impl Permissions {
         writable: true,
         executable: false,
         user: false,
+        cache: Cache::Normal,
+    };
+
+    /// Read, write, no execute, supervisor only, **uncached** — what a
+    /// device's registers have.
+    ///
+    /// A barrier question and a caching question are different: this says the
+    /// memory behind the mapping is a device's, so the CPU must not cache a
+    /// read of it and must not defer a write to it.  The machine encodes it —
+    /// x86_64 with `PCD`, `PWT` and `PAT`, aarch64 with its `MAIR` index — and
+    /// a machine that had no such encoding would have to say so.
+    pub const DEVICE: Permissions = Permissions {
+        writable: true,
+        executable: false,
+        user: false,
+        cache: Cache::Device,
     };
 
     /// The flags this permission set contributes to an entry.
@@ -162,6 +199,7 @@ pub const fn span(level: Level) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::Cache;
     use super::ENTRIES_PER_TABLE;
     use super::Level;
     use super::PAGE_SIZE;
@@ -254,6 +292,17 @@ mod tests {
         assert_eq!(read_execute & super::FLAG_PRESENT, super::FLAG_PRESENT);
         assert_eq!(read_execute & super::FLAG_WRITABLE, 0);
         assert_eq!(read_execute & super::FLAG_NO_EXECUTE, 0);
+    }
+
+    /// A device mapping is not cached, and an ordinary one is.
+    ///
+    /// A device's registers read through a cached mapping return stale values,
+    /// and a store to one may never reach the device — which is the difference
+    /// between a driver that works and one that works on an emulator.
+    #[test]
+    fn a_device_mapping_is_not_cached() {
+        assert_eq!(Permissions::DEVICE.cache, Cache::Device);
+        assert_eq!(Permissions::KERNEL_READ_WRITE.cache, Cache::Normal);
     }
 
     /// A kernel mapping is not user-accessible, and that is not incidental.

@@ -16,6 +16,9 @@ ENTRY(_start)
    reason to move us. */
 KERNEL_LOAD_ADDRESS = 0x100000;
 
+/* The frame pool's span.  512 MiB of *address space*: see `__pool_start`. */
+POOL_SIZE = 512M;
+
 SECTIONS
 {
     . = KERNEL_LOAD_ADDRESS;
@@ -63,6 +66,28 @@ SECTIONS
 
     __image_end = .;
     __kernel_end = .;
+
+    /* The physical frame pool: reserved address space, not storage.
+       Nothing is loaded here and no boot clears it — the allocator zeroes a
+       frame when it hands one out, which is the guarantee that is actually
+       needed.  Reserving it in the image rather than declaring an array in
+       `.bss` is what keeps a boot from writing past the end of RAM on a small
+       machine: a 512 MiB array in `.bss` made a 528 MiB machine print nothing
+       at all, because the boot's clear of it landed outside RAM.
+
+       The span is a ceiling: the manager hands the allocator the machine's
+       own answer clamped to it, so a machine whose RAM ends inside the span
+       manages only the frames that are really there. */
+    . = ALIGN(4K);
+    __pool_start = .;
+    /* `NOLOAD` is what keeps the span out of the image's file contents: the
+       section occupies address space and nothing is written for it.  Without
+       it the ELF grows by the pool's size — a 5 MiB image for a 512 MiB
+       reservation — and a loader spends that long reading zeros. */
+    .pool (NOLOAD) : {
+        . += POOL_SIZE;
+    }
+    __pool_end = .;
 
     /DISCARD/ : {
         *(.comment)

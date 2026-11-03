@@ -33,6 +33,7 @@
 pub mod index;
 pub mod table;
 
+pub use index::Cache;
 pub use index::ENTRIES_PER_TABLE;
 pub use index::Level;
 pub use index::PAGE_SIZE;
