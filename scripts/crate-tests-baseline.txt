@@ -28,7 +28,6 @@ crypto               4850   64
 e1000                   2    0
 fs                  14683  113
 init                   68    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
-integration_tests       2    0
 ipc                   335    9
 irq                   411   10
 kernel               2107   18
@@ -38,7 +37,6 @@ paging                717   13
 pci                   919   16
 power                 321   12
 profiler              312    2
-protofire               4    0
 rights                 78    3
 security             1275   14
 service_manager        61    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot

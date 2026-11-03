@@ -271,14 +271,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "integration_tests"
-version = "0.1.0"
-dependencies = [
- "abi",
- "async_io",
-]
-
-[[package]]
 name = "ipc"
 version = "0.1.0"
 dependencies = [
@@ -380,10 +372,6 @@ dependencies = [
 
 [[package]]
 name = "profiler"
-version = "0.1.0"
-
-[[package]]
-name = "protofire"
 version = "0.1.0"
 
 [[package]]

@@ -238,15 +238,16 @@
 
 # ── Layer 9: not shipped ────────────────────────────────────────────────────
 #
-# Nothing depends on these.  The integration tests and the build tool may name
-# anything, which is expressible as the top layer rather than as an exception.
-10 integration_tests
-
-# `protofire` is the workspace root's empty package — the name cargo needs before
-# it will accept a `[workspace]` with a `[package]`.  It has no dependencies and
-# nothing depends on it.
-10 protofire
-
+# Nothing depends on these.  The build tool may name anything, which is
+# expressible as the top layer rather than as an exception.
+#
+# There were two more here, and both were shapes from a single-crate tree rather
+# than decisions this one made: a root package called `protofire` ("the name
+# cargo needs before it will accept a `[workspace]` with a `[package]`" — which
+# is not true; a `Cargo.toml` with only `[workspace]` is valid) and an
+# `integration_tests` crate with one line and no tests.  Neither had a caller,
+# a test, or a reason, so both are gone rather than recorded with an argument
+# no one could write.
 # `xtask` is the build tool: `clap` and `anyhow`, no crate of this tree.
 10 xtask
 

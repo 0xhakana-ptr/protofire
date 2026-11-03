@@ -1,9 +1,3 @@
-[package]
-name = "protofire"
-version = "0.1.0"
-edition = "2024"
-publish = false
-
 [workspace]
 resolver = "2"
 members = [
@@ -43,7 +37,6 @@ members = [
     "apps/shell",
     "apps/service_manager",
     "tools/xtask",
-    "tests",
 ]
 
 [workspace.package]

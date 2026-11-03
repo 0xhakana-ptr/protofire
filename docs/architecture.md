@@ -22,7 +22,7 @@ extracted yet.
 ## The layers
 
 ```
-  9-10   integration_tests, protofire (root), xtask     not shipped
+  9-10   xtask                                          not shipped
      8   bootloader                                    the image
      7   kernel                                        the core
   5-7   syscall, pci, e1000, sound, virt, fs, net,
@@ -299,9 +299,9 @@ The drivers are one crate each so that a machine without a device does not carry
 its code.
 
 `kernel` names everything below it and nothing in its own layer.  `bootloader` is
-the only crate that links an image.  `integration_tests`, `protofire` and `xtask`
-are not shipped: nothing depends on them, and they may name anything, which is
-expressible as the top layer rather than as an exception.
+the only crate that links an image.  `xtask` is not shipped: nothing depends on
+it, and it may name anything, which is expressible as the top layer rather than
+as an exception.
 
 ## What a crate split buys, measured
 
