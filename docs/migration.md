@@ -14,7 +14,7 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | Subsystem | Previous tree | Here | What is in |
 |---|---:|---:|---|
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 8,313 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011, the device-tree handshake — nine of a hundred |
+| `arch` | 95,361 | 9,155 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the 8259, the PL011, the device-tree handshake, the GIC — ten of a hundred |
 | `crypto` | 4,606 | 4,850 | all of it, one module per algorithm — counted under `libs` below |
 | `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
 | `kernel` | 39,704 | 1,536 | the boot sequence, the syscall table, device discovery |
@@ -24,7 +24,7 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | `syscall` | 15,647 | 253 | the context, the validators, three handlers |
 | `user` | 19,145 | — | nothing; `apps/` holds three skeletons |
 | `libs` | — | 16,291 | allocator, audit, cell, crypto, fdt, irq, paging, profiler, rights, sync, unicode |
-| **total** | **312,131** | **~54,900** | |
+| **total** | **312,131** | **~55,800** | |
 
 The `libs` crates have no previous-tree column because most of them were modules
 under `src/kernel/` or `src/memory/` there; their lines are counted in those
@@ -92,10 +92,60 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
-x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
-interrupt controller: a GIC on aarch64 and the IOAPIC on x86_64, because a
-device that has been given an address can be driven by polling and cannot be
-driven well.
+x86_64 — the port I/O the PCI bus is reached through.  What comes next is
+routing a *device's* line: the GIC works and a boot proves it, but nothing has
+yet learned which of the controller's lines a PCI function raises.  That number
+is in the bridge's `interrupt-map`, and it is the one thing this change left
+out rather than guessed at.
+
+### The interrupt controller, and the probe that could not fail
+
+An aarch64 boot now takes an interrupt:
+
+```
+protofire: interrupt table installed, interrupts on
+protofire: interrupt delivered to its handler
+```
+
+`arch/aarch64/src/gic.rs` is the GICv2 register layer: the distributor decides
+which lines exist and which CPU they go to, the CPU interface is what this core
+acknowledges and finishes through, and the two are different windows.  The
+arithmetic is the specification's, and the two arrays a driver must reach do not
+share a divisor — `ISENABLER` holds 32 interrupts per register and `IPRIORITYR`
+holds **four** — so a driver that used 32 for both enables the right line and
+sets the priority of a different one.
+
+The dispatcher now tells an IRQ from a fault: the vector is `(group * 4) +
+kind`, so `vector % 4 == 1` is an IRQ whatever its group, and that path
+acknowledges, hands the number to the sink, and finishes.  Returning without the
+finish leaves the line active and the machine taking exactly one interrupt —
+which is why the finish is not on the handler's honour.
+
+**The probe could not fail, and that is the defect worth recording.**  The boot
+raises an interrupt from the controller and a handler counts it.  The first
+version raised interrupt **zero** and initialised its counter to **zero**, so a
+boot that raised nothing printed exactly what a boot that raised something
+printed.  Deleting the write that raises it changed no output at all.  The
+counter now starts at `usize::MAX`, and deleting the write prints
+`raised but not delivered`.
+
+Two things were learned from the controller's own behaviour while doing this:
+
+- **`GICD_SGIR` raises only interrupts 0..16.**  It has no field for a device
+  line, because a device raises its own.  The first version asked it for
+  interrupt 40, wrote an SGI id the distributor did not route, and then had to
+  reconcile "the path works" — an unclaimed PPI arrived on its own and was
+  reported — with "my interrupt never came".  The path an SGI takes is the same
+  one a device's takes, so it is the right instrument and the only one.
+
+- **A PCIe `interrupt-map` did not resolve, and was left out rather than
+  guessed at.**  The entries are `key + phandle + parent specifier`, and QEMU's
+  `virt` writes a parent specifier wider than the GIC's declared
+  `#interrupt-cells` — five cells against three.  A parser that assumed three
+  read the next entry's key as part of the controller's number.  Rather than
+  ship a table that resolved one pin out of four, the function was removed; the
+  number a PCI function raises is still an open question, and the answer is the
+  one the map states.
 
 ### PCI enumeration, and the six defects that were hiding behind "not mapped"
 

@@ -87,3 +87,32 @@ pub unsafe fn install_interrupt_table() -> bool {
 pub unsafe fn set_interrupt_dispatch(sink: fn(irq::Frame) -> bool) {
     let _ = sink;
 }
+
+/// Enable one of the machine's interrupt lines.
+///
+/// False: this machine has no controller this crate drives yet.  The function
+/// exists on every machine so a driver asks one question, and `false` is an
+/// answer a caller reports rather than a gap it works around.
+///
+/// # Safety
+///
+/// As the aarch64 arm: after [`install_interrupt_table`], once per line.
+#[cfg(target_os = "none")]
+pub unsafe fn enable_interrupt_line(number: usize) -> bool {
+    let _ = number;
+    false
+}
+
+/// Raise one interrupt from the controller: this machine has none to raise.
+///
+/// False, as [`enable_interrupt_line`] is — the machine has no controller this
+/// crate drives, so there is nothing to ask.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn raise_interrupt(number: usize) -> bool {
+    let _ = number;
+    false
+}

@@ -36,6 +36,7 @@ extern crate alloc;
 core::arch::global_asm!(include_str!("entry.S"));
 
 pub mod boot;
+pub mod gic;
 pub mod interrupts;
 pub mod paging;
 pub mod port;
@@ -102,7 +103,73 @@ pub fn halt() -> ! {
 pub unsafe fn install_interrupt_table() -> bool {
     // SAFETY: the caller's contract is this function's — once, with the sink
     // installed and the stack valid.
-    unsafe { trap::install_table() }
+    let installed = unsafe { trap::install_table() };
+    if !installed {
+        return false;
+    }
+
+    // And the controller, which is what turns a vector into an interrupt.
+    //
+    // A vector table with no controller behind it takes exceptions the kernel
+    // raises and nothing a device raises: the machine has a way to arrive and
+    // no way to be called.  This is the half the boot line was reporting as
+    // "installed" while a device's line went nowhere.
+    let Some((distributor, cpu)) = boot::interrupt_controller() else {
+        return true;
+    };
+
+    let gic = gic::Gic::new(distributor, cpu);
+    // SAFETY: the two windows are the ones a `arm,cortex-gic` node describes,
+    // and the boot mapped the region below four gigabytes as device memory
+    // already.  Called once, on this CPU.
+    unsafe {
+        gic.enable();
+        trap::set_controller(gic);
+    }
+    true
+}
+
+/// Raise one interrupt from the controller, as a device would.
+///
+/// Answers whether this machine has a controller that can do it.  It is the
+/// only way a boot can prove the path from the distributor to a handler without
+/// waiting on hardware that may never speak: a device raises its line when it
+/// has something to say, and there is no way to ask it to.
+///
+/// # Safety
+///
+/// Called after [`install_interrupt_table`] and after the line was enabled with
+/// [`enable_interrupt_line`], with a handler that will finish it.
+#[cfg(target_os = "none")]
+pub unsafe fn raise_interrupt(number: usize) -> bool {
+    let Some((distributor, cpu)) = boot::interrupt_controller() else {
+        return false;
+    };
+    let gic = gic::Gic::new(distributor, cpu);
+    // SAFETY: the caller's contract is this function's.
+    unsafe { gic.raise(number) }
+}
+
+/// Enable one of the machine's interrupt lines.
+///
+/// Answers whether the machine has a controller that can route it.  A line a
+/// device raises is only delivered once this has been called for its number,
+/// and a driver that enabled its own device but not its line is one that waits
+/// forever for an interrupt the machine is not forwarding.
+///
+/// # Safety
+///
+/// Called after [`install_interrupt_table`], once per line, before the device
+/// that raises it is told to start signalling.
+#[cfg(target_os = "none")]
+pub unsafe fn enable_interrupt_line(number: usize) -> bool {
+    let Some((distributor, cpu)) = boot::interrupt_controller() else {
+        return false;
+    };
+    let gic = gic::Gic::new(distributor, cpu);
+    // SAFETY: the caller's contract is this function's — after the controller
+    // is enabled, once per line.
+    unsafe { gic.enable_interrupt(number) }
 }
 
 /// Install the sink a trap frame goes to.

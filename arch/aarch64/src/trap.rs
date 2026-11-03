@@ -109,6 +109,16 @@ impl ExceptionFrame {
     pub fn is_supervisor_call(&self) -> bool {
         self.class() == 0x15
     }
+
+    /// Whether this exception arrived on one of the four IRQ entries.
+    ///
+    /// The vector is `(group * 4) + kind`, and every group's `Irq` kind has the
+    /// index 1.  So the question is `vector % 4 == 1` — the same arithmetic for
+    /// an IRQ taken from the kernel and one taken from a user program, which is
+    /// what makes one check enough.
+    pub fn is_irq(&self) -> bool {
+        self.vector % 4 == IRQ_KIND
+    }
 }
 
 // The offsets `entry.S` writes, checked against this structure's.  A mismatch
@@ -281,6 +291,82 @@ pub unsafe fn install_table() -> bool {
     returned && raised == SUPERVISOR_CALL_VECTOR
 }
 
+/// The index of `Kind::Irq` within a group.
+const IRQ_KIND: u64 = 1;
+
+/// The controller, once the boot has found and enabled one.
+#[cfg(target_os = "none")]
+static GIC: cell::SyncUnsafeCell<Option<crate::gic::Gic>> = cell::SyncUnsafeCell::new(None);
+
+/// Record the controller the boot enabled, so an IRQ can be acknowledged.
+///
+/// # Safety
+///
+/// Called once, after [`crate::gic::Gic::enable`], before any line is
+/// unmasked.  The two windows must stay mapped for the life of the boot.
+#[cfg(target_os = "none")]
+pub unsafe fn set_controller(gic: crate::gic::Gic) {
+    // SAFETY: the caller promises this is the only write, and it happens before
+    // any interrupt can arrive.
+    unsafe { *GIC.get() = Some(gic) };
+}
+
+/// Acknowledge the interrupt, hand it to the sink, and finish it.
+///
+/// ## Why the order is acknowledge, handle, finish
+///
+/// The controller holds the line *active* between the acknowledge and the
+/// finish.  An interrupt at that priority is not delivered again until it is
+/// finished, and a handler that returned without one would leave the machine
+/// taking exactly one interrupt and then appearing to hang — which is the
+/// failure mode a span of code that looks correct produces.
+///
+/// ## Why an unhandled interrupt finishes anyway
+///
+/// A device the boot has no driver for still raises its line, and a kernel that
+/// stopped the machine for it could never be debugged on a machine that had one
+/// more device.  The line is finished and the arrival is reported; a sink that
+/// wants to treat it as fatal can answer `false` and stop.
+#[cfg(target_os = "none")]
+fn finish_irq(frame: &ExceptionFrame) {
+    // SAFETY: the static is written once before any line is unmasked.
+    let controller = unsafe { *GIC.get() };
+    let Some(controller) = controller else {
+        crate::serial::write_str("protofire: irq with no controller at vector ");
+        crate::serial::write_u32(frame.vector as u32);
+        crate::serial::write_str("\n");
+        crate::halt()
+    };
+
+    // SAFETY: the windows were mapped uncached by the boot that installed this
+    // controller, and this runs in an exception handler where nothing else is
+    // touching them.
+    let interrupt = unsafe { controller.acknowledge() };
+    let Some(interrupt) = interrupt else {
+        // A spurious reading: there was nothing to acknowledge.  Finishing it
+        // would name an interrupt that never existed, so this returns and the
+        // assembly's `eret` resumes the interrupted code.
+        return;
+    };
+
+    let handled = match sink() {
+        Some(sink) => sink(irq::Frame::device(interrupt as usize)),
+        None => false,
+    };
+
+    // SAFETY: `interrupt` is the number `acknowledge` returned.
+    unsafe { controller.finish(interrupt) };
+
+    if !handled {
+        crate::serial::write_str("protofire: unhandled interrupt ");
+        crate::serial::write_u32(interrupt);
+        crate::serial::write_str("\n");
+        // Not fatal: a device with no driver raises its line whether or not
+        // anything wants it, and a kernel that stopped here could not boot on a
+        // machine with one device more than it knows.
+    }
+}
+
 /// The entry a supervisor call from EL1 arrives at.
 ///
 /// Group `CurrentSpX` (offset 4) and kind `Synchronous` (offset 0), so entry
@@ -305,6 +391,14 @@ pub unsafe extern "C" fn aarch64_exception_dispatch(frame: *mut ExceptionFrame) 
     // SAFETY: `entry.S` passes `sp` after building the frame at that address,
     // and nothing else holds it.
     let frame = unsafe { &*frame };
+
+    // An IRQ is not a fault: the vector says which kind arrived, and the two
+    // need different handling.  A fault's frame carries the address it named;
+    // an IRQ's carries the interrupt number the controller hands out, and the
+    // controller has to be told when the handler is done.
+    if frame.is_irq() {
+        return finish_irq(frame);
+    }
 
     let shared = irq::Frame::fault(frame.vector as usize, frame.far as usize);
     let handled = match sink() {

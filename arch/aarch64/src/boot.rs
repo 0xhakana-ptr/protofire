@@ -200,6 +200,36 @@ pub fn pcie_memory_window() -> Option<(u64, u64)> {
 /// truncated list.
 const MAX_RANGES_CELLS: usize = 64;
 
+/// The interrupt controller's two windows, as the tree describes them.
+///
+/// `(distributor, cpu_interface)`.  A GIC's `reg` has two entries — the
+/// distributor and the CPU interface — and both are needed: the first decides
+/// which lines exist and which CPU they go to, the second is what this core
+/// acknowledges and finishes through.
+///
+/// The compatible string names a GIC version this kernel's [`crate::gic`]
+/// implements.  `arm,cortex-a15-gic` is GICv2, and a machine with a GICv3 has a
+/// `reg` whose second entry does not exist — its CPU interface is system
+/// registers rather than memory.  So this refuses anything it does not
+/// recognise rather than reading two windows that are not two.
+///
+/// `None` when there is no tree, no controller, or one of a version this crate
+/// does not drive.
+pub fn interrupt_controller() -> Option<(usize, usize)> {
+    let tree = device_tree()?;
+    let node = tree
+        .find_compatible("arm,cortex-a15-gic")
+        .or_else(|| tree.find_compatible("arm,gic-400"))?;
+
+    let mut regions = node.reg();
+    let distributor = regions.next()?;
+    let cpu = regions.next()?;
+    if distributor.address == 0 || cpu.address == 0 {
+        return None;
+    }
+    Some((distributor.address as usize, cpu.address as usize))
+}
+
 /// Where the tree said the console is, for a boot line.
 ///
 /// Kept beside the window queries because it is the same kind of answer: a fact

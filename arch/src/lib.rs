@@ -102,6 +102,32 @@ pub use arch_riscv64::boot::pcie_memory_window;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::boot::pcie_memory_window;
 
+// The interrupt controller's windows, where a machine has one of that shape.
+// `None` is an answer: x86_64's controller is not two memory windows.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::boot::interrupt_controller;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::boot::interrupt_controller;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::boot::interrupt_controller;
+
+// Enabling one interrupt line.  Every machine answers; `false` is an answer.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::enable_interrupt_line;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::enable_interrupt_line;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::enable_interrupt_line;
+
+// Raising one interrupt from the controller, for a boot that wants to prove
+// the path rather than report it.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::raise_interrupt;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::raise_interrupt;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::raise_interrupt;
+
 // Making a page-table change visible.  Every machine has an instruction for
 // it, and a caller that changed a table without one changed nothing the CPU
 // observes.

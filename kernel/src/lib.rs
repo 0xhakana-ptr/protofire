@@ -86,6 +86,75 @@ pub enum BootStage {
 pub use abi::BootInfo;
 pub use abi::Loader;
 
+/// The line the boot raises to prove the interrupt path.
+///
+/// A **software** interrupt, which is the only kind the controller can be asked
+/// to raise: `GICD_SGIR` generates numbers 0..16 and nothing else, because a
+/// device's line is raised by its device.  The path an SGI takes — distributor,
+/// CPU interface, `IAR`, vector, `EOIR` — is the same one a device's interrupt
+/// takes, so it is the right instrument and the only one.
+pub const TEST_INTERRUPT: usize = 0;
+
+/// The sentinel [`TEST_INTERRUPT_RAISED`] holds before an interrupt arrives.
+///
+/// `usize::MAX` is not an interrupt number any controller reports, so it is
+/// distinguishable from every real one — including zero, which is the line this
+/// boot raises.
+const NO_INTERRUPT: usize = usize::MAX;
+
+/// The interrupt the test raised, if any.
+///
+/// A static because the sink is a plain `fn` and has no context to be handed
+/// one — the same shape the trap sink itself has.
+pub static TEST_INTERRUPT_RAISED: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(NO_INTERRUPT);
+
+/// Raise one interrupt from the controller and require that it arrived.
+///
+/// Prints what happened either way.  A line that was published and never
+/// delivered is the failure this reports, and a boot log that said "interrupts
+/// on" without it has said nothing about whether the machine can take one.
+#[cfg(target_os = "none")]
+fn raise_test_interrupt() {
+    use core::sync::atomic::Ordering;
+
+    // A value no interrupt can have, so "nothing arrived" is distinguishable
+    // from "interrupt 0 arrived".
+    //
+    // This is the defect that made the first version of this probe useless: the
+    // line raised is interrupt *zero*, the counter's initial value was zero,
+    // and so a boot that raised nothing printed exactly what a boot that raised
+    // something printed.  A test that cannot fail is worse than no test, and
+    // this one could not fail.
+    TEST_INTERRUPT_RAISED.store(NO_INTERRUPT, Ordering::Release);
+
+    // SAFETY: the controller is enabled and the sink is installed by the time
+    // this runs.  An SGI needs no enable — its bit is always set — so this asks
+    // the controller to raise it and nothing else.
+    let raised = unsafe { arch::raise_interrupt(TEST_INTERRUPT) };
+
+    if !raised {
+        arch::serial::write_str(
+            "protofire: interrupt path not exercised (this machine has no controller to raise one)",
+        );
+        arch::serial::write_str("\n");
+        return;
+    }
+
+    let delivered = TEST_INTERRUPT_RAISED.load(Ordering::Acquire);
+    if delivered == TEST_INTERRUPT {
+        arch::serial::write_str("protofire: interrupt delivered to its handler\n");
+    } else {
+        arch::serial::write_str("protofire: interrupt raised but not delivered");
+        if delivered != NO_INTERRUPT {
+            arch::serial::write_str(" (handler saw ");
+            arch::serial::write_u32(delivered as u32);
+            arch::serial::write_str(")");
+        }
+        arch::serial::write_str("\n");
+    }
+}
+
 /// The boot, from the point where a machine is up to the point where it stops.
 ///
 /// This takes a [`BootInfo`] rather than a loader's registers: parsing the
@@ -228,6 +297,24 @@ pub fn kernel_main() -> ! {
             arch::interrupts::silence_legacy_controller();
             arch::interrupts::enable();
             arch::serial::write_str(", interrupts on\n");
+
+            // Then prove the path, rather than reporting it.
+            //
+            // "Interrupts on" is a flag; a flag is not an interrupt.  The
+            // recurring defect in this tree is code that is written, wired and
+            // never executed, and the only thing that separates "the table is
+            // installed" from "an interrupt arrives through it" is an
+            // interrupt arriving through it.
+            //
+            // A device raises its line when it has something to say and cannot
+            // be asked to say it on demand — so the controller raises one
+            // itself.  `raise` makes the distributor deliver interrupt 40
+            // exactly as a device would, and the sink below counts it.
+            //
+            // A machine whose controller cannot do that reports it and boots
+            // on: this is evidence, and a machine without the mechanism is not
+            // a machine that must refuse to start.
+            raise_test_interrupt();
         } else {
             arch::serial::write_str("\n");
         }

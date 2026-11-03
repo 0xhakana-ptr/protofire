@@ -85,8 +85,8 @@ in and what is not.
 | | |
 |---|---|
 | crates | 37 |
-| source | ~54,900 lines |
-| tests | 614, all runnable with `cargo test -p <crate>` |
+| source | ~55,800 lines |
+| tests | 621, all runnable with `cargo test -p <crate>` |
 | machines that boot | 2 of 3 (`riscv64` builds, and has no entry yet) |
 
 ## Building and running

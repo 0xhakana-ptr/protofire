@@ -15,10 +15,10 @@
 
 abi                  3514   56
 allocator            2508   13
-arch                 5431    1
-arch_aarch64         2375   23
-arch_riscv64         1157   16
-arch_x86_64          1747   21
+arch                 6274    1
+arch_aarch64         3114   30
+arch_riscv64         1195   16
+arch_x86_64          1787   21
 async_io             1302   24
 audit                 595    8
 block                1220   10
@@ -31,7 +31,7 @@ fs                  14683  113
 init                   68    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 ipc                   335    9
 irq                   411   10
-kernel               2458   21
+kernel               2551   21
 memory               1865   27
 net                     2    0
 paging                727   13
@@ -49,4 +49,4 @@ unicode              4630   31
 virt                   55    0
 virtio_block         1106   13
 virtio_core          1850   24
-xtask                 620    9
+xtask                 629    9

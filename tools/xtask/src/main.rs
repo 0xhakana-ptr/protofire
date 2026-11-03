@@ -232,6 +232,15 @@ impl Machine {
                     true,
                 ),
                 ("protofire: interrupt table installed, interrupts on", true),
+                // The path exercised, not the flag set.
+                //
+                // "Interrupts on" is a flag; a boot that printed it and never
+                // took an interrupt has said nothing about whether the machine
+                // can.  This line means a controller delivered a line, the
+                // vector fired, the handler ran and the interrupt was finished
+                // — and the check behind it can fail: with the raise disabled
+                // the boot prints "raised but not delivered" instead.
+                ("protofire: interrupt delivered to its handler", true),
                 ("protofire: heap at ", false),
                 ("protofire: block device from ", false),
                 (

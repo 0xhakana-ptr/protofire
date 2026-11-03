@@ -33,6 +33,12 @@
 pub fn handle(frame: irq::Frame) -> bool {
     let vector = frame.vector;
 
+    // The boot's own check: the line it raised, to prove the path.
+    if vector == crate::TEST_INTERRUPT {
+        crate::TEST_INTERRUPT_RAISED.store(vector, core::sync::atomic::Ordering::Release);
+        return true;
+    }
+
     // A device's line: whoever registered for this number is told.
     if irq::dispatch_installed(vector) {
         return true;

@@ -50,3 +50,12 @@ pub fn pcie_ecam_window() -> Option<(usize, usize)> {
 pub fn pcie_memory_window() -> Option<(u64, u64)> {
     None
 }
+
+/// The interrupt controller's two windows: none yet.
+///
+/// A riscv64 machine's PLIC is one window, and this crate drives none of it —
+/// the boot entry does not exist.  `None` is the answer for a machine whose
+/// controller this tree cannot reach.
+pub fn interrupt_controller() -> Option<(usize, usize)> {
+    None
+}

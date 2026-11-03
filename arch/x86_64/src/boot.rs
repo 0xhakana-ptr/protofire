@@ -97,3 +97,14 @@ pub fn pcie_ecam_window() -> Option<(usize, usize)> {
 pub fn pcie_memory_window() -> Option<(u64, u64)> {
     None
 }
+
+/// The interrupt controller's two windows: this machine has none of that shape.
+///
+/// x86_64's controller is not two memory windows.  The 8259 is two port ranges
+/// and the IOAPIC is a single window addressed through a register pair, so a
+/// `(distributor, cpu)` pair is not this machine's model.  `None` says so, and
+/// the kernel's controller setup reports that this machine has no such answer
+/// rather than inventing one.
+pub fn interrupt_controller() -> Option<(usize, usize)> {
+    None
+}
