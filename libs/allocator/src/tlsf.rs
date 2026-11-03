@@ -918,7 +918,7 @@ pub(crate) fn find_suitable_block(state: &AllocatorState, min_size: usize) -> us
     // Clamp fl to our range.
     let start_fl = fl.clamp(FL_MIN, FL_MAX);
 
-    // ── Search within the same first‑level class ──
+    // Search within the same first‑level class
     let fl_idx = start_fl - FL_MIN; // safely in 0..FL_COUNT-1
     let sl_mask = state.sl_bitmaps[fl_idx] & !((1u32 << sl) - 1);
     if sl_mask != 0 {
@@ -928,7 +928,7 @@ pub(crate) fn find_suitable_block(state: &AllocatorState, min_size: usize) -> us
         return state.free_lists[idx];
     }
 
-    // ── Search higher first‑level classes ──
+    // Search higher first‑level classes
     // Mask out all bits at or below the current FL class, then scan upwards.
     // We only consider bits 0..FL_COUNT-1; any bits beyond FL_COUNT are stale
     // and must be ignored to avoid out-of-bounds accesses.
@@ -1014,7 +1014,7 @@ pub(crate) unsafe fn coalesce(state: &mut AllocatorState, block: usize) -> usize
         let heap_start = state.start;
         let heap_end = state.end;
 
-        // ── Merge with the previous physical block (if free) ──
+        // Merge with the previous physical block (if free)
         if start > heap_start {
             let prev = block_prev_phys(start);
             if prev >= heap_start && prev < start {
@@ -1032,7 +1032,7 @@ pub(crate) unsafe fn coalesce(state: &mut AllocatorState, block: usize) -> usize
             }
         }
 
-        // ── Merge with the next physical block (if free) ──
+        // Merge with the next physical block (if free)
         let end = start.wrapping_add(size);
         if end < heap_end {
             let next = end;

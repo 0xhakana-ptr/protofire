@@ -33,7 +33,7 @@ mod tests {
     use profiler::AllocProfiler;
     use std::sync::Mutex;
 
-    // ── Deterministic PRNG for property tests ───────────────────────────────
+    // Deterministic PRNG for property tests
     // Same LCG family as tests/simplefs/property.rs and tests/parsers/fuzz.rs,
     // kept local because the allocator state lives behind `pub(crate)` and is
     // only reachable from in-crate unit tests.

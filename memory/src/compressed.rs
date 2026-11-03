@@ -145,7 +145,7 @@ pub fn decompress_page(encoded: &[u8], output: &mut [u8]) -> bool {
     }
 }
 
-// ── LZSS ──────────────────────────────────────────────────────────────
+// LZSS
 
 const HASH_BITS: usize = 12;
 const HASH_SIZE: usize = 1 << HASH_BITS;

@@ -5,7 +5,7 @@
 
 pub use super::allocator::KernelGlobalAllocator;
 
-// ─── The heap model ───────────────────────────────────────────────────────
+// The heap model
 //
 // This crate does **not** install a `#[global_allocator]`, and the absence is
 // the design: a library that installed one could not be a dependency of a test

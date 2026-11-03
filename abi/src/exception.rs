@@ -513,7 +513,7 @@ impl X86_64StackSegmentError {
     }
 }
 
-// ── Segment Not Present (#NP) error code decode ──
+// Segment Not Present (#NP) error code decode
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64SegmentNotPresentError {
@@ -538,7 +538,7 @@ impl X86_64SegmentNotPresentError {
     }
 }
 
-// ── Invalid TSS (#TS) error code decode ──
+// Invalid TSS (#TS) error code decode
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct X86_64InvalidTssError {
@@ -567,7 +567,7 @@ impl X86_64InvalidTssError {
     }
 }
 
-// ── User Exception Frame ──
+// User Exception Frame
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -986,7 +986,7 @@ mod tests {
         assert_eq!(syndrome.iss, 0x4d);
     }
 
-    // ── x86 error code decode tests ──
+    // x86 error code decode tests
 
     #[test]
     fn general_protection_error_decodes_gdt_selector() {
