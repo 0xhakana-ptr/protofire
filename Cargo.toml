@@ -31,6 +31,7 @@ members = [
     "libs/sync",
     "libs/unicode",
     "memory",
+    "paging",
     "net",
     "power",
     "security",

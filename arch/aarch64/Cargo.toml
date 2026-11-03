@@ -7,6 +7,9 @@ license.workspace = true
 
 [dependencies]
 abi.workspace = true
+# The page-table types and the walk arithmetic.  A machine encodes an entry and
+# installs a table; what a table is, and how one is walked, is `paging`'s.
+paging = { path = "../../paging" }
 aarch64-cpu.workspace = true
 # The host arm of the console records bytes behind a lock; a host build is
 # multi-threaded in its tests, and the recording is not the kernel's single-CPU

@@ -15,6 +15,7 @@ extern crate alloc;
 
 pub mod boot;
 pub mod interrupts;
+pub mod paging;
 pub mod port;
 pub mod serial;
 

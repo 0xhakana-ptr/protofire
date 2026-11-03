@@ -55,6 +55,16 @@
 2 crypto
 2 async_io
 
+# `paging` is a page table and the arithmetic that walks one.  It is a crate of
+# its own because two crates above it need it and may not depend on each other:
+# `arch` (3) encodes an entry and installs a table, and `memory` (4) hands out
+# the frames a table is built in.  A page table in either would make the other
+# reach across, and `arch` -> `memory` is upward.
+#
+# It names nothing at all: not a machine, not an allocator, not a lock.  That is
+# what lets a host test build a table and assert what a walk finds.
+2 paging
+
 # `power` is the governor policy: a load sample and a frequency range in, a
 # target frequency out.  It names `abi` for the driver trait the architecture
 # crates implement, and nothing else — which is what lets its arithmetic be

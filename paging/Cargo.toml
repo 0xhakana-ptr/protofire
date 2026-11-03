@@ -1,0 +1,11 @@
+[package]
+name = "paging"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Nothing.  This is the point: a page table is a page of numbers and the walk
+# over it is arithmetic, and neither names a machine, a frame allocator or a
+# lock.  A crate with no dependencies is one that can be tested anywhere.
+[dependencies]
