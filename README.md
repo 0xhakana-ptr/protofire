@@ -34,20 +34,21 @@ so that its assertions can be tested without an emulator.
 ```
 protofire 0.1.0: entered via pvh, console up, stage 1
 protofire: heap at 0x121e00..0x4121e00
-protofire: completion queue ready, capacity 64
+protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label protofire
 ```
 
 That is the whole of the boot: the PVH and multiboot2 handshakes, a serial
-console on all three machines, a TLSF heap behind a global allocator, and a
-completion queue drained once through the kernel.  Everything else is being
-moved in from the previous tree, one crate at a time, and a crate arrives only
-when its tests arrive with it.
+console on all three machines, a TLSF heap behind a global allocator, and one
+file read off a mounted PyroFS volume by three syscalls — `open`, `read` and
+`close` — rather than by calling the filesystem.  Everything else is being moved
+in from the previous tree, one crate at a time, and a crate arrives only when
+its tests arrive with it.
 
 | | |
 |---|---|
-| crates | 29 |
-| source | ~19,000 lines |
-| tests | 207, all runnable with `cargo test -p <crate>` |
+| crates | 32 |
+| source | ~24,000 lines |
+| tests | 370, all runnable with `cargo test -p <crate>` |
 
 ## The gate
 

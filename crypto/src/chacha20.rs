@@ -1,0 +1,208 @@
+//! crypto/src/chacha20.rs
+//!
+//! ChaCha20 (RFC 8439): 256-bit key, 96-bit nonce, 32-bit counter.
+
+/// ChaCha20 quarter round: operates on four 32-bit state words in-place.
+#[inline(always)]
+fn chacha20_quarter_round(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
+    state[a] = state[a].wrapping_add(state[b]);
+    state[d] ^= state[a];
+    state[d] = state[d].rotate_left(16);
+
+    state[c] = state[c].wrapping_add(state[d]);
+    state[b] ^= state[c];
+    state[b] = state[b].rotate_left(12);
+
+    state[a] = state[a].wrapping_add(state[b]);
+    state[d] ^= state[a];
+    state[d] = state[d].rotate_left(8);
+
+    state[c] = state[c].wrapping_add(state[d]);
+    state[b] ^= state[c];
+    state[b] = state[b].rotate_left(7);
+}
+
+/// ChaCha20 block function: process the 4x4 state matrix with 20 rounds
+/// (10 double rounds) and return the result added to the input.
+pub(crate) fn chacha20_block(key: &[u8; 32], counter: u32, nonce: &[u8; 12]) -> [u8; 64] {
+    // Initial state: "expand 32-byte k" constant (4 words) + key (8 words) +
+    // block counter (1 word) + nonce (3 words).
+    let mut state: [u32; 16] = [
+        0x61707865, // "expa"
+        0x3320646e, // "nd 3"
+        0x79622d32, // "2-by"
+        0x6b206574, // "te k"
+        // Key words (8 × 32-bit little-endian).
+        u32::from_le_bytes([key[0], key[1], key[2], key[3]]),
+        u32::from_le_bytes([key[4], key[5], key[6], key[7]]),
+        u32::from_le_bytes([key[8], key[9], key[10], key[11]]),
+        u32::from_le_bytes([key[12], key[13], key[14], key[15]]),
+        u32::from_le_bytes([key[16], key[17], key[18], key[19]]),
+        u32::from_le_bytes([key[20], key[21], key[22], key[23]]),
+        u32::from_le_bytes([key[24], key[25], key[26], key[27]]),
+        u32::from_le_bytes([key[28], key[29], key[30], key[31]]),
+        counter, // Block counter.
+        // Nonce words (3 × 32-bit little-endian).
+        u32::from_le_bytes([nonce[0], nonce[1], nonce[2], nonce[3]]),
+        u32::from_le_bytes([nonce[4], nonce[5], nonce[6], nonce[7]]),
+        u32::from_le_bytes([nonce[8], nonce[9], nonce[10], nonce[11]]),
+    ];
+
+    let initial = state;
+
+    // 10 double rounds = 20 rounds total.
+    for _ in 0..10 {
+        // Column rounds.
+        chacha20_quarter_round(&mut state, 0, 4, 8, 12);
+        chacha20_quarter_round(&mut state, 1, 5, 9, 13);
+        chacha20_quarter_round(&mut state, 2, 6, 10, 14);
+        chacha20_quarter_round(&mut state, 3, 7, 11, 15);
+        // Diagonal rounds.
+        chacha20_quarter_round(&mut state, 0, 5, 10, 15);
+        chacha20_quarter_round(&mut state, 1, 6, 11, 12);
+        chacha20_quarter_round(&mut state, 2, 7, 8, 13);
+        chacha20_quarter_round(&mut state, 3, 4, 9, 14);
+    }
+
+    // Add the original state to produce the 64-byte keystream block.
+    for i in 0..16 {
+        state[i] = state[i].wrapping_add(initial[i]);
+    }
+
+    // Serialise to little-endian bytes.
+    let mut block = [0u8; 64];
+    for (i, word) in state.iter().enumerate() {
+        let bytes = word.to_le_bytes();
+        block[i * 4..(i + 1) * 4].copy_from_slice(&bytes);
+    }
+
+    block
+}
+
+/// Encrypt or decrypt `data` in-place using ChaCha20.
+///
+/// ChaCha20 is a stream cipher: encryption and decryption are the same
+/// XOR operation with the keystream.
+pub fn chacha20_encrypt(key: &[u8; 32], nonce: &[u8; 12], data: &mut [u8]) {
+    let mut counter: u32 = 0;
+
+    for chunk in data.chunks_mut(64) {
+        let keystream = chacha20_block(key, counter, nonce);
+        for (byte, ks) in chunk.iter_mut().zip(keystream.iter()) {
+            *byte ^= ks;
+        }
+        counter = counter.wrapping_add(1);
+    }
+}
+
+/// Generate ChaCha20 keystream bytes without XOR'ing into plaintext.
+/// Useful for generating random bytes from a CSPRNG seeded with ChaCha20.
+pub fn chacha20_keystream(key: &[u8; 32], nonce: &[u8; 12], counter: u32, out: &mut [u8]) {
+    let mut ctr = counter;
+    for chunk in out.chunks_mut(64) {
+        let keystream = chacha20_block(key, ctr, nonce);
+        let len = chunk.len();
+        chunk.copy_from_slice(&keystream[..len]);
+        ctr = ctr.wrapping_add(1);
+    }
+}
+#[cfg(test)]
+mod tests_chacha20 {
+    use crate::sha256::sha256;
+
+    // ChaCha20 test vectors (RFC 8439 §2.4.2)
+
+    #[test]
+    fn chacha20_block_quarter_round_vector() {
+        // Test quarter round from RFC 8439 §2.1.1.
+        let mut state: [u32; 16] = [
+            0x879531e0, 0xc5ecf37d, 0x516461b1, 0xc9a62f8a, 0x44c20ef3, 0x3390af7f, 0xd9fc690b,
+            0x2a5f714c, 0x53372767, 0xb00a5631, 0x974c541a, 0x359e9963, 0x5c971061, 0x3d631689,
+            0x2098d9d6, 0x91dbd320,
+        ];
+        super::chacha20_quarter_round(&mut state, 2, 7, 8, 13);
+        assert_eq!(state[2], 0xbdb886dc);
+        assert_eq!(state[7], 0xcfacafd2);
+        assert_eq!(state[8], 0xe46bea80);
+        assert_eq!(state[13], 0xccc07c79);
+    }
+
+    #[test]
+    fn chacha20_block_test_vector() {
+        // Test vector verified against independent Python implementation.
+        // Key + nonce from RFC 8439 §2.4.2.
+        let key: [u8; 32] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+            0x1c, 0x1d, 0x1e, 0x1f,
+        ];
+        let nonce: [u8; 12] = [
+            0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let counter: u32 = 1;
+
+        let block = super::chacha20_block(&key, counter, &nonce);
+
+        // Expected output cross-verified with independent Python
+        // implementation.
+        let expected: [u8; 64] = [
+            0x10, 0xf1, 0xe7, 0xe4, 0xd1, 0x3b, 0x59, 0x15, 0x50, 0x0f, 0xdd, 0x1f, 0xa3, 0x20,
+            0x71, 0xc4, 0xc7, 0xd1, 0xf4, 0xc7, 0x33, 0xc0, 0x68, 0x03, 0x04, 0x22, 0xaa, 0x9a,
+            0xc3, 0xd4, 0x6c, 0x4e, 0xd2, 0x82, 0x64, 0x46, 0x07, 0x9f, 0xaa, 0x09, 0x14, 0xc2,
+            0xd7, 0x05, 0xd9, 0x8b, 0x02, 0xa2, 0xb5, 0x12, 0x9c, 0xd1, 0xde, 0x16, 0x4e, 0xb9,
+            0xcb, 0xd0, 0x83, 0xe8, 0xa2, 0x50, 0x3c, 0x4e,
+        ];
+        assert_eq!(block, expected);
+    }
+
+    #[test]
+    fn chacha20_encrypt_test_vector() {
+        // Cross-verified with independent Python implementation.
+        let key: [u8; 32] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+            0x1c, 0x1d, 0x1e, 0x1f,
+        ];
+        let nonce: [u8; 12] = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        let plaintext = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+        let mut data = plaintext.to_vec();
+        super::chacha20_encrypt(&key, &nonce, &mut data);
+
+        // Ciphertext cross-verified with independent Python implementation.
+        let expected_ciphertext: [u8; 114] = [
+            0xe3, 0x64, 0x7a, 0x29, 0xde, 0xd3, 0x15, 0x28, 0xef, 0x56, 0xba, 0xc7, 0x0f, 0x7a,
+            0x7a, 0xc3, 0xb7, 0x35, 0xc7, 0x44, 0x4d, 0xa4, 0x2d, 0x99, 0x82, 0x3e, 0xf9, 0x93,
+            0x8c, 0x8e, 0xbf, 0xdc, 0xf0, 0x5b, 0xb7, 0x1a, 0x82, 0x2c, 0x62, 0x98, 0x1a, 0xa1,
+            0xea, 0x60, 0x8f, 0x47, 0x93, 0x3f, 0x2e, 0xd7, 0x55, 0xb6, 0x2d, 0x93, 0x12, 0xae,
+            0x72, 0x03, 0x76, 0x74, 0xf3, 0xe9, 0x3e, 0x24, 0x4c, 0x23, 0x28, 0xd3, 0x2f, 0x75,
+            0xbc, 0xc1, 0x5b, 0xb7, 0x57, 0x4f, 0xde, 0x0c, 0x6f, 0xcd, 0xf8, 0x7b, 0x7a, 0xa2,
+            0x5b, 0x59, 0x72, 0x97, 0x0c, 0x2a, 0xe6, 0xcc, 0xed, 0x86, 0xa1, 0x0b, 0xe9, 0x49,
+            0x6f, 0xc6, 0x1c, 0x40, 0x7d, 0xfd, 0xc0, 0x15, 0x10, 0xed, 0x8f, 0x4e, 0xb3, 0x5d,
+            0x0d, 0x62,
+        ];
+        assert_eq!(data, expected_ciphertext);
+
+        // Decrypt: apply ChaCha20 again to recover plaintext.
+        super::chacha20_encrypt(&key, &nonce, &mut data);
+        assert_eq!(data, plaintext);
+    }
+
+    #[test]
+    fn chacha20_keystream_is_reproducible() {
+        let key = sha256(b"test-key-seed");
+        let nonce = sha256(b"test-nonce-seed");
+        let nonce_12: [u8; 12] = [
+            nonce[0], nonce[1], nonce[2], nonce[3], nonce[4], nonce[5], nonce[6], nonce[7],
+            nonce[8], nonce[9], nonce[10], nonce[11],
+        ];
+
+        let mut out1 = [0u8; 128];
+        let mut out2 = [0u8; 128];
+        super::chacha20_keystream(&key, &nonce_12, 0, &mut out1);
+        super::chacha20_keystream(&key, &nonce_12, 0, &mut out2);
+        assert_eq!(out1, out2);
+    }
+}

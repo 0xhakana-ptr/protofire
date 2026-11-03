@@ -29,10 +29,24 @@ extracted yet.
          security, allocator
      4   arch                                          the route to the machine
      3   arch_x86_64, arch_aarch64, arch_riscv64       the machines
-     2   crypto, async_io                              algorithms over the ABI
+     2   crypto, async_io, power, ipc                  algorithms and rings
      1   abi                                           the wire format
      0   cell, profiler, unicode, rights, audit        core and alloc only
 ```
+
+`ipc` and `power` sit at layer 2 with the algorithms, not with the kernel, and
+that placement is a decision with an argument.  A pipe's ring buffer is a
+buffer, two cursors and a count; a frequency governor is arithmetic over a load
+sample and a range.  Neither needs a machine, a scheduler or a thread — which is
+exactly why both can be tested on a host, and why they are crates whose contents
+run in a third of a second rather than only during a boot.
+
+What belongs to the kernel is the half that does need those things: the pipe's
+endpoints, which park a reader and so need a wait queue, and the `cpufreq`
+dispatchers, which touch an MSR or a device tree.  Those halves live in the
+kernel and call into these crates; the crates never learn what a thread is.  The
+test of the placement is that `scripts/check-layering.sh` would refuse the
+opposite arrangement, where a ring's arithmetic reached up for the scheduler.
 
 The numbers are not aesthetic.  Each is the answer to "what does a reader have to
 understand before this crate makes sense?"
@@ -84,6 +98,16 @@ translate, and translation tables are how two error vocabularies drift apart.
 Both are testable on a host, which is the property that justifies them being
 crates: a hash has published vectors, and a request/completion queue has a state
 machine that can be driven without an emulator.
+
+`crypto` is one module per algorithm — `sha256`, `crc`, `chacha20`, `poly1305`,
+`aes`, `gcm`, `xts`, `hmac`, `hkdf`, `pbkdf2`, `x25519`, `ecdsa`, `rsa`, and the
+two that are not algorithms at all — `constant_time` and `salt`.  The split is
+the crate argument applied one level down: a primitive is added or removed one
+at a time, and the `use` lines between the modules are the dependency graph.  A
+mode names the block cipher it wraps (`gcm` and `xts` import `aes`), a
+construction names its hash (`hmac` imports `sha256`, `hkdf` and `pbkdf2` import
+`hmac`).  Nothing is re-exported through an intermediate module, so there is one
+place each function can be found.
 
 ### Layer 3 — the machines
 
@@ -172,7 +196,7 @@ own.  That is checkable, and these are the numbers from this tree:
 
 | | |
 |---|---|
-| a test run for one crate | `cargo test -p crypto` — 64 tests, 0.3 s |
+| a test run for one crate | `cargo test -p crypto` — 64 tests, 0.5 s |
 | lines moved with two import changes | 4,606 (`crypto`, from the previous tree) |
 | lines moved with no source change | 4,596 (`unicode`) |
 
@@ -189,7 +213,7 @@ wrong — flipping one SHA-256 initial constant turns five of them red.
 | `check-layering.sh` | does every dependency point downward? |
 | `check-arch-fanout.sh` | does anything outside `arch/` know which machine it is? |
 | `check-crate-tests.sh` | does every crate with code have tests, and has none lost any? |
-| `xtask check` | does the image reach its console, its heap and its completion queue? |
+| `xtask check` | does the image reach its console, its heap, and a file read through the syscalls? |
 
 The first three are censuses: each records a number, refuses growth, and refuses a
 stale row.  A ratchet moves in the change that moves it, with its argument in the
