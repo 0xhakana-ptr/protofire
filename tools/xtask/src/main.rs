@@ -127,8 +127,13 @@ impl Machine {
     ///
     /// The fourth names every mounted filesystem and the prefix it owns.  A
     /// mount table with one entry has never resolved anything, so the line is
-    /// required to name two: the volume the disk was formatted with, and a
-    /// tmpfs at `/tmp` that only exists if the namespace works.
+    /// required to name three: the volume the disk was formatted with, a tmpfs
+    /// at `/tmp`, and a disc at `/cdrom`.
+    ///
+    /// The fifth is the disc's file read back.  The disc is the one filesystem
+    /// the boot cannot have written, so bytes coming out of it came from the
+    /// image — which is why it is the line that proves the namespace rather
+    /// than the mounts.
     ///
     /// The fifth names where the block device came from.  The boot falls back
     /// to its in-memory image when the bus has no disk, so "the filesystem
@@ -144,7 +149,11 @@ impl Machine {
                 ("protofire: heap at ", false),
                 ("protofire: block device from virtio-blk on pci", true),
                 (
-                    "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory)",
+                    "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
+                    true,
+                ),
+                (
+                    "protofire: /cdrom/README.TXT reads back from the disc",
                     true,
                 ),
                 ("protofire: virtio-blk wrote and read back sector ", false),

@@ -37,6 +37,7 @@
 extern crate alloc;
 
 pub mod devices;
+pub mod iso_disc;
 pub mod scheduler;
 pub mod syscall;
 
@@ -280,9 +281,68 @@ pub fn kernel_main() -> ! {
         .mount("/tmp", "tmpfs", "memory", alloc::sync::Arc::new(scratch))
         .unwrap_or_else(|_| halt());
 
+    // A third filesystem, on a disc the boot builds.
+    //
+    // ISO 9660 is read-only, which is why it is the one that proves the
+    // namespace rather than the two before it: it cannot be written, so what
+    // it holds is what the image was built with, and a read that returns those
+    // bytes came from the disc.
+    //
+    // The image is built here for the same reason the PyroFS one is: an image
+    // in the tree would be one nobody rebuilt, and a format change would find
+    // the stale copy before it found the code.
+    let disc = iso_disc::build();
+    let disc_device: alloc::sync::Arc<dyn block::QueuedBlockDevice> =
+        block::MemoryBlockDevice::new(ISO_LABEL, disc, true);
+    match fs::iso9660::Iso9660Volume::open(disc_device) {
+        Ok(volume) => {
+            namespace
+                .mount("/cdrom", "iso9660", ISO_LABEL, volume)
+                .unwrap_or_else(|_| halt());
+        }
+        Err(_) => {
+            arch::serial::write_str("protofire: iso9660 disc FAILED to mount\n");
+            halt()
+        }
+    }
+
     arch::serial::write_str("protofire: namespace: ");
     arch::serial::write_str(&fs::mount::describe(&namespace));
     arch::serial::write_str("\n");
+
+    // A file read off the disc, through the namespace rather than from the
+    // volume directly.
+    //
+    // The tmpfs on `/tmp` is empty and the boot's own volume is written by the
+    // boot; the disc is the one filesystem whose contents came from an image
+    // and cannot have been changed since.  A read that returns those bytes
+    // came from the disc, through the mount table, and no other explanation
+    // fits — which is what a boot line is for.
+    arch::serial::write_str("protofire: /cdrom/README.TXT ");
+    match namespace.lookup("/cdrom/README.TXT") {
+        Ok(node) => {
+            let mut buffer = [0u8; 64];
+            match node.read(0, &mut buffer) {
+                Ok(count)
+                    if count == iso_disc::DISC_CONTENT.len()
+                        && buffer[..count] == *iso_disc::DISC_CONTENT =>
+                {
+                    arch::serial::write_str("reads back from the disc\n")
+                }
+                Ok(count) => {
+                    arch::serial::write_str("read ");
+                    arch::serial::write_u32(count as u32);
+                    arch::serial::write_str(" bytes that are not the disc's\n")
+                }
+                Err(error) => {
+                    arch::serial::write_str("FAILED to read: ");
+                    arch::serial::write_str(error.as_str());
+                    arch::serial::write_str("\n")
+                }
+            }
+        }
+        Err(_) => arch::serial::write_str("FAILED to find\n"),
+    }
 
     // The read happens through a syscall, not through the filesystem.
     //
@@ -321,6 +381,9 @@ const BOOT_VOLUME_LABEL: &str = "protofire";
 /// A constant rather than a string compare against a literal in two places:
 /// the boot line and the probe's condition are one fact.
 const SOURCE_VIRTIO: &str = "virtio-blk on pci";
+
+/// The label the boot's ISO 9660 disc carries.
+const ISO_LABEL: &str = "bootdisc";
 
 /// The tmpfs mounted at `/tmp`, sized to what a boot's scratch space is worth.
 ///

@@ -16,7 +16,7 @@ a filesystem and a syscall — and the rest is being moved a crate at a time.
 | `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
 | `arch` | 95,361 | 1,697 | boot, interrupts, serial, port I/O — four modules of a hundred |
 | `crypto` | 4,606 | 4,832 | all of it, one module per algorithm |
-| `fs` | 68,494 | 12,400 | PyroFS, tmpfs, the mount table and the VFS contract; nine filesystems are not here |
+| `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
 | `kernel` | 39,704 | 1,157 | the boot sequence, the syscall table, device discovery |
 | `memory` | 9,649 | 1,860 | the frame pool and the region pools |
 | `network` | 39,240 | 1 | nothing |
@@ -38,7 +38,7 @@ rows.
 |---|---:|---|
 | NTFS | 14,643 | no |
 | PyroFS | 7,260 | **yes** |
-| ISO 9660 | 5,928 | no |
+| ISO 9660 | 5,928 | **yes**, read-only — rewritten, not moved |
 | ext4 | 3,436 | no |
 | F2FS | 3,285 | no |
 | FAT32 | 2,732 | no |
@@ -56,9 +56,18 @@ resolution, and path normalization.  What is still not here is the *handle
 table*, which arrives with the process layer because a handle belongs to a
 process.
 
-Two filesystems are mounted on a boot: PyroFS at `/` and tmpfs at `/tmp`.  The
-second is what proved the namespace — a table with one entry has never resolved
-anything.
+Three filesystems are mounted on a boot: PyroFS at `/`, tmpfs at `/tmp` and an
+ISO 9660 disc at `/cdrom`.  The second is what proved the namespace — a table
+with one entry has never resolved anything — and the third is what proved it
+goes both ways, because a disc cannot be written and so what comes out of it
+came from the image.
+
+**ISO 9660 was rewritten rather than moved**, and that is the pattern for the
+rest: the previous tree's 5,928 lines are 1,105 of a reader and 800 of a
+*writer* — a writer for a writable ISO image, which was a requirement of that
+kernel rather than of the format.  The rewrite is the reader, at 1,700 lines,
+with the field offsets named and tested instead of being a packed struct cast
+from a sector.  See [`fs/src/iso9660/mod.rs`](../fs/src/iso9660/mod.rs).
 
 The order the rest come in is by what they prove rather than by size: the FAT
 family next (shared structure, three formats), then the read-only formats, then

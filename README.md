@@ -18,7 +18,8 @@ protofire: pci scan found 4 device(s) on 1 bus
 protofire: block device from virtio-blk on pci
 protofire: virtio-blk wrote and read back sector 63
 protofire: formatting the disk with the boot image
-protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory)
+protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)
+protofire: /cdrom/README.TXT reads back from the disc
 protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label protofire
 ```
 
@@ -36,7 +37,7 @@ in and what is not.
 |---|---|
 | crates | 36 |
 | source | ~44,000 lines |
-| tests | 447, all runnable with `cargo test -p <crate>` |
+| tests | 491, all runnable with `cargo test -p <crate>` |
 
 ## Building and running
 

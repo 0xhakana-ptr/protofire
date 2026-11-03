@@ -26,11 +26,11 @@ bootloader             82    0 # exempt: entry symbols, a panic handler and an a
 cell                  217    4
 crypto               4850   64
 e1000                   2    0
-fs                  12701   74
+fs                  14683  113
 init                   68    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 integration_tests       2    0
 ipc                   335    9
-kernel               1210    9
+kernel               1495   14
 memory               1865   27
 net                     2    0
 pci                   919   16
@@ -48,4 +48,4 @@ unicode              4630   31
 virt                   55    0
 virtio_block         1106   13
 virtio_core          1760   24
-xtask                 527    9
+xtask                 536    9
