@@ -122,10 +122,19 @@ pub use arch_x86_64::CallFrame;
 
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::CallOutcome;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::Context;
 #[cfg(target_arch = "riscv64")]
 pub use arch_riscv64::CallOutcome;
+
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::Context;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::CallOutcome;
+
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::Context;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::enter_user;
@@ -133,6 +142,13 @@ pub use arch_aarch64::enter_user;
 pub use arch_riscv64::enter_user;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::enter_user;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::switch_address_space;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::switch_address_space;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::switch_address_space;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::set_call_sink;

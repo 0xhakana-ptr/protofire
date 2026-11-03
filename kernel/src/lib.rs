@@ -647,79 +647,119 @@ pub fn kernel_main() -> ! {
     // the first thing in the tree that does not: it is mapped `user`, entered
     // through an `eret` that names EL0, and its only way back is a supervisor
     // call.  Reaching the line below means the whole path ran.
-    run_program();
+    run_programs();
 
     halt()
 }
 
-/// Map the program, enter it, and report what happened.
+/// Build two programs, map them, and let the scheduler run them.
 ///
-/// ## The three things that have to be true
+/// ## Why two, and why they call `Write` before exiting
 ///
-/// 1. A frame holds the program's machine code, and it is mapped at
-///    [`process::PROGRAM_BASE`] with `user: true` — without that bit an `eret`
-///    to EL0 faults on its first instruction fetch.
-/// 2. `enter_user` writes `ELR_EL1` and `SPSR_EL1` and executes `eret`.  There
-///    is no other way to a lower exception level.
-/// 3. The program's `svc` arrives at vector 8, the trap path reads `x8` for the
-///    number, and writes its answer back into `x0` — which `entry.S` restores
-///    before `eret`, so the program finds it.
+/// One program proves the entry path; it cannot prove a switch, because a
+/// switch needs something to switch to.  Two programs that each print their own
+/// number and then exit, with a switch on every `Write`, exercise: a second
+/// address space, `TTBR0_EL1` written between two running programs, two
+/// contexts saved and restored, and two exits reaped.
 ///
-/// Nothing here returns: the program exits through a syscall and the trap path
-/// stops the machine.
+/// A log that shows `program 1` and `program 2` interleaved is the evidence;
+/// one program twice looks the same as one program once, which is why the
+/// number is the program's own value and not the kernel's counter.
 #[cfg(target_os = "none")]
-fn run_program() {
+fn run_programs() {
+    use crate::address_space::AddressSpace;
     use crate::process;
+    use crate::scheduler::Scheduler;
+    use crate::scheduler::Task;
 
-    arch::serial::write_str("protofire: entering ring 3\n");
-
-    // SAFETY: the sink is installed once, before EL0 is entered, and every call
-    // it serves arrives from a program this function mapped.
+    // SAFETY: the sink is installed once, before EL0 is entered.
     unsafe { arch::set_call_sink(process::serve) };
 
-    let Some(image) = crate::address_space::allocate_image_frame() else {
-        arch::serial::write_str("protofire: no frame for a program image\n");
-        return;
-    };
-    let Some(stack) = crate::address_space::allocate_image_frame() else {
-        arch::serial::write_str("protofire: no frame for a program stack\n");
+    let mut scheduler = Scheduler::new();
+    for number in [1u16, 2] {
+        let Some(mut space) = (unsafe { AddressSpace::new() }) else {
+            arch::serial::write_str("protofire: no root table for a program\n");
+            return;
+        };
+        let Some(image) = crate::address_space::allocate_image_frame() else {
+            arch::serial::write_str("protofire: no frame for a program image\n");
+            return;
+        };
+        let Some(stack) = crate::address_space::allocate_image_frame() else {
+            arch::serial::write_str("protofire: no frame for a program stack\n");
+            return;
+        };
+        space.own(image);
+        space.own(stack);
+
+        let bytes = process::program_bytes(number);
+        // SAFETY: `image` is a live frame the allocator handed out and zeroed,
+        // and the program is smaller than one page; this boot is identity
+        // mapped, so the frame's physical address is one the kernel can write.
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), image as *mut u8, bytes.len());
+        }
+
+        let base = process::program_base(number);
+        let stack_page = process::program_stack_top(number) & !0xFFF;
+        // SAFETY: both frames belong to this space, and the two virtual
+        // addresses are this program's own window.
+        let mapped = unsafe { space.map(base, image, false) && space.map(stack_page, stack, true) };
+        if !mapped {
+            arch::serial::write_str("protofire: a program could not be mapped\n");
+            return;
+        }
+
+        arch::serial::write_str("protofire: program ");
+        arch::serial::write_u32(number as u32);
+        arch::serial::write_str(" mapped at ");
+        arch::serial::write_hex(base as u64);
+        arch::serial::write_str("\n");
+
+        scheduler.add(Task::new(
+            if number == 1 { "one" } else { "two" },
+            base,
+            process::program_stack_top(number),
+            space,
+        ));
+    }
+
+    // Install it, then enter the first program in it.
+    //
+    // `enter_user` does not return: the first program's trap brings us back
+    // into the kernel and the scheduler takes it from there.  So the entry is
+    // the first task's context installed by hand rather than through a switch.
+    let first = scheduler.current().map(|task| *task.context());
+    // SAFETY: called once, before any program runs.
+    unsafe { crate::scheduler::install(scheduler) };
+
+    let Some(context) = first else {
+        arch::serial::write_str("protofire: no program to run\n");
         return;
     };
 
-    // The image, through the frame's address — this boot is identity mapped, so
-    // the frame's physical address is one the kernel can write.
-    // SAFETY: `image` is a live frame the allocator handed out and zeroed, and
-    // the program is smaller than one page.
+    arch::serial::write_str("protofire: entering ring 3\n");
+    // SAFETY: the entry is mapped `user` in the installed space — the first
+    // task's root is not yet installed, so this switches to it as it enters.
     unsafe {
-        core::ptr::copy_nonoverlapping(
-            process::program_bytes().as_ptr(),
-            image as *mut u8,
-            process::program_bytes().len(),
-        );
+        arch::switch_address_space(crate::scheduler_first_root());
+        arch::enter_user(context.elr as usize, context.registers[0] as usize)
     }
+}
 
-    // SAFETY: both are frames from the pool, and the addresses are the
-    // program's own — no other mapping owns them.
-    let mapped_image = unsafe { crate::address_space::map_user_page(process::PROGRAM_BASE, image) };
-    let mapped_stack =
-        unsafe { crate::address_space::map_user_page(process::PROGRAM_STACK_TOP & !0xFFF, stack) };
-
-    arch::serial::write_str("protofire: program mapped ");
-    arch::serial::write_u32(usize::from(mapped_image && mapped_stack) as u32);
-    arch::serial::write_str("\n");
-    if !(mapped_image && mapped_stack) {
-        return;
-    }
-
-    // SAFETY: the entry and the stack top are the two pages just mapped `user`,
-    // and the kernel has no live state that an exception could not resume
-    // through — the trap path builds its own frame.
-    unsafe { arch::enter_user(process::PROGRAM_BASE, process::PROGRAM_STACK_TOP) }
+/// The root the first task runs through, for the entry into EL0.
+///
+/// A separate function because `install` moved the scheduler: the root has to
+/// be read back out of the static rather than from the value the boot still
+/// holds.
+#[cfg(target_os = "none")]
+fn scheduler_first_root() -> usize {
+    crate::scheduler::first_root().unwrap_or(0)
 }
 
 /// The host build has no ring 3 to enter.
 #[cfg(not(target_os = "none"))]
-fn run_program() {}
+fn run_programs() {}
 
 /// Enable the MAC policy, install one rule, and make `open` decide both ways.
 ///

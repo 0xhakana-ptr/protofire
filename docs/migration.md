@@ -92,10 +92,54 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
-x86_64 — the port I/O the PCI bus is reached through.  What comes next is a
-second process: the scheduler, a per-process address space, and the `TTBR0_EL1`
-swap that makes one program's pages invisible to another.  A program runs at EL0
-now, which is the part that needed everything below it.
+x86_64 — the port I/O the PCI bus is reached through.  What comes next is
+preemption: the scheduler switches only when a program calls, and switching one
+that did not ask needs the timer.  That is the timer's job and the timer is not
+programmed.
+
+### Two programs, two address spaces
+
+    protofire: program 1 mapped at 0x8040000000
+    protofire: program 2 mapped at 0x8080000000
+    protofire: entering ring 3
+    program 1 says hello
+    program 2 says hello
+    protofire: every program exited, 1 switch(es), 2 exit(s)
+
+A program's pages live above `0x80_0000_0000`, which is root entry 1 — one entry
+past this kernel's identity map.  So a program's root table holds the kernel's
+entry 0 unchanged, and every kernel address translates identically in every
+space.  That is the whole economy of it: a root that copied the identity map
+instead would spend a hundred and thirty thousand frames per program to share
+what is already shared.
+
+A task switch is therefore two copies and one system register — save the frame
+into the running task, copy the next one's over it, write `TTBR0_EL1` if the
+space changed.  There is no assembly, because the assembly that matters is the
+epilogue every trap already runs through: it restores whatever frame it finds
+and `eret`s, including the exception level.
+
+`eret` carries no address-space identifier.  An ASID would let two roots'
+translations coexist in the TLB and remove the flush; it also has to be
+allocated, kept unique and cleared at the right moment, and this kernel has one
+CPU and a switch per program exit.  The flush is the cheap correct answer.
+
+**A `Write` that switched the task was the first version, and it was wrong in a
+way the log did not show.**  Both programs printed their lines, so it looked
+right.  Underneath, `advance` replaced the frame with the other task's context
+and then the handler wrote *its own* answer into that context's `x0` and
+answered `Return` — so the program resumed was the other one, with its `x0`
+overwritten by a value meant for this one, and the exit never happened.  Only
+`Exit` switches now, which is also the honest policy: a program that made a call
+and got its answer has no reason to lose the CPU.
+
+Two mutations were run and both stop the boot, which is what makes the switch
+real rather than nominal.  Deleting the `TTBR0_EL1` write leaves program 2's
+entry unmapped in program 1's space, and the boot stops at
+`instruction abort at 0x8080000000`.  Deleting the context restore resumes
+program 1 — at `0x8040000018`, after its `mov` — inside program 2's space, and
+the boot stops at `instruction abort at 0x8040000018`.  Neither program can
+reach the other's memory, and both can reach the kernel's.
 
 ### A program at EL0
 

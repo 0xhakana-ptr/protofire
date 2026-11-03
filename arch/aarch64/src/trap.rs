@@ -376,19 +376,46 @@ pub struct CallFrame {
 /// What a call's handler answers.
 #[derive(Debug, Clone, Copy)]
 pub enum CallOutcome {
-    /// Resume the program with this value in `x0`.
+    /// Resume *this* program with this value in `x0`.
     Return(usize),
-    /// The program has ended; there is nothing to resume.
+    /// The program has ended.  The handler has already chosen what runs next
+    /// and has put that program's context where the trap path will find it.
     ///
-    /// The trap path does not return to EL0 and does not `eret`: it stops the
-    /// machine after reporting, because this boot has one program and no
-    /// scheduler to run next.
-    Exit(usize),
+    /// ## Why this carries no value
+    ///
+    /// A scheduler that answers "resume *this* context" would be answering
+    /// about a dead one.  So the handler does the switch itself — writing the
+    /// next context into the frame and, if the next program lives somewhere
+    /// else, changing `TTBR0_EL1` — and answers only that this program is done.
+    /// The trap path then returns through the same epilogue as a normal call,
+    /// which is what keeps one restore path rather than two.
+    Exit,
 }
 
 /// The function a supervisor call is handed to.
+///
+/// It takes the frame itself, not a copy of the few fields a call names,
+/// because an `Exit` has to replace the whole context with another program's —
+/// every register, the `ELR` and the `SPSR`.  A sink that received only the
+/// number and the arguments could answer a call and could not switch tasks.
 #[cfg(target_os = "none")]
-pub type CallSink = fn(CallFrame) -> CallOutcome;
+pub type CallSink = fn(CallFrame, &mut ExceptionFrame) -> CallOutcome;
+
+/// What a program's context looks like to a scheduler.
+///
+/// The whole 800-byte frame the assembly built, so a task switch is a copy of
+/// one of these into the frame the trap path already has on the stack.
+pub type Context = ExceptionFrame;
+
+/// Write `context` over the frame the trap path will restore.
+///
+/// That is the whole of a task switch: the epilogue restores every register,
+/// `ELR_EL1` and `SPSR_EL1` from this frame, so replacing it replaces what the
+/// machine does next — including the exception level it returns to.
+#[cfg(target_os = "none")]
+pub fn install_context(frame: &mut ExceptionFrame, context: &Context) {
+    *frame = *context;
+}
 
 #[cfg(target_os = "none")]
 static CALL_SINK: cell::SyncUnsafeCell<Option<CallSink>> = cell::SyncUnsafeCell::new(None);
@@ -427,18 +454,20 @@ fn serve_user_call(frame: &mut ExceptionFrame) {
     // SAFETY: the sink is installed before EL0 is entered and this runs after.
     let sink = unsafe { *CALL_SINK.get() };
     let outcome = match sink {
-        Some(sink) => sink(call),
-        None => CallOutcome::Exit(usize::MAX),
+        Some(sink) => sink(call, frame),
+        None => {
+            // No sink: nothing can answer, and there is no context to resume.
+            crate::serial::write_str("protofire: supervisor call with no handler\n");
+            crate::halt()
+        }
     };
 
     match outcome {
         CallOutcome::Return(value) => frame.set_return(value),
-        CallOutcome::Exit(status) => {
-            crate::serial::write_str("protofire: program exited with ");
-            crate::serial::write_u32(status as u32);
-            crate::serial::write_str("\n");
-            crate::halt()
-        }
+        // The handler has already written what resumes into this frame, and the
+        // epilogue below restores it and `eret`s.  Nothing to do here, which is
+        // the point: one restore path, whichever program it belongs to.
+        CallOutcome::Exit => {}
     }
 }
 

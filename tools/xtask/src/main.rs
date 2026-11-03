@@ -253,14 +253,24 @@ impl Machine {
                 // first fetch.  `hello from ring 3` is the program's `Write`
                 // reaching the console through the trap path.
                 ("protofire: entering ring 3", true),
-                ("protofire: program mapped 1", true),
-                ("hello from ring 3", true),
-                // And the exit status is zero, not two: the program compares
-                // the value in `x0` against what `Write` answered, so a trap
-                // path that did not write the answer back makes it exit two.
-                // The status is the assertion, which is why it is required
-                // exactly rather than as a prefix.
-                ("protofire: program exited with 0", true),
+                // Two programs, each in an address space of its own, at
+                // addresses no other program can reach.
+                ("protofire: program 1 mapped at ", false),
+                ("protofire: program 2 mapped at ", false),
+                // Both ran, in order, each printing its own number.  One
+                // program twice would read the same as one program once, which
+                // is why the number comes from the program and not from a
+                // kernel counter.
+                ("program 1 says hello", true),
+                ("program 2 says hello", true),
+                // And the switch happened once and both exits were counted.
+                // Deleting the `TTBR0_EL1` write leaves program 2's entry
+                // unmapped and the boot stops at an instruction abort; deleting
+                // the context restore resumes program 1 in program 2's space.
+                (
+                    "protofire: every program exited, 1 switch(es), 2 exit(s)",
+                    true,
+                ),
                 // The policy, asked twice through the real handler.
                 //
                 // A rule the boot installs allows one label and not another,
@@ -280,14 +290,24 @@ impl Machine {
                 // first fetch.  `hello from ring 3` is the program's `Write`
                 // reaching the console through the trap path.
                 ("protofire: entering ring 3", true),
-                ("protofire: program mapped 1", true),
-                ("hello from ring 3", true),
-                // And the exit status is zero, not two: the program compares
-                // the value in `x0` against what `Write` answered, so a trap
-                // path that did not write the answer back makes it exit two.
-                // The status is the assertion, which is why it is required
-                // exactly rather than as a prefix.
-                ("protofire: program exited with 0", true),
+                // Two programs, each in an address space of its own, at
+                // addresses no other program can reach.
+                ("protofire: program 1 mapped at ", false),
+                ("protofire: program 2 mapped at ", false),
+                // Both ran, in order, each printing its own number.  One
+                // program twice would read the same as one program once, which
+                // is why the number comes from the program and not from a
+                // kernel counter.
+                ("program 1 says hello", true),
+                ("program 2 says hello", true),
+                // And the switch happened once and both exits were counted.
+                // Deleting the `TTBR0_EL1` write leaves program 2's entry
+                // unmapped and the boot stops at an instruction abort; deleting
+                // the context restore resumes program 1 in program 2's space.
+                (
+                    "protofire: every program exited, 1 switch(es), 2 exit(s)",
+                    true,
+                ),
                 // The whole line, because its tail is the outcome.
                 //
                 // A prefix would accept `pool check FAILED`: the numbers before

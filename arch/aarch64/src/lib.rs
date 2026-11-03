@@ -46,6 +46,7 @@ pub mod trap;
 
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
+pub use trap::Context;
 #[cfg(target_os = "none")]
 pub use trap::set_call_sink;
 pub mod vbar;
@@ -212,6 +213,48 @@ pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
             options(noreturn)
         )
     }
+}
+
+/// Translate through a different root table from now on.
+///
+/// ## What this does not do
+///
+/// It writes `TTBR0_EL1` and flushes and nothing else.  The **caller** must be
+/// running through a mapping both tables share, because the next instruction
+/// fetch happens through the new one: a switch made from an address only the
+/// old table maps faults on the instruction after the write.
+///
+/// That is why this kernel's program roots copy the kernel's entry 0 — the
+/// kernel's code, its stack and the trap vectors are reachable through every
+/// root, so a switch can happen anywhere in the kernel and the trap path does
+/// not have to be careful about where it is.
+///
+/// ## Why no ASID
+///
+/// An address-space identifier would let two roots' translations coexist in the
+/// TLB and remove the flush.  It also has to be allocated, kept unique and
+/// cleared at the right moment, and this kernel has one CPU and a switch per
+/// scheduling decision.  The flush is the cheap correct answer; the identifier
+/// is the optimisation that needs a reason to exist first.
+///
+/// # Safety
+///
+/// `root` must be a page-aligned root table whose entry 0 maps every address
+/// the kernel is running on — its text, its stack and the vectors — because the
+/// next fetch happens through it.
+#[cfg(target_os = "none")]
+pub unsafe fn switch_address_space(root: usize) -> bool {
+    // SAFETY: the caller promises the new root covers the code performing this
+    // call.  The barriers are the ones the architecture requires around a
+    // change to translation.
+    unsafe {
+        core::arch::asm!("msr ttbr0_el1, {}", in(reg) root as u64, options(nostack));
+        core::arch::asm!("dsb sy", options(nostack));
+        core::arch::asm!("tlbi vmalle1", options(nostack));
+        core::arch::asm!("dsb sy", options(nostack));
+        core::arch::asm!("isb", options(nostack));
+    }
+    paging::current_root_table() == root
 }
 
 /// Raise one interrupt from the controller, as a device would.

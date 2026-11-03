@@ -148,13 +148,13 @@ pub struct CallFrame {
 pub enum CallOutcome {
     /// Resume the program with this value.
     Return(usize),
-    /// The program has ended.
-    Exit(usize),
+    /// The program has ended.  The handler has already chosen what runs next.
+    Exit,
 }
 
 /// The function a supervisor call is handed to.
 #[cfg(target_os = "none")]
-pub type CallSink = fn(CallFrame) -> CallOutcome;
+pub type CallSink = fn(CallFrame, &mut Context) -> CallOutcome;
 
 /// Install the function that serves a program's supervisor call: no-op here.
 ///
@@ -178,4 +178,48 @@ pub unsafe fn set_call_sink(sink: CallSink) {
 #[cfg(target_os = "none")]
 pub unsafe fn enter_user(_entry: usize, _stack_top: usize) -> ! {
     unreachable!("U-mode is not implemented on riscv64 yet")
+}
+
+/// Translate through a different root table: this machine has no such path yet.
+///
+/// x86_64's equivalent is a `cr3` write, which this crate does have for
+/// installation and does not yet have for switching; riscv64's is `satp`.  Both
+/// need a per-process root to switch to, which is what the kernel builds for
+/// the machine that has one.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn switch_address_space(_root: usize) -> bool {
+    false
+}
+
+/// A program's saved context.
+///
+/// The machine's own trap frame, which this crate does not have: a task switch
+/// copies one of these into the frame the trap path restores, and this machine
+/// has no such path yet.  The type exists so the scheduler names one thing on
+/// every machine.
+///
+/// It is the aarch64 frame's shape because that is the one written; a real
+/// frame here would be the registers an interrupt from ring 3 pushed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Context {
+    /// The general registers.
+    pub registers: [u64; 30],
+    /// The link register.
+    pub link_register: u64,
+    /// Where to resume.
+    pub elr: u64,
+    /// The state to resume in.
+    pub spsr: u64,
+    /// The syndrome.
+    pub esr: u64,
+    /// The fault address.
+    pub far: u64,
+    /// The vector.
+    pub vector: u64,
+    /// The SIMD registers.
+    pub simd: [u128; 32],
 }
