@@ -30,6 +30,7 @@
 
 
 
+
 abi                  3037   52
 allocator            2508   13
 arch                 1436    1
@@ -46,8 +47,8 @@ e1000                   2    0
 fs                  11023   54
 integration_tests       2    0
 ipc                   328    9
-kernel                243    1
-memory               1862   27
+kernel                251    1
+memory               1865   27
 net                     2    0
 pci                     2    0
 power                 321   12

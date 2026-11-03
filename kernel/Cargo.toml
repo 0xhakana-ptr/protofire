@@ -21,3 +21,5 @@ sound.workspace = true
 # manifest was in when it pinned `x86_64` in a path dependency and made the
 # other two machines unbuildable from here.
 arch = { path = "../arch" }
+fs = { path = "../fs" }
+block = { path = "../libs/block" }

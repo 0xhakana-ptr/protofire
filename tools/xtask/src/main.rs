@@ -111,7 +111,10 @@ impl Machine {
                     true,
                 ),
                 ("protofire: heap at ", false),
-                ("protofire: block service round trip ok, ", false),
+                (
+                    "protofire: filesystem mounted and read /greeting.txt, label ",
+                    false,
+                ),
             ],
             Self::Aarch64 => &[],
             Self::Riscv64 => &[],

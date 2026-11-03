@@ -40,7 +40,10 @@ const HOST_POOL_SIZE: usize = 512 * 1024 * 1024;
 /// (`arch::managed_pool_bytes` on the machine that has one).
 #[cfg(target_os = "none")]
 fn pool_bounds() -> (usize, usize) {
-    extern "C" {
+    // SAFETY: the two symbols are the linker script's own markers around the
+    // pool's span; neither is called, and this block only takes their
+    // addresses.
+    unsafe extern "C" {
         static __pool_start: u8;
         static __pool_end: u8;
     }

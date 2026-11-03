@@ -20,13 +20,11 @@
 
 #![no_std]
 
-// No `extern crate alloc` yet, and the absence is deliberate: declaring it
-// commits the final image to a `#[global_allocator]`, and `libs/allocator` is
-// still a stub.  A binary that names `alloc` without one fails to link with an
-// error about a missing global allocator — which is the correct complaint, but
-// it would be answered by writing an allocator to satisfy the compiler rather
-// than because something needs to allocate.  The line comes back in the change
-// that gives the allocator a real body.
+// The boot builds a filesystem image in memory and mounts it, and both need a
+// heap.  The `#[global_allocator]` below is what provides one, so this line and
+// that static arrived together: an `alloc` without an allocator is a link
+// error, and an allocator nobody allocates from is a heap with no caller.
+extern crate alloc;
 
 pub mod ipc;
 pub mod power;
@@ -122,83 +120,76 @@ pub fn kernel_main() -> ! {
     arch::serial::write_hex(heap_end as u64);
     arch::serial::write_str("\n");
 
-    // The block service, driven end to end: a write, a read, and a comparison.
+    // A real filesystem, end to end: build a PyroFS image, mount it over an
+    // in-memory device, and read a file back through the `VNode` contract.
     //
-    // This is not a probe left in the tree.  It is the smallest run of a real
-    // service — the same `submit`/`poll`/completion path a driver will use,
-    // over the same queue — and it exists because a crate with a queue and no
-    // producer has not been shown to carry one.  A driver's version of this
-    // check is a boot that drains its queue after a transfer; this is what can
-    // run before there is a driver.
-    use async_io::Service as _;
-    let mut disk = async_io::MemoryBlockService::new(DISK_SECTORS, COMPLETION_QUEUE_CAPACITY);
+    // This is the first run of the three layers together — `block` gives the
+    // device, `fs` the interface, `pyrofs` the format — and it is what turns
+    // "the crates compile" into "the filesystem works on a machine".  The
+    // volume is built by this boot rather than shipped: an image that is a
+    // constant in the tree would be one nobody rebuilt, and a format change
+    // would find the stale copy before it found the code.
+    let image = match fs::pyrofs::PyroFs::build_image(
+        BOOT_VOLUME_LABEL,
+        &[fs::pyrofs::ImageEntry {
+            path: "/greeting.txt",
+            data: BOOT_VOLUME_CONTENT,
+        }],
+    ) {
+        Ok(image) => image,
+        Err(_) => {
+            arch::serial::write_str("protofire: filesystem image build FAILED\n");
+            halt()
+        }
+    };
 
-    let mut written = [0u8; async_io::block::SECTOR_SIZE];
-    written[0] = 0x50; // 'P'
-    written[1] = 0x46; // 'F'
-    let write_id = async_io::BlockOp::Write {
-        sector: 0,
-        count: 1,
-    }
-    .token(0);
-    let accepted = disk
-        .submit(async_io::Request::with_arguments(
-            write_id,
-            written.as_mut_ptr() as u64,
-            written.len(),
-        ))
-        .is_none();
-    let wrote = accepted && disk.poll();
-    let write_done = disk.take_completion().filter(|done| done.is_ok());
+    // The device the volume mounts on.  `MemoryBlockDevice::from_image` takes
+    // the bytes a builder produced, which is the same shape a driver's device
+    // has once it has read its first sectors.
+    let device: alloc::sync::Arc<dyn block::BlockDevice> =
+        block::MemoryBlockDevice::new(BOOT_VOLUME_LABEL, image, false);
 
-    let mut read_back = [0u8; async_io::block::SECTOR_SIZE];
-    let read_id = async_io::BlockOp::Read {
-        sector: 0,
-        count: 1,
-    }
-    .token(1);
-    let accepted = disk
-        .submit(async_io::Request::with_arguments(
-            read_id,
-            read_back.as_mut_ptr() as u64,
-            read_back.len(),
-        ))
-        .is_none();
-    let read = accepted && disk.poll();
-    let read_done = disk.take_completion().filter(|done| done.id == read_id);
+    let volume = match fs::pyrofs::PyroFs::open(device, true) {
+        Ok(volume) => fs::pyrofs::PyroFsVolume::new(volume),
+        Err(error) => {
+            arch::serial::write_str("protofire: filesystem mount FAILED: ");
+            arch::serial::write_str(error.as_str());
+            arch::serial::write_str("\n");
+            halt()
+        }
+    };
 
-    arch::serial::write_str("protofire: block service ");
-    if write_done.is_some() && read_done.is_some() && read_back[..2] == [0x50, 0x46] {
-        arch::serial::write_str("round trip ok, ");
-        arch::serial::write_u32(disk.performed() as u32);
-        arch::serial::write_str(" transfer(s) over ");
-        arch::serial::write_u32(DISK_SECTORS as u32);
-        arch::serial::write_str(" sector(s)");
+    let read_ok = match fs::FileSystem::lookup(&volume, "/greeting.txt") {
+        Ok(node) => {
+            let mut buffer = [0u8; BOOT_VOLUME_CONTENT.len()];
+            match node.read(0, &mut buffer) {
+                Ok(count) if count == BOOT_VOLUME_CONTENT.len() => buffer == *BOOT_VOLUME_CONTENT,
+                _ => false,
+            }
+        }
+        Err(_) => false,
+    };
+
+    arch::serial::write_str("protofire: filesystem ");
+    if read_ok {
+        arch::serial::write_str("mounted and read /greeting.txt, label ");
+        arch::serial::write_str(BOOT_VOLUME_LABEL);
     } else {
-        // A service that accepted a transfer and could not perform it is a
-        // kernel that cannot hold a block, and the log has to say so.
-        let _ = (wrote, read);
-        arch::serial::write_str("FAILED the round trip");
+        arch::serial::write_str("FAILED to read /greeting.txt");
     }
     arch::serial::write_str("\n");
 
     halt()
 }
 
-/// How many sectors the boot's block service models.
-///
-/// Two, because the check writes sector zero and reads it back: a value larger
-/// than that would be a device the check never touched, and the number stands
-/// in for the first real driver's geometry.
-const DISK_SECTORS: usize = 2;
+/// The label the boot's volume carries.
+const BOOT_VOLUME_LABEL: &str = "protofire";
 
-/// How many completions the kernel's queue holds.
+/// What the boot writes into its volume and reads back.
 ///
-/// Stated once.  A driver whose device can have more requests in flight than
-/// this will have completions refused, and `CompletionQueue::refused()` is the
-/// counter that says so — which is why the number is here rather than inside
-/// the crate: only the kernel knows how many devices it expects to run.
-const COMPLETION_QUEUE_CAPACITY: usize = 64;
+/// A string no other file in the tree contains: a check that compared a
+/// constant against itself would pass on a volume that was never written.
+const BOOT_VOLUME_CONTENT: &[u8] = b"the quick brown pyrofox";
 
 /// The allocator's diagnostic sink: the console, one string at a time.
 ///

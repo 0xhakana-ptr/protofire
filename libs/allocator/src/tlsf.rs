@@ -6,7 +6,7 @@
 
 use cell::SyncUnsafeCell;
 
-// ─── Constants ────────────────────────────────────────────────────────────
+// Constants
 
 pub(crate) const KERNEL_HEAP_SIZE: usize = 64 * 1024 * 1024;
 
@@ -39,7 +39,7 @@ const _: () = assert!(1usize << SL_INDEX_LOG2 == SL_COUNT);
 
 pub(crate) const FREE_LISTS_COUNT: usize = FL_COUNT * SL_COUNT; // 704
 
-// ─── Block header — 16 bytes on 64‑bit ────────────────────────────────────
+// Block header — 16 bytes on 64‑bit
 
 /// `size` uses the least-significant bit as the free/used flag:
 ///   bit 0 = 0 → block is free
@@ -63,7 +63,7 @@ pub(crate) struct KernelHeap([u8; KERNEL_HEAP_SIZE]);
 pub(crate) static KERNEL_HEAP: SyncUnsafeCell<KernelHeap> =
     SyncUnsafeCell::new(KernelHeap([0; KERNEL_HEAP_SIZE]));
 
-// ─── Allocator state ──────────────────────────────────────────────────────
+// Allocator state
 
 #[derive(Debug)]
 pub(crate) struct AllocatorState {
@@ -97,7 +97,7 @@ impl AllocatorState {
     }
 }
 
-// ─── Utility ──────────────────────────────────────────────────────────────
+// Utility
 
 pub(crate) fn align_up(value: usize, align: usize) -> Option<usize> {
     value
@@ -105,7 +105,7 @@ pub(crate) fn align_up(value: usize, align: usize) -> Option<usize> {
         .map(|aligned| aligned & !(align - 1))
 }
 
-// ─── Raw block accessors ──────────────────────────────────────────────────
+// Raw block accessors
 //
 // All functions in this section operate on raw block addresses and are
 // inherently unsafe — the caller must ensure the address points to a valid
@@ -243,7 +243,7 @@ pub(crate) unsafe fn block_set_next_free(block: usize, next: usize) {
     }
 }
 
-// ─── TLSF mapping ─────────────────────────────────────────────────────────
+// TLSF mapping
 
 /// Map a block `size` to its (first‑level, second‑level) class.
 ///
@@ -366,7 +366,7 @@ pub(crate) unsafe fn report_heap_damage(state: &AllocatorState, caller: &str) {
     }
 }
 
-// ─── Post-operation audit ─────────────────────────────────────────────────
+// Post-operation audit
 
 /// Set while a damage report is being printed.
 ///
@@ -435,7 +435,7 @@ pub(crate) unsafe fn audit_after_operation(state: &AllocatorState, operation: &s
     }
 }
 
-// ─── Structural invariant checking ────────────────────────────────────────
+// Structural invariant checking
 
 /// Bytes reserved at the end of every allocation for a canary word.
 ///
@@ -623,7 +623,7 @@ pub(crate) unsafe fn check_invariants(state: &AllocatorState) -> Result<(), Heap
     }
 }
 
-// ─── Recent-operation trace ───────────────────────────────────────────────
+// Recent-operation trace
 
 /// How many recent heap operations are remembered for post-mortem reporting.
 pub(crate) const HEAP_TRACE_DEPTH: usize = 32;
@@ -740,7 +740,7 @@ pub(crate) unsafe fn validate_block(
     }
 }
 
-// ─── Free‑list management ─────────────────────────────────────────────────
+// Free‑list management
 
 /// Insert `block` into the appropriate free list.
 pub(crate) unsafe fn insert_free_block(state: &mut AllocatorState, block: usize) {
@@ -951,7 +951,7 @@ pub(crate) fn find_suitable_block(state: &AllocatorState, min_size: usize) -> us
     0
 }
 
-// ─── Coalescing ──────────────────────────────────────────────────────────
+// Coalescing
 
 /// Validate that `candidate` looks like a genuine free block that physically
 /// follows `predecessor`.  Returns the candidate's size if it passes all

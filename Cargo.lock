@@ -286,6 +286,8 @@ dependencies = [
  "allocator",
  "arch",
  "async_io",
+ "block",
+ "fs",
  "security",
  "sound",
  "spin",
