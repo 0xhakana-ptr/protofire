@@ -23,9 +23,7 @@ use block::RequestState;
 use block::Ticket;
 use sync::Mutex;
 
-// ---------------------------------------------------------------------------
 // Persistent write-back clock
-// ---------------------------------------------------------------------------
 
 /// Monotonic cache clock used to age dirty blocks.  The scheduler advances it
 /// once per timer tick; a block written at tick `T` is "expired" once the
@@ -60,8 +58,13 @@ pub(crate) fn set_cache_tick_for_test(value: u64) {
 /// 300 ticks @ 100 Hz = every 3 seconds.
 pub const WRITE_BACK_PERIOD_TICKS: u64 = 300;
 /// Minimum age (in scheduler ticks) before a dirty block is eligible for the
-/// automatic background write-back.  600 ticks @ 100 Hz = 6 seconds, matching
-/// the Linux `dirty_expire_centisecs` default of 3000 centiseconds.
+/// automatic background write-back.  600 ticks @ 100 Hz = 6 seconds.
+///
+/// Six seconds is a choice about how much work a crash may cost, not a
+/// compatibility target.  It is long enough that a file rewritten in a burst is
+/// written once rather than once per edit, and short enough that a power loss
+/// costs a few seconds of edits rather than a session's.  A caller that cannot
+/// accept six seconds calls `fsync` and does not wait for this.
 pub const WRITE_BACK_AGE_TICKS: u64 = 600;
 
 /// Maximum number of cached blocks.  Increased from 64 to 512 to reduce

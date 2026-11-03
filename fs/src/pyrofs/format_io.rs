@@ -159,8 +159,8 @@ pub(crate) fn decode_dir_entries(
             // of the macOS-style "UTF-8 only" path model.  A future WTF-8 or
             // byte-string VFS layer would be required for lossless round-trips.
             //
-            // Store the filename as-is — the kernel treats names as
-            // opaque UTF-8 byte sequences (Linux / HarmonyOS semantics).
+            // Store the filename as-is — this kernel treats names as opaque
+            // UTF-8 byte sequences.
             name: String::from_utf8_lossy(name).into_owned(),
         });
     }

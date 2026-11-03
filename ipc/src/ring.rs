@@ -33,8 +33,15 @@ pub const DEFAULT_PIPE_CAPACITY: usize = 16384;
 /// Minimum capacity the resize path accepts (one page).
 pub const PIPE_MIN_SIZE: usize = 4096;
 
-/// Maximum capacity the resize path accepts, which is Linux's default
-/// `fs.pipe-max-size` of 1 MiB.
+/// Maximum capacity the resize path accepts.
+///
+/// A megabyte is a bound on what one pipe may pin in the heap.  It is a policy
+/// this crate picks because a ring that could grow to whatever a program asked
+/// for would let one program consume the heap by resizing a pipe it never
+/// writes to.  The number is the ring's, not a compatibility target: a caller
+/// that asks for more gets this, and reads the granted size back with
+/// [`F_GETPIPE_SZ`](abi::fs::F_GETPIPE_SZ) rather than assuming its request was
+/// honoured.
 pub const PIPE_MAX_SIZE: usize = 1024 * 1024;
 
 /// Round a requested pipe size to the convention a program expects.
@@ -140,9 +147,10 @@ impl ByteRing {
     ///
     /// The data is compacted to the front, so both cursors reset and the ring's
     /// next read starts at zero.  Returns [`Error::Busy`] when the new capacity
-    /// cannot hold what is already buffered — which is what Linux's
-    /// `F_SETPIPE_SZ` does, and what makes the call report rather than
-    /// truncate.
+    /// cannot hold what is already buffered: those bytes were accepted from a
+    /// writer that was told they fit, and truncating them would break that
+    /// promise silently.  A refusal the caller can report is the only honest
+    /// answer.
     pub fn resize(&mut self, new_capacity: usize) -> Result<()> {
         if new_capacity < self.byte_count {
             return Err(Error::Busy);
@@ -242,8 +250,7 @@ mod tests {
     /// A resize below what is buffered is refused, and the buffer is unchanged.
     ///
     /// The refusal is the point: truncating would lose bytes a writer was told
-    /// had been accepted, and Linux's `F_SETPIPE_SZ` refuses for the same
-    /// reason.
+    /// had been accepted.
     #[test]
     fn a_resize_below_the_content_is_refused() {
         let mut ring = ByteRing::new(8);
