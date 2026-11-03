@@ -40,6 +40,7 @@ pub mod address_space;
 pub mod devices;
 pub mod interrupts;
 pub mod iso_disc;
+pub mod process;
 pub mod scheduler;
 pub mod syscall;
 
@@ -640,8 +641,85 @@ pub fn kernel_main() -> ! {
     }
     arch::serial::write_str("\n");
 
+    // A program, at EL0, calling back.
+    //
+    // Everything above runs at EL1 and talks to the kernel directly.  This is
+    // the first thing in the tree that does not: it is mapped `user`, entered
+    // through an `eret` that names EL0, and its only way back is a supervisor
+    // call.  Reaching the line below means the whole path ran.
+    run_program();
+
     halt()
 }
+
+/// Map the program, enter it, and report what happened.
+///
+/// ## The three things that have to be true
+///
+/// 1. A frame holds the program's machine code, and it is mapped at
+///    [`process::PROGRAM_BASE`] with `user: true` — without that bit an `eret`
+///    to EL0 faults on its first instruction fetch.
+/// 2. `enter_user` writes `ELR_EL1` and `SPSR_EL1` and executes `eret`.  There
+///    is no other way to a lower exception level.
+/// 3. The program's `svc` arrives at vector 8, the trap path reads `x8` for the
+///    number, and writes its answer back into `x0` — which `entry.S` restores
+///    before `eret`, so the program finds it.
+///
+/// Nothing here returns: the program exits through a syscall and the trap path
+/// stops the machine.
+#[cfg(target_os = "none")]
+fn run_program() {
+    use crate::process;
+
+    arch::serial::write_str("protofire: entering ring 3\n");
+
+    // SAFETY: the sink is installed once, before EL0 is entered, and every call
+    // it serves arrives from a program this function mapped.
+    unsafe { arch::set_call_sink(process::serve) };
+
+    let Some(image) = crate::address_space::allocate_image_frame() else {
+        arch::serial::write_str("protofire: no frame for a program image\n");
+        return;
+    };
+    let Some(stack) = crate::address_space::allocate_image_frame() else {
+        arch::serial::write_str("protofire: no frame for a program stack\n");
+        return;
+    };
+
+    // The image, through the frame's address — this boot is identity mapped, so
+    // the frame's physical address is one the kernel can write.
+    // SAFETY: `image` is a live frame the allocator handed out and zeroed, and
+    // the program is smaller than one page.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            process::program_bytes().as_ptr(),
+            image as *mut u8,
+            process::program_bytes().len(),
+        );
+    }
+
+    // SAFETY: both are frames from the pool, and the addresses are the
+    // program's own — no other mapping owns them.
+    let mapped_image = unsafe { crate::address_space::map_user_page(process::PROGRAM_BASE, image) };
+    let mapped_stack =
+        unsafe { crate::address_space::map_user_page(process::PROGRAM_STACK_TOP & !0xFFF, stack) };
+
+    arch::serial::write_str("protofire: program mapped ");
+    arch::serial::write_u32(usize::from(mapped_image && mapped_stack) as u32);
+    arch::serial::write_str("\n");
+    if !(mapped_image && mapped_stack) {
+        return;
+    }
+
+    // SAFETY: the entry and the stack top are the two pages just mapped `user`,
+    // and the kernel has no live state that an exception could not resume
+    // through — the trap path builds its own frame.
+    unsafe { arch::enter_user(process::PROGRAM_BASE, process::PROGRAM_STACK_TOP) }
+}
+
+/// The host build has no ring 3 to enter.
+#[cfg(not(target_os = "none"))]
+fn run_program() {}
 
 /// Enable the MAC policy, install one rule, and make `open` decide both ways.
 ///

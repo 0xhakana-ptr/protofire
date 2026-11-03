@@ -246,6 +246,21 @@ impl Machine {
             // refused it: this is the line that would have caught the boot that
             // stopped after the heap.
             Self::Aarch64 => &[
+                // A program at EL0, and its calls served.
+                //
+                // `program mapped 1` means a frame of machine code was mapped
+                // `user` — without that bit the `eret` into EL0 faults on its
+                // first fetch.  `hello from ring 3` is the program's `Write`
+                // reaching the console through the trap path.
+                ("protofire: entering ring 3", true),
+                ("protofire: program mapped 1", true),
+                ("hello from ring 3", true),
+                // And the exit status is zero, not two: the program compares
+                // the value in `x0` against what `Write` answered, so a trap
+                // path that did not write the answer back makes it exit two.
+                // The status is the assertion, which is why it is required
+                // exactly rather than as a prefix.
+                ("protofire: program exited with 0", true),
                 // The policy, asked twice through the real handler.
                 //
                 // A rule the boot installs allows one label and not another,
@@ -258,6 +273,21 @@ impl Machine {
                 // described.  The count of tables taken from frames is zero on
                 // this machine — its spare tables are enough — so the check is
                 // what stands in for a branch that has never run.
+                // A program at EL0, and its calls served.
+                //
+                // `program mapped 1` means a frame of machine code was mapped
+                // `user` — without that bit the `eret` into EL0 faults on its
+                // first fetch.  `hello from ring 3` is the program's `Write`
+                // reaching the console through the trap path.
+                ("protofire: entering ring 3", true),
+                ("protofire: program mapped 1", true),
+                ("hello from ring 3", true),
+                // And the exit status is zero, not two: the program compares
+                // the value in `x0` against what `Write` answered, so a trap
+                // path that did not write the answer back makes it exit two.
+                // The status is the assertion, which is why it is required
+                // exactly rather than as a prefix.
+                ("protofire: program exited with 0", true),
                 // The whole line, because its tail is the outcome.
                 //
                 // A prefix would accept `pool check FAILED`: the numbers before

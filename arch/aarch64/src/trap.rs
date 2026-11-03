@@ -110,6 +110,39 @@ impl ExceptionFrame {
         self.class() == 0x15
     }
 
+    /// Whether this exception is a supervisor call from a program.
+    ///
+    /// The vector is entry 8 — `Lower64`'s synchronous kind — and the class is
+    /// `0x15`.  Both, because either alone is a different thing: entry 8 with
+    /// another class is a program's fault, and an `svc` at EL1 is the kernel
+    /// calling itself, which `install_table` does as its self-test.
+    pub fn is_user_supervisor_call(&self) -> bool {
+        self.vector == USER_SUPERVISOR_CALL_VECTOR && self.is_supervisor_call()
+    }
+
+    /// The syscall number a program put in `x8`.
+    ///
+    /// The register is the ABI's choice, and it is the one every caller sets
+    /// before `svc`.  Reading it here rather than from `x0` keeps the number
+    /// and the first argument from sharing a register.
+    pub fn syscall_number(&self) -> usize {
+        self.registers[8] as usize
+    }
+
+    /// The six arguments a program put in `x0..x5`.
+    pub fn syscall_arguments(&self) -> [usize; 6] {
+        let mut arguments = [0usize; 6];
+        for (index, slot) in arguments.iter_mut().enumerate() {
+            *slot = self.registers[index] as usize;
+        }
+        arguments
+    }
+
+    /// Put a syscall's result in `x0`, which is where a caller reads it.
+    pub fn set_return(&mut self, value: usize) {
+        self.registers[0] = value as u64;
+    }
+
     /// Whether this exception arrived on one of the four IRQ entries.
     ///
     /// The vector is `(group * 4) + kind`, and every group's `Irq` kind has the
@@ -294,6 +327,14 @@ pub unsafe fn install_table() -> bool {
 /// The index of `Kind::Irq` within a group.
 const IRQ_KIND: u64 = 1;
 
+/// The vector a program's supervisor call arrives on.
+///
+/// `Lower64` (offset 8) and `Synchronous` (offset 0) is entry 8, which is a
+/// different entry from the kernel's own `svc` at entry 4 — the one
+/// `install_table` uses as its self-test.  The two being one number apart in
+/// nobody's arithmetic is why this is named.
+pub const USER_SUPERVISOR_CALL_VECTOR: u64 = 8;
+
 /// The controller, once the boot has found and enabled one.
 #[cfg(target_os = "none")]
 static GIC: cell::SyncUnsafeCell<Option<crate::gic::Gic>> = cell::SyncUnsafeCell::new(None);
@@ -309,6 +350,96 @@ pub unsafe fn set_controller(gic: crate::gic::Gic) {
     // SAFETY: the caller promises this is the only write, and it happens before
     // any interrupt can arrive.
     unsafe { *GIC.get() = Some(gic) };
+}
+
+/// What a supervisor call's handler answers.
+///
+/// ## Why this is not `irq::Frame`
+///
+/// An interrupt's frame carries a vector and an address; a syscall's carries
+/// six arguments and answers with a word.  Folding the two into one type would
+/// give every IRQ handler six fields it does not have and every syscall handler
+/// an address it did not ask for — which is the union-of-conventions this
+/// tree's `irq::Frame` header already refuses.
+///
+/// The two are separate types and separate sinks.  A kernel installs both.
+#[derive(Debug, Clone, Copy)]
+pub struct CallFrame {
+    /// The number the program put in `x8`.
+    pub number: usize,
+    /// The six arguments from `x0..x5`.
+    pub arguments: [usize; 6],
+    /// The instruction after the `svc`, which is where to resume.
+    pub resume: usize,
+}
+
+/// What a call's handler answers.
+#[derive(Debug, Clone, Copy)]
+pub enum CallOutcome {
+    /// Resume the program with this value in `x0`.
+    Return(usize),
+    /// The program has ended; there is nothing to resume.
+    ///
+    /// The trap path does not return to EL0 and does not `eret`: it stops the
+    /// machine after reporting, because this boot has one program and no
+    /// scheduler to run next.
+    Exit(usize),
+}
+
+/// The function a supervisor call is handed to.
+#[cfg(target_os = "none")]
+pub type CallSink = fn(CallFrame) -> CallOutcome;
+
+#[cfg(target_os = "none")]
+static CALL_SINK: cell::SyncUnsafeCell<Option<CallSink>> = cell::SyncUnsafeCell::new(None);
+
+/// Install the function that serves a program's supervisor call.
+///
+/// # Safety
+///
+/// Called once, before any program can run.
+#[cfg(target_os = "none")]
+pub unsafe fn set_call_sink(sink: CallSink) {
+    // SAFETY: the caller promises this is the only write and that it happens
+    // before EL0 is entered.
+    unsafe { *CALL_SINK.get() = Some(sink) };
+}
+
+/// Serve a program's supervisor call and resume it.
+///
+/// ## Why the frame is written rather than copied back
+///
+/// `entry.S` restores `x0..x30` from the frame before `eret`, so a value
+/// written into the frame's `x0` *is* the value the program finds on return.
+/// Copying it somewhere else afterwards would need a second restore path, which
+/// is the one thing the assembly's common epilogue exists to avoid.
+///
+/// `ELR_EL1` needs no change: it already holds the instruction after the `svc`,
+/// which is where the program continues.
+#[cfg(target_os = "none")]
+fn serve_user_call(frame: &mut ExceptionFrame) {
+    let call = CallFrame {
+        number: frame.syscall_number(),
+        arguments: frame.syscall_arguments(),
+        resume: frame.elr as usize,
+    };
+
+    // SAFETY: the sink is installed before EL0 is entered and this runs after.
+    let sink = unsafe { *CALL_SINK.get() };
+    let outcome = match sink {
+        Some(sink) => sink(call),
+        None => CallOutcome::Exit(usize::MAX),
+    };
+
+    match outcome {
+        CallOutcome::Return(value) => frame.set_return(value),
+        CallOutcome::Exit(status) => {
+            crate::serial::write_str("protofire: program exited with ");
+            crate::serial::write_u32(status as u32);
+            crate::serial::write_str("\n");
+            crate::halt()
+        }
+    }
 }
 
 /// Acknowledge the interrupt, hand it to the sink, and finish it.
@@ -390,7 +521,7 @@ pub const SUPERVISOR_CALL_VECTOR: usize = 4;
 pub unsafe extern "C" fn aarch64_exception_dispatch(frame: *mut ExceptionFrame) {
     // SAFETY: `entry.S` passes `sp` after building the frame at that address,
     // and nothing else holds it.
-    let frame = unsafe { &*frame };
+    let frame = unsafe { &mut *frame };
 
     // An IRQ is not a fault: the vector says which kind arrived, and the two
     // need different handling.  A fault's frame carries the address it named;
@@ -398,6 +529,14 @@ pub unsafe extern "C" fn aarch64_exception_dispatch(frame: *mut ExceptionFrame) 
     // controller has to be told when the handler is done.
     if frame.is_irq() {
         return finish_irq(frame);
+    }
+
+    // A supervisor call from EL0 is the one exception that is a *request*: a
+    // program asking the kernel to do something.  It is served and the program
+    // resumed, which is what makes this the first path in the tree where
+    // something outside the kernel can reach the registry.
+    if frame.is_user_supervisor_call() {
+        return serve_user_call(frame);
     }
 
     let shared = irq::Frame::fault(frame.vector as usize, frame.far as usize);

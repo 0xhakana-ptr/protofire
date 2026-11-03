@@ -322,6 +322,70 @@ pub fn managed_frames() -> usize {
     tables.frames.total_frames()
 }
 
+/// Map `physical` at `virtual_address`, reachable from EL0.
+///
+/// ## Why this is not `map_region`
+///
+/// `map_region` re-encodes an existing identity-mapped page with different
+/// permissions: the virtual address and the physical one are the same number.
+/// A program's text is not identity mapped — it lives in a frame the allocator
+/// handed out, at an address of the kernel's choosing — so the two differ and
+/// the entry has to say so.
+///
+/// The permissions are `user: true` and executable: this is code a ring-3
+/// program runs, which is the whole point of the mapping.  The kernel's own
+/// text is `user: false`, and an entry that was not would let a program read
+/// the kernel through the address it happens to be at.
+///
+/// # Safety
+///
+/// `virtual_address` and `physical` must be page-aligned, `physical` must be a
+/// live frame, and the caller must have chosen a virtual address no other
+/// mapping owns.
+#[cfg(target_os = "none")]
+pub unsafe fn map_user_page(virtual_address: usize, physical: usize) -> bool {
+    let tables = TABLES.get();
+    // SAFETY: the static is this module's, and this runs after `install`.
+    let tables = unsafe { &mut *tables };
+
+    if virtual_address >= IDENTITY_LIMIT || !virtual_address.is_multiple_of(GRANULE) {
+        return false;
+    }
+    let Some(leaf) = leaf_for(&tables.root, virtual_address) else {
+        return false;
+    };
+
+    let entry = Entry::page(
+        physical,
+        Permissions {
+            writable: true,
+            executable: true,
+            user: true,
+            cache: paging::Cache::Normal,
+        },
+    );
+    leaf.set_entry(
+        index(Level::Leaf, virtual_address),
+        encode(entry, Level::Leaf),
+    );
+    arch::flush_translation();
+    true
+}
+
+/// A frame for a program's image, zeroed and owned by the caller.
+///
+/// `None` when the pool is empty or the machine's tables cannot describe the
+/// page.  The frame is not freed by the kernel: a program's image lives as long
+/// as the program does.
+#[cfg(target_os = "none")]
+pub fn allocate_image_frame() -> Option<usize> {
+    let tables = TABLES.get();
+    // SAFETY: the static is this module's, and this runs after `install`.
+    let tables = unsafe { &mut *tables };
+    let frame = tables.frames.allocate(1)?;
+    (!frame.is_null()).then_some(frame as usize)
+}
+
 /// Take one frame, as a page table would, and report whether it worked.
 ///
 /// ## Why the boot calls this

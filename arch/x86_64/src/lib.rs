@@ -105,3 +105,59 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
 pub unsafe fn message_frame() -> Option<()> {
     None
 }
+
+/// What a supervisor call's handler answers.
+///
+/// Shared shape with the aarch64 crate so the kernel names one type: a machine
+/// without an entry still has to answer what a call would mean, and
+/// `unreachable` in `enter_user` is what makes the answer untested rather than
+/// wrong.
+#[derive(Debug, Clone, Copy)]
+pub struct CallFrame {
+    /// The number the program put in its syscall register.
+    pub number: usize,
+    /// The six arguments.
+    pub arguments: [usize; 6],
+    /// Where the program resumes.
+    pub resume: usize,
+}
+
+/// What a call's handler answers.
+#[derive(Debug, Clone, Copy)]
+pub enum CallOutcome {
+    /// Resume the program with this value.
+    Return(usize),
+    /// The program has ended.
+    Exit(usize),
+}
+
+/// The function a supervisor call is handed to.
+#[cfg(target_os = "none")]
+pub type CallSink = fn(CallFrame) -> CallOutcome;
+
+/// Install the function that serves a program's supervisor call: no-op here.
+///
+/// # Safety
+///
+/// As the aarch64 arm: once, before any program can run.
+#[cfg(target_os = "none")]
+pub unsafe fn set_call_sink(sink: CallSink) {
+    let _ = sink;
+}
+
+/// Enter ring 3: this machine has no path yet.
+///
+/// The pieces exist — ring 3 needs a TSS with an RSP0, a user-accessible GDT
+/// segment, and a gate with DPL 3, and `idt.rs` installs every gate at DPL 0
+/// because nothing has ever entered ring 3 on this machine.  Declaring this
+/// `unreachable` rather than stopping the machine is the honest thing: a caller
+/// that reached it would be a caller whose boot assumed a capability this crate
+/// does not have.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn enter_user(_entry: usize, _stack_top: usize) -> ! {
+    unreachable!("ring 3 is not implemented on x86_64 yet")
+}

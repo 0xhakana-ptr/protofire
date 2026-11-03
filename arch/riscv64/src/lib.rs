@@ -126,3 +126,56 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
 pub unsafe fn message_frame() -> Option<()> {
     None
 }
+
+/// What a supervisor call's handler answers.
+///
+/// Shared shape with the aarch64 crate so the kernel names one type: a machine
+/// without an entry still has to answer what a call would mean, and
+/// `unreachable` in `enter_user` is what makes the answer untested rather than
+/// wrong.
+#[derive(Debug, Clone, Copy)]
+pub struct CallFrame {
+    /// The number the program put in its syscall register.
+    pub number: usize,
+    /// The six arguments.
+    pub arguments: [usize; 6],
+    /// Where the program resumes.
+    pub resume: usize,
+}
+
+/// What a call's handler answers.
+#[derive(Debug, Clone, Copy)]
+pub enum CallOutcome {
+    /// Resume the program with this value.
+    Return(usize),
+    /// The program has ended.
+    Exit(usize),
+}
+
+/// The function a supervisor call is handed to.
+#[cfg(target_os = "none")]
+pub type CallSink = fn(CallFrame) -> CallOutcome;
+
+/// Install the function that serves a program's supervisor call: no-op here.
+///
+/// # Safety
+///
+/// As the aarch64 arm: once, before any program can run.
+#[cfg(target_os = "none")]
+pub unsafe fn set_call_sink(sink: CallSink) {
+    let _ = sink;
+}
+
+/// Enter U-mode: this machine has no boot and no path.
+///
+/// U-mode needs a `sstatus.SPP` clear, an `sepc`, and a trap entry at `stvec`;
+/// this crate has the last of the three and neither of the others, because
+/// nothing has entered it.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn enter_user(_entry: usize, _stack_top: usize) -> ! {
+    unreachable!("U-mode is not implemented on riscv64 yet")
+}

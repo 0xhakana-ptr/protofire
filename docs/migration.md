@@ -92,11 +92,45 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
-x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
-process layer: EL0, a scheduler, and a trap path that carries the syscall
-registers.  Everything below it is now in place and in use — the policy decides
-an `open`, the registry outlives the boot, and the frame allocator hands out the
-pages a page table is built from.
+x86_64 — the port I/O the PCI bus is reached through.  What comes next is a
+second process: the scheduler, a per-process address space, and the `TTBR0_EL1`
+swap that makes one program's pages invisible to another.  A program runs at EL0
+now, which is the part that needed everything below it.
+
+### A program at EL0
+
+    protofire: entering ring 3
+    protofire: program mapped 1
+    hello from ring 3
+    protofire: program exited with 0
+
+Thirty-two bytes of AArch64, mapped `user`, entered with an `eret` that names
+EL0, and its `svc` served and resumed.  It is the first thing in this tree that
+does not run at EL1.
+
+The program is written as words with a table of what each one encodes, and the
+bytes were disassembled by `llvm-objdump` before they were written down — a
+program encoded by hand is one the machine fetches as different instructions,
+and the failure would be a trap at a plausible address rather than a message.
+
+**The first version of it could not fail.**  It called `Write`, ignored the
+answer, and exited zero.  Deleting the trap path's write-back of `x0` changed no
+output at all: the boot printed the same three lines.  The program now compares
+`x0` against what `Write` answered — seventeen, the length of the line — and
+exits two when the comparison fails.  Deleting the write-back makes it exit two,
+and the gate requires the exit status exactly.
+
+Two mutations were run against the entry path and both failed as they should.
+Setting `SPSR_EL1` to EL1h instead of EL0t leaves the program's page mapped
+`user` with no EL1 execute permission, and the boot stops at
+`instruction abort at 0x1000000` — which is the `user` bit being real rather
+than decorative.
+
+What is not here: a second program.  `enter_user` does not return and `Exit`
+stops the machine, because there is no scheduler to run next and no address
+space to switch to.  The page is in the kernel's own table with `user: true`;
+that protects the kernel from the program and does not protect one program from
+another.
 
 ### The frame allocator, and the loop it breaks
 

@@ -43,6 +43,11 @@ pub mod paging;
 pub mod port;
 pub mod serial;
 pub mod trap;
+
+pub use trap::CallFrame;
+pub use trap::CallOutcome;
+#[cfg(target_os = "none")]
+pub use trap::set_call_sink;
 pub mod vbar;
 
 /// Stop this CPU until an interrupt arrives.
@@ -144,6 +149,69 @@ pub unsafe fn message_frame() -> Option<gicv2m::Frame> {
     let base = boot::msi_frame()?;
     // SAFETY: `base` is the `arm,gic-v2m-frame` window the tree named.
     Some(unsafe { gicv2m::Frame::probe(base) })
+}
+
+/// The exception level a program runs at.
+///
+/// Named because it appears in `SPSR_EL1`'s `M` field, and a bare `0b0000` in
+/// that field is a value a reader has to decode every time.
+pub const USER_EXCEPTION_LEVEL: u64 = 0;
+
+/// `SPSR_EL1` for a return to EL0.
+///
+/// The `M` field is `0b0000` — EL0t, the only state a program runs in — and the
+/// DAIF bits are set, so a program does not take an interrupt directly.  A
+/// program that could would be one taking an exception the kernel has no frame
+/// for.
+///
+/// Bit 9 (`D`) is set rather than clear for a reason worth naming: with it
+/// clear at EL0, a program's debug exception would arrive on a vector the
+/// kernel installed for something else.  This kernel has no debugger to attach,
+/// so the mask is the honest setting.
+pub const SPSR_EL0T: u64 = 0x3C0;
+
+/// Enter EL0 at `entry` with the stack at `stack_top`.
+///
+/// ## What this does that nothing else in this tree did
+///
+/// Everything up to here runs at EL1.  Returning to a lower exception level is
+/// an `eret` with `SPSR_EL1` naming EL0 and `ELR_EL1` naming where in the
+/// program to start — the same instruction the trap path already ends with,
+/// pointed somewhere new.  What made it impossible before is not the
+/// instruction: it is that no mapping was `user` and no frame carried a
+/// program.
+///
+/// ## Why it does not return
+///
+/// Control does not come back here.  The program returns to the kernel through
+/// a trap — a syscall or an exit — and the trap path is what resumes the
+/// kernel.  A function that "returned" would be claiming a program can finish
+/// without trapping, which it cannot: EL0 has no way out except an exception.
+///
+/// # Safety
+///
+/// `entry` must be a virtual address mapped `user` and executable, `stack_top`
+/// must be a `user`-accessible page's end, and the caller must have no live
+/// state on the kernel stack that an exception could not restore — the trap
+/// path builds its own frame and resumes through it.
+#[cfg(target_os = "none")]
+pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
+    // SAFETY: the caller promises the two addresses are mapped for EL0.  The
+    // `eret` is the architecture's own return-to-lower-EL instruction, and
+    // `isb` is what makes the system-register writes visible to it.
+    unsafe {
+        core::arch::asm!(
+            "msr elr_el1, {entry}",
+            "msr sp_el0, {stack}",
+            "msr spsr_el1, {spsr}",
+            "isb",
+            "eret",
+            entry = in(reg) entry as u64,
+            stack = in(reg) stack_top as u64,
+            spsr = in(reg) SPSR_EL0T,
+            options(noreturn)
+        )
+    }
 }
 
 /// Raise one interrupt from the controller, as a device would.

@@ -111,6 +111,36 @@ pub use arch_riscv64::boot::interrupt_controller;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::boot::interrupt_controller;
 
+// A program's calls, and the way in.  Every machine names the types; only the
+// machines that can enter a lower exception level have a path.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::CallFrame;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::CallFrame;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::CallFrame;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::CallOutcome;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::CallOutcome;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::CallOutcome;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::enter_user;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::enter_user;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::enter_user;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::set_call_sink;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::set_call_sink;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::set_call_sink;
+
 // How much memory this machine has, for a frame allocator that must clamp to
 // what is really there.  `None` means "use the pool's own span".
 #[cfg(target_arch = "aarch64")]
