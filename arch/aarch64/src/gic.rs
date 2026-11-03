@@ -57,6 +57,8 @@ pub const DIST_ITARGETSR: usize = 0x800;
 pub const DIST_SGIR: usize = 0xF00;
 /// `GICD_IGROUPR`: one bit per interrupt — set means group 1.
 pub const DIST_IGROUPR: usize = 0x080;
+/// `GICD_ICFGR`: two bits per interrupt — the odd one says edge-triggered.
+pub const DIST_ICFGR: usize = 0xC00;
 
 /// The priority a device's interrupt is given.
 ///
@@ -99,6 +101,15 @@ impl Distributor {
     /// The shift of interrupt `number`'s byte inside `IPRIORITYR`'s register.
     pub const fn priority_shift(number: usize) -> u32 {
         ((number % 4) * 8) as u32
+    }
+
+    /// The shift of interrupt `number`'s two-bit configuration field.
+    ///
+    /// `ICFGR` is two bits per interrupt, sixteen per register, and **the
+    /// second bit is the one that matters**: it is `1` for edge-triggered and
+    /// `0` for level-sensitive.  The first bit is reserved and reads as zero.
+    pub const fn config_shift(number: usize) -> u32 {
+        ((number % 16) * 2) as u32
     }
 
     /// Enable the distributor itself.
@@ -286,7 +297,16 @@ impl Gic {
     /// 3. `ITARGETSR` — which CPU.  On a GICv2 the byte is a bitmask of cores,
     ///    and on a machine with one core it is `0x01`.  Not written, the line
     ///    goes nowhere.
-    /// 4. `ISENABLER` — the enable bit.
+    /// 4. `ICFGR` — **edge-triggered**, and this is the one a message-signalled
+    ///    interrupt cannot do without.
+    ///
+    ///    GIC's shared peripheral interrupts default to *level-sensitive*,
+    ///    which means the distributor holds an interrupt pending only while
+    ///    the line is asserted.  An MSI is a write: the device asserts and
+    ///    deasserts in one operation with nothing between them, so a
+    ///    level-sensitive line is pending for no time at all and `ISPENDR`
+    ///    reads zero.  The interrupt never existed rather than never arrived.
+    /// 5. `ISENABLER` — the enable bit.
     ///
     /// A number below 32 is a per-CPU interrupt: its enable bit is read-only in
     /// the distributor, and its target byte does not exist.  So this refuses
@@ -321,6 +341,14 @@ impl Gic {
             let current = read(targets);
             let shift = Distributor::priority_shift(number);
             write(targets, (current & !(0xFF << shift)) | (1u32 << shift));
+
+            // Edge-triggered, before the enable.
+            let config = self.distributor.array_address(DIST_ICFGR, number, 16);
+            let current = read(config);
+            write(
+                config,
+                current | (1 << (Distributor::config_shift(number) + 1)),
+            );
 
             let enable = self.distributor.array_address(DIST_ISENABLER, number, 32);
             write(enable, Distributor::enable_bit(number));

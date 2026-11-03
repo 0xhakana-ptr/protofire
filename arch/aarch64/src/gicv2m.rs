@@ -34,8 +34,26 @@
 
 /// `GICV2M_MSI_TYPER`: the interrupt range this frame raises.
 pub const MSI_TYPER: usize = 0x008;
-/// The first `MSI_SET_SPI` register; slot `n` is four bytes past it.
-pub const MSI_SET_SPI: usize = 0x000;
+/// The first `GICV2M_MSI_SETSPI_NS` register; slot `n` is four bytes past it.
+///
+/// ## Why `0x40` and not `0x00`
+///
+/// A GICv2m frame has **two aliases** of the same array: `0x0000` for secure
+/// accesses and `0x0040` for non-secure ones.  A kernel running at non-secure
+/// EL1 — which is every kernel that arrived through EL2, and the one this tree
+/// boots — must use the non-secure alias.
+///
+/// A write to the secure alias from non-secure state is not an error and does
+/// not fault: the frame simply does not act on it.  `ISPENDR` stays zero, the
+/// interrupt never exists, and the symptom is indistinguishable from a
+/// misconfigured distributor.  Six separate things were checked before this one
+/// — the line's enable, its group, its trigger, its target, its priority, and
+/// the distributor's own enable, all of which read back correct — because a
+/// silent write to the wrong alias looks exactly like a correct write that did
+/// nothing.
+pub const MSI_SET_SPI: usize = 0x040;
+/// The secure alias's first register, which this kernel must not use.
+pub const MSI_SET_SPI_SECURE: usize = 0x000;
 
 /// The first interrupt number, from `MSI_TYPER` bits 0..10.
 pub const TYPER_FIRST_MASK: u32 = 0x03FF;
@@ -113,6 +131,9 @@ impl Frame {
     /// This is the address an MSI-X table entry holds.  The value the device
     /// writes is not part of the selection: **the address is**, which is why
     /// this is a computed value and a caller cannot pick one.
+    ///
+    /// It is the **non-secure** alias, because that is the only one this
+    /// kernel's exception level may use.
     pub const fn address(&self, slot: u32) -> Option<u64> {
         if self.holds(slot) {
             Some((self.base + MSI_SET_SPI + (slot as usize) * 4) as u64)

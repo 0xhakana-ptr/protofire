@@ -121,19 +121,38 @@ Five defects were fixed while writing it, and four were in the test fake:
 reads `MSI_TYPER` and reports what it found: `msi frame raises 80 interrupt(s)
 from 64`, which is `0x0050_0040` decoded and not assumed.
 
-**A write to `MSI_SET_SPI` does not raise an interrupt on this machine.**
-Reading `MSI_TYPER` works, so the window is mapped and readable.  Writing it
-leaves `GICD_ISPENDR` at zero — the frame produces nothing, so this is not a
-delivery problem.  Three candidate interrupt numbers were enabled (the frame's
-own report of 64, and 48 and 80 from QEMU's `base-spi`/`num-spi` device
-properties, which disagree with `MSI_TYPER`), and none arrived.  Writing the
-same address from QEMU's monitor does not raise one either.
+**A write to `MSI_SET_SPI` does not raise an interrupt on this machine.**  The
+frame is real, its registers read, and QEMU reports it as `arm-gicv2m` with 64
+interrupts from SPI 48.  Every prerequisite was then checked, and each was
+either already correct or irrelevant:
 
-So the boot test was removed rather than left passing vacuously, and the two
-crates stay: they are arithmetic over a specification, and the
-specification-shaped half is tested.  What is not known is why QEMU's frame does
-not act on the write, and the next step is to find that out rather than to build
-a driver on top of it.
+| checked | how | result |
+|---|---|---|
+| the window is mapped | `MSI_TYPER` reads `0x0050_0040` | mapped, readable |
+| the line is enabled | `GICD_ISENABLER0+8` bit 0 | set |
+| the line is group 1 | `GICD_IGROUPR0+8` bit 0 | set |
+| the line is edge-triggered | `GICD_ICFGR2` bit 1 | set |
+| the distributor is on | `GICD_CTLR` | `0x3`, both groups |
+| the CPU interface is on | `GICC_CTLR`, `GICC_PMR` | `0x1`, `0xff` |
+| interrupts are masked | `DAIF` | clear |
+| the controller is GICv2 | `GICD_PIDR2` bits 7..4 | `2` |
+| the secure alias was the problem | wrote `0x0040` instead of `0x0000` | neither acts |
+| the number was wrong | enabled 64, and 48 and 80 from `base-spi` | none arrives |
+| the write is what does it | wrote the same address from QEMU's monitor | nothing |
+
+`ISPENDR` stays zero throughout, so **the frame produces nothing at all** — this
+is not a delivery problem and no amount of distributor configuration reaches it.
+QEMU's frame also answers zero to every identification register (`PIDR2` at
+`0xfe8` reads `0`), which a real GICv2m would not.
+
+The honest conclusion is that this QEMU build's `arm-gicv2m` does not act on the
+write, and the reason was not found.  The boot test was removed rather than left
+passing vacuously, and the two crates stay: they are arithmetic over a
+specification and that half is tested.  A driver built on a mechanism that has
+never been seen to work would be the defect this file keeps recording.
+
+The GIC itself is not in question: the software-generated interrupt above
+travels the whole path, and that is the half MSI-X shares.
 
 ### The interrupt controller, and the probe that could not fail
 

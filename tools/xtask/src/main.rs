@@ -242,7 +242,15 @@ impl Machine {
                 // the boot prints "raised but not delivered" instead.
                 ("protofire: interrupt delivered to its handler", true),
                 ("protofire: heap at ", false),
-                ("protofire: block device from ", false),
+                // The driver running on the device, and doing real I/O on it.
+                //
+                // `block device from memory` is the fallback: a machine with no
+                // disk prints it and boots anyway, which is correct and is not
+                // the same claim.  These two lines name the virtio path, and
+                // the second is a sector leaving the machine and coming back
+                // through the driver's own queue.
+                ("protofire: block device from virtio-blk on pci", true),
+                ("protofire: virtio-blk wrote and read back sector ", false),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
