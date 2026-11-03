@@ -142,7 +142,34 @@ pub const XATTR_NAME_MAX: usize = 64;
 /// Maximum byte length of an xattr value.
 pub const XATTR_VALUE_MAX: usize = 256;
 
-// fcntl command constants (Linux-compatible values)
+// Open flags
+//
+// A program passes one of these as `open`'s second argument and the kernel
+// decodes them; the numbers are the wire format, so a program compiled against
+// different ones would ask for an access mode it did not get.
+
+/// Open for reading only, which is what a caller that names no flag gets.
+pub const OPEN_FLAG_NONE: usize = 0;
+/// Open for reading.
+pub const OPEN_FLAG_READ: usize = 1 << 0;
+/// Open for writing.
+pub const OPEN_FLAG_WRITE: usize = 1 << 1;
+/// Create the file if it does not exist.
+pub const OPEN_FLAG_CREATE: usize = 1 << 2;
+/// The flags this build understands.
+///
+/// A handler validates against this set rather than masking the unknown bits
+/// off: a caller asking for a flag a newer ABI defines should be told this
+/// kernel does not have it, not silently given the behaviour it did not ask
+/// for.
+pub const OPEN_KNOWN_FLAGS: usize = OPEN_FLAG_READ | OPEN_FLAG_WRITE | OPEN_FLAG_CREATE;
+
+// fcntl command constants
+//
+// These are wire values: a program's headers carry them, and the kernel serves
+// them by number.  Their numbers are therefore pinned by the ABI tests rather
+// than chosen here, which is the same reason every other number in this crate
+// is written with its value spelled out.
 
 /// Duplicate `fd` to the lowest free descriptor `>= arg`.
 pub const F_DUPFD: usize = 0;
@@ -162,7 +189,10 @@ pub const F_GETPIPE_SZ: usize = 1032;
 /// Close-on-exec per-fd flag (bit 0 of the [`F_GETFD`]/[`F_SETFD`] value).
 pub const FD_CLOEXEC: usize = 1;
 
-/// Non-blocking I/O status flag (Linux `O_NONBLOCK` value 0o4000).
+/// Non-blocking I/O status flag.
+///
+/// `0o4000`, and the value is the wire format's: a program compiled against a
+/// different bit would have its `F_SETFL` silently do nothing.
 pub const O_NONBLOCK: usize = 0o4000;
 
 // fallocate modes
@@ -503,5 +533,45 @@ mod tests {
         assert_eq!(record.name_offset, DIRECTORY_ENTRY_RECORD_SIZE);
         assert_eq!(record.name_len, 5);
         assert_eq!(record.size, 3);
+    }
+
+    /// The open flags keep their values, and the known set covers exactly them.
+    ///
+    /// These cross the boundary: a program compiled against `1 << 1` asking for
+    /// write would be given read if this moved, and nothing would fail to
+    /// compile.  The known mask is asserted here because a flag added to the
+    /// list below without joining the mask is a flag every handler will refuse.
+    #[test]
+    fn open_flags_keep_their_values() {
+        use super::OPEN_FLAG_CREATE;
+        use super::OPEN_FLAG_NONE;
+        use super::OPEN_FLAG_READ;
+        use super::OPEN_FLAG_WRITE;
+        use super::OPEN_KNOWN_FLAGS;
+        assert_eq!(OPEN_FLAG_NONE, 0);
+        assert_eq!(OPEN_FLAG_READ, 1);
+        assert_eq!(OPEN_FLAG_WRITE, 2);
+        assert_eq!(OPEN_FLAG_CREATE, 4);
+        assert_eq!(OPEN_KNOWN_FLAGS, 7);
+    }
+
+    /// The fcntl numbers are the wire format and are pinned.
+    #[test]
+    fn fcntl_numbers_keep_their_values() {
+        use super::F_DUPFD;
+        use super::F_GETFD;
+        use super::F_GETFL;
+        use super::F_GETPIPE_SZ;
+        use super::F_SETFD;
+        use super::F_SETFL;
+        use super::F_SETPIPE_SZ;
+        assert_eq!(F_DUPFD, 0);
+        assert_eq!(F_GETFD, 1);
+        assert_eq!(F_SETFD, 2);
+        assert_eq!(F_GETFL, 3);
+        assert_eq!(F_SETFL, 4);
+        assert_eq!(F_SETPIPE_SZ, 1031);
+        assert_eq!(F_GETPIPE_SZ, 1032);
+        assert_eq!(super::O_NONBLOCK, 0o4000);
     }
 }

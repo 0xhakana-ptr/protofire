@@ -5,11 +5,21 @@
 //! ## What lives here, and what does not
 //!
 //! A subsystem becomes a crate when something else needs to name it without
-//! naming the kernel.  `fs`, `memory` and `net` are crates for that reason —
-//! they are asked questions by `syscall`, by drivers, and by each other, and a
-//! crate boundary is what makes "who may name whom" a compiler error rather
-//! than a convention.  What stays here is what only the kernel core organises:
-//! scheduling, IPC, power, and the boot sequence that puts them in order.
+//! naming the kernel.  `fs`, `memory`, `net`, `ipc` and `power` are crates for
+//! that reason — they are asked questions by `syscall`, by drivers, and by each
+//! other, and a crate boundary is what makes "who may name whom" a compiler
+//! error rather than a convention.  What stays here is what only the kernel
+//! core organises: scheduling, and the boot sequence that puts the subsystems
+//! in order.
+//!
+//! `ipc` and `power` are crates of their own even though the kernel is their
+//! only caller today.  A ring buffer and a governor are arithmetic over values,
+//! and arithmetic that can only be tested by booting is arithmetic nobody
+//! tests; naming them through a manifest is what keeps a test on the host
+//! cheap.  Their halves that need a machine — the pipe endpoints that park a
+//! reader, the `cpufreq` dispatchers that ask for an MSR — arrive in those
+//! crates and reach the kernel through an injected hook, not by moving the
+//! crate here.
 //!
 //! ## The boot sequence
 //!
@@ -26,9 +36,8 @@
 // error, and an allocator nobody allocates from is a heap with no caller.
 extern crate alloc;
 
-pub mod ipc;
-pub mod power;
 pub mod scheduler;
+pub mod syscall;
 
 // The heap's global allocator, installed here because this is the crate that
 // knows it is a kernel.
@@ -159,23 +168,31 @@ pub fn kernel_main() -> ! {
         }
     };
 
-    let read_ok = match fs::FileSystem::lookup(&volume, "/greeting.txt") {
-        Ok(node) => {
-            let mut buffer = [0u8; BOOT_VOLUME_CONTENT.len()];
-            match node.read(0, &mut buffer) {
-                Ok(count) if count == BOOT_VOLUME_CONTENT.len() => buffer == *BOOT_VOLUME_CONTENT,
-                _ => false,
-            }
-        }
-        Err(_) => false,
-    };
+    // The read happens through a syscall, not through the filesystem.
+    //
+    // The registry is handed the mounted volume and is then the only thing
+    // that can reach it: every later step names a descriptor and a number, and
+    // the only code that reaches a `VNode` is the handler `open` leads to.
+    // That is what makes this a boot of the syscall path rather than a boot
+    // that happens to have one compiled in — and it is the step the previous
+    // version of this function skipped, which is why the table was written and
+    // never executed.
+    let mut table = crate::syscall::SyscallTable::new();
+    table.set_volume(alloc::sync::Arc::new(volume));
+    table.register(::syscall::SyscallNumber::Open, crate::syscall::open);
+    table.register(::syscall::SyscallNumber::Read, crate::syscall::read);
+    table.register(::syscall::SyscallNumber::Close, crate::syscall::close);
+
+    let read_ok = read_greeting_through_syscall(&mut table);
 
     arch::serial::write_str("protofire: filesystem ");
     if read_ok {
-        arch::serial::write_str("mounted and read /greeting.txt, label ");
+        arch::serial::write_str(
+            "mounted and read /greeting.txt through syscall open/read/close, label ",
+        );
         arch::serial::write_str(BOOT_VOLUME_LABEL);
     } else {
-        arch::serial::write_str("FAILED to read /greeting.txt");
+        arch::serial::write_str("FAILED to read /greeting.txt through syscall open/read/close");
     }
     arch::serial::write_str("\n");
 
@@ -190,6 +207,70 @@ const BOOT_VOLUME_LABEL: &str = "protofire";
 /// A string no other file in the tree contains: a check that compared a
 /// constant against itself would pass on a volume that was never written.
 const BOOT_VOLUME_CONTENT: &[u8] = b"the quick brown pyrofox";
+
+/// The path the boot opens and reads.
+const BOOT_VOLUME_PATH: &str = "/greeting.txt";
+
+/// Read the boot's file through the syscall table.
+///
+/// Three calls — open, read, close — each built the way a program builds one:
+/// a number, six argument words, and a value or an error back.  The result is
+/// whether the bytes are the ones the image was built with; a caller that wants
+/// the reason a boot failed has the console, which is what the boot prints.
+///
+/// The buffer is a local rather than a fixed address, and it reaches the
+/// handler as a borrow.  That is the whole of this function's contribution to
+/// safety: nothing here turns a number into a pointer.
+fn read_greeting_through_syscall(table: &mut crate::syscall::SyscallTable) -> bool {
+    use crate::syscall::Arguments;
+    use ::syscall::SyscallContext;
+
+    // open(path, flags)
+    let mut context = SyscallContext::new(
+        ::syscall::SyscallNumber::Open as usize,
+        [0, abi::fs::OPEN_FLAG_READ, 0, 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: Some(BOOT_VOLUME_PATH),
+        buffer: None,
+    };
+    let Ok(dispatch) = table.dispatch(&mut arguments) else {
+        return false;
+    };
+    let descriptor = dispatch.value;
+
+    // read(descriptor, offset, buffer)
+    let mut buffer = [0u8; BOOT_VOLUME_CONTENT.len()];
+    let mut context = SyscallContext::new(
+        ::syscall::SyscallNumber::Read as usize,
+        [descriptor, crate::syscall::READ_OFFSET_CURRENT, 0, 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        buffer: Some(&mut buffer),
+    };
+    let read_ok = match table.dispatch(&mut arguments) {
+        Ok(dispatch) => {
+            dispatch.value == BOOT_VOLUME_CONTENT.len() && buffer == *BOOT_VOLUME_CONTENT
+        }
+        Err(_) => false,
+    };
+
+    // close(descriptor)
+    //
+    // The close runs even when the read failed: a slot left open in a table
+    // this small is the kind of leak that shows up as a limit much later.
+    let mut context = SyscallContext::new(
+        ::syscall::SyscallNumber::Close as usize,
+        [descriptor, 0, 0, 0, 0, 0],
+    );
+    let mut arguments = Arguments::plain(&mut context);
+    let close_ok = table.dispatch(&mut arguments).is_ok();
+
+    read_ok && close_ok && table.open_descriptors() == 0
+}
 
 /// The allocator's diagnostic sink: the console, one string at a time.
 ///

@@ -129,7 +129,12 @@ census >"$work/census.txt"
 
 if [ "$mode" = "record" ]; then
     next="$work/baseline.new"
-    grep -E '^[[:space:]]*(#|$)' "$BASELINE" >"$next" 2>/dev/null || true
+    # The header, with its blank lines squeezed to one: the original file has a
+    # run of them, and a re-record that copied the run verbatim and then added
+    # another would grow the header by a line every time the census was taken.
+    grep -E '^[[:space:]]*(#|$)' "$BASELINE" 2>/dev/null \
+        | awk 'BEGIN { blank = 0 } /^[[:space:]]*$/ { blank = 1; next } { if (blank) print ""; blank = 0; print }' \
+        >"$next" || true
     printf '\n' >>"$next"
     # Keep each row's trailing note: it is the argument for the row, and a
     # re-record is a change in the tree, not a change of mind about why it is

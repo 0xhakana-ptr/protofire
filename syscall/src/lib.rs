@@ -13,8 +13,18 @@
 //! What is not here is the registry: the table from a number to the function
 //! that serves it.  Every entry names a subsystem — the filesystem, the
 //! network, the scheduler — so the table belongs where those are, and it moves
-//! when they do.  The split is the same one `fs` makes between `VNode` and a
-//! volume.
+//! when they do.  It is at `kernel/src/syscall/mod.rs` today, serving `open`,
+//! `read` and `close` against the mounted volume.  The split is the same one
+//! `fs` makes between `VNode` and a volume.
+//!
+//! ## The handler type, and why the kernel does not use it
+//!
+//! [`table::SyscallHandler`] takes the context alone, which is the right shape
+//! for a handler with no state.  The kernel's three handlers need the table
+//! they were reached through — the descriptor array is in it — so the kernel
+//! names its own type that takes the table as well.  This crate's type stays
+//! the statement of what a stateless handler is; a later `yield` or `getpid`
+//! can be registered through it by wrapping.
 //!
 //! ## Why the numbering is a crate
 //!
@@ -26,9 +36,12 @@
 //!
 //! ## The promise
 //!
-//! Numbers below [`FROZEN_SYSCALL_COUNT`] are frozen: assigned once, never
-//! reused, never renumbered.  The tests below pin every one of them, which is
-//! what makes the promise checkable rather than stated.
+//! Numbers up to and including 120 are frozen: assigned once, never reused,
+//! never renumbered.  The tests below pin the ones a program is most likely to
+//! have hard-coded, which is what makes the promise checkable rather than
+//! stated.  Above 120 the numbering is still the wire format but the set may
+//! grow, and [`table::PUBLIC_SYSCALL_COUNT`] is the number both sides agree on
+//! for a build.
 
 #![no_std]
 

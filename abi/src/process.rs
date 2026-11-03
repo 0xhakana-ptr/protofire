@@ -73,7 +73,10 @@ pub const fn is_valid_process_signal(signal: usize) -> bool {
 }
 
 /// `sa_flags` bit: restart interrupted syscalls after the handler returns.
-/// Matches the Linux value (bit 28 of `sa_flags`).
+///
+/// Bit 28, and the position is part of the wire format: a program's headers
+/// carry the same number, so this is pinned by the ABI tests rather than chosen
+/// here.
 pub const SA_RESTART: u64 = 0x1000_0000;
 
 /// Mask of `SA_*` flags the kernel understands and will act on.  Only

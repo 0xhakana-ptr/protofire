@@ -59,14 +59,15 @@
 # target frequency out.  It names `abi` for the driver trait the architecture
 # crates implement, and nothing else — which is what lets its arithmetic be
 # tested on a host.  The half that probes a machine arrives with the `cpufreq`
-# modules in the architecture crates, and moves up then.
+# modules in the architecture crates, and reaches the policy through the trait
+# rather than by moving this crate up to the kernel.
 2 power
 
 # `ipc` is the pipe's ring buffer: a fixed buffer, two cursors and a count.  It
 # names `abi` for the error a refused resize returns, and nothing else.  The
 # pipe's endpoints — the half that parks a reader or a writer — arrive with the
-# wait queue and move up to the kernel's layer then, because parking is the
-# scheduler's act.
+# wait queue, and parking is the scheduler's act: that half lives in the kernel
+# and hands bytes to this ring, which never learns what a thread is.
 2 ipc
 
 # ── Layer 3: the machine ────────────────────────────────────────────────────
@@ -99,15 +100,13 @@
 # So `sync` names `arch`, and everything that wants a lock also carries the
 # machine layer with it.  That is the price, and it is cheaper than the
 # alternative.
-# `block` is the disk interface: what a driver implements and what a filesystem
-# reads.  It is below both so that neither has to name the other, which is the
-# argument the previous tree's `kernel/block.rs` header makes and this tree
-# enforces.
-6 block
-
-# `sync` is here rather than at layer 0, and that placement is a decision with a
-# cost, so it is argued rather than assumed.
 5 sync
+
+# `block` is the disk interface: what a driver implements and what a filesystem
+# reads.  It is below both so that neither has to name the other.  The driver
+# list grows with every machine and the filesystem list does not, so a trait
+# owned by the filesystem would make each new driver depend on it.
+6 block
 
 # `memory` is the frame pool and the region pools: a range and a bitmap, plus one
 # injected hook for "make this range writable".  It does *not* name `arch` — the
@@ -115,14 +114,9 @@
 # difference between this layer and `sync`'s, and it is deliberate.
 4 memory
 
-# `security` is the token and the MAC policy.  Below both the filesystem and the
-# process layer, because both must ask it and neither may name the other to do
-# so.  A denial goes through a sink rather than into an audit record, because
-# finding the current process is the audit layer's business.
-# `security` is the token and the MAC policy.  It is *below* the filesystem and
+# `security` is the token and the MAC policy.  It is below the filesystem and
 # the process layer because both have to ask it, and neither may name the other
-# to do so — the same argument the previous tree's `kernel/security/mod.rs`
-# makes.  A denial goes through a sink rather than into an audit record,
+# to do so.  A denial goes through a sink rather than into an audit record,
 # because finding the current process is the audit layer's business.
 6 security
 
@@ -157,10 +151,18 @@
 7 fs
 7 net
 
-# ── Layer 6: the kernel core ────────────────────────────────────────────────
+# ── Layer 6: the core ───────────────────────────────────────────────────────
 #
-# The boot sequence, the scheduler, IPC, power, and whatever else only the kernel
-# organises.  It may name everything below.
+# The boot sequence, the scheduler, and whatever else only the kernel organises.
+# It may name everything below.
+#
+# `ipc` and `power` are *not* here.  Their rings and their governors are
+# arithmetic over values, and arithmetic that can only be exercised by booting
+# is arithmetic nobody checks; both are crates at layer 2 so a host test can
+# reach them.  What belongs to the kernel is the half that needs a machine or a
+# scheduler — the pipe endpoints that park a reader, the `cpufreq` dispatchers
+# that touch an MSR — and that half reaches the kernel through an injected hook
+# rather than by pulling the crate up here.
 9 kernel
 
 # ── Layer 8: the image ──────────────────────────────────────────────────────
@@ -182,3 +184,18 @@
 
 # `xtask` is the build tool: `clap` and `anyhow`, no crate of this tree.
 10 xtask
+
+# ── Layer 9: programs ───────────────────────────────────────────────────────
+#
+# A program is not a crate of the kernel: it compiles against `abi` and reaches
+# everything else through syscalls, so it names nothing below it and nothing
+# below it names it.  The layer is the top one because that is what "a caller
+# and not a callee" is — the same reason the tests and the build tool are here.
+#
+# They are at layer 10 rather than 9 because a shipped program is compiled by
+# the same workspace and must not be mistaken for something the kernel links.
+# Nothing depends on them; when one is embedded as an image, the build step
+# that embeds it is what gives it a place, not a manifest edge.
+10 init
+10 shell
+10 service_manager

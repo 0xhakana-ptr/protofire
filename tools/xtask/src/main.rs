@@ -103,6 +103,12 @@ impl Machine {
     /// line and stopped before the second has a loader but no heap.  The
     /// address itself is not asserted: it moves with the image, and the gate
     /// is that the line is there, not where it points.
+    ///
+    /// The third names the three syscalls the read went through, not just the
+    /// result.  A boot that read the file by calling the filesystem directly
+    /// printed the same bytes and the same label; the words `through syscall
+    /// open/read/close` are what distinguish the two, and they are the whole
+    /// claim this line makes.
     fn required_lines(self) -> &'static [(&'static str, bool)] {
         match self {
             Self::X8664 => &[
@@ -112,7 +118,7 @@ impl Machine {
                 ),
                 ("protofire: heap at ", false),
                 (
-                    "protofire: filesystem mounted and read /greeting.txt, label ",
+                    "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,
                 ),
             ],
