@@ -116,3 +116,17 @@ pub fn interrupt_controller() -> Option<(usize, usize)> {
 pub fn msi_frame() -> Option<usize> {
     None
 }
+
+/// The machine's memory, as the loader described it.
+///
+/// `None`, and the reason is a gap rather than a fact about the machine: this
+/// crate reads the multiboot2 handshake's magic and nothing else, so the memory
+/// map the same structure carries is not parsed.  A caller treats `None` as
+/// "use the pool's own span", which on a machine whose RAM is smaller than that
+/// span would hand out frames that are not there.
+///
+/// Parsing the map is the change that fills this in; it is listed in
+/// `docs/migration.md`.
+pub fn managed_pool_bytes() -> Option<usize> {
+    None
+}

@@ -241,6 +241,33 @@ pub fn kernel_main() -> ! {
     #[cfg(not(target_os = "none"))]
     arch::serial::write_str("not installed (a host has no address space to install)\n");
 
+    // The frames the machine really has, for the tables past the reserved ones.
+    //
+    // Printed here rather than beside the heap because it is the page table's
+    // input: a boot that managed a pool larger than RAM would map a device
+    // window into memory that is not there, and the line is how that shows.
+    #[cfg(target_os = "none")]
+    {
+        arch::serial::write_str("protofire: frame pool ");
+        arch::serial::write_u32(crate::address_space::managed_frames() as u32);
+        arch::serial::write_str(" frame(s), ");
+        arch::serial::write_u32(crate::address_space::free_frames() as u32);
+        arch::serial::write_str(" free, ");
+        arch::serial::write_u32(crate::address_space::frames_taken_for_tables() as u32);
+        arch::serial::write_str(" in page tables");
+
+        // And the allocator itself, exercised rather than described.
+        //
+        // SAFETY: the pool is initialised and nothing else has allocated from
+        // it; the frame is released before the call returns.
+        let pool_ok = unsafe { crate::address_space::self_check_frame_pool() };
+        arch::serial::write_str(if pool_ok {
+            ", pool check ok\n"
+        } else {
+            ", pool check FAILED\n"
+        });
+    }
+
     // Interrupts: a table of gates, and the sink a frame goes to.
     //
     // The order is the point.  The sink is installed first, so a vector that

@@ -66,3 +66,11 @@ pub fn interrupt_controller() -> Option<(usize, usize)> {
 pub fn msi_frame() -> Option<usize> {
     None
 }
+
+/// The machine's memory: none yet.
+///
+/// This machine has no boot entry, so nothing reads the device tree its
+/// firmware would hand over.
+pub fn managed_pool_bytes() -> Option<usize> {
+    None
+}

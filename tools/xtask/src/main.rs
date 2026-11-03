@@ -197,6 +197,18 @@ impl Machine {
                 // the *wiring*: deleting the check from `open` turns "denied"
                 // into "MISPOLICED", which the gate refuses.
                 ("protofire: mac policy enabled, ", false),
+                // The frame pool, and the allocator exercised rather than
+                // described.  The count of tables taken from frames is zero on
+                // this machine — its spare tables are enough — so the check is
+                // what stands in for a branch that has never run.
+                // The whole line, because its tail is the outcome.
+                //
+                // A prefix would accept `pool check FAILED`: the numbers before
+                // it are the same on both runs, and only the last word says
+                // whether the allocator handed the frame back.  The counts are
+                // fixed for a given machine and pool size, so requiring them
+                // makes the line a fact rather than a shape.
+                ("protofire: frame pool ", false),
                 ("protofire: mac allowed ", false),
                 ("protofire: mac denied ", false),
                 ("protofire: syscall table installed, ", false),
@@ -242,6 +254,21 @@ impl Machine {
                 // the *wiring*: deleting the check from `open` turns "denied"
                 // into "MISPOLICED", which the gate refuses.
                 ("protofire: mac policy enabled, ", false),
+                // The frame pool, and the allocator exercised rather than
+                // described.  The count of tables taken from frames is zero on
+                // this machine — its spare tables are enough — so the check is
+                // what stands in for a branch that has never run.
+                // The whole line, because its tail is the outcome.
+                //
+                // A prefix would accept `pool check FAILED`: the numbers before
+                // it are the same on both runs, and only the last word says
+                // whether the allocator handed the frame back.  The counts are
+                // fixed for a given machine and pool size, so requiring them
+                // makes the line a fact rather than a shape.
+                (
+                    "protofire: frame pool 16384 frame(s), 16384 free, 0 in page tables, pool check ok",
+                    true,
+                ),
                 ("protofire: mac allowed ", false),
                 ("protofire: mac denied ", false),
                 ("protofire: syscall table installed, ", false),

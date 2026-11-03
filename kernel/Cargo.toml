@@ -25,6 +25,10 @@ block = { path = "../block" }
 # The page-table types and the walk arithmetic.  The kernel decides what its
 # address space maps; `paging` is what a table is.
 paging = { path = "../libs/paging" }
+# Frames for page tables past the ones the boot reserves.  The allocator hands
+# out pages before the heap exists, which is why its free list is a bitmap
+# rather than a map — the same restriction that made this dependency necessary.
+memory = { path = "../memory" }
 # The handler table an interrupt is delivered through.
 irq = { path = "../libs/irq" }
 # The static holder for the page tables: a `static mut` would be the usual

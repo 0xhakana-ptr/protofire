@@ -2,16 +2,41 @@
 //!
 //! Physical frame allocator with free-range tracking, reuse, and coalescing.
 //!
-//! Free ranges are tracked in a `BTreeMap<start_frame, count>` for O(log n)
-//! insertion and removal, replacing the previous `Vec<FrameRange>` which
-//! required O(n) element shifting on every insert/remove.
-
-use alloc::collections::BTreeMap;
+//! ## Why a bitmap and not a map
+//!
+//! The first version tracked free ranges in a `BTreeMap`.  That is the right
+//! shape for an unbounded set and the wrong one here for a reason that is not
+//! about speed: **this allocator hands out the frames a page table is built
+//! from, and a page table has to exist before the heap does.**  A free list
+//! that needed `alloc` could not run at the moment it is most needed, and the
+//! way that surfaced was the kernel working around it — building its tables in
+//! a `static` array instead, with a fixed bound nobody had justified.
+//!
+//! The second version was a sorted array of a fixed number of ranges.  It
+//! dropped `alloc` and it **broke a test that existed to say why the map was
+//! there**: freeing every other frame of a hundred and forty leaves seventy
+//! separate holes, and a `deallocate` with nowhere to put one returns `false`
+//! and loses the frame.  A free list that drops memory under fragmentation is
+//! worse than one that cannot be built.
+//!
+//! One bit per frame is the shape that is both fixed-size and unbounded in
+//! fragmentation.  The bitmap is `MAX_FRAMES / 8` bytes — sixteen kilobytes for
+//! the 512 MiB pool — and it lives in a `static`, so it needs no heap and no
+//! caller-supplied storage.
 
 use profiler::AllocProfiler;
 
 pub const FRAME_SIZE: usize = 4096;
-pub const MAX_NODES: usize = 8;
+
+/// The most frames this allocator can manage.
+///
+/// The pool is a linker-reserved span, and the machine's answer is clamped to
+/// it.  512 MiB is what every linker script reserves, so this is that span in
+/// frames — a ceiling, and one the bitmap is sized from.
+pub const MAX_FRAMES: usize = 512 * 1024 * 1024 / FRAME_SIZE;
+
+/// The bitmap is one bit per frame: 16 KiB for [`MAX_FRAMES`].
+const BITMAP_WORDS: usize = MAX_FRAMES / 64;
 
 /// The host build's pool backing store, in bytes.
 ///
@@ -99,13 +124,21 @@ fn no_mapping_needed(_address: usize, _byte_len: usize) {}
 
 pub struct FrameAllocator {
     // `next_frame` is the bump-allocation high-water mark; anything below it is
-    // either live or tracked explicitly in `free_ranges`.
+    // either live or has its bit set in `free`.
     base: usize,
     total_frames: usize,
     next_frame: usize,
-    // Sorted (by BTreeMap key order), non-overlapping free segments recycled
-    // after deallocation.  Key = start_frame, value = count.
-    free_ranges: BTreeMap<usize, usize>,
+    /// One bit per frame below `next_frame`: **set means free**.
+    ///
+    /// Inline rather than behind a pointer: a `static` shared by every
+    /// instance would make two allocators in one test decide against each
+    /// other's bits, and the tests create one per case.  Sixteen kilobytes is
+    /// the cost, paid once by the kernel and once per test — and a test thread
+    /// has megabytes of stack.
+    ///
+    /// "Free" is the set state because the common operation is "is this frame
+    /// available", and a cleared word is then the common case for a full pool.
+    free: [u64; BITMAP_WORDS],
     /// Frame allocator profiler (zero-cost when `alloc_profiler` feature is
     /// disabled).
     pub profiler: AllocProfiler,
@@ -137,7 +170,7 @@ impl FrameAllocator {
             base: 0,
             total_frames: 0,
             next_frame: 0,
-            free_ranges: BTreeMap::new(),
+            free: [0; BITMAP_WORDS],
             profiler: AllocProfiler::new(),
             map_hook: no_mapping_needed,
         }
@@ -165,7 +198,7 @@ impl FrameAllocator {
         let pool_size = pool_end.saturating_sub(pool_base);
         self.total_frames = total_size.min(pool_size) / FRAME_SIZE;
         self.next_frame = 0;
-        self.free_ranges.clear();
+        self.clear_free();
     }
 
     /// Configure this allocator to manage a sub-range of the physical pool.
@@ -178,7 +211,7 @@ impl FrameAllocator {
         self.base = pool_base + start_frame * FRAME_SIZE;
         self.total_frames = end_frame.saturating_sub(start_frame);
         self.next_frame = 0;
-        self.free_ranges.clear();
+        self.clear_free();
         let _ = node_id; // Reserved for future per-node profiling.
     }
 
@@ -189,7 +222,13 @@ impl FrameAllocator {
 
         // Reuse holes first so long-lived churn does not force the bump tail
         // forward.
-        if let Some(frame_start) = self.allocate_from_free_ranges(count) {
+        if let Some(frame_start) = self.find_free_run(count) {
+            // A hole is available until it is taken: the bit is what says so,
+            // and a recycled range that did not clear it would be handed out a
+            // second time.
+            for frame in frame_start..frame_start + count {
+                self.set_used(frame);
+            }
             let address = self.frame_address(frame_start)?;
             let zero_bytes = (count * FRAME_SIZE) as u64;
             self.zero_frame_range(frame_start, count)?;
@@ -256,8 +295,15 @@ impl FrameAllocator {
             return false;
         }
 
-        if !self.insert_free_range(start_frame, count) {
-            return false;
+        // A double free is the caller's bug and a corruption if believed: the
+        // frames would be handed out twice and two owners would write to one.
+        for frame in start_frame..end_frame {
+            if self.is_free(frame) {
+                return false;
+            }
+        }
+        for frame in start_frame..end_frame {
+            self.set_free(frame);
         }
 
         self.rewind_tail_high_water_mark();
@@ -265,18 +311,15 @@ impl FrameAllocator {
         true
     }
 
+    /// Shrink the high-water mark past frames that are free.
+    ///
+    /// The bump tail is only ever a high-water mark, so a free frame at the top
+    /// is one the next bump allocation would have to step over: pulling the
+    /// mark down makes it available without a search.
     fn rewind_tail_high_water_mark(&mut self) {
-        // If the highest free range touches the allocation tail, shrink tail
-        // eagerly so future allocations reuse the reclaimed region.
-        loop {
-            let tail = self.free_ranges.last_key_value().map(|(&s, &c)| (s, c));
-            match tail {
-                Some((start, count)) if start + count == self.next_frame => {
-                    self.next_frame = start;
-                    self.free_ranges.remove(&start);
-                }
-                _ => break,
-            }
+        while self.next_frame > 0 && self.is_free(self.next_frame - 1) {
+            self.next_frame -= 1;
+            self.set_used(self.next_frame);
         }
     }
 
@@ -292,18 +335,56 @@ impl FrameAllocator {
     /// allocated.
     pub fn largest_free_contiguous_frames(&self) -> usize {
         let tail_free = self.total_frames.saturating_sub(self.next_frame);
-        self.free_ranges
-            .values()
-            .copied()
-            .max()
-            .unwrap_or(0)
-            .max(tail_free)
+        // The largest free run, which the tail is when nothing is fragmented.
+        self.largest_free_run().max(tail_free)
     }
 
     /// Number of distinct free ranges — a fragmentation metric.  Fragmented
     /// pools have many small ranges; a compacted pool has at most one.
+    ///
+    /// A run is a maximal sequence of free frames, which is what the ranges in
+    /// a map or an array were.  Counting transitions over the bitmap is the
+    /// same number and needs no stored list.
     pub fn free_range_count(&self) -> usize {
-        self.free_ranges.len()
+        let limit = self.next_frame.min(MAX_FRAMES);
+        let mut runs = 0;
+        let mut previously_free = false;
+        for index in 0..limit {
+            let free = self.is_free(index);
+            if free && !previously_free {
+                runs += 1;
+            }
+            previously_free = free;
+        }
+        runs
+    }
+
+    /// The length of the longest run of free frames.
+    fn largest_free_run(&self) -> usize {
+        let limit = self.next_frame.min(MAX_FRAMES);
+        let mut best = 0;
+        let mut current = 0;
+        for index in 0..limit {
+            if self.is_free(index) {
+                current += 1;
+                best = best.max(current);
+            } else {
+                current = 0;
+            }
+        }
+        best
+    }
+
+    /// How many frames are free below the high-water mark.
+    pub fn free_frames(&self) -> usize {
+        let limit = self.next_frame.min(MAX_FRAMES);
+        let mut total = 0;
+        for index in 0..limit {
+            if self.is_free(index) {
+                total += 1;
+            }
+        }
+        total
     }
 
     /// Compact the physical pool by moving live frames down into holes,
@@ -318,26 +399,30 @@ impl FrameAllocator {
     /// frames already moved before the barrier are preserved.
     ///
     /// Returns the number of frames successfully moved.
+    ///
+    /// ## Why it no longer takes a bitmap
+    ///
+    /// The first version of this method allocated a `Vec` the size of the pool,
+    /// which is the thing this file spent a change removing.  The second took
+    /// one from its caller, which moved the problem instead of solving it.  The
+    /// allocator already holds one bit per frame, so compaction works against a
+    /// copy of the bits it has — sixteen kilobytes on the stack of the one
+    /// caller that compacts, and no allocation anywhere.
     pub fn compact<F>(&mut self, mut fixup: F) -> usize
     where
         F: FnMut(usize, usize) -> bool,
     {
-        let n = self.next_frame;
-        // `free_bit[i]` is true when frame `i` is free.  We compact against a
-        // bitmap so that an early stop (unmovable barrier) rebuilds the free
-        // list without clobbering live frames that were never relocated.
-        let mut free_bit: alloc::vec::Vec<bool> = alloc::vec![false; n];
-        for (&start, &count) in &self.free_ranges {
-            for bit in free_bit.iter_mut().skip(start).take(count) {
-                *bit = true;
-            }
-        }
+        let n = self.next_frame.min(MAX_FRAMES);
+        // A local copy rather than mutating `self.free` in place: an early stop
+        // at an unmovable frame leaves the bits past it meaningful, and the
+        // rebuild below has to start from what was true on entry.
+        let mut bits = self.free;
 
         let mut moved = 0usize;
         let mut fill = 0usize;
         let mut f = 0usize;
         while f < n {
-            if free_bit[f] {
+            if bits[f / 64] & (1 << (f % 64)) != 0 {
                 f += 1;
                 continue;
             }
@@ -366,29 +451,16 @@ impl FrameAllocator {
                         FRAME_SIZE,
                     );
                 }
-                free_bit[fill] = false;
-                free_bit[f] = true;
+                bits[fill / 64] &= !(1 << (fill % 64));
+                bits[f / 64] |= 1 << (f % 64);
                 moved += 1;
             }
             fill += 1;
             f += 1;
         }
 
-        // Rebuild the free list from the bitmap, coalescing adjacent runs.
-        self.free_ranges.clear();
-        let mut run_start: Option<usize> = None;
-        for (i, is_free) in free_bit.iter().copied().enumerate() {
-            if is_free {
-                if run_start.is_none() {
-                    run_start = Some(i);
-                }
-            } else if let Some(s) = run_start.take() {
-                self.free_ranges.insert(s, i - s);
-            }
-        }
-        if let Some(s) = run_start {
-            self.free_ranges.insert(s, n - s);
-        }
+        // The bits are the free list: publishing them is the rebuild.
+        self.free = bits;
         moved
     }
 
@@ -411,94 +483,68 @@ impl FrameAllocator {
         Some(())
     }
 
-    /// First-fit search over address-ordered free ranges.
-    /// Iteration order is ascending by key (start_frame), which matches the
-    /// sorted-address order previously maintained by the Vec.
-    fn allocate_from_free_ranges(&mut self, count: usize) -> Option<usize> {
-        // Find the first range whose count is sufficient.
-        let found_key = {
-            let mut key = None;
-            for (&start, &cnt) in self.free_ranges.iter() {
-                if cnt >= count {
-                    key = Some(start);
-                    break;
-                }
-            }
-            key
-        };
-
-        let start = found_key?;
-        let range_count = self.free_ranges.remove(&start)?;
-
-        if range_count > count {
-            self.free_ranges.insert(start + count, range_count - count);
-        }
-
-        Some(start)
+    /// Whether frame `index` is free.
+    fn is_free(&self, index: usize) -> bool {
+        index < self.total_frames && self.free[index / 64] & (1 << (index % 64)) != 0
     }
 
-    /// Insert a freed frame range, coalescing with adjacent ranges.
+    /// Mark frame `index` free.
+    fn set_free(&mut self, index: usize) {
+        if index < MAX_FRAMES {
+            self.free[index / 64] |= 1 << (index % 64);
+        }
+    }
+
+    /// Mark frame `index` used.
+    fn set_used(&mut self, index: usize) {
+        if index < MAX_FRAMES {
+            self.free[index / 64] &= !(1 << (index % 64));
+        }
+    }
+
+    /// Clear every bit, which is "every frame used".
+    fn clear_free(&mut self) {
+        self.free = [0; BITMAP_WORDS];
+    }
+
+    /// The first run of `count` free frames, if there is one.
     ///
-    /// Returns `false` if the range overlaps with an existing free range
-    /// (indicating a double-free or corruption).
-    fn insert_free_range(&mut self, start_frame: usize, count: usize) -> bool {
+    /// A first-fit scan from the lowest address, which is the answer the
+    /// ordered map and then the sorted array gave: a caller that got the
+    /// lowest-addressed hole before gets it now.  The scan starts at the
+    /// bitmap's first word and skips a whole word at a time when it is clear,
+    /// so a full pool costs one load per sixty-four frames.
+    fn find_free_run(&self, count: usize) -> Option<usize> {
         if count == 0 {
-            return false;
+            return None;
         }
-
-        let mut new_start = start_frame;
-        let mut new_count = count;
-
-        // Check the previous range (largest start_frame < start_frame) for
-        // overlap or adjacency.
-        let merge_prev = self
-            .free_ranges
-            .range(..start_frame)
-            .next_back()
-            .map(|(&s, &c)| (s, c));
-
-        if let Some((prev_start, prev_count)) = merge_prev {
-            let prev_end = prev_start + prev_count;
-            if start_frame < prev_end {
-                return false; // Overlap with previous range
+        let limit = self.next_frame.min(MAX_FRAMES);
+        let mut index = 0;
+        while index < limit {
+            // Skip a clear word outright.
+            if self.free[index / 64] == 0 {
+                index = (index / 64 + 1) * 64;
+                continue;
             }
-            if start_frame == prev_end {
-                // Coalesce with previous
-                self.free_ranges.remove(&prev_start);
-                new_start = prev_start;
-                new_count += prev_count;
+            if !self.is_free(index) {
+                index += 1;
+                continue;
             }
-        }
-
-        // Merge with following adjacent ranges.  We collect keys first to
-        // avoid borrowing conflicts between range() and remove().
-        loop {
-            let next = self
-                .free_ranges
-                .range(new_start + new_count..)
-                .next()
-                .map(|(&s, &c)| (s, c));
-
-            match next {
-                Some((next_start, next_count)) => {
-                    let new_end = new_start + new_count;
-                    if new_end < next_start {
-                        break; // Gap before next range — done coalescing
-                    }
-                    if new_end > next_start {
-                        return false; // Overlap (should be unreachable with
-                        // well-formed free_ranges)
-                    }
-                    // Adjacent: coalesce
-                    self.free_ranges.remove(&next_start);
-                    new_count += next_count;
-                }
-                None => break,
+            // Measure this run without committing to it.
+            let run_start = index;
+            let mut run = 0;
+            while index < limit && self.is_free(index) && run < count {
+                run += 1;
+                index += 1;
+            }
+            if run == count {
+                return Some(run_start);
+            }
+            if index == run_start {
+                index += 1;
             }
         }
-
-        self.free_ranges.insert(new_start, new_count);
-        true
+        None
     }
 }
 
@@ -508,6 +554,43 @@ mod tests {
     use super::FrameAllocator;
     use super::physical_pool_size;
     use alloc::vec::Vec;
+
+    /// The free list survives fragmentation far past any fixed bound.
+    ///
+    /// This is the test that decided the representation.  A sorted array of
+    /// ranges dropped `alloc` and lost frames: seventy interleaved single-frame
+    /// holes do not fit in eight nodes, and `deallocate` answered `false` and
+    /// dropped the frame.  A bitmap has one bit per frame, so the number of
+    /// holes is the pool's size and not a constant somebody picked.
+    ///
+    /// The `is_some` on every allocation is the assertion that matters: a
+    /// figure that merely counted free frames right would pass while the
+    /// allocator had forgotten where they were.
+    #[test]
+    fn fragmentation_is_bounded_by_the_pool_and_not_by_a_constant() {
+        let mut allocator = FrameAllocator::new();
+        allocator.init(FRAME_SIZE * 256);
+
+        let mut frames = Vec::new();
+        for _ in 0..200 {
+            frames.push(allocator.allocate(1).expect("allocate frame"));
+        }
+
+        // Every other frame, which is the worst case: no two holes are adjacent
+        // and none of them coalesce.
+        for index in (0..frames.len()).step_by(2) {
+            assert!(
+                allocator.deallocate(frames[index], 1),
+                "a deallocation that answers false loses the frame"
+            );
+        }
+        assert_eq!(allocator.free_range_count(), 100);
+
+        for _ in 0..100 {
+            assert!(allocator.allocate(1).is_some(), "every hole is reusable");
+        }
+        assert_eq!(allocator.free_frames(), 0);
+    }
 
     #[test]
     fn allocator_reuses_a_freed_frame_range() {
@@ -648,6 +731,8 @@ mod tests {
         assert_eq!(allocator.free_range_count(), 5);
         assert_eq!(allocator.largest_free_contiguous_frames(), 1);
 
+        // The bitmap is the caller's, because the allocator must work before
+        // the heap and one bit per frame cannot live in its own struct.
         let moved = allocator.compact(|_, _| true);
         assert_eq!(moved, 5); // the 5 live frames moved into the 5 holes
 

@@ -299,3 +299,28 @@ pub fn boot_info() -> abi::BootInfo {
         loader: abi::Loader::DeviceTree,
     }
 }
+
+/// The machine's memory, as the device tree describes it.
+///
+/// The sum of every `device_type = "memory"` region.  This is what a boot hands
+/// the frame allocator: the pool is a linker-reserved span and can only manage
+/// frames that are really there, so the machine's answer is the ceiling the
+/// allocator clamps to.
+///
+/// `None` when there is no tree.  A caller treats that as "use the pool's own
+/// span", which is what a machine with no memory description has.
+pub fn managed_pool_bytes() -> Option<usize> {
+    let tree = device_tree()?;
+    let root = tree.root().ok()?;
+    let mut regions = [(0_u64, 0_u64); 4];
+    let mut count = 0;
+    crate::paging::collect_memory(root, &mut regions, &mut count);
+    if count == 0 {
+        return None;
+    }
+    let total: u64 = regions[..count]
+        .iter()
+        .map(|(start, end)| end.saturating_sub(*start))
+        .sum();
+    Some(total as usize)
+}

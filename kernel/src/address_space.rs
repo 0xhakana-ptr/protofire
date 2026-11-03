@@ -109,7 +109,17 @@ struct Tables {
     third: [PageTable; THIRD_LEVEL],
     leaf: [PageTable; LEAF_TABLES],
     /// Third-level tables for regions above [`IDENTITY_LIMIT`].
+    ///
+    /// The first two windows come from here because they are always needed and
+    /// a `static` is cheaper than a frame.  A third takes a frame from the
+    /// pool — which is the point of the allocator existing: this array is a
+    /// bound nobody could justify, and a machine that needed a third window
+    /// would have found it.
     device: [PageTable; DEVICE_THIRD_LEVEL],
+    /// Frames for tables beyond the spares.
+    frames: memory::FrameAllocator,
+    /// How many page tables came from a frame rather than a spare.
+    frames_taken: usize,
 }
 
 #[cfg(target_os = "none")]
@@ -119,6 +129,8 @@ static TABLES: cell::SyncUnsafeCell<Tables> = cell::SyncUnsafeCell::new(Tables {
     third: [const { PageTable::new() }; THIRD_LEVEL],
     leaf: [const { PageTable::new() }; LEAF_TABLES],
     device: [const { PageTable::new() }; DEVICE_THIRD_LEVEL],
+    frames: memory::FrameAllocator::new(),
+    frames_taken: 0,
 });
 
 // The relations between the constants above, checked rather than restated: a
@@ -278,6 +290,16 @@ pub unsafe fn install() -> bool {
     // anything else can touch it.
     let tables = unsafe { &mut *tables };
 
+    // Frames for the tables past the spare ones.
+    //
+    // The pool is a linker-reserved span and the machine's answer clamps it: a
+    // machine whose RAM ends inside the span must manage only the frames that
+    // are really there, and one that managed the whole span would hand out
+    // pages past the end of memory.  `managed_pool_bytes` is that answer, and
+    // `None` means the machine cannot say — then the span is all there is.
+    let machine = arch::managed_pool_bytes().unwrap_or(memory::frame::physical_pool_size());
+    tables.frames.init(machine);
+
     build(tables);
 
     let root = tables.root.address();
@@ -285,6 +307,94 @@ pub unsafe fn install() -> bool {
     // is a page-aligned static.  The caller's contract is that this is the only
     // call.
     unsafe { arch::paging::install(root) }
+}
+
+/// How many frames the pool manages, for a boot line that reports it.
+///
+/// A machine whose RAM is smaller than the linker's span manages fewer, and
+/// that difference is the one thing a reader of the boot log needs to see.
+#[cfg(target_os = "none")]
+pub fn managed_frames() -> usize {
+    let tables = TABLES.get();
+    // SAFETY: the static is this module's; `install` is the only writer and
+    // this read happens after it.
+    let tables = unsafe { &*tables };
+    tables.frames.total_frames()
+}
+
+/// Take one frame, as a page table would, and report whether it worked.
+///
+/// ## Why the boot calls this
+///
+/// The spare tables are enough for every window this machine has, so
+/// `frames_taken_for_tables` is zero on a real boot and the branch that asks
+/// the allocator for a table has never run.  A count of zero is honest and is
+/// not evidence — this tree's recurring defect is code that is written, wired
+/// and never executed, and "zero" cannot be told from "unreachable".
+///
+/// So the boot takes one frame through the same call the branch makes and
+/// releases it.  That is not the branch itself; it is the one thing on the
+/// branch's only external dependency.  What it cannot show is that the branch
+/// is reached, which is why the boot line reports both numbers rather than one.
+///
+/// # Safety
+///
+/// Called once, after the pool is initialised and before anything else
+/// allocates from it.  The frame is released before this returns.
+#[cfg(target_os = "none")]
+pub unsafe fn self_check_frame_pool() -> bool {
+    let tables = TABLES.get();
+    // SAFETY: the static is this module's, and this runs after `install`.
+    let tables = unsafe { &mut *tables };
+
+    let before = tables.frames.free_frames() + tables.frames.available_frames();
+    let Some(frame) = tables.frames.allocate(1) else {
+        return false;
+    };
+    if frame.is_null() {
+        return false;
+    }
+
+    // A frame the allocator hands out is zeroed, and a page table that was not
+    // would carry whatever the last owner wrote.
+    // SAFETY: `frame` is a live frame inside the pool the allocator manages,
+    // and one frame is `FRAME_SIZE` bytes.
+    let zeroed = unsafe { core::slice::from_raw_parts(frame, paging::PAGE_SIZE) }
+        .iter()
+        .all(|byte| *byte == 0);
+    let released = tables.frames.deallocate(frame, 1);
+    // And the frame came back: a `deallocate` that answers `true` and loses the
+    // frame leaves the pool one frame smaller on every pass, which is a leak
+    // that reports success.  Comparing the count before and after is what makes
+    // "released" mean something rather than repeat what the function said.
+    let after = tables.frames.free_frames() + tables.frames.available_frames();
+    zeroed && released && after == before
+}
+
+/// How many page tables came from the frame pool.
+///
+/// Zero on a boot whose spares were enough — which is the honest state of this
+/// kernel rather than a failure, and the number that says whether the frame
+/// allocator is exercised by a boot or only by its tests.
+#[cfg(target_os = "none")]
+pub fn frames_taken_for_tables() -> usize {
+    let tables = TABLES.get();
+    // SAFETY: as `managed_frames`.
+    let tables = unsafe { &*tables };
+    tables.frames_taken
+}
+
+/// How many of those frames can still be handed out.
+///
+/// The recycled holes plus the bump tail.  `free_frames` alone counts only the
+/// holes, which is zero on a pool nothing has been freed from and reads as "no
+/// memory left" — the opposite of the truth on a fresh boot.
+#[cfg(target_os = "none")]
+pub fn free_frames() -> usize {
+    let tables = TABLES.get();
+    // SAFETY: as `managed_frames`.
+    let tables = unsafe { &*tables };
+    tables.frames.free_frames() + tables.frames.available_frames()
 }
 
 /// Fill the tables with the identity map the boot has, with permissions this
@@ -478,14 +588,32 @@ fn device_table_for(tables: &mut Tables, span_index: usize) -> Option<&'static P
         return Some(unsafe { &*(address as *const PageTable) });
     }
 
-    // No table yet: take the next unused spare.
-    let free = tables.device.iter().position(|table| table.is_empty())?;
-    // The tables live in a `static`, so an address into the array outlives the
-    // borrow of the array itself — which is what `'static` says here.
-    let address = tables.device[free].address();
+    // No table yet: take an unused spare, or a frame when the spares are gone.
+    //
+    // The count of frames taken is what the boot reports, and it is the number
+    // that says whether this branch has ever run: a machine whose spares were
+    // always enough has an allocator here that nothing exercised, which is the
+    // defect this tree keeps recording.
+    let address = match tables.device.iter().position(|table| table.is_empty()) {
+        // The tables live in a `static`, so an address into the array outlives
+        // the borrow of the array itself — which is what `'static` says here.
+        Some(free) => tables.device[free].address(),
+        None => {
+            // Past the spares, a page table comes from the frame allocator —
+            // the same frames the allocator exists to hand out, and the reason
+            // it had to work before the heap.
+            let frame = tables.frames.allocate(1)? as usize;
+            if frame == 0 {
+                return None;
+            }
+            tables.frames_taken += 1;
+            frame
+        }
+    };
     let entry = encode(Entry::table(address), Level::Second);
     second.set_entry(span_index, entry);
-    // SAFETY: `address` names the entry of a `static` array.
+    // SAFETY: `address` names either an entry of a `static` array or a frame
+    // the allocator just handed out and zeroed, and both are a whole page.
     Some(unsafe { &*(address as *const PageTable) })
 }
 

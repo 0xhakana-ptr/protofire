@@ -295,6 +295,7 @@ dependencies = [
  "cell",
  "fs",
  "irq",
+ "memory",
  "paging",
  "pci",
  "security",

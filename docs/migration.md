@@ -93,9 +93,45 @@ Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, and — on
 x86_64 — the port I/O the PCI bus is reached through.  What comes next is the
-last hop of an MSI: the encoding is here and the frame is here, and a write to
-the frame does not raise an interrupt on QEMU's `virt`.  That is an open
-question, and it is written down rather than papered over.
+process layer: EL0, a scheduler, and a trap path that carries the syscall
+registers.  Everything below it is now in place and in use — the policy decides
+an `open`, the registry outlives the boot, and the frame allocator hands out the
+pages a page table is built from.
+
+### The frame allocator, and the loop it breaks
+
+`memory/src/frame.rs` tracked free ranges in a `BTreeMap`.  That is the right
+shape for an unbounded set and the wrong one here for a reason that is not about
+speed: **this allocator hands out the frames a page table is built from, and a
+page table has to exist before the heap does.**  A free list that needed `alloc`
+could not run when it was most needed, and the way that showed was the kernel
+working around it — building its tables in a `static` array with a bound nobody
+had justified.
+
+The free list was replaced twice, and the second attempt is the instructive one.
+A sorted array of a fixed number of ranges dropped `alloc` and **broke a test
+that existed to say why the map was there**: freeing every other frame of two
+hundred leaves a hundred separate holes, and a `deallocate` with nowhere to put
+one answers `false` and loses the frame.  A free list that drops memory under
+fragmentation is worse than one that cannot be built.
+
+One bit per frame is the shape that is both fixed-size and unbounded in
+fragmentation: sixteen kilobytes for the pool, no heap, and the number of holes
+is the pool's size rather than a constant somebody picked.  `MAX_NODES` was in
+the file and unused, which is what a bound looks like when the implementation
+stops honouring it.
+
+`arch::managed_pool_bytes` was named by that file's own documentation and
+implemented by no machine.  It is now: aarch64 sums the device tree's memory
+regions, x86_64 answers `None` because its boot does not parse the multiboot2
+memory map, and riscv64 answers `None` because it has no entry.
+
+`address_space` takes a table from the pool once its two spare tables are used.
+That branch has not run on this machine, and the boot says so — `0 in page
+tables` — rather than letting a zero read as a success.  The allocator itself is
+exercised: the boot allocates a frame, checks it is zeroed, releases it, and
+compares the free count before and after.  Deleting the release makes it print
+`pool check FAILED`, which the gate refuses.
 
 ### MSI-X: the encoding, and the hop that does not arrive
 

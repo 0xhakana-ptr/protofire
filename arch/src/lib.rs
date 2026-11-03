@@ -111,6 +111,15 @@ pub use arch_riscv64::boot::interrupt_controller;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::boot::interrupt_controller;
 
+// How much memory this machine has, for a frame allocator that must clamp to
+// what is really there.  `None` means "use the pool's own span".
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::boot::managed_pool_bytes;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::boot::managed_pool_bytes;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::boot::managed_pool_bytes;
+
 // The message-signalled interrupt frame, where a machine has one.
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::boot::msi_frame;
