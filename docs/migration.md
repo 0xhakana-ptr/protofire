@@ -103,9 +103,11 @@ address spaces.  Its timer is the local APIC's, calibrated against the PIT, and
 its monotonic clock is the TSC — the APIC's own count runs *down* and reloads,
 which is not a deadline and cost a boot its wakes.
 
-What comes next is the blocking `read`, which needs a pipe to park a reader on
-that `sleep` does not — `sleep` has a deadline and a wake, and a pipe has a
-writer and no clock.
+The blocking `read` is in on both machines: a pipe parks a reader, which
+`sleep` could not — `sleep` has a deadline and a wake, and a pipe has a writer
+and no clock.  What comes next is the third machine, because that is where a
+seam stops being two machines' coincidence and becomes either a design or a
+bug.
 
 ### The timer, and three reasons it looked broken
 
