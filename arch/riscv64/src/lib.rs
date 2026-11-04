@@ -48,9 +48,14 @@ pub mod trap;
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
 pub use trap::Context;
+pub use trap::PIPE_READER;
+pub use trap::PIPE_WRITER;
+pub use trap::PROGRAM_LEN;
+pub use trap::SLEEP_MICROSECONDS;
 #[cfg(target_os = "none")]
 pub use trap::install_context;
 pub use trap::is_user_context;
+pub use trap::program_bytes;
 pub use trap::resume_address;
 pub use trap::return_state;
 pub use trap::return_value;
@@ -283,42 +288,6 @@ pub unsafe fn message_frame() -> Option<()> {
     None
 }
 
-/// How long a program's image is: this machine has no program yet.
-///
-/// Zero, and it is an answer rather than a gap: the trap path is real, but no
-/// program has been written to run under it, and a caller that asked would be
-/// a caller whose boot assumed a capability this crate does not have.
-pub const PROGRAM_LEN: usize = 0;
-
-/// A program's bytes: none, because this machine runs none yet.
-pub fn program_bytes(_number: u16) -> [u8; PROGRAM_LEN] {
-    []
-}
-
-/// The number of the program that reads the pipe: this machine runs none.
-pub const PIPE_READER: u16 = 3;
-
-/// The number of the program that writes to it.
-pub const PIPE_WRITER: u16 = 2;
-
-/// How long the boot's programs sleep: this machine runs none.
-pub const SLEEP_MICROSECONDS: u64 = 0;
-
-/// Enter U-mode: this machine has the instruction and no path yet.
-///
-/// U-mode needs a `sstatus.SPP` clear, an `sepc`, and a trap entry at `stvec`
-/// — the last of the three is real now, and no program exists to enter: a
-/// program's bytes are this machine's to write, and an entry into nothing
-/// would be a fault in a frame nobody built.
-///
-/// # Safety
-///
-/// As [`enter_user`].
-#[cfg(target_os = "none")]
-pub unsafe fn enter_user_with_context(_context: &Context) -> ! {
-    unreachable!("U-mode is not implemented on riscv64 yet")
-}
-
 /// Enter U-mode at `entry` with the stack at `stack_top`.
 ///
 /// ## What this does that nothing else in this tree did
@@ -356,8 +325,56 @@ pub unsafe fn enter_user_with_context(_context: &Context) -> ! {
 /// state on the kernel stack that a trap could not restore — the trap path
 /// builds its own frame and resumes through it.
 #[cfg(target_os = "none")]
-pub unsafe fn enter_user(_entry: usize, _stack_end: usize) -> ! {
-    unreachable!("U-mode is not implemented on riscv64 yet")
+pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
+    // SAFETY: the caller promises the two addresses are mapped for U-mode.
+    // The `sscratch` write is what makes the first trap back land on the
+    // kernel's stack: the trap entry swaps a program's `sp` with whatever
+    // `sscratch` holds.
+    unsafe {
+        core::arch::asm!(
+            "csrci sstatus, 2",
+            "csrw sepc, {entry}",
+            "csrw sstatus, {spsr}",
+            "csrw sscratch, {kernel_stack}",
+            "mv sp, {user_stack}",
+            "sret",
+            entry = in(reg) entry as u64,
+            spsr = in(reg) trap::USER_SSTATUS,
+            kernel_stack = in(reg) core::ptr::addr_of!(_stack_top) as usize as u64,
+            user_stack = in(reg) stack_top as u64,
+            options(noreturn)
+        )
+    }
+}
+
+/// Enter U-mode with a whole context, which is the form a scheduler has.
+///
+/// `enter_user` takes the two numbers a first program needs; this takes the
+/// whole frame, which is what a scheduler builds and what `sret` restores.
+///
+/// # Safety
+///
+/// As [`enter_user`].
+#[cfg(target_os = "none")]
+pub unsafe fn enter_user_with_context(context: &Context) -> ! {
+    // SAFETY: the caller's contract is `enter_user`'s.  The context's own
+    // `sstatus` is what a resumed program returns under; a first program's is
+    // [`trap::USER_SSTATUS`], which `starting_context` wrote.
+    unsafe {
+        core::arch::asm!(
+            "csrci sstatus, 2",
+            "csrw sepc, {entry}",
+            "csrw sstatus, {spsr}",
+            "csrw sscratch, {kernel_stack}",
+            "mv sp, {user_stack}",
+            "sret",
+            entry = in(reg) context.sepc,
+            spsr = in(reg) context.sstatus,
+            kernel_stack = in(reg) core::ptr::addr_of!(_stack_top) as usize as u64,
+            user_stack = in(reg) stack_pointer(context) as u64,
+            options(noreturn)
+        )
+    }
 }
 
 /// Translate through a different root table from now on.

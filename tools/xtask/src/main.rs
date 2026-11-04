@@ -216,8 +216,7 @@ impl Machine {
     /// it once.
     fn repeated_lines(self) -> &'static [(&'static str, usize)] {
         match self {
-            Self::X8664 | Self::Aarch64 => &[(" says hello", 6)],
-            Self::Riscv64 => &[],
+            Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[(" says hello", 6)],
         }
     }
 
@@ -460,15 +459,15 @@ impl Machine {
                     false,
                 ),
             ],
-            // The OpenSBI machine, at the milestone its boot is at: the
-            // firmware's tree was recorded and parsed, the kernel's own table
-            // replaced the register's bare state, the frame pool was sized by
-            // the tree's memory and exercised, the heap came up, and the
-            // machine takes a trap it raised itself and arms a timer the
-            // firmware owns the deadline of.  The pool's count is exact for
-            // the same reason aarch64's is -- the numbers are fixed by the
-            // machine's memory and the linker's span, so a shape-check would
-            // accept a `pool check FAILED` tail.
+            // The OpenSBI machine, at the same milestones as the other two:
+            // the tree parsed, the kernel's own table installed, the frame
+            // pool exercised, the interrupt path proven by a line the machine
+            // raised itself, a timer the firmware owns the deadline of, and
+            // three programs at U-mode — one asleep, one blocked on a pipe,
+            // one writing to it.  The pool's count is exact for the same
+            // reason aarch64's is — the numbers are fixed by the machine's
+            // memory and the linker's span, so a shape-check would accept a
+            // `pool check FAILED` tail.
             Self::Riscv64 => &[
                 (
                     "protofire 0.1.0: entered via dtb, console up, stage 1",
@@ -488,6 +487,39 @@ impl Machine {
                 ("protofire: timer line enabled = 1", true),
                 ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),
+                ("protofire: block device from virtio-blk on pci", true),
+                ("protofire: virtio-blk wrote and read back sector ", false),
+                (
+                    "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
+                    true,
+                ),
+                (
+                    "protofire: /cdrom/README.TXT reads back from the disc",
+                    true,
+                ),
+                ("protofire: syscall table installed, ", false),
+                ("protofire: mac policy enabled, ", false),
+                ("protofire: mac allowed ", false),
+                ("protofire: mac denied ", false),
+                (
+                    "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
+                    false,
+                ),
+                ("protofire: entering ring 3", true),
+                ("protofire: program 1 mapped at ", false),
+                ("protofire: program 2 mapped at ", false),
+                ("protofire: program 3 mapped at ", false),
+                ("protofire: a program blocks on a pipe", true),
+                ("protofire: a write woke ", false),
+                ("program 1 says hello", true),
+                ("program 2 says hello", true),
+                ("protofire: every program exited, ", false),
+                // Sleeping, and the wake that ended it: the deadline is a
+                // firmware call on this machine, and a boot that slept and
+                // never woke prints the sleep line and not the wake.
+                ("protofire: a program sleeps until counter ", false),
+                ("protofire: a program woke, ", false),
+                ("protofire: the timer preempted, ", false),
             ],
         }
     }

@@ -859,6 +859,62 @@ loop counter overflowed a multiply, and a `copy_nonoverlapping` that saw
 pointers nothing in this tree had made.  "Off" is now half the counter's range,
 which no boot waits out and nothing wraps past.
 
+### A program in U-mode, and the instruction the machine does not advance
+
+    protofire: entering ring 3
+    program 3 says hello
+    program 1 says hello
+    program 2 says hello
+    protofire: a program blocks on a pipe
+    protofire: every program is asleep, waiting
+    protofire: a write woke 1 blocked task(s)
+    protofire: every program exited, 3 exit(s), 23 tick(s), 13 switch(es)
+    protofire: the timer preempted, 12 switch(es) from ticks
+
+The programs are this machine's machine code: `ecall` is the call, `a7`
+carries the number, and the helpers that encode them are checked by decoding
+what they encoded.  The sleep travels in an `addi` immediate, whose twelve
+signed bits reach two thousand and forty-seven — the aarch64 program's twenty
+thousand needs the sixteen bits a `movz` has — so this machine's programs sleep
+two milliseconds, which is twenty slices, which is what the duration is for.
+
+**The first sleeper slept forever, and the cause is the instruction the
+machine does not advance.**  aarch64's `ELR` and x86_64's saved `rip` name the
+instruction *after* the call before any handler exists; RISC-V's `sepc` names
+the `ecall` itself, and nothing moves it.  The dispatcher's first advance was
+placed after the handler answered — which repairs a call that returned
+immediately, and does nothing for one that parked its frame: the sleep handler
+saves the frame with a deadline, the wake resumed the frame as it was parked,
+and the program executed the same `ecall` again.  The log counted it: a sleep,
+a wake, and the same sleep, every two milliseconds, forever.  The advance now
+happens **before** the handler runs, because a frame a handler parks has to
+park a resume past the call.
+
+**The first program could not read its own stack, and the cause is a
+permission the other two machines cannot express.**  The encoder had given
+every executable page `X` without `R` — the specification's execute-only form —
+but the permissions this kernel names carry no "read" flag: on x86_64 and
+aarch64 a present page is readable, and `executable` adds to that rather than
+replacing it.  The reader program's first load, from the descriptor the boot
+handed it, was the machine refusing what the mapping said.  A present leaf on
+this machine is readable now, because nothing above the encoder asks for
+execute-only and an encoder that invents it breaks the callers it has.
+
+Two further differences from the machines that came first are in the entry,
+not the trap.  `SUM` is set once at boot, because a RISC-V page marked `U` is
+off-limits to the supervisor *unless* it says otherwise — the reverse of
+x86_64, where the kernel reaches user pages unless `SMAP` was switched on —
+and the pipe handlers read a program's buffer.  And the entry masks
+interrupts across its three CSR writes and its `sret`, which is the aarch64
+entry race in this machine's registers: a tick between the writes restores the
+`sepc` it saved, and the `sret` returns to a kernel address in U-mode.
+
+The return path decides what `sscratch` holds next from the `sstatus` it is
+about to restore: back to a program, it re-arms the kernel stack for the next
+trap; back to the kernel, it zeroes it.  The idle's wait zeroes it too, before
+unmasking — a tick inside that window is the kernel's own trap, and a parked
+user `sp` would misroute it onto a program's stack.
+
 ## Kernel
 
 The boot sequence, the syscall table, the scheduler and device discovery.
