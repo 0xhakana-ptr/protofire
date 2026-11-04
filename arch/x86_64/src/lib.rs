@@ -284,6 +284,47 @@ fn set_measured_frequency(frequency: u64) {
     unsafe { *CALIBRATED.get() = Some(frequency) };
 }
 
+/// The monotonic clock's rate, in ticks per second.
+///
+/// ## Why this is separate from `timer_frequency`
+///
+/// They are two clocks: `timer_counter` reads the TSC and `arm_timer` loads an
+/// APIC count, and nothing in the architecture says the two run at one rate.
+/// On this emulator they happen to agree — a boot was measured with the sleep
+/// conversion using either number and behaved identically — so this is not a
+/// fix for anything observed.  It is the honest signature: a caller that
+/// compares against `timer_counter` asks how fast *that* counts, and a caller
+/// that loads a countdown asks how fast *that* counts, and one function
+/// answering both would be right only where the two coincide.
+///
+/// Calibrated once and remembered, for the reason `timer_frequency` gives.
+///
+/// # Safety
+///
+/// Called once, with interrupts disabled.
+#[cfg(target_os = "none")]
+pub unsafe fn clock_frequency() -> Option<u64> {
+    if let Some(rate) = measured_clock() {
+        return Some(rate);
+    }
+    // SAFETY: the caller's contract is this function's.
+    let rate = unsafe { apic::calibrate_clock() }?;
+    // SAFETY: as above — the only write, and it happens before any program.
+    unsafe { *CLOCK_RATE.get() = Some(rate) };
+    Some(rate)
+}
+
+/// The clock's rate, measured once.
+#[cfg(target_os = "none")]
+static CLOCK_RATE: cell::SyncUnsafeCell<Option<u64>> = cell::SyncUnsafeCell::new(None);
+
+/// The clock's rate, if this boot has measured one.
+#[cfg(target_os = "none")]
+fn measured_clock() -> Option<u64> {
+    // SAFETY: written once by `clock_frequency` before any program runs.
+    unsafe { *CLOCK_RATE.get() }
+}
+
 /// Arm the timer to fire every `microseconds`.
 ///
 /// Answers the count it loaded, so a boot line can report a number rather than
@@ -394,6 +435,26 @@ pub unsafe fn timer_counter() -> u64 {
 #[cfg(target_os = "none")]
 pub unsafe fn timer_fired() -> bool {
     false
+}
+
+/// The line a boot raises to prove the interrupt path: the timer's.
+///
+/// ## Why not a spare vector
+///
+/// Vector zero is the divide error, so a self-directed interrupt at zero is a
+/// fault the processor takes and the dispatch never sees — a boot reported
+/// "raised but not delivered" on every run with nothing actually wrong.
+///
+/// A spare vector above the timer's is worse rather than better: the local APIC
+/// records what it delivers as in-service, and a vector the kernel's sink does
+/// not claim leaves the controller in a state a real tick never produces.  The
+/// boot then reported the test as delivered and took no tick afterwards.
+///
+/// So the instrument is the timer's own vector.  Nothing has armed the timer
+/// when the boot raises it, so this is the only delivery on that vector, and a
+/// sink that counts it is a sink that will count the real ones.
+pub const fn test_interrupt() -> usize {
+    crate::apic::TIMER_VECTOR as usize
 }
 
 /// The timer's interrupt as a vector.

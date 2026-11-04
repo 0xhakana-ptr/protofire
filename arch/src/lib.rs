@@ -314,17 +314,23 @@ pub use arch_x86_64::arm_timer;
 pub use arch_x86_64::disarm_timer;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::clock_frequency;
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::timer_control;
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::timer_counter;
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::timer_frequency;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::clock_frequency;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::timer_control;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::timer_counter;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::timer_frequency;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::clock_frequency;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::timer_control;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
@@ -355,6 +361,16 @@ pub use arch_aarch64::timer_interrupt;
 pub use arch_riscv64::timer_interrupt;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::timer_interrupt;
+
+// The line a boot raises to prove the interrupt path.  The number is the
+// machine's: aarch64's only askable line is a software interrupt in 0..15, and
+// x86_64's APIC will send any vector at all — including zero, which is a fault.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::test_interrupt;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::test_interrupt;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::test_interrupt;
 
 // How much memory this machine has, for a frame allocator that must clamp to
 // what is really there.  `None` means "use the pool's own span".

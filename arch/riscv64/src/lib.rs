@@ -299,6 +299,16 @@ pub unsafe fn timer_frequency() -> Option<u64> {
     None
 }
 
+/// The monotonic clock's rate: this machine's timer is not driven.
+///
+/// # Safety
+///
+/// As the aarch64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn clock_frequency() -> Option<u64> {
+    None
+}
+
 /// Arm the timer: this machine's timer is not driven yet.
 ///
 /// # Safety
@@ -434,3 +444,9 @@ pub fn wait_for_a_wakeup() {}
 /// The host build: nothing to wait for.
 #[cfg(not(target_os = "none"))]
 pub fn wait_for_a_wakeup() {}
+
+/// The line a boot raises to prove the interrupt path: this machine has no
+/// entry, so there is no line to raise.
+pub const fn test_interrupt() -> usize {
+    0
+}

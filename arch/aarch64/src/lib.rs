@@ -102,6 +102,14 @@ pub fn halt() -> ! {
 /// the machine's final stop; this one is the idle a scheduler uses when every
 /// program is asleep, so it returns as soon as the timer has something to say.
 ///
+/// ## Why there is no unmask here
+///
+/// x86_64 needs `sti` before its `hlt` because a supervisor call arrives
+/// through an interrupt gate, which clears the flag.  aarch64's exception
+/// entry restores `PSTATE` from `SPSR_EL1` on the way out and masks nothing on
+/// the way in for this path, so there is no flag to set — and `wfi` returns
+/// when an interrupt is pending whether or not one is masked at the time.
+///
 /// A host has no `wfi` and no interrupt to wait for, so the host arm returns
 /// immediately; a test that called it in a loop would spin, which is the one
 /// thing its caller must not rely on.
@@ -364,6 +372,20 @@ pub unsafe fn timer_frequency() -> Option<u64> {
     unsafe { timer::frequency() }
 }
 
+/// The monotonic clock's rate.
+///
+/// The same register `timer_frequency` reads, and the same number: this
+/// machine's counter and its timer are one clock, which x86_64's are not.
+///
+/// # Safety
+///
+/// Reads a system register; no side effect.
+#[cfg(target_os = "none")]
+pub unsafe fn clock_frequency() -> Option<u64> {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { timer::frequency() }
+}
+
 /// The counter's current value.
 ///
 /// # Safety
@@ -433,6 +455,15 @@ pub unsafe fn timer_control() -> u64 {
 pub unsafe fn timer_fired() -> bool {
     // SAFETY: as `timer_frequency`.
     unsafe { timer::has_fired() }
+}
+
+/// The line a boot raises to prove the interrupt path.
+///
+/// Zero, because `GICD_SGIR` generates software interrupts 0..15 and nothing
+/// above them — a device's line is raised by its device, and the only line this
+/// controller can be *asked* for is one of the sixteen.
+pub const fn test_interrupt() -> usize {
+    0
 }
 
 /// The timer's interrupt as a private interrupt number.

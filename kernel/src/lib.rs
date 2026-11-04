@@ -89,12 +89,19 @@ pub use abi::Loader;
 
 /// The line the boot raises to prove the interrupt path.
 ///
-/// A **software** interrupt, which is the only kind the controller can be asked
-/// to raise: `GICD_SGIR` generates numbers 0..16 and nothing else, because a
-/// device's line is raised by its device.  The path an SGI takes — distributor,
-/// CPU interface, `IAR`, vector, `EOIR` — is the same one a device's interrupt
-/// takes, so it is the right instrument and the only one.
-pub const TEST_INTERRUPT: usize = 0;
+/// The machine's own, and on x86_64 it is the **timer's** vector rather than a
+/// spare one.  A spare vector proved the gate but cost the timer: the local
+/// APIC records every vector it delivers as in-service, and ending an
+/// interrupt for a vector the kernel's sink does not claim leaves the
+/// controller's state ordered differently from what a real tick produces.  The
+/// boot then reported a delivered test interrupt and never took a tick.
+///
+/// The timer's vector is the honest instrument anyway: it is the line the
+/// scheduler depends on, so proving it is proving the thing that matters.
+#[cfg(target_os = "none")]
+fn test_interrupt() -> usize {
+    arch::test_interrupt()
+}
 
 /// The sentinel [`TEST_INTERRUPT_RAISED`] holds before an interrupt arrives.
 ///
@@ -128,11 +135,13 @@ fn raise_test_interrupt() {
     // something printed.  A test that cannot fail is worse than no test, and
     // this one could not fail.
     TEST_INTERRUPT_RAISED.store(NO_INTERRUPT, Ordering::Release);
+    let line = test_interrupt();
 
     // SAFETY: the controller is enabled and the sink is installed by the time
-    // this runs.  An SGI needs no enable — its bit is always set — so this asks
-    // the controller to raise it and nothing else.
-    let raised = unsafe { arch::raise_interrupt(TEST_INTERRUPT) };
+    // this runs.  An SGI needs no enable — its bit is always set — and a
+    // self-directed APIC interrupt needs none either, so this asks the
+    // controller to raise it and nothing else.
+    let raised = unsafe { arch::raise_interrupt(line) };
 
     if !raised {
         arch::serial::write_str(
@@ -143,7 +152,7 @@ fn raise_test_interrupt() {
     }
 
     let delivered = TEST_INTERRUPT_RAISED.load(Ordering::Acquire);
-    if delivered == TEST_INTERRUPT {
+    if delivered == line {
         arch::serial::write_str("protofire: interrupt delivered to its handler\n");
     } else {
         arch::serial::write_str("protofire: interrupt raised but not delivered");
@@ -939,7 +948,7 @@ fn kernel_interrupt_stack_top() -> usize {
 /// that measurement and not by a scheduler weighing anything, because this
 /// kernel has no load to weigh.
 #[cfg(target_os = "none")]
-pub const TIME_SLICE_US: u64 = 20;
+pub const TIME_SLICE_US: u64 = 100;
 
 /// How many times the timer has fired.
 pub static TIMER_TICKS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
@@ -1000,7 +1009,11 @@ fn start_timer() {
     // SAFETY: read-only.
     let second = unsafe { arch::timer_counter() };
     arch::serial::write_str("protofire: timer counter ");
-    arch::serial::write_u32(first.saturating_sub(second) as u32);
+    // `second - first`, not the other way: this machine's counter counts up.
+    // The subtraction was written for the APIC's countdown and kept its
+    // direction when the clock changed, which made the line print zero on a
+    // counter that was running.
+    arch::serial::write_u32(second.saturating_sub(first) as u32);
     arch::serial::write_str(" ticks apart\n");
 
     arch::serial::write_str("protofire: timer control ");
@@ -1017,24 +1030,16 @@ fn start_timer() {
     arch::serial::write_u32((frequency / 1000) as u32);
     arch::serial::write_str(" ticks/ms\n");
 
-    // And the delivery path, proved rather than assumed: the same vector the
-    // timer uses, sent by the controller to this CPU.  If this line is missing
-    // from a boot log, an interrupt from ring 3 never arrives and the timer is
-    // not the thing to investigate.
+    // There is no second self-check here.
     //
-    // SAFETY: the table is installed, the APIC is enabled by `timer_frequency`,
-    // and the sink counts the timer's vector.
-    let delivered = unsafe { arch::raise_interrupt(timer_interrupt()) };
-    let seen = TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire);
-    arch::serial::write_str("protofire: interrupt from the controller ");
-    if !delivered {
-        arch::serial::write_str("not raised (this machine cannot send one to itself)");
-    } else if seen > 0 {
-        arch::serial::write_str("delivered to the timer's handler");
-    } else {
-        arch::serial::write_str("raised but not delivered");
-    }
-    arch::serial::write_str("\n");
+    // One was written — the timer's own vector, sent to this CPU — and it was
+    // the wrong instrument twice over: on aarch64 the controller cannot raise a
+    // timer's private interrupt on demand, so it printed "not raised" on every
+    // boot; and on x86_64 it proved the same thing `raise_test_interrupt`
+    // already proves, because an APIC self-interrupt takes the identical path
+    // through the gate and the stub.  What the timer needs proved is that its
+    // *countdown* runs, which the counter line above does, and that a tick
+    // preempts, which the last line of the boot does.
 }
 
 /// The label the boot's volume carries.
@@ -1188,11 +1193,32 @@ fn write_to_console(text: &str) {
 /// machine that cannot count cannot wake a sleeper, and the line the boot
 /// printed said so.
 pub fn idle_until_woken() {
-    while crate::scheduler::has_sleeping() && !crate::scheduler::has_runnable() {
-        // `arch::halt` disables interrupts and stops the core, so it would
-        // never return; `wait_for_a_wakeup` is the machine's "stop counting
-        // until something happens", with interrupts left on.
+    // ## Why the machine does the waiting
+    //
+    // The three things this loop needs are all the machine's, and each differs
+    // between the two that have a ring 3.  A supervisor call arrives through an
+    // **interrupt gate**, which clears the interrupt flag on entry — so the
+    // kernel runs with interrupts masked for the whole of a served call, and a
+    // wait that did not unmask them waits for a tick that can never be
+    // delivered.  x86_64's `sti` is that unmask and aarch64 has no such flag to
+    // clear.  The instruction that stops the core is `hlt` on one and `wfi` on
+    // the other.
+    //
+    // So `arch::wait_for_a_wakeup` is the whole of the machine half: it unmasks
+    // where there is something to unmask and stops the core until an interrupt
+    // arrives.  The boot hung once with `every program is asleep, waiting` and
+    // no tick, because this file had tried to spell `sti` itself.
+    let mut spins = 0u64;
+    while crate::scheduler::has_sleeping() && !crate::scheduler::has_selectable() {
         arch::wait_for_a_wakeup();
+        spins += 1;
+        if spins > 1_000_000 {
+            // A machine whose timer does not tick cannot wake a sleeper, and
+            // waiting forever would hang the boot with no evidence.  This line
+            // says which machine it was.
+            arch::serial::write_str("protofire: no tick arrived while every program was asleep\n");
+            break;
+        }
     }
 }
 

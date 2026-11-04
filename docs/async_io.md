@@ -128,7 +128,7 @@ forbids at layer 2.
 
 ## The kernel's use of it today
 
-Nothing yet.  This crate was moved in with its 24 tests and its own `//!` header
+Nothing yet.  This crate was moved in with its tests and its own `//!` header
 says how a service is driven; the kernel has no producer for it, so there is no
 boot line and no gate that runs one.
 

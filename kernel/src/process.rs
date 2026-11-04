@@ -136,7 +136,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // to sleep: a host build has no timer, and a program told it slept
         // would be a program whose timing lied.
         let microseconds = call.arguments[0] as u64;
-        match crate::scheduler::sleep_for_microseconds(microseconds) {
+        match crate::scheduler::sleep_for_microseconds(microseconds, frame) {
             Some(until) => {
                 arch::serial::write_str("protofire: a program sleeps until counter ");
                 arch::serial::write_u32(until as u32);
@@ -162,13 +162,15 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 if crate::scheduler::has_other_runnable() || !crate::scheduler::has_sleeping() {
                     return crate::scheduler::advance(frame, false);
                 }
-                crate::scheduler::advance(frame, false);
+                // Nothing is selectable, so the frame is not replaced.  The
+                // wait happens here, and the task that woke is installed
+                // afterwards — through the call that does *not* save, because
+                // the frame arriving here is the boot's kernel frame and the
+                // task it would be saved into is asleep with a program context
+                // that must not be clobbered.
                 arch::serial::write_str("protofire: every program is asleep, waiting\n");
                 crate::idle_until_woken();
-                // A task woke, so the scheduler has something to install.  The
-                // frame from this call is the sleeper's, and `advance` replaces
-                // it with the woken task's.
-                return crate::scheduler::advance(frame, false);
+                return crate::scheduler::switch_without_saving(frame);
             }
             None => {
                 return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented));

@@ -303,22 +303,18 @@ the only crate that links an image.  `xtask` is not shipped: nothing depends on
 it, and it may name anything, which is expressible as the top layer rather than
 as an exception.
 
-## What a crate split buys, measured
+## What a crate split buys
 
 The reason for this arrangement is that a crate can be built and tested on its
-own.  That is checkable, and these are the numbers from this tree:
+own, and the way to see that is to move one and change nothing else.
 
-| | |
-|---|---|
-| a test run for one crate | `cargo test -p crypto` — 64 tests, 0.5 s |
-| lines moved with two import changes | 4,606 (`crypto`, from the previous tree) |
-| lines moved with no source change | 4,596 (`unicode`) |
+`crypto` is the case that shows it: it crossed the boundary with
+`use crate::Error` becoming `use abi::Error` and nothing else.  The tests are the
+same tests, they run on a host instead of needing a boot, and they still fail
+when the code is wrong — flipping one SHA-256 initial constant turns five of them
+red.  `unicode` moved with no source change at all.
 
-The second row is the experiment that justified the exercise: the previous tree's
-`crypto` is 4,606 lines and 64 tests, and it crossed the boundary with
-`use crate::Error` becoming `use abi::Error`.  The tests are the same tests, they
-run on a host instead of needing a boot, and they still fail when the code is
-wrong — flipping one SHA-256 initial constant turns five of them red.
+A test run is `cargo test -p crypto`: seconds, and no machine.
 
 ## What the gates hold
 

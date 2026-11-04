@@ -41,6 +41,10 @@ pub fn handle(frame: irq::Frame) -> bool {
     #[cfg(target_os = "none")]
     if vector == arch::timer_interrupt() {
         crate::TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Release);
+        // The boot's self-check reads this, and so does nothing else: it is the
+        // record that *this* vector reached a handler, which is the one claim
+        // the boot makes before any program runs.
+        crate::TEST_INTERRUPT_RAISED.store(vector, core::sync::atomic::Ordering::Release);
 
         // Wake whatever slept past its deadline, *before* the preemption hook
         // asks who can run: a task that has finished sleeping is runnable now,
@@ -61,8 +65,11 @@ pub fn handle(frame: irq::Frame) -> bool {
         return true;
     }
 
-    // The boot's own check: the line it raised, to prove the path.
-    if vector == crate::TEST_INTERRUPT {
+    // A machine whose self-check uses a vector of its own records it here.
+    // x86_64's uses the timer's, so it never reaches this; aarch64's uses a
+    // software interrupt, which is not a timer and not a fault.
+    #[cfg(target_os = "none")]
+    if vector == crate::test_interrupt() && vector != arch::timer_interrupt() {
         crate::TEST_INTERRUPT_RAISED.store(vector, core::sync::atomic::Ordering::Release);
         return true;
     }

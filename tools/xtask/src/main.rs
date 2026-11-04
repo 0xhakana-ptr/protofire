@@ -186,6 +186,20 @@ impl Machine {
     /// to its in-memory image when the bus has no disk, so "the filesystem
     /// mounted" alone would pass on a machine where the driver never ran —
     /// `virtio-blk on pci` is the line that says it did.
+    /// Lines the log has to contain more than once, and how many.
+    ///
+    /// A separate list from [`Machine::required_lines`] because it answers a
+    /// different question: that one asks "did the boot reach this step", and
+    /// this one asks "did it reach it again after sleeping".  One program's
+    /// `Write` appears twice in its image, and a boot that never woke prints
+    /// it once.
+    fn repeated_lines(self) -> &'static [(&'static str, usize)] {
+        match self {
+            Self::X8664 | Self::Aarch64 => &[(" says hello", 4)],
+            Self::Riscv64 => &[],
+        }
+    }
+
     fn required_lines(self) -> &'static [(&'static str, bool)] {
         match self {
             Self::X8664 => &[
@@ -239,22 +253,32 @@ impl Machine {
                 // printing anything.  The line is the only evidence that
                 // `lgdt`/`ltr` were executed rather than planned.
                 ("protofire: descriptor tables installed, TSS loaded", true),
-                // The system call gate, exercised from ring 0.
+                // The interrupt path, exercised rather than reported.
                 //
-                // A gate at the wrong DPL is a program's `int $0x80` arriving
-                // as a protection fault, which reads as a fault in the program.
-                // The boot raises the vector itself and requires the dispatch's
-                // own answer, so the line means the stub, the frame and the
-                // `iretq` all ran.
-                (
-                    "protofire: interrupt from the controller delivered to the timer's handler",
-                    true,
-                ),
+                // "Interrupts on" is a flag; a boot that printed it and never
+                // took an interrupt has said nothing.  This line means the
+                // controller delivered a vector, the gate and the stub ran, and
+                // the `iretq` returned — and it can fail: with the raise
+                // disabled the boot prints "raised but not delivered" instead.
+                //
+                // The vector is the machine's, not a constant: `arch`'s
+                // `test_interrupt` answers one above the processor's
+                // exceptions, because vector zero is the divide error and the
+                // APIC will happily deliver a fault.
+                ("protofire: interrupt delivered to its handler", true),
                 // Two programs in ring 3, each in an address space of its own.
                 //
                 // `1` and `2` are the programs' own numbers: one program
                 // twice reads exactly the same as two programs once, so the
                 // value comes from the program and not from a kernel counter.
+                // Each program prints twice: once before it sleeps and once
+                // after it wakes.  One line each would pass on a boot where
+                // nobody ever slept, which is what a `Sleep` that answered
+                // immediately would produce.
+                //
+                // The second line is required, so this is where a boot that
+                // never woke fails: the sleeping program's first `Write` is
+                // there, and its second never is.
                 ("program 1 says hello", true),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
@@ -618,6 +642,32 @@ fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()> {
             writeln!(message, "  serial log ({} bytes):", log.len())?;
             for line in log.lines() {
                 writeln!(message, "    {line}")?;
+            }
+            bail!("{message}");
+        }
+    }
+
+    // A line that has to appear more than once.
+    //
+    // The required-lines list can say "this line exists"; it cannot say "and it
+    // exists twice", and the difference is the whole of what a sleep proves.
+    // A program that wrote its line and then slept for ever prints it once; a
+    // program that slept and woke prints it twice.  So the boot that reports
+    // both programs exiting is checked here against the count the program's own
+    // source has: two writes each.
+    for (line, least) in machine.repeated_lines().iter().copied() {
+        let seen = log
+            .lines()
+            .filter(|candidate| candidate.trim_end().contains(line))
+            .count();
+        if seen < least {
+            let mut message = String::new();
+            writeln!(
+                message,
+                "check failed: \"{line}\" appears {seen} time(s), and the program writes it {least}",
+            )?;
+            for candidate in log.lines() {
+                writeln!(message, "    {candidate}")?;
             }
             bail!("{message}");
         }

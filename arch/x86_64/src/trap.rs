@@ -237,17 +237,16 @@ fn end_of_interrupt() {
     }
 }
 
-/// Whether this vector is the timer's, which is the one that needs an EOI.
+/// Whether an end-of-interrupt has to be written for this vector.
 ///
-/// Public for the test that checks the two numbers agree: the vector the APIC
-/// raises and the vector this file ends the interrupt for are one fact in two
-/// places, and a mismatch would leave the line in service forever.
-///
-/// Only the timer's: the local APIC's EOI is written for a vector *it*
-/// delivered, and a vector the processor raised as a fault has no line in
-/// service to clear.
-pub fn is_timer_vector(vector: usize) -> bool {
-    vector == crate::apic::TIMER_VECTOR as usize
+/// Only the local APIC holds a line in service, and it holds one for every
+/// vector it delivers, so the rule is "the controller delivered it" rather than
+/// "it is the timer's".  A vector the processor raised as a fault has no line
+/// in service, and writing EOI for one would clear whichever line *is* being
+/// serviced — which is why the boundary is the processor's 32 exceptions and
+/// not "everything".
+pub fn needs_end_of_interrupt(vector: usize) -> bool {
+    vector >= 32
 }
 
 /// Hand a non-call vector to the kernel's sink, and give the scheduler a turn.
@@ -275,7 +274,7 @@ fn finish_interrupt(frame: &mut Context) {
     // reason aarch64's `EOIR` comes before its preemption hook: a switch made
     // with the line still in service leaves it active in a task that may not
     // run again for a while, and the next tick is then never delivered.
-    if is_timer_vector(frame.vector as usize) {
+    if needs_end_of_interrupt(frame.vector as usize) {
         end_of_interrupt();
     }
 

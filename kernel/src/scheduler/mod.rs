@@ -227,6 +227,23 @@ impl Scheduler {
     /// is the code that could get it wrong.  What is not done is selecting it
     /// again, which the `finished` flag prevents.
     pub fn schedule(&mut self, frame: &mut Context, exiting: bool) -> CallOutcome {
+        self.schedule_from(frame, exiting, true)
+    }
+
+    /// Select the next task and install it, optionally saving `frame` first.
+    ///
+    /// ## Why `save` exists, and what it prevents
+    ///
+    /// `schedule`'s frame always belongs to the task that is leaving — it is
+    /// the trap frame that task was suspended in.  A caller whose frame is a
+    /// *kernel* frame has no such claim: the boot's idle loop runs on the
+    /// kernel stack, and writing that frame into the sleeping task would put a
+    /// kernel address where a program's `ELR` was.  The symptom is an
+    /// instruction abort from ring 3 at an address inside the kernel, one boot
+    /// in three, and the first version of the sleep path did exactly that.
+    ///
+    /// So the two callers say which they are.  A trap saves; an idle does not.
+    fn schedule_from(&mut self, frame: &mut Context, exiting: bool, save: bool) -> CallOutcome {
         // Where the current task was, kept exactly.
         //
         // `exiting` is the *caller's* claim about what happened, and a sleeping
@@ -234,7 +251,7 @@ impl Scheduler {
         // this call, so its state is already `Sleeping` and this must not
         // overwrite it with `Finished`.  That is why the flag only ever sets
         // `Finished` and never the other way.
-        if let Some(task) = self.tasks.get_mut(self.current) {
+        if save && let Some(task) = self.tasks.get_mut(self.current) {
             task.context = *frame;
             if exiting {
                 task.state = State::Finished;
@@ -310,8 +327,18 @@ impl Scheduler {
     /// A duration is what a program asks for and a deadline is what a scheduler
     /// compares.  Converting once, here, keeps every comparison in one clock:
     /// the machine's counter, whose rate the caller measured.
-    pub fn sleep_until(&mut self, until: u64) {
+    pub fn sleep_until(&mut self, until: u64, frame: &Context) {
         if let Some(task) = self.tasks.get_mut(self.current) {
+            // The frame is saved **here**, not by a later `schedule`.
+            //
+            // A task that sleeps must resume where it asked to, and the only
+            // copy of that position is the trap frame the call arrived in.
+            // Leaving the save to whichever scheduling call happens next worked
+            // only while a call always happened: with every task asleep the
+            // boot idles instead, and the task then woke at whatever position
+            // its context last held — the first version resumed program 2 at
+            // its `Sleep` every time, printing the same line forever.
+            task.context = *frame;
             task.state = State::Sleeping { until };
         }
     }
@@ -359,9 +386,22 @@ impl Scheduler {
     ///
     /// A sleeping task counts: it will run again, so the boot has work left and
     /// must not stop the machine.  Only `Finished` is the "nothing left"
-    /// answer.
+    /// answer, which is why this is not the question a dispatcher asks — see
+    /// [`Scheduler::has_selectable`].
     pub fn has_runnable(&self) -> bool {
         self.tasks.iter().any(|task| task.state != State::Finished)
+    }
+
+    /// Whether any task could be selected right now.
+    ///
+    /// The question an idle loop asks, and deliberately different from
+    /// [`Scheduler::has_runnable`]: a task that is asleep is still work the boot
+    /// owes, and a task that is runnable is one the loop can stop waiting for.
+    /// A loop written with `has_runnable` never waits at all, because sleeping
+    /// tasks make it true — which is the defect the first version of the idle
+    /// had.
+    pub fn has_selectable(&self) -> bool {
+        self.tasks.iter().any(|task| task.state == State::Runnable)
     }
 
     /// Whether any task is asleep rather than runnable or finished.
@@ -416,6 +456,23 @@ pub unsafe fn install(scheduler: Scheduler) {
     // SAFETY: the caller promises this is the only write and that it happens
     // before EL0 is entered.
     unsafe { *SCHEDULER.get() = Some(scheduler) };
+}
+
+/// Install the next task's context without saving the frame it was given.
+///
+/// For the idle path: the boot waiting for a wakeup holds a kernel frame, and
+/// saving it into a task would replace that task's saved program state with a
+/// kernel address.  See `Scheduler::schedule_from`.
+///
+/// Answers what `advance` answers, and for the same reason: `Exit` means the
+/// frame was not replaced and the caller decides what to do about it.
+pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
+    // SAFETY: the scheduler is written once before any program runs.
+    let scheduler = unsafe { (&mut *SCHEDULER.get()).as_mut() };
+    match scheduler {
+        Some(scheduler) => scheduler.schedule_from(frame, false, false),
+        None => arch::CallOutcome::Exit,
+    }
 }
 
 /// Save the current task, install the next one's context, and answer.
@@ -514,11 +571,15 @@ pub fn preempt(frame: &mut arch::Context) {
 ///
 /// `None` when no scheduler is installed, which is the state a host build is
 /// in.
-pub fn sleep_for_microseconds(microseconds: u64) -> Option<u64> {
+pub fn sleep_for_microseconds(microseconds: u64, frame: &arch::Context) -> Option<u64> {
     #[cfg(target_os = "none")]
     {
-        // SAFETY: the register is a system register with no side effect.
-        let frequency = unsafe { arch::timer_frequency() }?;
+        // The **clock's** rate, not the timer's: `timer_counter` is what
+        // `until` is compared against, and on a machine whose two clocks run at
+        // different rates a duration converted with the timer's would be a
+        // deadline that is right by accident.
+        // SAFETY: read-only.
+        let frequency = unsafe { arch::clock_frequency() }?;
         // SAFETY: read-only.
         let now = unsafe { arch::timer_counter() };
         let until = now.saturating_add(arch::ticks_for_microseconds(frequency, microseconds));
@@ -526,12 +587,14 @@ pub fn sleep_for_microseconds(microseconds: u64) -> Option<u64> {
         // `as_mut` on the raw pointer is what a single writer holding the only
         // reference is allowed to do.
         let scheduler: &mut Option<Scheduler> = unsafe { &mut *SCHEDULER.get() };
-        scheduler.as_mut()?.sleep_until(until);
+        scheduler.as_mut()?.sleep_until(until, frame);
         Some(until)
     }
     #[cfg(not(target_os = "none"))]
     {
-        let _ = microseconds;
+        // A host has no timer, so a program that asked to sleep is told the
+        // call is not served rather than told it slept.
+        let _ = (microseconds, frame);
         None
     }
 }
@@ -566,6 +629,13 @@ pub fn has_other_runnable() -> bool {
     // SAFETY: the scheduler is written once before any program runs.
     let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
     scheduler.is_some_and(Scheduler::has_other_runnable)
+}
+
+/// Whether any installed task could be selected right now.
+pub fn has_selectable() -> bool {
+    // SAFETY: the scheduler is written once before any program runs.
+    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
+    scheduler.is_some_and(Scheduler::has_selectable)
 }
 
 /// Whether any installed task is asleep rather than runnable or finished.
@@ -686,6 +756,86 @@ mod tests {
         assert_eq!(scheduler.exited(), 1);
         assert!(!scheduler.has_runnable());
         assert!(scheduler.current().is_none());
+    }
+
+    /// A sleeping task is not selectable, and waking one makes it so.
+    ///
+    /// Two different questions, deliberately: `has_runnable` answers "does the
+    /// boot still owe work", which a sleeper makes true, and `has_selectable`
+    /// answers "can the CPU move now", which it does not.  The idle loop asked
+    /// the first and never waited — the boot printed one program's line and
+    /// stopped with the other asleep.
+    #[test]
+    fn a_sleeping_task_is_owed_but_not_selectable() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add(Task::without_space("a"));
+        scheduler.add(Task::without_space("b"));
+
+        let mut frame = starting_context(0, 0);
+        scheduler.sleep_until(100, &frame);
+        assert_eq!(scheduler.sleeping(), 1);
+        assert!(scheduler.has_sleeping(), "the boot still owes it a run");
+        assert!(scheduler.has_runnable(), "which is what this answers");
+        assert!(scheduler.has_selectable(), "and b can still run");
+
+        // Now b sleeps too: nothing is selectable, though two tasks are owed.
+        scheduler.schedule(&mut frame, false);
+        scheduler.sleep_until(100, &frame);
+        assert_eq!(scheduler.sleeping(), 2);
+        assert!(!scheduler.has_selectable(), "neither can run");
+        assert!(scheduler.has_runnable(), "and both are still owed");
+    }
+
+    /// A woken task is selectable again, and one whose deadline has not passed
+    /// is not.
+    #[test]
+    fn a_deadline_wakes_only_when_it_has_passed() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add(Task::without_space("only"));
+        let frame = starting_context(0, 0);
+        scheduler.sleep_until(1000, &frame);
+
+        assert_eq!(scheduler.wake_expired(999), 0, "not yet");
+        assert_eq!(scheduler.sleeping(), 1);
+
+        assert_eq!(scheduler.wake_expired(1000), 1, "at the deadline");
+        assert_eq!(scheduler.sleeping(), 0);
+        assert!(scheduler.has_selectable());
+    }
+
+    /// A task that sleeps resumes where it asked to.
+    ///
+    /// The frame is saved by `sleep_until` itself.  Leaving it to the next
+    /// scheduling call worked only while a call always happened; with every
+    /// task asleep the boot idles instead, and the task then resumed at
+    /// whatever position its context last held — which was the `Sleep` call,
+    /// so it printed its line and slept again forever.
+    #[test]
+    fn a_sleeper_keeps_the_position_it_slept_at() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add(Task::without_space("a"));
+        scheduler.add(Task::without_space("b"));
+
+        // A frame that is unmistakably not a fresh one: it is the *reference*
+        // the comparison below is against, so nothing has to read a field.
+        let frame = starting_context(0x80_0000_1234, 0x80_0000_2000);
+        let slept_at = frame;
+
+        scheduler.sleep_until(50, &frame);
+
+        // The frame the task holds is the one the sleep was called from, byte
+        // for byte.  `Context` is `Copy` and `PartialEq`-free, so the check is
+        // the two addresses plus a comparison of the whole value as bytes —
+        // which is what "the position survived" means and nothing narrower.
+        let saved = *scheduler.tasks[0].context();
+        assert_eq!(
+            core::mem::size_of_val(&saved),
+            core::mem::size_of_val(&slept_at)
+        );
+        assert!(
+            saved == slept_at,
+            "the sleeping task kept the frame it asked from"
+        );
     }
 
     /// A task that made a call is resumed with that call's answer in `x0`.

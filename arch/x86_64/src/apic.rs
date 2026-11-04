@@ -473,25 +473,26 @@ pub unsafe fn calibrate(apic: &Apic) -> Option<u64> {
     Some(per_second * 16)
 }
 
-/// Measure the timestamp counter's frequency against the PIT.
+/// Measure the timestamp counter's rate against the PIT.
 ///
-/// ## Why this is a second measurement
+/// ## Why this is a second measurement and not the first one reused
 ///
-/// The APIC's timer and the TSC are different clocks: the first counts bus
-/// cycles divided by the divide configuration, and the second counts at a rate
-/// the CPU reports through `CPUID` only on some machines.  A deadline is a TSC
-/// reading, so a conversion from a duration needs the TSC's rate — using the
-/// APIC's would make a twenty-millisecond sleep last a different time on every
-/// machine with a different bus clock.
+/// The APIC's timer and the TSC are different clocks with different rates.  A
+/// deadline is a TSC reading, so converting a duration to a deadline needs the
+/// TSC's rate; a countdown is an APIC count, so arming the timer needs the
+/// APIC's.  One number cannot serve both, and the first version of this code
+/// used the APIC's for the TSC as well — which worked on this emulator because
+/// a twenty-millisecond sleep has enough slack to absorb being sixteen times
+/// too short, and would not have worked on anything that asked for a small one.
 ///
-/// The method is the PIT again, for the reason it was used the first time: its
-/// crystal is documented and it needs no firmware table.
+/// The method is the PIT, for the reason it was used the first time: its
+/// crystal is documented and needs no firmware table.
 ///
 /// # Safety
 ///
 /// Called once, with interrupts disabled.  It programs the PIT's channel 2,
 /// which nothing else in this kernel uses.
-pub unsafe fn calibrate_tsc() -> Option<u64> {
+pub unsafe fn calibrate_clock() -> Option<u64> {
     let pit_count = PIT_MAX_COUNT;
 
     let gate = crate::port::inb(PIT_GATE);
@@ -506,8 +507,7 @@ pub unsafe fn calibrate_tsc() -> Option<u64> {
 
     let mut spins = 0u32;
     loop {
-        let status = crate::port::inb(PIT_GATE);
-        if status & 0b0010_0000 != 0 {
+        if crate::port::inb(PIT_GATE) & 0b0010_0000 != 0 {
             break;
         }
         spins += 1;
@@ -522,7 +522,8 @@ pub unsafe fn calibrate_tsc() -> Option<u64> {
     if elapsed == 0 {
         return None;
     }
-    // TSC ticks per PIT tick, times the PIT's frequency.
+    // TSC ticks per PIT tick, times the PIT's frequency.  No divide factor:
+    // the TSC is not behind the APIC's divide configuration.
     Some(elapsed * PIT_FREQUENCY / pit_count as u64)
 }
 

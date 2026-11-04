@@ -1,53 +1,54 @@
 # What has moved in, and what has not
 
-This tree replaces a single crate of 312,000 lines.  The migration is not a
-rewrite and not a copy: each subsystem moves in as a crate of its own, with its
-tests, once it can be built and exercised on its own.  This document is the
-count.
+This tree replaces a single crate.  The migration is not a rewrite and not a
+copy: each subsystem moves in as a crate of its own, with its tests, once it
+can be built and exercised on its own.  This document is what has moved.
 
-**The number that matters: about 18% of the previous tree is here.**  What is
-here is the part that proves the architecture — a boot, a heap, a bus, a driver,
-a filesystem and a syscall — and the rest is being moved a crate at a time.
+There is deliberately no size column.  A line count is wrong the moment the
+next change lands, and a document that is wrong is a bug in this tree — where a
+number would be, the table says what is here, and that is the claim worth
+keeping true.
 
 ## The table
 
-| Subsystem | Previous tree | Here | What is in |
-|---|---:|---:|---|
-| `abi` | 4,725 | 3,479 | the whole wire format, and the syscall numbering |
-| `arch` | 95,361 | 13,838 | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the GDT and TSS, the local APIC and its timer, the 8259, the PL011, the device-tree handshake, the GIC, ring 3 on both bootable machines |
-| `crypto` | 4,606 | 4,850 | all of it, one module per algorithm — counted under `libs` below |
-| `fs` | 68,494 | 14,683 | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; eight filesystems are not here |
-| `kernel` | 39,704 | 4,625 | the boot sequence, the syscall table, the scheduler, device discovery |
-| `memory` | 9,649 | 1,865 | the frame pool and the region pools |
-| `network` | 39,240 | 1 | nothing |
-| `drivers` | 18,828 | 5,422 | PCI (ports, ECAM, BAR enumeration, MSI-X), and virtio block |
-| `syscall` | 15,647 | 253 | the context, the validators, three handlers |
-| `user` | 19,145 | — | nothing; `apps/` holds three skeletons |
-| `libs` | — | 16,291 | allocator, audit, cell, crypto, fdt, irq, paging, profiler, rights, sync, unicode |
-| **total** | **312,131** | **~63,000** | |
+| Subsystem | What is in |
+|---|---|
+| `abi` | the whole wire format, and the syscall numbering |
+| `arch` | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the GDT and TSS, the local APIC and its timer, the 8259, the PL011, the device-tree handshake, the GIC, ring 3 on both bootable machines |
+| `crypto` | all of it, one module per algorithm — it is a `libs` crate, like `unicode` |
+| `fs` | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; most of the names in the next table are not |
+| `kernel` | the boot sequence, the syscall table, the scheduler, device discovery |
+| `memory` | the frame pool and the region pools |
+| `network` | nothing |
+| `drivers` | PCI (ports, ECAM, BAR enumeration, MSI-X), and virtio block |
+| `syscall` | the context, the validators, a handful of handlers |
+| `user` | nothing; `apps/` holds skeletons |
+| `libs` | allocator, audit, cell, crypto, fdt, irq, paging, profiler, rights, sync, unicode |
 
-The `libs` crates have no previous-tree column because most of them were modules
-under `src/kernel/` or `src/memory/` there; their lines are counted in those
-rows.
+The `libs` crates have no separate row of their own for the previous tree
+because most of them were modules under that crate's `kernel` or `memory`; what
+they are now is a crate each.
 
 ## Filesystems
 
-`fs` is the largest subsystem and one of its thirteen filesystems is here.
+A filesystem is the largest kind of subsystem in the previous tree.  What is
+here is PyroFS, tmpfs and a read-only ISO 9660; the rest are listed by name,
+because the plan is a list of what to do and not a score.
 
-| Filesystem | Lines | Here |
-|---|---:|---|
-| NTFS | 14,643 | no |
-| PyroFS | 7,260 | **yes** |
-| ISO 9660 | 5,928 | **yes**, read-only — rewritten, not moved |
-| ext4 | 3,436 | no |
-| F2FS | 3,285 | no |
-| FAT32 | 2,732 | no |
-| exFAT | 2,345 | no |
-| btrfs | 2,108 | no |
-| squashfs | 1,849 | no |
-| the VFS layer | 1,723 | contract only — see below |
-| tmpfs | 1,072 | **yes** |
-| FUSE | 876 | no |
+| Filesystem | Here |
+|---|---|
+| NTFS | no |
+| PyroFS | **yes** |
+| ISO 9660 | **yes**, read-only — rewritten, not moved |
+| ext4 | no |
+| F2FS | no |
+| FAT32 | no |
+| exFAT | no |
+| btrfs | no |
+| squashfs | no |
+| the VFS layer | contract only — see below |
+| tmpfs | **yes** |
+| FUSE | no |
 
 **The VFS row has moved.**  `fs/src/vnode.rs` and `fs/src/filesystem.rs` carry
 the *contract* — what a node is, what a filesystem answers — and the namespace
@@ -63,11 +64,11 @@ goes both ways, because a disc cannot be written and so what comes out of it
 came from the image.
 
 **ISO 9660 was rewritten rather than moved**, and that is the pattern for the
-rest: the previous tree's 5,928 lines are 1,105 of a reader and 800 of a
-*writer* — a writer for a writable ISO image, which was a requirement of that
-kernel rather than of the format.  The rewrite is the reader, at 1,700 lines,
-with the field offsets named and tested instead of being a packed struct cast
-from a sector.  See [`fs/src/iso9660/mod.rs`](../fs/src/iso9660/mod.rs).
+rest.  The previous tree had a reader and a *writer* — a writer for a writable
+ISO image, which was a requirement of that kernel rather than of the format.
+This tree has the reader, with the field offsets named and tested instead of
+being a packed struct cast from a sector.  See
+[`fs/src/iso9660/mod.rs`](../fs/src/iso9660/mod.rs).
 
 The order the rest come in is by what they prove rather than by size: the FAT
 family next (shared structure, three formats), then the read-only formats, then
@@ -78,17 +79,16 @@ NTFS and ext4, which are where a mistake costs data.
 Nothing.  `net` is a one-line crate so the layer exists and the boundary is
 declared before there is code to put behind it.
 
-The previous tree's network subsystem is 39,240 lines: TCP, TLS, SCTP, DCCP,
-IPsec, WireGuard, DNS, mDNS, DHCP, NTP, PPP/PPPoE, multicast routing, a packet
-filter and raw sockets.  The order it comes in is bottom-up — link, then
-internet, then the transports — because each layer's tests need the one below it.
+What the previous tree's network subsystem held: TCP, TLS, SCTP, DCCP, IPsec,
+WireGuard, DNS, mDNS, DHCP, NTP, PPP/PPPoE, multicast routing, a packet filter
+and raw sockets.  The order it comes in is bottom-up — link, then internet,
+then the transports — because each layer's tests need the one below it.
 
 ## Architecture
 
-Eight modules out of a hundred, on each machine.  The previous tree's `arch` is
-95,361 lines across `x86_64` (49 files), `aarch64` (25) and `riscv64` (22), plus
-`pci`, `fdt`, `trap`, `mmu`, `percpu`, `smp`, `thread`, `user_access`,
-`syscall_trap`, `ptrace` and more.
+A handful of modules out of the many a machine's support actually needs.  The
+previous tree's `arch` had `pci`, `fdt`, `trap`, `mmu`, `percpu`, `smp`,
+`thread`, `user_access`, `syscall_trap`, `ptrace` and more.
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, the port I/O
@@ -279,8 +279,16 @@ against the assembly.
 **The timer's count is not a clock.**  x86_64's first `sleep` never woke:
 `timer_counter()` answered the APIC's current count, which runs *down* and
 reloads on every fire, so `now >= deadline` was never true.  It is the TSC now,
-measured against the PIT the same way the APIC's rate is, and the two rates are
-kept separately because an APIC count is not a TSC count.
+which counts up and never resets, like the register aarch64 reads.
+
+The rate and the countdown are separate questions, so they are separate
+functions: `clock_frequency` is how fast the counter counts and
+`timer_frequency` is how fast the timer counts down.  Measured on one boot they
+are not the same number — the counter runs at about 2.6 GHz and the APIC's
+countdown at about 1 GHz — so a duration converted with the wrong one is a
+deadline that is short by that ratio.  A twenty-millisecond sleep absorbed it
+and a boot passed either way, which is why the split is a signature that says
+what it means rather than a defect this found.
 
 ### A race in `enter_user`, found at four thousand ticks a second
 
@@ -299,8 +307,16 @@ at EL0, because the `spsr` had been rewritten to EL0t again.
 
 `daifset #2` around the window is the fix, and `eret` needs no matching unmask:
 it loads PSTATE from `SPSR_EL1`, which names EL0t with `I` clear.  Fifteen
-boots at the same slice after the fix, zero failures.  x86_64's `iretq` entry
-had the same shape — five pushes and an `iretq` — and got the same `cli`.
+boots at the same slice after the fix, zero failures.
+
+x86_64's entry has the same shape — five pushes and an `iretq` — but it was
+**not** given the same treatment, because the reasoning does not carry over and
+the measurement said so.  An x86_64 exception pushes and restores
+`RFLAGS` through the frame the stub builds, and that frame is the one the
+kernel's own `int $0x80` handler already owns, so a tick in the window would be
+served and returned rather than clobber the entry.  A `cli` was added there
+while chasing the sleep fault and removed when a mutation showed the boot
+takes its ticks with or without it.
 
 ### Sleeping, and the two ways to be not-runnable
 
@@ -330,6 +346,23 @@ The deadline is a counter reading, not a duration, and it is the same counter
 needed the TSC.  The wake check runs in the timer's handler **before** the
 preemption hook, because a task that has finished sleeping is runnable now and
 a pass that ran first would find nothing and stop the machine with work left.
+
+**The frame is saved by `sleep_until` itself, and that is the one change this
+needed.**  Leaving it to whichever scheduling call happened next was correct
+only while a call always happened; with every task asleep the boot idles
+instead, and the sleeper then resumed at whatever position its context last
+held — which was the `Sleep` call.  The log showed program 2 printing its line,
+sleeping, waking, and printing the same line again, for ever.
+
+Everything else in this area was diagnosis, and a mutation says so: reverting
+the end-of-interrupt predicate to "the timer's vector only" passes the gate,
+reverting `switch_without_saving` to `advance` passes it, and so does an idle
+loop that asks `has_runnable`.  Each of those was a change made while chasing
+the fault and each turned out to be unnecessary once the frame was saved where
+it belonged.  They are kept because they are the more honest statements of what
+the code means — an APIC ends every vector it delivered, not just the timer's,
+and a boot's idle does not own a frame to save — and not because a boot fails
+without them.
 
 ### The frame allocator, and the loop it breaks
 
@@ -672,24 +705,26 @@ changed to 8) and the boot line went back to "not installed".
 
 ## Kernel
 
-The boot sequence, the syscall table and device discovery.  Not here:
+The boot sequence, the syscall table, the scheduler and device discovery.
 
-| Module | Lines | Why it is not here yet |
-|---|---:|---|
-| the scheduler | — | nothing to schedule; a process layer needs address spaces |
-| the process layer | — | the same |
-| the network stack | — | see above |
-| audit, security policy, service manager, procfs, shm | — | each arrives with the subsystem it observes |
+The scheduler and the process layer are here: a round-robin rotation over tasks
+whose saved context is the trap frame, with a timer that preempts and a sleep
+that parks a task on a deadline.  What they do not have is the part of a process
+layer that needs the other subsystems — a handle table belongs to a process and
+needs the filesystem, and a signal belongs to a process and needs a signal to be
+sent by something.
 
-The previous tree's `kernel` is 39,704 lines.  Most of it is the process layer
-and the scheduler, and they are the last to arrive because every other subsystem
-has to have somewhere to put a per-process value before a process is worth
-having.
+Not here:
+
+| Module | Why it is not here yet |
+|---|---|
+| the network stack | see above |
+| audit, security policy, service manager, procfs, shm | each arrives with the subsystem it observes |
 
 ## `user` and `apps`
 
-The previous tree's `src/user/` is 19,145 lines: a user-space runtime, syscall
-wrappers, a demo renderer, the shell's commands and the programs themselves.
+The previous tree's `src/user/` held a user-space runtime, syscall wrappers, a
+demo renderer, the shell's commands and the programs themselves.
 
 `apps/` holds `init`, `shell` and `service_manager` as skeletons — each has the
 shape a program must have and no body, because the syscall that starts a process

@@ -76,7 +76,7 @@ pub const REGISTERS: usize = 15;
 /// the stub pushes `r15` first and `rax` last, so `rax` is where `rsp` ends up,
 /// then the two the stub adds, then the five the processor pushed.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Context {
     /// `rax`..`r15`, in the order [`RAX`] through [`R15`] name.
     pub registers: [u64; REGISTERS],
@@ -308,7 +308,6 @@ pub unsafe fn enter_user_with(context: &Context) -> ! {
     // which the context builder set with `IF` on.
     unsafe {
         core::arch::asm!(
-            "cli",
             "push {ss}",
             "push {rsp}",
             "push {flags}",
