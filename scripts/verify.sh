@@ -60,7 +60,10 @@ MACHINES="x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf"
 # build.  A machine is added here when `cargo xtask check --machine` has
 # required lines for it, and not before: `xtask` refuses a machine with no
 # expected lines rather than passing a check that asserted nothing.
-BOOTABLE_MACHINES="x86_64 aarch64"
+# riscv64 is in because its image boots: the OpenSBI hand-off, the device
+# tree, the kernel's own page table and the heap are all exercised, and the
+# machine's required lines are the evidence.
+BOOTABLE_MACHINES="x86_64 aarch64 riscv64"
 
 step() {
     printf '==> verify[%s]: %s\n' "$VERIFY_TIER" "$1"

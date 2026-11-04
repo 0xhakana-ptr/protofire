@@ -25,6 +25,15 @@ extern crate alloc;
 // `wfi`, so those arms are no-ops that a test can still run — and the crate
 // stays compilable everywhere it is named.
 
+// The entry: the global pointer, the stack, `sscratch`, the bss clear and the
+// S-mode hand-off.
+//
+// Here rather than in `bootloader` for the reason the other machines' entries
+// are: every instruction is a fact about this machine, and the protocol crate
+// is not the machine.
+#[cfg(target_os = "none")]
+core::arch::global_asm!(include_str!("entry.S"));
+
 pub mod boot;
 pub mod interrupts;
 pub mod paging;

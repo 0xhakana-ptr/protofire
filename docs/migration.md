@@ -14,7 +14,7 @@ keeping true.
 | Subsystem | What is in |
 |---|---|
 | `abi` | the whole wire format, and the syscall numbering |
-| `arch` | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the GDT and TSS, the local APIC and its timer, the 8259, the PL011, the device-tree handshake, the GIC, ring 3 on both bootable machines |
+| `arch` | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the GDT and TSS, the local APIC and its timer, the 8259, the PL011, the NS16550A, the device-tree handshake, the GIC, the OpenSBI handoff, ring 3 on two of the three bootable machines |
 | `crypto` | all of it, one module per algorithm — it is a `libs` crate, like `unicode` |
 | `fs` | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; most of the names in the next table are not |
 | `kernel` | the boot sequence, the syscall table, the scheduler, device discovery |
@@ -753,6 +753,62 @@ report success from writing `VBAR_EL1` — it raises a supervisor call first and
 answers `true` only if the call arrived at entry 4 and returned.  A probe that
 cannot fail is not evidence, so the probe was mutated (the expected vector
 changed to 8) and the boot line went back to "not installed".
+
+### The riscv64 boot, and the two shifts that look alike
+
+    protofire 0.1.0: entered via dtb, console up, stage 1
+    protofire: device tree v17, 1 memory region(s), uart at 0x10000000
+    protofire: page table built and installed, 4 KiB granule
+    protofire: frame pool 16384 frame(s), 16384 free, 0 in page tables, pool check ok
+    protofire: block device from virtio-blk on pci
+
+The third machine boots through the whole of the machine-neutral kernel —
+device tree, page table, frame pool, heap, the PCI scan, virtio-blk, the
+namespace and the MAC policy — on the strength of work that never named it.  What
+it needed was an entry, a linker script and the boot's own answers.
+
+OpenSBI hands the image over in S-mode with the tree in `a1` and the MMU off.
+The entry sets `gp` before anything gp-relative can run (and tells the assembler
+not to relax the very instruction that loads it, or the relaxation would read
+`gp` before it exists), clears `sscratch`, sets `SUM`, and clears the bss.
+`SUM` is the bit x86_64 does not have an analogue of: on RISC-V a page marked
+`U` is off-limits to the supervisor *unless* it is set, where x86_64 lets the
+kernel reach user pages unless `SMAP` was switched on.  The pipe handlers read
+and write a program's buffer, so the permission is granted once at entry rather
+than re-learned at every fault.  The FPU is left off, which is the same answer
+x86_64 gives for SSE state: no f-register is saved in a frame, and a kernel that
+used one would fault loudly instead of corrupting a program's float silently.
+
+The image stays an ELF at `0x8020_0000`, because that loader reads an entry
+point rather than a first byte, and two megabytes in is where OpenSBI's own
+memory ends.
+
+**The first boot died at the instruction after the `satp` write, and the two
+faults it left are a lesson about shifts.**  A page-table **entry** keeps its
+page number above the flag bits, at 10..53.  The `satp` **register** keeps its
+page number at 0..43, and nothing above it but the ASID.  The install that was
+written before any boot existed used the entry's shift, so the root's number
+landed mostly in the ASID field and the walk started from a root made of an
+address's middle bits; the first fetch faulted, the trap vector named nothing,
+and the machine spun at its own entry.  QEMU's exception log said
+`exec_page_fault` at exactly the next instruction's address, which is the whole
+diagnosis: translation was on and the table it was handed was not the table that
+was built.
+
+**The mode is Sv48, and the reason is the walk's shape, not reach.**  The
+kernel's page-table arithmetic is four levels of nine bits — the shape the two
+machines with a ring 3 already share.  Sv48's walk is exactly that shape;
+Sv39's three levels would put the user window at an index the four-level
+arithmetic cannot name, and the price of insisting on Sv39 is a machine
+conditional in code that is machine-neutral today.  A machine that answers the
+mode whose walk matches the shared arithmetic is a machine the kernel never
+learns the name of.
+
+The boot's own answers came from the tree OpenSBI hands over: the console's
+address, the memory the frame pool clamps to, the PCIe ECAM window and the BAR
+window the enumeration pass assigns from, and the timer's rate — which RISC-V
+reports nowhere but `/cpus`'s `timebase-frequency`, there being no register on
+this machine that says how fast `time` runs.
 
 
 ## Kernel

@@ -97,6 +97,7 @@ name = "arch_riscv64"
 version = "0.1.0"
 dependencies = [
  "abi",
+ "fdt",
  "irq",
  "paging",
  "riscv",

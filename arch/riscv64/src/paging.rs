@@ -23,9 +23,23 @@
 //!
 //! ## The modes
 //!
-//! Sv39 has three levels and Sv48 four.  Both index nine bits per level, so the
-//! walk arithmetic is `paging`'s; what differs is where it starts, which is why
-//! `satp` says the mode and this module does not assume one.
+//! Sv48 has four levels and Sv39 three; both index nine bits per level.  The
+//! kernel's walk — `libs/paging`'s `Level` and `index` — is four levels of
+//! nine bits, because that is the shape the two machines with a ring 3 already
+//! share, and the walk arithmetic is where the bugs are: a shift off by one
+//! maps the wrong page and the failure looks like corruption far away.  Sv48
+//! is the mode whose walk has exactly that shape — the kernel's root is Sv48's
+//! root, its second level's slots cover one gibibyte, which is what the
+//! kernel's third level already assumes — so the arithmetic stays `paging`'s
+//! and this machine does not carry a second opinion about how an address
+//! splits.  Sv39's three levels would put this kernel's user window at an
+//! index the four-level arithmetic cannot name: the walk would share one
+//! root slot between the kernel and every program, and per-program isolation
+//! would need a machine conditional in code that is machine-neutral today.
+//!
+//! That is why this machine answers Sv48 and not Sv39, and it is a statement
+//! about the *walk*, not about reach: both modes cover the addresses this
+//! image uses with room above them.
 //!
 //! ## On a host build
 //!
@@ -199,11 +213,12 @@ impl EntryEncoding for Encoding {
     }
 }
 
-/// The mode Sv39, which is the three-level one.
+/// The mode Sv48, which is the four-level one.
 ///
-/// `satp` names it in bits 60..63; eight is Sv39 and nine is Sv48.  This tree
-/// uses Sv39.
-pub const SATP_MODE_SV39: u64 = 8 << 60;
+/// `satp` names it in bits 60..63; nine is Sv48 and eight is Sv39.  Four
+/// levels is what this kernel's walk arithmetic assumes, which is the reason
+/// this machine answers this mode — see the header's "The modes".
+pub const SATP_MODE_SV48: u64 = 9 << 60;
 
 /// Make a change to the page tables visible to the walk.
 ///
@@ -228,39 +243,125 @@ pub fn flush_translation() {}
 
 /// The address ranges on this machine that are *not* ordinary memory.
 ///
-/// Empty, and it says nothing about the machine: riscv64 has no entry yet, so
-/// there is no platform this crate can name a window for.  When the boot
-/// arrives it will be the board's, and a board's window is a fact the device
-/// tree states rather than one a constant can hold.
+/// Every address below the lowest RAM bank and above the highest one.  On the
+/// platform this tree boots, the UART this console writes, the PLIC, the PCIe
+/// ECAM window and the flash all sit below two gigabytes, and RAM begins at
+/// `0x8000_0000` — so the gap below the first bank is where this machine's
+/// devices live, and the range above the last is where a second bank's
+/// neighbours would.
 ///
-/// A `const fn` returning an empty slice rather than an absent function, so the
-/// kernel asks one question of three machines and does not need to know which
-/// one answered.
+/// ## Why the answer comes from the tree and not a constant
+///
+/// A board's memory map is a fact the firmware states, and the same argument
+/// that puts the UART's address in this crate puts the *gap's* edges there:
+/// both are the machine's, and the tree is what says them.  The fallback when
+/// the tree did not parse is the emulated platform's answer, which is the
+/// state a machine with a broken blob is in: it has a console because
+/// [`crate::serial`] writes a constant address, and the window below RAM is
+/// what makes that console's registers uncached.
 pub fn device_windows() -> Windows {
-    Windows::new()
+    let mut windows = Windows::new();
+    let Some(tree) = crate::boot::device_tree() else {
+        // No tree: the constant, which is `virt`'s memory map.
+        windows.push(0, VIRT_RAM_START);
+        return windows;
+    };
+
+    let Ok(root) = tree.root() else {
+        windows.push(0, VIRT_RAM_START);
+        return windows;
+    };
+
+    // Every `memory` node, which a machine may have several of.  A memory node
+    // is identified by `device_type`, not by `compatible`: the specification
+    // says so, and QEMU's tree has no `compatible` on `memory@80000000` at all.
+    let mut ram: [(u64, u64); MAX_MEMORY_NODES] = [(0, 0); MAX_MEMORY_NODES];
+    let mut memory_nodes = 0;
+    collect_memory(root, &mut ram, &mut memory_nodes);
+
+    if memory_nodes == 0 {
+        windows.push(0, VIRT_RAM_START);
+        return windows;
+    }
+
+    // The lowest memory start and the highest memory end define the gap.  A
+    // machine with two discontiguous RAM banks has a device range between
+    // them, and treating that as memory is the unsafe direction — but so is
+    // *not* treating it as a device, which is what a single gap cannot
+    // express.  Sorting the banks and emitting a window between each pair is
+    // the general answer; this machine has one bank and the loop below is
+    // written so a second would still be correct for the range below the
+    // first and above the last.
+    let mut lowest = ram[0].0;
+    let mut highest = ram[0].1;
+    for node in &ram[..memory_nodes] {
+        lowest = lowest.min(node.0);
+        highest = highest.max(node.1);
+    }
+    windows.push(0, lowest as usize);
+    windows.push(highest as usize, usize::MAX);
+    windows
 }
 
-/// A small set of address ranges that are a device's rather than memory's.
+/// The most `memory` nodes this function reads.
+const MAX_MEMORY_NODES: usize = 4;
+
+/// Where `qemu-system-riscv64 -machine virt` puts its RAM.
+const VIRT_RAM_START: usize = 0x8000_0000;
+
+/// Collect the `device_type = "memory"` regions under `node`.
+pub(crate) fn collect_memory(
+    node: fdt::Node<'_>,
+    out: &mut [(u64, u64); MAX_MEMORY_NODES],
+    count: &mut usize,
+) {
+    if node.property("device_type").and_then(|p| p.as_str()) == Some("memory") {
+        for region in node.reg() {
+            if *count < MAX_MEMORY_NODES {
+                out[*count] = (region.address, region.address.saturating_add(region.size));
+                *count += 1;
+            }
+        }
+    }
+    for child in node.children() {
+        if *count < MAX_MEMORY_NODES {
+            collect_memory(child, out, count);
+        }
+    }
+}
+
+/// A small set of address ranges.
 ///
-/// Empty on this machine, and the type is shared with the ones whose answer is
-/// not: `kernel::address_space` asks every machine the same question and gets
-/// the same shape back, which is what keeps the caller from knowing which
-/// machine answered.
+/// A fixed array rather than a slice because the ranges come from a device
+/// tree, which is data: a `const fn` returning `&'static [(usize, usize)]`
+/// could only ever describe a constant, and the point of this answer is that
+/// it no longer does.
 #[derive(Debug, Clone, Copy)]
 pub struct Windows {
+    entries: [(usize, usize); 4],
     length: usize,
 }
 
 impl Windows {
-    /// No windows.
+    /// No windows: every address keeps its rule.
     pub const fn new() -> Windows {
-        Windows { length: 0 }
+        Windows {
+            entries: [(0, 0); 4],
+            length: 0,
+        }
     }
 
-    /// The ranges, in no order.  Empty here.
+    /// Add one range.  A full set drops it rather than growing.
+    pub fn push(&mut self, start: usize, end: usize) {
+        if self.length < self.entries.len() {
+            self.entries[self.length] = (start, end);
+            self.length += 1;
+        }
+    }
+
+    /// The ranges, in the order they were added.
     pub fn as_slice(&self) -> &[(usize, usize)] {
-        let _ = self.length;
-        &[]
+        &self.entries[..self.length]
     }
 }
 
@@ -274,16 +375,26 @@ impl Default for Windows {
 #[cfg(target_os = "none")]
 pub fn current_root_table() -> usize {
     let value: u64;
-    // SAFETY: reading `satp` has no side effect.  The address is bits 0..44 as
-    // a page number, which is what the shift undoes.
+    // SAFETY: reading `satp` has no side effect.  The register's page number
+    // is bits 0..43 — *not* bits 10..53, which is where a page-table **entry**
+    // keeps one above its flag bits — and the shift back to a byte address
+    // undoes the twelve the register dropped.
     unsafe {
         core::arch::asm!("csrr {}, satp", out(reg) value, options(nomem, nostack, preserves_flags))
     };
-    (((value >> PAGE_NUMBER_START) & ((1u64 << 44) - 1)) << PAGE_NUMBER_SHIFT) as usize
+    ((value & ((1u64 << 44) - 1)) << PAGE_NUMBER_SHIFT) as usize
 }
 
-/// Install `table` in `satp`, in Sv39 mode, and answer whether this was a
+/// Install `table` in `satp`, in Sv48 mode, and answer whether this was a
 /// change.
+///
+/// The register's page number is bits 0..43 — **not** bits 10..53, which is
+/// where a page-table *entry* keeps its page number above the flag bits.  The
+/// two shifts look alike and the wrong one cost this tree its first boot: the
+/// entry's layout moved the root's number into the register's ASID field, the
+/// walk started from a root that was mostly an address's middle bits, and the
+/// first instruction fetch after the write was a page fault at the instruction
+/// itself.
 ///
 /// # Safety
 ///
@@ -297,13 +408,13 @@ pub unsafe fn install(table: usize) -> bool {
     if previous == table {
         return false;
     }
-    let root = (((table as u64) >> PAGE_NUMBER_SHIFT) & ((1u64 << 44) - 1)) << PAGE_NUMBER_START;
+    let root = ((table as u64) >> PAGE_NUMBER_SHIFT) & ((1u64 << 44) - 1);
     // SAFETY: the caller promises the table is complete and aligned.
     unsafe {
         core::arch::asm!(
             "csrw satp, {}",
             "sfence.vma",
-            in(reg) SATP_MODE_SV39 | root,
+            in(reg) SATP_MODE_SV48 | root,
             options(nostack)
         );
     }

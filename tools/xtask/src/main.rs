@@ -138,7 +138,28 @@ impl Machine {
                 // unnecessary because `q35`'s default is already modern.
                 "virtio-blk-pci,drive=blk0,disable-legacy=on".to_string(),
             ],
-            Self::Riscv64 => Vec::new(),
+            // The OpenSBI machine: firmware first, then this image's entry in
+            // S-mode.  `-cpu rv64` and not a named extension list, because the
+            // generic CPU is what the previous tree booted and what the device
+            // tree describes; the disk rides the PCIe bus, which is the same
+            // `virtio-blk-pci` the other two machines are given and the same
+            // modern-only interface request.
+            Self::Riscv64 => vec![
+                "-machine".to_string(),
+                "virt".to_string(),
+                "-cpu".to_string(),
+                "rv64".to_string(),
+                "-m".to_string(),
+                "512M".to_string(),
+                "-drive".to_string(),
+                format!("file={},format=raw,if=none,id=blk0", disk.display()),
+                "-device".to_string(),
+                // `disable-legacy=on` asks for the modern interface only, for
+                // the same reason the other two machines ask: a transitional
+                // device's capability list is one this tree's modern parser
+                // does not read the way it expects.
+                "virtio-blk-pci,drive=blk0,disable-legacy=on".to_string(),
+            ],
         }
     }
 
@@ -439,7 +460,29 @@ impl Machine {
                     false,
                 ),
             ],
-            Self::Riscv64 => &[],
+            // The OpenSBI machine, at the milestone its boot is at: the
+            // firmware's tree was recorded and parsed, the kernel's own table
+            // replaced the register's bare state, the frame pool was sized by
+            // the tree's memory and exercised, and the heap came up.  The
+            // pool's count is exact for the same reason aarch64's is — the
+            // numbers are fixed by the machine's memory and the linker's span,
+            // so a shape-check would accept a `pool check FAILED` tail.
+            Self::Riscv64 => &[
+                (
+                    "protofire 0.1.0: entered via dtb, console up, stage 1",
+                    true,
+                ),
+                ("protofire: device tree v", false),
+                (
+                    "protofire: page table built and installed, 4 KiB granule",
+                    true,
+                ),
+                (
+                    "protofire: frame pool 16384 frame(s), 16384 free, 0 in page tables, pool check ok",
+                    true,
+                ),
+                ("protofire: heap at ", false),
+            ],
         }
     }
 }

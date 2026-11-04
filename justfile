@@ -74,6 +74,14 @@ run-x86_64:
 check-x86_64:
     cargo run --offline --quiet -p xtask -- check --machine x86_64
 
+# Boot the riscv64 image (through OpenSBI) and keep its serial output.
+run-riscv64:
+    cargo run --offline --quiet -p xtask -- run --machine riscv64
+
+# Boot the riscv64 image and require its console lines.
+check-riscv64:
+    cargo run --offline --quiet -p xtask -- check --machine riscv64
+
 # The gate.  `just verify` is p0; `just verify p3` is the release floor.
 verify tier="p0":
     sh scripts/verify.sh {{tier}}
