@@ -25,15 +25,14 @@
 //!
 //! Sv48 has four levels and Sv39 three; both index nine bits per level.  The
 //! kernel's walk — `libs/paging`'s `Level` and `index` — is four levels of
-//! nine bits, because that is the shape the two machines with a ring 3 already
-//! share, and the walk arithmetic is where the bugs are: a shift off by one
-//! maps the wrong page and the failure looks like corruption far away.  Sv48
-//! is the mode whose walk has exactly that shape — the kernel's root is Sv48's
-//! root, its second level's slots cover one gibibyte, which is what the
-//! kernel's third level already assumes — so the arithmetic stays `paging`'s
-//! and this machine does not carry a second opinion about how an address
-//! splits.  Sv39's three levels would put this kernel's user window at an
-//! index the four-level arithmetic cannot name: the walk would share one
+//! nine bits, and the walk arithmetic is where the bugs are: a shift off by
+//! one maps the wrong page and the failure looks like corruption far away.
+//! Sv48 is the mode whose walk has exactly that shape — the kernel's root is
+//! Sv48's root, its second level's slots cover one gibibyte, which is what
+//! the kernel's third level already assumes — so the arithmetic stays
+//! `paging`'s and this machine does not carry a second opinion about how an
+//! address splits.  Sv39's three levels would put this kernel's user window at
+//! an index the four-level arithmetic cannot name: the walk would share one
 //! root slot between the kernel and every program, and per-program isolation
 //! would need a machine conditional in code that is machine-neutral today.
 //!

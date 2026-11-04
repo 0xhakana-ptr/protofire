@@ -92,8 +92,8 @@ previous tree's `arch` had `pci`, `fdt`, `trap`, `mmu`, `percpu`, `smp`,
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, the port I/O
-the PCI bus is reached through, and — on both bootable machines — ring 3, a
-timer and a preempting scheduler.
+the PCI bus is reached through, and — on all three bootable machines — ring 3,
+a timer and a preempting scheduler.
 
 Both machines now reach a program at ring 3, and the two halves differ enough
 to say where.  x86_64 needed a descriptor table with a DPL-3 code and data
@@ -103,11 +103,11 @@ address spaces.  Its timer is the local APIC's, calibrated against the PIT, and
 its monotonic clock is the TSC — the APIC's own count runs *down* and reloads,
 which is not a deadline and cost a boot its wakes.
 
-The blocking `read` is in on both machines: a pipe parks a reader, which
+The blocking `read` is in on all three machines: a pipe parks a reader, which
 `sleep` could not — `sleep` has a deadline and a wake, and a pipe has a writer
-and no clock.  What comes next is the third machine, because that is where a
-seam stops being two machines' coincidence and becomes either a design or a
-bug.
+and no clock.  The third machine took every seam the first two had left and
+kept it, which is the argument that the seams are design rather than two
+machines' coincidence.
 
 ### The timer, and three reasons it looked broken
 
