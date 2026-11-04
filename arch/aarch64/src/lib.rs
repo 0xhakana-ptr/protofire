@@ -48,6 +48,8 @@ pub mod trap;
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
 pub use trap::Context;
+pub use trap::PIPE_READER;
+pub use trap::PIPE_WRITER;
 pub use trap::PROGRAM_LEN;
 pub use trap::SLEEP_MICROSECONDS;
 #[cfg(target_os = "none")]
@@ -115,10 +117,25 @@ pub fn halt() -> ! {
 /// thing its caller must not rely on.
 #[cfg(target_os = "none")]
 pub fn wait_for_a_wakeup() {
-    // SAFETY: `wfi` is a hint that permits the core to enter a low-power state
-    // until an interrupt is pending.  Interrupts are unmasked by this kernel's
-    // `SPSR_EL0T` and its handler, so a pending one wakes the core.
-    unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
+    // ## Why this unmasks
+    //
+    // The same reason x86_64's `sti; hlt` does, in this machine's words.  A
+    // supervisor call arrives through an exception, and `entry.S` masks `IRQ`
+    // on the way in — so the kernel runs with interrupts off for the whole of
+    // a served call, and a wait that did not unmask them never takes the tick
+    // that would end it.  `wfi` alone then returns immediately for ever: it is
+    // a hint about the core's power state, not an enable.
+    //
+    // `msr daifclr, #2` clears the `I` bit.  The trap path's `eret` puts the
+    // program's `PSTATE` back, so this mask does not outlive the call.
+    //
+    // SAFETY: `daifclr` is unprivileged at EL1.  `wfi` is a hint that permits
+    // the core to enter a low-power state until an interrupt is pending; with
+    // `I` clear, a pending one wakes it.
+    unsafe {
+        core::arch::asm!("msr daifclr, #2", options(nomem, nostack));
+        core::arch::asm!("wfi", options(nomem, nostack));
+    };
 }
 
 /// The host build: nothing to wait for.

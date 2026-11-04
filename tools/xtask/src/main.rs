@@ -195,7 +195,7 @@ impl Machine {
     /// it once.
     fn repeated_lines(self) -> &'static [(&'static str, usize)] {
         match self {
-            Self::X8664 | Self::Aarch64 => &[(" says hello", 4)],
+            Self::X8664 | Self::Aarch64 => &[(" says hello", 6)],
             Self::Riscv64 => &[],
         }
     }
@@ -271,10 +271,11 @@ impl Machine {
                 // `1` and `2` are the programs' own numbers: one program
                 // twice reads exactly the same as two programs once, so the
                 // value comes from the program and not from a kernel counter.
-                // Each program prints twice: once before it sleeps and once
-                // after it wakes.  One line each would pass on a boot where
-                // nobody ever slept, which is what a `Sleep` that answered
-                // immediately would produce.
+                // Three programs print twice each: the two that sleep print
+                // before and after the wake, and the pipe reader prints before
+                // it blocks and after it is woken.  One line each would pass on
+                // a boot where nobody ever waited, which is what a `Sleep` or a
+                // `Read` that answered immediately would produce.
                 //
                 // The second line is required, so this is where a boot that
                 // never woke fails: the sleeping program's first `Write` is
@@ -324,6 +325,13 @@ impl Machine {
                 // addresses no other program can reach.
                 ("protofire: program 1 mapped at ", false),
                 ("protofire: program 2 mapped at ", false),
+                ("protofire: program 3 mapped at ", false),
+                // A read that had nothing to read and waited for another task.
+                // The wake below is the only thing that ends it, so the pair is
+                // the claim: a task blocked, and a task's write is what moved
+                // it.
+                ("protofire: a program blocks on a pipe", true),
+                ("protofire: a write woke ", false),
                 // Both ran, in order, each printing its own number.  One
                 // program twice would read the same as one program once, which
                 // is why the number comes from the program and not from a
@@ -358,6 +366,13 @@ impl Machine {
                 // addresses no other program can reach.
                 ("protofire: program 1 mapped at ", false),
                 ("protofire: program 2 mapped at ", false),
+                ("protofire: program 3 mapped at ", false),
+                // A read that had nothing to read and waited for another task.
+                // The wake below is the only thing that ends it, so the pair is
+                // the claim: a task blocked, and a task's write is what moved
+                // it.
+                ("protofire: a program blocks on a pipe", true),
+                ("protofire: a write woke ", false),
                 // Both ran, in order, each printing its own number.  One
                 // program twice would read the same as one program once, which
                 // is why the number comes from the program and not from a

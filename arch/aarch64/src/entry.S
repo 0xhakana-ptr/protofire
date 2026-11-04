@@ -233,7 +233,7 @@ exception_vectors:
    would hand Rust a frame of the wrong shape — which is why the two are
    documented against each other rather than derived. */
 exception_entry:
-    sub sp, sp, #800
+    sub sp, sp, #816
     /* The index first, because `x16` is saved with `x17` below. */
     str x16, [sp, #280]
 
@@ -262,6 +262,15 @@ exception_entry:
     str x0, [sp, #264]
     mrs x0, far_el1
     str x0, [sp, #272]
+
+    /* The interrupted stack pointer.  `SP_EL0` is a system register and the
+       hardware does not push it, so a program that used its stack would have it
+       restored from somewhere else — which is what the pipe reader found: it
+       resumed with the *previous* task's stack and took a data abort inside
+       another program's memory.  Saved here and restored below, so a switch
+       carries it like any other register. */
+    mrs x0, sp_el0
+    str x0, [sp, #800]
 
     stp q0, q1, [sp, #288]
     stp q2, q3, [sp, #320]
@@ -295,6 +304,8 @@ exception_entry:
     msr elr_el1, x0
     ldr x0, [sp, #256]
     msr spsr_el1, x0
+    ldr x0, [sp, #800]
+    msr sp_el0, x0
 
     ldp q0, q1, [sp, #288]
     ldp q2, q3, [sp, #320]
@@ -330,7 +341,7 @@ exception_entry:
     ldp x28, x29, [sp, #224]
     ldr x30, [sp, #240]
 
-    add sp, sp, #800
+    add sp, sp, #816
     eret
 
 .section .bss.stack, "aw", @nobits

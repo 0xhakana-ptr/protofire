@@ -144,6 +144,52 @@ const _: () = assert!(THIRD_LEVEL * 512 * 512 * GRANULE == IDENTITY_LIMIT);
 #[cfg(target_os = "none")]
 const _: () = assert!(LEAF_TABLES * 512 * GRANULE == IDENTITY_LIMIT);
 
+/// How much of the user window one program owns.
+///
+/// A gigabyte, which is what `process::program_base` spaces programs by.  The
+/// number is here rather than there because this is the module that knows what
+/// a user address is, and a validator with its own copy would be a second
+/// opinion about the same fact.
+pub const USER_WINDOW: usize = 0x4000_0000;
+
+/// How many programs the window has room for.
+///
+/// The boot runs two and the space is four; the number is a bound on the
+/// validator, not a policy about how many programs a boot may start.  A
+/// program numbered past it would map above this end, and `AddressSpace::map`
+/// would have to say so.
+pub const USER_WINDOWS: usize = 4;
+
+/// The first address above the user window.
+pub const USER_LIMIT: usize = USER_BASE + USER_WINDOW * USER_WINDOWS;
+
+/// Whether `address` is one a program of this kernel could have mapped.
+///
+/// ## Why this is the only check a syscall needs
+///
+/// A pointer from ring 3 is a number, and a number is not an address: the
+/// kernel must not dereference one because the program said so.  Three things
+/// have to hold together, and this checks all three:
+///
+/// 1. The range is the user window — `USER_BASE` up to a program's end — so a
+///    program cannot hand the kernel a kernel address and have it written to.
+/// 2. The range does not wrap.  `start + length` overflows for an address near
+///    the top, and a wrapped end would pass a naive `end > start` test.
+/// 3. The whole range is inside the window, not merely its start.  A read of
+///    one byte at the last valid address is fine; a read of four that crosses
+///    the boundary is not.
+///
+/// What it does **not** check is that the pages are mapped.  A valid-looking
+/// address into an unmapped page faults when the kernel touches it, and that
+/// fault is the program's — the kernel would have to copy the page tables into
+/// a walk to know, and a fault is the machine's own answer.
+pub fn is_user_range(address: usize, length: usize) -> bool {
+    let Some(end) = address.checked_add(length) else {
+        return false;
+    };
+    address >= USER_BASE && end <= USER_LIMIT
+}
+
 /// The address of a linker symbol, by name.
 ///
 /// The five names are the linker script's own, and a name that is not one of
@@ -1072,6 +1118,50 @@ mod tests {
             "the window's answer, not the text rule"
         );
         assert_eq!(in_text.cache, Cache::Device);
+    }
+
+    /// The user window is above the kernel and a range has to fit inside it.
+    ///
+    /// The three things this tests are the three a syscall depends on: a
+    /// kernel address is refused, a range that wraps is refused, and a range
+    /// whose end crosses the boundary is refused.  A validator that got any of
+    /// them wrong would let a program write one byte past its own pages.
+    #[test]
+    fn the_user_window_refuses_what_is_not_in_it() {
+        use super::USER_BASE;
+        use super::USER_WINDOW;
+        use super::is_user_range;
+
+        let first = USER_BASE;
+        assert!(
+            is_user_range(first, 1),
+            "the first user byte is a user byte"
+        );
+        assert!(!is_user_range(first - 1, 1), "the last kernel byte is not");
+        assert!(
+            !is_user_range(0x4000_0000, 16),
+            "a kernel address is refused"
+        );
+
+        assert!(
+            is_user_range(first, USER_WINDOW),
+            "a whole window from its start fits"
+        );
+        assert!(
+            is_user_range(super::USER_LIMIT - 1, 1),
+            "the last user byte is a user byte"
+        );
+        assert!(
+            !is_user_range(super::USER_LIMIT, 1),
+            "and the byte after it is not"
+        );
+
+        // A range that wraps must be refused rather than read as "ends before
+        // it starts, so it is fine".
+        assert!(
+            !is_user_range(usize::MAX - 1, 8),
+            "an overflowing range is not a user range"
+        );
     }
 
     /// A machine with no device windows behaves exactly as it did before the

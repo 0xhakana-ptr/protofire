@@ -450,3 +450,9 @@ pub fn wait_for_a_wakeup() {}
 pub const fn test_interrupt() -> usize {
     0
 }
+
+/// The number of the program that reads the pipe: this machine runs none.
+pub const PIPE_READER: u16 = 3;
+
+/// The number of the program that writes to it.
+pub const PIPE_WRITER: u16 = 2;

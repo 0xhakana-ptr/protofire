@@ -294,6 +294,7 @@ dependencies = [
  "block",
  "cell",
  "fs",
+ "ipc",
  "irq",
  "memory",
  "paging",

@@ -29,6 +29,9 @@ paging = { path = "../libs/paging" }
 # out pages before the heap exists, which is why its free list is a bitmap
 # rather than a map — the same restriction that made this dependency necessary.
 memory = { path = "../memory" }
+# The pipe's ring buffer.  The arithmetic is the crate's; parking a task on an
+# empty ring is this crate's, which is the split `scripts/layering.txt` argues.
+ipc = { path = "../ipc" }
 # The handler table an interrupt is delivered through.
 irq = { path = "../libs/irq" }
 # The static holder for the page tables: a `static mut` would be the usual

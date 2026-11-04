@@ -309,15 +309,6 @@ at EL0, because the `spsr` had been rewritten to EL0t again.
 it loads PSTATE from `SPSR_EL1`, which names EL0t with `I` clear.  Fifteen
 boots at the same slice after the fix, zero failures.
 
-x86_64's entry has the same shape — five pushes and an `iretq` — but it was
-**not** given the same treatment, because the reasoning does not carry over and
-the measurement said so.  An x86_64 exception pushes and restores
-`RFLAGS` through the frame the stub builds, and that frame is the one the
-kernel's own `int $0x80` handler already owns, so a tick in the window would be
-served and returned rather than clobber the entry.  A `cli` was added there
-while chasing the sleep fault and removed when a mutation showed the boot
-takes its ticks with or without it.
-
 ### Sleeping, and the two ways to be not-runnable
 
     protofire: a program sleeps until counter 632293560
@@ -363,6 +354,65 @@ it belonged.  They are kept because they are the more honest statements of what
 the code means — an APIC ends every vector it delivered, not just the timer's,
 and a boot's idle does not own a frame to save — and not because a boot fails
 without them.
+
+### A pipe, and the first read that waits for a task
+
+A `sleep` waits for a clock.  A pipe waits for *another task*, and the two are
+different in every way that matters: there is no deadline to compare, the wake
+comes from a syscall rather than from the timer, and the wait ends in three
+ways rather than one — bytes arrived, the write end closed, or the wait was
+interrupted.  The third is not implemented.
+
+The split is the one `scripts/layering.txt` already described: `ipc::ByteRing`
+is the arithmetic and is tested on a host, and the endpoints that park a task
+are the kernel's because parking needs the scheduler.  `kernel/src/pipe.rs`
+holds the second half and hands bytes to the first.
+
+A task now has a third state.  `Sleeping { until }` ends when the clock passes
+a reading; `Blocked` ends when another task says so.  A scheduler that folded
+the two together would have to invent a deadline for a wait that has none, and
+any number it invented would be a read that gives up early.
+
+**A pointer from ring 3 is a number until something checks it**, and this is
+the first call that takes one.  `address_space::is_user_range` asks three
+things: the range is in the user window, it does not wrap, and its *end* is in
+the window and not merely its start.  What it does not ask is whether the pages
+are mapped — a fault is the machine's answer to that, and a walk of the page
+tables to know in advance would be the kernel doing what the MMU already does.
+
+**`SP_EL0` was never in aarch64's trap frame**, and that is what the pipe reader
+found.  The hardware does not push a stack pointer, so a switch carried every
+register but that one — and a program that used its stack resumed with the
+previous task's, taking a data abort inside another program's memory.  It was
+invisible for as long as no program touched its stack: the announcing programs
+call `svc` and never `push`.  The frame is 816 bytes now, with `sp_el0` at the
+end so every `q` pair keeps its offset.
+
+The same fault was in `starting_context`, which carried the stack pointer in
+`x0` — a register a program overwrites with its first argument.  It is a field
+of its own now, and `stack_pointer` reads it.
+
+**`Write` had two meanings under one number.**  The announcing call names a
+program in `esi` and has no length; a pipe write names a descriptor in `edi`
+and a length in `edx`.  Recognising a pipe by the descriptor alone was wrong
+twice: a program's `edi` holds whatever the boot left — zero — and zero is a
+valid descriptor once a pipe exists, so the announcement was served as a pipe
+write and printed nothing.  A length is what one call genuinely lacks and the
+other genuinely has, and that is the test now.
+
+### The idle that could not take a tick
+
+Both machines park a boot in an idle loop when every task is asleep, and both
+had to unmask interrupts to do it: `sti` before `hlt` on x86_64, and
+`msr daifclr, #2` before `wfi` on aarch64.  A supervisor call arrives through
+an interrupt gate, which clears the flag on entry, so the kernel serves the
+whole call with interrupts off — and a wait in that window waits for a tick
+that cannot be delivered.
+
+aarch64's half was missing and this is how it showed: two programs slept, the
+boot printed `every program is asleep, waiting`, and `wfi` returned two hundred
+thousand times without a single tick reaching the timer's handler.  The counter
+line above it read `187081226` and never moved.
 
 ### The frame allocator, and the loop it breaks
 

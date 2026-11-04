@@ -71,6 +71,14 @@ pub struct ExceptionFrame {
     pub vector: u64,
     /// `q0`..`q31`.  Saved because the compiler uses them for `memcpy`.
     pub simd: [u128; 32],
+    /// The interrupted `SP_EL0`, at the end so every `q` pair keeps its offset.
+    ///
+    /// A system register, and the hardware does not push it — so without this
+    /// field a task switch carries every register but the stack pointer, and a
+    /// program that uses its stack resumes with the previous task's.  The pipe
+    /// reader is what found it: it took a data abort at an address inside
+    /// another program's memory.
+    pub sp_el0: u64,
 }
 
 /// An `irq::Frame` needs a vector and nothing else from a machine that has no
@@ -165,8 +173,9 @@ const _: () = assert!(core::mem::offset_of!(ExceptionFrame, spsr) == 256);
 const _: () = assert!(core::mem::offset_of!(ExceptionFrame, esr) == 264);
 const _: () = assert!(core::mem::offset_of!(ExceptionFrame, far) == 272);
 const _: () = assert!(core::mem::offset_of!(ExceptionFrame, vector) == 280);
+const _: () = assert!(core::mem::offset_of!(ExceptionFrame, sp_el0) == 800);
 const _: () = assert!(core::mem::offset_of!(ExceptionFrame, simd) == 288);
-const _: () = assert!(core::mem::size_of::<ExceptionFrame>() == 800);
+const _: () = assert!(core::mem::size_of::<ExceptionFrame>() == 816);
 const _: () = assert!(core::mem::align_of::<ExceptionFrame>() == 16);
 
 /// What the kernel installs: one function, answering whether it took the frame.
@@ -448,7 +457,7 @@ pub type Context = ExceptionFrame;
 /// never changes it — so the stack pointer travels in `x0` and the install path
 /// writes it to the register before the `eret`.
 pub fn starting_context(entry: usize, stack_top: usize) -> Context {
-    let mut context = ExceptionFrame {
+    ExceptionFrame {
         registers: [0; 30],
         link_register: 0,
         elr: entry as u64,
@@ -457,9 +466,12 @@ pub fn starting_context(entry: usize, stack_top: usize) -> Context {
         far: 0,
         vector: 0,
         simd: [0; 32],
-    };
-    context.registers[0] = stack_top as u64;
-    context
+        // The stack pointer belongs here and not in `x0`: `x0` is a program's
+        // first argument and it overwrites it immediately, so a context that
+        // carried the stack there lost it the moment the program ran.  The
+        // pipe reader's `ldr x0, [sp]` is what made that visible.
+        sp_el0: stack_top as u64,
+    }
 }
 
 /// Where a context resumes: the instruction the `eret` will return to.
@@ -474,11 +486,13 @@ pub fn set_resume_address(context: &mut Context, address: usize) {
 
 /// The stack pointer a context runs on.
 ///
-/// `SP_EL0` is not in the frame — the assembly does not save it, because a trap
-/// never changes it — so it travels in `x0` and the install path writes it to
-/// the register.  This is that convention, named.
+/// `SP_EL0`, which the assembly saves and restores like any other register.
+/// It used to travel in `x0`, and that was wrong for a reason the pipe reader
+/// found: `x0` is a program's first argument and it overwrites it on its first
+/// instruction, so the next switch installed a context whose "stack" was
+/// whatever the program had put there.
 pub fn stack_pointer(context: &Context) -> usize {
-    context.registers[0] as usize
+    context.sp_el0 as usize
 }
 
 /// The word a program reads a call's answer from.
@@ -725,12 +739,12 @@ mod tests {
     /// A frame is 800 bytes and 16-aligned, so a `q` pair stays aligned.
     #[test]
     fn the_frame_is_a_multiple_of_sixteen() {
-        assert_eq!(core::mem::size_of::<ExceptionFrame>(), 800);
+        assert_eq!(core::mem::size_of::<ExceptionFrame>(), 816);
         assert_eq!(core::mem::align_of::<ExceptionFrame>(), 16);
         // The assembly subtracts exactly this from `sp`, and a size that was
         // not a multiple of 16 would let a `q` pair straddle a boundary the
         // `stp` encodes as an offset it cannot express.
-        assert_eq!(800 % 16, 0);
+        assert_eq!(816 % 16, 0);
     }
 
     /// The class is `ESR_EL1`'s top six bits.
@@ -798,6 +812,7 @@ mod tests {
             far: 0,
             vector: 0,
             simd: [0; 32],
+            sp_el0: 0,
         }
     }
 }
@@ -810,7 +825,86 @@ mod tests {
 // `arch::program_bytes` and gets whichever machine answered.
 
 /// How long a program's image is, in bytes.
-pub const PROGRAM_LEN: usize = 18 * 4;
+///
+/// The longest of the three images: the announcing program, the pipe writer
+/// and the pipe reader.  A program is copied into a whole page, so this
+/// matters only to the copy.
+pub const PROGRAM_LEN: usize = 25 * 4;
+
+/// The number of the program that reads the pipe.
+pub const PIPE_READER: u16 = 3;
+
+/// The number of the program that writes to it.
+pub const PIPE_WRITER: u16 = 2;
+
+/// The writer: announce, sleep, announce again, then put bytes in the pipe.
+///
+/// The reader must reach its `Read` first and block, or a write into a pipe
+/// nobody has read yet is an ordinary copy.  The reader's loop is shorter and
+/// it makes no earlier call; this sleep then makes the order a fact rather
+/// than a hope.
+///
+/// `[sp]` holds the write end's descriptor and `[sp + 8]` is the four bytes it
+/// sends.
+const PIPE_WRITER_PROGRAM: [u32; 25] = [
+    0xD280_0803, // movz x3, #64
+    0xD280_2002, // movz x2, #256
+    0xF100_0442, // subs x2, x2, #1
+    0x54FF_FFE1, // b.ne -1
+    0xF100_0463, // subs x3, x3, #1
+    0x54FF_FF81, // b.ne -4
+    0xD280_0041, // movz x1, #2   (this program's number)
+    0xD280_00C8, // movz x8, #6   (Write)
+    0xD400_0001, // svc #0
+    0xD289_C400, // movz x0, #20000 (the sleep)
+    0xD280_0628, // movz x8, #49  (Sleep)
+    0xD400_0001, // svc #0
+    0xD280_0041, // movz x1, #2   (Write, after the wake)
+    0xD280_00C8, // movz x8, #6
+    0xD400_0001, // svc #0
+    0xF940_03E0, // ldr x0, [sp]  (the write end)
+    0x9100_23E1, // add x1, sp, #8 (the bytes)
+    0xD280_0082, // movz x2, #4
+    0xD280_00C8, // movz x8, #6   (Write to the pipe)
+    0xD400_0001, // svc #0
+    0xD280_0000, // movz x0, #0
+    0xD280_0068, // movz x8, #3   (Exit)
+    0xD400_0001, // svc #0
+    0xD280_0080, // movz x0, #4   (a no-op before the branch)
+    0x1400_0000, // b .
+];
+
+/// The reader: wait on a descriptor the boot left on its stack.
+///
+/// `[sp]` is the read end's descriptor and `[sp + 8]` the four-byte buffer.
+/// The read blocks — the pipe is empty and its writer is alive — and the
+/// writer's syscall is the only thing that ends the wait.
+const PIPE_READER_PROGRAM: [u32; 21] = [
+    0xD280_0803, // movz x3, #64
+    0xD280_2002, // movz x2, #256
+    0xF100_0442, // subs x2, x2, #1
+    0x54FF_FFE1, // b.ne -1
+    0xF100_0463, // subs x3, x3, #1
+    0x54FF_FF81, // b.ne -4
+    0xD280_0061, // movz x1, #3     (announce)
+    0xD280_00C8, // movz x8, #6     (Write)
+    0xD400_0001, // svc #0
+    0xF940_03E0, // ldr x0, [sp]    (the read end)
+    0x9100_23E1, // add x1, sp, #8  (the buffer)
+    0xD280_0082, // movz x2, #4
+    0xD280_00A8, // movz x8, #5     (Read)
+    0xD400_0001, // svc #0
+    // The length is cleared before the second announcement: `x2` still holds
+    // the read's four, and a write with a length to a pipe descriptor is a pipe
+    // write, so the announcement would go into the pipe and print nothing.
+    0xD280_0002, // movz x2, #0     (announce has no length)
+    0xD280_0061, // movz x1, #3     (Write, after the wait)
+    0xD280_00C8, // movz x8, #6
+    0xD400_0001, // svc #0
+    0xD280_0000, // movz x0, #0
+    0xD280_0068, // movz x8, #3     (Exit)
+    0xD400_0001, // svc #0
+];
 
 /// How long the program sleeps, in microseconds.
 ///
@@ -867,8 +961,16 @@ const fn program_words(number: u16) -> [u32; 18] {
 
 /// A program's bytes, for a caller that writes them into a frame.
 pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
-    let words = program_words(number);
     let mut bytes = [0u8; PROGRAM_LEN];
+    let mut words = [0u32; PROGRAM_LEN / 4];
+    if number == PIPE_WRITER {
+        words[..PIPE_WRITER_PROGRAM.len()].copy_from_slice(&PIPE_WRITER_PROGRAM);
+    } else if number == PIPE_READER {
+        words[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);
+    } else {
+        let announcing = program_words(number);
+        words[..announcing.len()].copy_from_slice(&announcing);
+    }
     for (index, word) in words.iter().enumerate() {
         bytes[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
     }

@@ -291,6 +291,10 @@ fn finish_interrupt(frame: &mut Context) {
         // machine with one device more than it knows.
         crate::serial::write_str("protofire: unhandled interrupt ");
         crate::serial::write_u32(frame.vector as u32);
+        crate::serial::write_str(" at ");
+        crate::serial::write_hex(unsafe { fault_address() } as u64);
+        crate::serial::write_str(" rip ");
+        crate::serial::write_hex(frame.instruction_pointer);
         crate::serial::write_str("\n");
     }
 }

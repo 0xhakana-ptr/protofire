@@ -40,6 +40,7 @@ pub mod address_space;
 pub mod devices;
 pub mod interrupts;
 pub mod iso_disc;
+pub mod pipe;
 pub mod process;
 pub mod scheduler;
 pub mod syscall;
@@ -714,8 +715,36 @@ fn run_programs() {
         arch::set_preempt_sink(crate::scheduler::preempt);
     }
 
+    // The pipe table, before any program can make one.
+    //
+    // SAFETY: called once, before EL0 is entered.
+    unsafe { crate::pipe::install() };
+
+    // The pipe the reader waits on, made before either program runs.
+    //
+    // The writer is program 2 and the reader is program 3, so the ordering is
+    // the point: the reader reaches its `Read` first — its loop is shorter and
+    // it makes no earlier call — and the pipe is empty, so it blocks.  Program
+    // 2's write is what ends that wait, and nothing else can.
+    let pipe = alloc::sync::Arc::new(crate::pipe::Pipe::new(ipc::DEFAULT_PIPE_CAPACITY));
+    let reader_end = match crate::pipe::attach(crate::pipe::End::reader(pipe.clone())) {
+        Some(end) => end,
+        None => {
+            arch::serial::write_str("protofire: no room for a pipe end\n");
+            return;
+        }
+    };
+    let writer_end = match crate::pipe::attach(crate::pipe::End::writer(pipe)) {
+        Some(end) => end,
+        None => {
+            arch::serial::write_str("protofire: no room for a pipe end\n");
+            return;
+        }
+    };
+
     let mut scheduler = Scheduler::new();
-    for number in [1u16, 2] {
+    for number in [1u16, 2, 3] {
+        let mut handed_stack_top: Option<usize> = None;
         let Some(mut space) = (unsafe { AddressSpace::new() }) else {
             arch::serial::write_str("protofire: no root table for a program\n");
             return;
@@ -739,8 +768,45 @@ fn run_programs() {
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), image as *mut u8, bytes.len());
         }
 
+        // The pipe's end, on the stack where the program's first instruction
+        // looks for it.
+        //
+        // A program receives a value from the boot through the one place both
+        // sides agree on, and this boot writes it before the program runs: the
+        // reader reads `[rsp]` for its descriptor, and the writer finds its own
+        // at `[rsp]` too.  The byte above it is the writer's payload.
+        let handed = match number {
+            n if n == process::PIPE_READER => Some(reader_end),
+            n if n == process::PIPE_WRITER => Some(writer_end),
+            _ => None,
+        };
+        if let Some(descriptor) = handed {
+            // The stack's top is a boundary, not storage: a program's `rsp`
+            // points at it and `[rsp]` is the first four bytes *above* it.  So
+            // the words go below the boundary and the stack pointer moves down
+            // to them — which is what a `push` would have done, done early.
+            // The **physical** frame, not its virtual address.
+            //
+            // A program's pages are mapped in its own address space, and the
+            // boot is running through the kernel's — so `0x8080000fe0` is an
+            // address this walk does not reach, and the first version faulted
+            // writing it.  The frame is identity-mapped here, so the kernel
+            // writes the bytes where they will be and the program reads them
+            // through its own mapping of the same page.
+            let base = (stack + paging::PAGE_SIZE - 32) as *mut u64;
+            // SAFETY: `stack` is the frame this space owns for its stack, the
+            // program has not run, and the four words are inside it.
+            unsafe {
+                base.write(descriptor as u64);
+                base.add(1).write(0x64_63_62_61); // "abcd", little-endian
+            }
+            // The stack pointer the task starts with points at those words, in
+            // the program's own address space.
+            handed_stack_top = Some(process::program_stack_top(number) - 32);
+        }
+
         let base = process::program_base(number);
-        let stack_page = process::program_stack_top(number) & !0xFFF;
+        let stack_page = process::program_stack_page(number);
         // SAFETY: both frames belong to this space, and the two virtual
         // addresses are this program's own window.
         let mapped = unsafe { space.map(base, image, false) && space.map(stack_page, stack, true) };
@@ -755,10 +821,17 @@ fn run_programs() {
         arch::serial::write_hex(base as u64);
         arch::serial::write_str("\n");
 
+        let stack_top = handed_stack_top
+            .take()
+            .unwrap_or_else(|| process::program_stack_top(number));
         scheduler.add(Task::new(
-            if number == 1 { "one" } else { "two" },
+            match number {
+                n if n == process::PIPE_READER => "reader",
+                n if n == process::PIPE_WRITER => "writer",
+                _ => "one",
+            },
             base,
-            process::program_stack_top(number),
+            stack_top,
             space,
         ));
     }
@@ -1208,17 +1281,17 @@ pub fn idle_until_woken() {
     // where there is something to unmask and stops the core until an interrupt
     // arrives.  The boot hung once with `every program is asleep, waiting` and
     // no tick, because this file had tried to spell `sti` itself.
-    let mut spins = 0u64;
+    // No spin bound.
+    //
+    // One was here, at a million waits, on the argument that a machine whose
+    // timer does not tick should say so rather than hang.  It fired on a
+    // healthy aarch64 boot: a `wfi` returns on every tick whether or not that
+    // tick ended the wait, so the counter measured the boot's speed and not a
+    // fault.  What ends the loop is `wake_expired` turning a deadline into a
+    // runnable task, and a machine that never does that is a machine that hangs
+    // — with a log that already said "every program is asleep, waiting".
     while crate::scheduler::has_sleeping() && !crate::scheduler::has_selectable() {
         arch::wait_for_a_wakeup();
-        spins += 1;
-        if spins > 1_000_000 {
-            // A machine whose timer does not tick cannot wake a sleeper, and
-            // waiting forever would hang the boot with no evidence.  This line
-            // says which machine it was.
-            arch::serial::write_str("protofire: no tick arrived while every program was asleep\n");
-            break;
-        }
     }
 }
 

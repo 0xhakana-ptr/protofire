@@ -73,6 +73,14 @@ enum State {
     Runnable,
     /// It asked to sleep until the counter reads `until`.
     Sleeping { until: u64 },
+    /// It is waiting for another task to wake it, and no deadline applies.
+    ///
+    /// The difference from `Sleeping` is what ends the wait.  A deadline is the
+    /// clock's answer and the timer delivers it; this is another task's answer
+    /// and nothing but a `wake` delivery ends it.  A scheduler that folded the
+    /// two together would have to invent a deadline for a wait that has none,
+    /// and any number it invented would be a read that gives up early.
+    Blocked,
     /// It exited, and is never selected again.
     Finished,
 }
@@ -362,6 +370,48 @@ impl Scheduler {
         woken
     }
 
+    /// Park the current task until another task wakes it.
+    ///
+    /// The frame is saved here for the reason `sleep_until` gives: the position
+    /// to resume at exists only in the trap frame the call arrived in, and a
+    /// blocked task has no later scheduling call to rely on.
+    pub fn block(&mut self, frame: &Context) {
+        if let Some(task) = self.tasks.get_mut(self.current) {
+            task.context = *frame;
+            task.state = State::Blocked;
+        }
+    }
+
+    /// Wake every blocked task, answering how many.
+    ///
+    /// ## Why this wakes all of them
+    ///
+    /// A wait queue would record *which* task waits on *which* object, and this
+    /// kernel has one blocking object and one blocked task in the boot that
+    /// proves it.  Waking all of them is the correct behaviour for a pipe's
+    /// reader and a writer — several readers on one pipe may all make progress
+    /// — and it is wrong for anything that needs one exact waiter.  The queue
+    /// arrives with the second such object; until then a wake that names its
+    /// waiters would be a queue with one entry and a lookup.
+    pub fn wake_blocked(&mut self) -> usize {
+        let mut woken = 0;
+        for task in &mut self.tasks {
+            if task.state == State::Blocked {
+                task.state = State::Runnable;
+                woken += 1;
+            }
+        }
+        woken
+    }
+
+    /// How many tasks are blocked rather than asleep, runnable or finished.
+    pub fn blocked(&self) -> usize {
+        self.tasks
+            .iter()
+            .filter(|task| task.state == State::Blocked)
+            .count()
+    }
+
     /// How many tasks are asleep.
     pub fn sleeping(&self) -> usize {
         self.tasks
@@ -408,7 +458,7 @@ impl Scheduler {
     pub fn has_sleeping(&self) -> bool {
         self.tasks
             .iter()
-            .any(|task| matches!(task.state, State::Sleeping { .. }))
+            .any(|task| matches!(task.state, State::Sleeping { .. } | State::Blocked))
     }
 
     /// Release every finished program's pages.
@@ -636,6 +686,39 @@ pub fn has_selectable() -> bool {
     // SAFETY: the scheduler is written once before any program runs.
     let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
     scheduler.is_some_and(Scheduler::has_selectable)
+}
+
+/// Park the running task until another task wakes it.
+///
+/// `None` when no scheduler is installed, which is the state a host build is in
+/// and the state a boot is in before it installs one.
+pub fn block(frame: &arch::Context) -> bool {
+    // SAFETY: the scheduler is written once before any program runs.
+    let scheduler = unsafe { (&mut *SCHEDULER.get()).as_mut() };
+    match scheduler {
+        Some(scheduler) => {
+            scheduler.block(frame);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Wake every blocked task, answering how many.
+///
+/// Called when something a blocked task was waiting for changed — a pipe's
+/// writer putting bytes in, or its write end closing.
+pub fn wake_blocked() -> usize {
+    // SAFETY: as `block`.
+    let scheduler = unsafe { (&mut *SCHEDULER.get()).as_mut() };
+    scheduler.map_or(0, Scheduler::wake_blocked)
+}
+
+/// How many installed tasks are blocked, for a boot line that reports it.
+pub fn blocked() -> usize {
+    // SAFETY: as `block`.
+    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
+    scheduler.map_or(0, Scheduler::blocked)
 }
 
 /// Whether any installed task is asleep rather than runnable or finished.

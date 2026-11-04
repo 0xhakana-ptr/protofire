@@ -491,7 +491,11 @@ mod tests {
 // program's words had.
 
 /// How long a program's image is, in bytes.
-pub const PROGRAM_LEN: usize = 64;
+///
+/// The longer of the two images.  A program is copied into a whole page, so the
+/// exact length matters only to the copy; a shorter array would truncate the
+/// pipe reader's last instruction.
+pub const PROGRAM_LEN: usize = 89;
 
 /// How long the program sleeps, in microseconds.
 ///
@@ -509,11 +513,116 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 const NUMBER_OFFSET: usize = 25;
 
 /// One program's bytes, with `number` in its `Write` argument.
+///
+/// Program 3 is the pipe's reader and is a different program, not the same one
+/// with a different number: it makes a call the others never make and its
+/// first act is to block.  Everything about it is the machine code below, which
+/// is why it is a second array rather than a parameter.
 pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
-    let mut bytes = PROGRAM_BASE;
+    if number == PIPE_READER {
+        let mut bytes = [0u8; PROGRAM_LEN];
+        bytes[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);
+        return bytes;
+    }
+    if number == PIPE_WRITER {
+        let mut bytes = [0u8; PROGRAM_LEN];
+        bytes[..PIPE_WRITER_PROGRAM.len()].copy_from_slice(&PIPE_WRITER_PROGRAM);
+        return bytes;
+    }
+    let mut bytes = [0u8; PROGRAM_LEN];
+    bytes[..PROGRAM_BASE.len()].copy_from_slice(&PROGRAM_BASE);
     bytes[NUMBER_OFFSET..NUMBER_OFFSET + 4].copy_from_slice(&(number as u32).to_le_bytes());
     bytes
 }
+
+/// The number of the program that reads the pipe.
+pub const PIPE_READER: u16 = 3;
+
+/// The number of the program that writes to it.
+pub const PIPE_WRITER: u16 = 2;
+
+/// The writer: announce, sleep, announce again, then put bytes in the pipe.
+///
+/// ## Why the sleep comes before the write
+///
+/// The reader has to reach its `Read` first and block, or there is nothing to
+/// prove — a write into a pipe nobody has read yet is an ordinary copy.  The
+/// reader's loop is shorter and it makes no earlier call, so it blocks; this
+/// program's sleep then guarantees the order rather than relying on it.
+///
+/// `[rsp]` holds the write end's descriptor and `[rsp + 16]` is the four bytes
+/// it sends.
+const PIPE_WRITER_PROGRAM: [u8; 89] = [
+    0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
+    0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
+    0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
+    0x75, 0xFA, // jne -6
+    0x41, 0x83, 0xE8, 0x01, // sub r8d, 1
+    0x75, 0xEE, // jne -18
+    0xBE, 0x02, 0x00, 0x00, 0x00, // mov esi, 2          (this program's number)
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6          (Write)
+    0xCD, 0x80, // int 0x80
+    0xBF, 0x20, 0x4E, 0x00, 0x00, // mov edi, 20000      (the sleep)
+    0xB8, 0x31, 0x00, 0x00, 0x00, // mov eax, 49         (Sleep)
+    0xCD, 0x80, // int 0x80
+    0xBE, 0x02, 0x00, 0x00, 0x00, // mov esi, 2          (Write, after the wake)
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6
+    0xCD, 0x80, // int 0x80
+    0x8B, 0x3C, 0x24, // mov edi, [rsp]      (the write end)
+    0x48, 0x8D, 0x74, 0x24, 0x10, // lea rsi, [rsp + 16] (the bytes)
+    0xBA, 0x04, 0x00, 0x00, 0x00, // mov edx, 4
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6          (Write to the pipe)
+    0xCD, 0x80, // int 0x80
+    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
+    0xCD, 0x80, // int 0x80
+    0xEB, 0xFE, // jmp $
+];
+
+/// The pipe reader: wait on a descriptor the boot left on its stack.
+///
+/// ## The interface, and why it is the stack
+///
+/// `[rsp]` holds the read end's descriptor and `[rsp + 8]` is the four-byte
+/// buffer the read fills.  A program's only way to receive a value from the
+/// boot is a place it knows how to look at, and the stack is the one place both
+/// sides already agree on — the boot writes it before the program runs, and the
+/// program's first instruction can reach it without a call.
+///
+/// ## What it proves
+///
+/// The read blocks: the pipe is empty when this program runs, its writer is
+/// alive, and `try_read` answers `Block`.  The line `a program blocks on a
+/// pipe` is that event.  The `Write` after it says the read returned, which can
+/// only happen because the writer's syscall woke it — nothing else wakes a
+/// blocked task.
+const PIPE_READER_PROGRAM: [u8; 79] = [
+    0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
+    0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
+    0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
+    0x75, 0xFA, // jne -6
+    0x41, 0x83, 0xE8, 0x01, // sub r8d, 1
+    0x75, 0xEE, // jne -18
+    0xBE, 0x03, 0x00, 0x00, 0x00, // mov esi, 3          (announce)
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6          (Write)
+    0xCD, 0x80, // int 0x80
+    0x8B, 0x3C, 0x24, // mov edi, [rsp]      (the read end)
+    0x48, 0x8D, 0x74, 0x24, 0x08, // lea rsi, [rsp + 8]  (the buffer)
+    0xBA, 0x04, 0x00, 0x00, 0x00, // mov edx, 4
+    0xB8, 0x05, 0x00, 0x00, 0x00, // mov eax, 5          (Read)
+    0xCD, 0x80, // int 0x80
+    // The length is cleared before the second announcement.  `edx` still holds
+    // the read's four, and a write with a length to a descriptor that names a
+    // pipe is a pipe write — so the announcement would go into the pipe and
+    // print nothing.  This is the same confusion the kernel's length test
+    // exists to end, seen from the program's side.
+    0x31, 0xD2, // xor edx, edx        (announce has no length)
+    0xBE, 0x03, 0x00, 0x00, 0x00, // mov esi, 3          (Write, after the wait)
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6
+    0xCD, 0x80, // int 0x80
+    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
+    0xCD, 0x80, // int 0x80
+    0xEB, 0xFE, // jmp $
+];
 
 /// The program with a zero number, which [`program_bytes`] patches.
 ///
@@ -530,7 +639,7 @@ pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
 /// bound is real: 0x1000 × 0x10000 was too long, and under the emulator the
 /// trap cost of ten thousand ticks a second left the program unable to reach
 /// its first `int` at all.
-const PROGRAM_BASE: [u8; PROGRAM_LEN] = [
+const PROGRAM_BASE: [u8; 64] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -552,8 +661,44 @@ const PROGRAM_BASE: [u8; PROGRAM_LEN] = [
 
 #[cfg(test)]
 mod program_tests {
+    use super::PIPE_READER;
+    use super::PIPE_WRITER;
     use super::PROGRAM_LEN;
     use super::program_bytes;
+
+    /// The three programs are three different images.
+    ///
+    /// The boot runs an announcing program, a pipe writer and a pipe reader,
+    /// and a builder that returned one image for all three would look correct
+    /// until the reader slept instead of blocking — which is what the first
+    /// version did, because `program_bytes` never checked the number.
+    #[test]
+    fn the_three_programs_are_three_images() {
+        let announce = program_bytes(1);
+        let writer = program_bytes(PIPE_WRITER);
+        let reader = program_bytes(PIPE_READER);
+
+        assert_ne!(
+            announce, writer,
+            "the writer makes a call the others do not"
+        );
+        assert_ne!(
+            writer, reader,
+            "and the reader makes one the writer does not"
+        );
+
+        // The reader's read is `mov eax, 5` — syscall 5 — and the announce
+        // program has no such immediate anywhere in it.
+        let read_encoding: [u8; 5] = [0xB8, 0x05, 0x00, 0x00, 0x00];
+        assert!(
+            reader.windows(5).any(|window| window == read_encoding),
+            "the reader calls Read"
+        );
+        assert!(
+            !announce.windows(5).any(|window| window == read_encoding),
+            "and the announcing program does not"
+        );
+    }
 
     /// The image is the length the table says, and the number lands where the
     /// encoding puts it.
