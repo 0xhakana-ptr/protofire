@@ -810,6 +810,54 @@ window the enumeration pass assigns from, and the timer's rate — which RISC-V
 reports nowhere but `/cpus`'s `timebase-frequency`, there being no register on
 this machine that says how fast `time` runs.
 
+### A trap on the third machine, and a timer the firmware owns
+
+    protofire: interrupt table installed, interrupts on
+    protofire: interrupt delivered to its handler
+    protofire: timer line enabled = 1
+    protofire: timer armed at 10000 ticks/ms
+
+One entry serves every trap, because `stvec` names one address and the cause
+read there is the whole of what arrived.  The entry has one trick worth
+writing down: RISC-V pushes nothing on a trap and switches no stack, so the
+first instruction exchanges `sp` with `sscratch` — which holds the kernel
+stack while a program runs and zero while the kernel does — and the exchange
+yielding zero is how the kernel's own traps find their way home.  Which stack
+the interrupted `sp` was is decided by `sstatus.SPP`, the bit the hardware set
+before the first instruction of the handler ran.
+
+The frame is 288 bytes: all thirty-two integer registers, `sepc`, `sstatus`,
+`scause` and `stval`.  No float registers, because `sstatus.FS` is left off
+from the entry onward — the same answer x86_64's frame gives for SSE, and a
+kernel that used a float would fault loudly instead of corrupting a program's
+state silently.  aarch64's frame saves its vector registers because that
+machine's compiler provably emits them; this one's does not.
+
+There is no self-test `ecall` in the install, and the absence is not an
+omission the way it was on aarch64: an `ecall` from S-mode is the **firmware's**
+door — the same instruction that arms the timer — so raising one as a probe
+would be a request to OpenSBI.  The line this machine can be asked for is the
+supervisor software interrupt, whose pending bit S-mode may set on itself; the
+boot raises it the moment the register is written, and silences the source
+before the handler sees it, because a pending bit that stays set takes the
+same interrupt again the moment interrupts are enabled.
+
+The timer is an SBI call, and the call is a trap: arming is an `ecall` into
+M-mode, which clobbers the argument registers — the previous tree's timer did
+not declare them, and every tick it reported was tick 1.  Every register the
+call can reach is declared at the call site, which is the one place a reader
+can check it.
+
+**The first storm came from the disarm, and it was arithmetic.**  There is no
+disable bit this mode owns, so "off" is a deadline the counter will not reach.
+The first version computed that deadline by adding the counter's full range —
+which **wraps** to one tick in the past.  The boot disarmed its timer and
+instantly armed it for an immediate fire, whose handler re-armed the real
+slice: four thousand traps a second through a phase of the boot that should
+have been quiet, and two panics a long way from the cause — a hex printer whose
+loop counter overflowed a multiply, and a `copy_nonoverlapping` that saw
+pointers nothing in this tree had made.  "Off" is now half the counter's range,
+which no boot waits out and nothing wraps past.
 
 ## Kernel
 

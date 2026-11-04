@@ -93,6 +93,164 @@ _start:
     wfi
     j 3b
 
+/* The one trap path every trap reaches.
+
+   ## The swap
+
+   RISC-V pushes nothing on a trap and switches no stack: the handler starts on
+   whatever `sp` the interrupted code held, which for a program is a stack the
+   kernel must not build a frame on.  So the first instruction exchanges `sp`
+   with `sscratch` — which holds the kernel stack while a program runs, and
+   zero while the kernel does.  The exchange yields zero for the kernel's own
+   trap (which then puts its stack back), and the kernel stack for a program's.
+
+   The distinction survives because of a rule the Rust side keeps: `sscratch`
+   is zeroed for the whole of any kernel window that can take a trap with
+   interrupts enabled — the boot before any program, and the idle's wait.  A
+   parked user `sp` is only ever in `sscratch` while the hart is in U-mode or
+   inside a handler running masked.
+
+   ## The frame's layout
+
+   The offsets below are [`crate::trap::ExceptionFrame`]'s, field for field,
+   and the structure asserts them with `offset_of!` rather than trusting this
+   table:
+
+   | offset | what |
+   |---|---|
+   | 0..256 | `x0`..`x31`, eight bytes each; `x0` stored as the zero it reads |
+   | 256 | `sepc` — where to return; for a call, the `ecall` itself |
+   | 264 | `sstatus` — the state to return to |
+   | 272 | `scause` — what the trap was |
+   | 280 | `stval` — the address a fault named |
+
+   The total is 288 bytes.  `x2` — the stack pointer — is saved last and in a
+   place of its own decision: the interrupted `sp` is the user's when the trap
+   came from a program and the frame's own top when it came from the kernel,
+   and `sstatus.SPP`, set by the hardware before the first instruction here,
+   is what tells the two apart. */
+
+.section .text.trap, "ax"
+.balign 4
+.global trap_entry
+trap_entry:
+    csrrw sp, sscratch, sp
+    bnez sp, 1f
+    csrrw sp, sscratch, x0
+1:
+    addi sp, sp, -288
+
+    /* Everything but `x2`, before anything is clobbered: the two scratch
+       registers the code below needs are ordinary slots by the time their
+       registers are used. */
+    sd x0, 0(sp)
+    sd x1, 8(sp)
+    sd x3, 24(sp)
+    sd x4, 32(sp)
+    sd x5, 40(sp)
+    sd x6, 48(sp)
+    sd x7, 56(sp)
+    sd x8, 64(sp)
+    sd x9, 72(sp)
+    sd x10, 80(sp)
+    sd x11, 88(sp)
+    sd x12, 96(sp)
+    sd x13, 104(sp)
+    sd x14, 112(sp)
+    sd x15, 120(sp)
+    sd x16, 128(sp)
+    sd x17, 136(sp)
+    sd x18, 144(sp)
+    sd x19, 152(sp)
+    sd x20, 160(sp)
+    sd x21, 168(sp)
+    sd x22, 176(sp)
+    sd x23, 184(sp)
+    sd x24, 192(sp)
+    sd x25, 200(sp)
+    sd x26, 208(sp)
+    sd x27, 216(sp)
+    sd x28, 224(sp)
+    sd x29, 232(sp)
+    sd x30, 240(sp)
+    sd x31, 248(sp)
+
+    /* The interrupted stack pointer. */
+    csrr t0, sstatus
+    andi t0, t0, 256             /* SPP: set means the trap came from S-mode */
+    beqz t0, 2f
+    addi t0, sp, 288             /* the kernel's own `sp`, at the frame's top */
+    j 3f
+2:  csrr t0, sscratch            /* the program's, parked by the swap */
+3:  sd t0, 16(sp)
+
+    csrr t0, sepc
+    sd t0, 256(sp)
+    csrr t0, sstatus
+    sd t0, 264(sp)
+    csrr t0, scause
+    sd t0, 272(sp)
+    csrr t0, stval
+    sd t0, 280(sp)
+
+    mv a0, sp
+    call riscv64_trap_dispatch
+
+    /* The restore.  Every register comes home from the frame before the two
+       scratch registers are spent on the return itself: `sepc` and `sstatus`
+       go back to the machine, then the frame's `x2` decides where `sret` runs,
+       and the `SPP` it carries decides what `sscratch` holds afterwards — the
+       kernel stack, for the next program's trap, or zero, for the kernel's
+       own.  `ESR` has no counterpart here to skip: `scause` and `stval`
+       describe the trap, and an `sret` reads neither. */
+    ld x1, 8(sp)
+    ld x3, 24(sp)
+    ld x4, 32(sp)
+    ld x5, 40(sp)
+    ld x6, 48(sp)
+    ld x7, 56(sp)
+    ld x8, 64(sp)
+    ld x9, 72(sp)
+    ld x10, 80(sp)
+    ld x11, 88(sp)
+    ld x12, 96(sp)
+    ld x13, 104(sp)
+    ld x14, 112(sp)
+    ld x15, 120(sp)
+    ld x16, 128(sp)
+    ld x17, 136(sp)
+    ld x18, 144(sp)
+    ld x19, 152(sp)
+    ld x20, 160(sp)
+    ld x21, 168(sp)
+    ld x22, 176(sp)
+    ld x23, 184(sp)
+    ld x24, 192(sp)
+    ld x25, 200(sp)
+    ld x26, 208(sp)
+    ld x27, 216(sp)
+    ld x28, 224(sp)
+    ld x29, 232(sp)
+    ld x30, 240(sp)
+    ld x31, 248(sp)
+
+    ld t0, 256(sp)
+    csrw sepc, t0
+    ld t0, 264(sp)
+    csrw sstatus, t0
+    ld t0, 16(sp)
+    addi sp, sp, 288
+
+    csrr t1, sstatus
+    andi t1, t1, 256
+    bnez t1, 4f
+    csrw sscratch, sp
+    mv sp, t0
+    sret
+4:  csrw sscratch, x0
+    mv sp, t0
+    sret
+
 /* The kernel's stack: what the trap entry swaps in for a program's `sp`, and
    the stack the boot itself runs on.  A page-aligned page of it, like the
    aarch64 entry's. */

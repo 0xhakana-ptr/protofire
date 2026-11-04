@@ -18,8 +18,18 @@ paging = { path = "../../libs/paging" }
 # The frame a trap hands to the kernel's sink.  A machine that cannot take a
 # trap still names the type, because the install signature is the same on every
 # machine.
+
+# The three crates only a bare-metal build names, for the same reason the
+# aarch64 crate's manifest gates them: a host build has no `stvec`, no sink to
+# install and no `.bss` to put a static in, so those arms do not exist there.
+[target.'cfg(target_os = "none")'.dependencies]
+# The frame a trap hands to the kernel's sink.  The type crosses the boundary
+# between this machine and the kernel's handler table, so it belongs to
+# neither.
 irq = { path = "../../libs/irq" }
-riscv.workspace = true
+# The sinks the trap path writes once and every dispatch reads.
+cell = { path = "../../libs/cell" }
+
 # The host arm of the console records bytes behind a lock; a host build is
 # multi-threaded in its tests, and the recording is not the kernel's single-CPU
 # boot path.  Only a host build names it.

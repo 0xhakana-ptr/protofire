@@ -122,16 +122,23 @@ pub fn encode_at(entry: Entry, level: Level) -> u64 {
     // they are set from the permission and never from a constant: an entry
     // that ORed in `LEAF_BITS` and then added the real permission would give
     // an unexecutable page the execute bit.
-    if entry.permissions.executable {
-        word |= EXECUTABLE;
-    } else {
-        // Readable is required on a page that is not executable: an entry with
-        // no R, W or X is a table pointer, so a page with none of them would
-        // not be a page.  A non-executable leaf is therefore readable.
-        word |= READABLE;
-    }
+    //
+    // A present leaf is **readable**, and that is not a shortcut: the
+    // permissions this kernel names carry no "read" flag, because on the two
+    // machines that came first a present page is readable and `executable` is
+    // an addition to that, not a replacement for it.  RISC-V *could* express
+    // execute-only — `R` clear, `X` set — and the first encoder gave exactly
+    // that to every executable page, which made a program's stack a page its
+    // own program could run but not read: the load from the descriptor the
+    // boot handed it was the machine refusing what the mapping said.  Nothing
+    // above this crate asks for execute-only, so the encoder does not invent
+    // it.
+    word |= READABLE;
     if entry.permissions.writable {
         word |= WRITABLE;
+    }
+    if entry.permissions.executable {
+        word |= EXECUTABLE;
     }
     if entry.permissions.user {
         word |= USER;
@@ -501,15 +508,17 @@ mod tests {
         assert_ne!(read_only & DIRTY, 0);
     }
 
-    /// An executable page sets X and no R, which is the specification's
-    /// execute-only form.
+    /// An executable page is readable too, because readable is what a present
+    /// leaf *is* on the permissions this kernel names: there is no "read"
+    /// flag to clear, and the specification's execute-only form — `R` clear,
+    /// `X` set — is one nothing above this crate asks for.
     ///
-    /// The one thing it must not do is leave all three clear: an entry with V
-    /// set and none of R, W, X names another table, so a page encoded that way
-    /// would be walked as a table pointer.
+    /// The first encoder gave execute-only to every executable page, and the
+    /// fault it produced is the test's shape: a program could fetch from its
+    /// own stack page and not load from it.
     #[test]
-    fn an_executable_page_sets_x_and_is_still_a_leaf() {
-        let execute_only = Entry::page(
+    fn an_executable_page_is_readable_as_well() {
+        let executable = Entry::page(
             0x1000,
             Permissions {
                 writable: false,
@@ -518,12 +527,18 @@ mod tests {
                 cache: paging::Cache::Normal,
             },
         );
-        let word = encode(execute_only, Level::Leaf);
+        let word = encode(executable, Level::Leaf);
         assert_ne!(word & super::EXECUTABLE, 0, "execute is set");
-        assert_eq!(word & super::READABLE, 0, "read is the permission's answer");
-        assert_ne!(word & super::LEAF_BITS, 0, "X alone is enough to be a leaf");
+        assert_ne!(word & super::READABLE, 0, "and read is never refused");
+        assert_ne!(word & super::LEAF_BITS, 0, "and the entry is a leaf");
         assert!(decode(word, Level::Leaf).is_leaf);
         assert!(decode(word, Level::Leaf).permissions.executable);
+
+        // A leaf always carries at least one of R, W, X — the specification's
+        // definition of a leaf — and with `R` unconditional that holds for
+        // every permission set the kernel can name.
+        let plain = Entry::page(0x1000, paging::Permissions::default());
+        assert_ne!(encode(plain, Level::Leaf) & super::LEAF_BITS, 0);
     }
 
     /// The user bit is bit 4, and a kernel page does not have it.

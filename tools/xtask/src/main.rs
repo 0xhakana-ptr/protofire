@@ -463,10 +463,12 @@ impl Machine {
             // The OpenSBI machine, at the milestone its boot is at: the
             // firmware's tree was recorded and parsed, the kernel's own table
             // replaced the register's bare state, the frame pool was sized by
-            // the tree's memory and exercised, and the heap came up.  The
-            // pool's count is exact for the same reason aarch64's is — the
-            // numbers are fixed by the machine's memory and the linker's span,
-            // so a shape-check would accept a `pool check FAILED` tail.
+            // the tree's memory and exercised, the heap came up, and the
+            // machine takes a trap it raised itself and arms a timer the
+            // firmware owns the deadline of.  The pool's count is exact for
+            // the same reason aarch64's is -- the numbers are fixed by the
+            // machine's memory and the linker's span, so a shape-check would
+            // accept a `pool check FAILED` tail.
             Self::Riscv64 => &[
                 (
                     "protofire 0.1.0: entered via dtb, console up, stage 1",
@@ -481,6 +483,10 @@ impl Machine {
                     "protofire: frame pool 16384 frame(s), 16384 free, 0 in page tables, pool check ok",
                     true,
                 ),
+                ("protofire: interrupt table installed, interrupts on", true),
+                ("protofire: interrupt delivered to its handler", true),
+                ("protofire: timer line enabled = 1", true),
+                ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),
             ],
         }
