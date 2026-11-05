@@ -67,10 +67,44 @@ clap = { version = "4.0", features = ["derive"] }
 # `opt-level = 1` keeps a debug build fast enough to boot and small enough to
 # read; `debug = 1` keeps file and line in a panic's `Location` and in a
 # backtrace without the type and variable records that dominate a link.
+#
+# ## Why `incremental = false`, which is not a style choice
+#
+# Incremental compilation keeps a per-crate query cache under `target/debug/`,
+# and this workspace has thirty-seven members: one `cargo test --workspace`
+# built 1314 incremental directories and grew `target/` to 5.6 GB.  The memory
+# it costs at build time is the reason this line exists — a host with 16 GB ran
+# out and the build was killed, twice, on the full gate rather than on any one
+# crate.
+#
+# What it gives up is recompiling less after a small edit.  What it buys is that
+# the gate runs at all on a machine that size, which is the priority: a build
+# that cannot finish is not incremental, it is absent.
+#
+# If a machine with more memory wants the speed back, `CARGO_INCREMENTAL=1` on
+# the command line overrides this without an edit.
 [profile.dev]
 panic = "abort"
 opt-level = 1
 debug = 1
+incremental = false
+
+# The test profile is `dev` plus test harnesses, and it is the one that ran out
+# of memory: every crate's lib and test binary is built for the host at once.
+#
+# `debug = 0` drops the debug info from those binaries.  A test that fails
+# reports its file and line from `panic!`'s own `Location`, which `debug = 1`
+# is not needed for; what the setting buys is a backtrace with variable names,
+# and every machine here debugs by booting a serial log rather than by running
+# a host test under a debugger.  A test that needs a backtrace can be run with
+# `RUSTFLAGS=-Cdebuginfo=1`.
+# `panic` is deliberately absent: cargo accepts it only in `dev` and `release`,
+# and a test profile inherits it from `dev`.  Restating it here is the kind of
+# line a reader assumes is load-bearing and cargo silently ignores.
+[profile.test]
+opt-level = 1
+debug = 0
+incremental = false
 
 [profile.release]
 panic = "abort"
