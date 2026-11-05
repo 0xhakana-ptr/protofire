@@ -42,7 +42,7 @@ extern crate alloc;
 core::arch::global_asm!(
     include_str!("entry.S"),
     SECONDARY_STACK_BYTES = const smp::SECONDARY_STACK_BYTES,
-    SECONDARY_STACK_RESERVATION = const smp::secondary_stack_reservation(),
+    KERNEL_STACK_RESERVATION = const smp::kernel_stack_reservation(),
 );
 
 pub mod boot;
@@ -210,15 +210,34 @@ pub unsafe extern "C" fn riscv64_set_boot_hart(hart: usize) {
     smp::set_boot_hart(hart);
 }
 
-// The kernel stack a program's trap lands on.  `sscratch` holds it while a
-// program runs, and the trap entry's swap turns a program's `sp` into this
-// one.  The symbol is the entry assembly's, which is where the stack is
-// defined, a second definition here would be a second opinion about where
-// the kernel's stack is.  A `//` and not a `///`: a doc comment on an extern
-// block decorates nothing.
+// The per-CPU kernel stacks, as the entry assembly laid them out.  One array,
+// indexed by slot, and the trap path reads the top of this CPU's slice out of
+// it.  The symbol is the entry assembly's, which is where the stacks are
+// defined; a second definition here would be a second opinion about where the
+// kernel's stacks are.
 #[cfg(target_os = "none")]
 unsafe extern "C" {
-    static _stack_top: u8;
+    static kernel_stacks: u8;
+}
+
+/// The top of this CPU's kernel stack.
+///
+/// ## Why this is asked rather than written
+///
+/// `sscratch` holds the stack a program's trap lands on, and it is per-hart: a
+/// value written by the boot hart is a stack the second hart would build its
+/// frame on, which is two frames over one region and an unwind into the wrong
+/// program.  The slot is what tells them apart, and the array is indexed by it.
+///
+/// The symbol's address plus the slot's slice is the answer, so the stack a CPU
+/// boots on, the stack its trap path swaps in, and the stack a resumed
+/// program's next trap lands on are all one stack.
+#[cfg(target_os = "none")]
+pub fn kernel_stack_top() -> usize {
+    let slot = current_cpu_slot();
+    // `addr_of!` takes the base of the array without creating a reference:
+    // there is storage there, not a value.
+    core::ptr::addr_of!(kernel_stacks) as usize + (slot + 1) * smp::SECONDARY_STACK_BYTES
 }
 
 /// Stop this CPU until an interrupt arrives.
@@ -523,7 +542,7 @@ pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
             "sret",
             entry = in(reg) entry as u64,
             spsr = in(reg) trap::USER_SSTATUS,
-            kernel_stack = in(reg) core::ptr::addr_of!(_stack_top) as usize as u64,
+            kernel_stack = in(reg) kernel_stack_top() as u64,
             user_stack = in(reg) stack_top as u64,
             options(noreturn)
         )
@@ -553,7 +572,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
             "sret",
             entry = in(reg) context.sepc,
             spsr = in(reg) context.sstatus,
-            kernel_stack = in(reg) core::ptr::addr_of!(_stack_top) as usize as u64,
+            kernel_stack = in(reg) kernel_stack_top() as u64,
             user_stack = in(reg) stack_pointer(context) as u64,
             options(noreturn)
         )

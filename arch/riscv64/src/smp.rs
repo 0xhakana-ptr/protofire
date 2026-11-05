@@ -60,12 +60,12 @@ pub const SECONDARY_STACK_BYTES: usize = 65536;
 
 /// How much `.bss` the entry assembly's stack region reserves.
 ///
-/// One stack per hart the boot may start, as a single number: the assembly is
-/// `.skip`ped by this and indexes it by `slot + 1`, so a reservation that was
-/// one stack while the indexing assumed four is a fault the boot only shows
-/// once the fourth slot is used.  The first version reserved one.
-pub const fn secondary_stack_reservation() -> usize {
-    SECONDARY_STACK_BYTES * MAX_SECONDARY_HARTS
+/// One stack per **CPU slot**, and the boot hart owns one of them: the array is
+/// indexed by slot, zero for the boot hart, and a started hart's is its slot
+/// plus one.  So the count is `MAX_SECONDARY_HARTS + 1`, and a reservation that
+/// counted only the started harts left the last slot pointing past its end.
+pub const fn kernel_stack_reservation() -> usize {
+    SECONDARY_STACK_BYTES * (MAX_SECONDARY_HARTS + 1)
 }
 
 /// The hart the firmware cold-booted, as the entry assembly recorded it.

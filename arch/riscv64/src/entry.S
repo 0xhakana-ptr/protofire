@@ -53,7 +53,15 @@ _start:
     lla gp, __global_pointer$
     .option pop
 
-    lla sp, _stack_top
+    /* Slot zero's stack, from the same array every other CPU uses.  One array
+       indexed by slot is one fact about where a kernel stack lives, and a
+       second stack declared for the boot hart would be a second answer that
+       the trap path's `sscratch` write could disagree with. */
+    lla sp, kernel_stacks
+    /* `addi` holds twelve bits and a stack is sixty-four kilobytes, so the
+       size goes through a register. */
+    li t0, {SECONDARY_STACK_BYTES}
+    add sp, sp, t0
 
     /* No program is running, so no trap is a program's yet. */
     csrw sscratch, x0
@@ -268,15 +276,6 @@ trap_entry:
     mv sp, t0
     sret
 
-/* The kernel's stack: what the trap entry swaps in for a program's `sp`, and
-   the stack the boot itself runs on.  A page-aligned page of it, like the
-   aarch64 entry's. */
-.section .bss.stack, "aw", @nobits
-.balign 4096
-_stack_bottom:
-    .skip 65536
-_stack_top:
-
 /* The other harts' entry, which the boot hart names in the firmware's start
    call.  The firmware enters here in S-mode with `a0` = the hart's own id and
    `a1` = the slot the boot hart chose — an index into the stacks below and
@@ -312,10 +311,15 @@ secondary_entry:
        version of this line did.  The boot hart only ever hands out slots the
        reservation holds, and the multiplication is a real multiply, not a
        shift, so the size stays one fact. */
-    addi t0, a1, 1
+    /* `a1` is the slot among *started* harts, and the array is indexed by the
+       CPU slot, where zero is the boot hart's.  So the top of this hart's
+       stack is two slices up, not one: one for the boot hart's, one for this
+       hart's own.  Writing `a1 + 1` put the first started hart on the boot
+       hart's stack, which two harts then built frames on. */
+    addi t0, a1, 2
     li t1, {SECONDARY_STACK_BYTES}
     mul t0, t0, t1
-    lla sp, secondary_stacks
+    lla sp, kernel_stacks
     add sp, sp, t0
 
     csrw sscratch, x0
@@ -334,12 +338,17 @@ secondary_entry:
     wfi
     j 1b
 
-/* One stack per hart the boot may start, indexed by the slot the boot hart
-   handed the firmware.  The size is the boot stack's, and the count is the
-   constant `smp` owns — both interpolated, so neither is written here a
-   second time.  The reservation is the product, not one stack: a single
-   stack sized as if it were four is what the first version reserved. */
-.section .bss.secondary, "aw", @nobits
+/* One kernel stack per CPU slot, indexed by the slot the kernel numbered the
+   CPU with: zero is the boot hart's, and a started hart's is its slot plus
+   one.  Both entries above index this array, and the trap path's `sscratch`
+   write reads the same symbol through `kernel_stack_top`, so the stack a CPU
+   boots on and the stack its traps land on are one stack.
+
+   The reservation is `MAX_CPUS` stacks, not `MAX_SECONDARY_HARTS` ones: the
+   boot hart's is one of them, and a reservation that counted only the started
+   harts left the last slot pointing past its end. */
+.section .bss.stack, "aw", @nobits
 .balign 4096
-secondary_stacks:
-    .skip {SECONDARY_STACK_RESERVATION}
+.global kernel_stacks
+kernel_stacks:
+    .skip {KERNEL_STACK_RESERVATION}

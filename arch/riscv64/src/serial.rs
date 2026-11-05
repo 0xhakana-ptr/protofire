@@ -193,30 +193,146 @@ pub fn host_console_take() -> alloc::vec::Vec<u8> {
 #[cfg(not(target_os = "none"))]
 pub fn init() {}
 
-/// Write a string, one byte at a time.
+/// Write a string to the console.
+///
+/// ## Why a line is buffered rather than locked
+///
+/// A boot line is not one call.  `protofire: cpu 1 id 1, ticking, 1 ipi(s)`
+/// is eight calls to `write_str`, `write_u32` and `write_hex`, and a lock
+/// taken per call would let a second CPU's line land between any two of them:
+/// the log this produced read `pro0tofire: unhandled exception 12 label(s)`,
+/// which is two lines interleaved at a call boundary and worse than either.
+///
+/// So each CPU buffers its own line and the buffer is written out at the
+/// newline, in one locked burst.  Two properties follow and both are what a
+/// reader needs: a line is atomic, and a CPU's own output keeps its order
+/// without any lock held between calls.
+///
+/// The buffer is per-CPU because the alternative, one shared buffer, would
+/// need the lock held from the first byte of a line to the last, which is a
+/// lock held across whatever the caller does between two prints.  A slot
+/// indexes it exactly as it indexes the kernel stacks.
 pub fn write_str(text: &str) {
-    // One line is dozens of writes, and two CPUs printing at once would
-    // interleave them: a boot log with two half-lines is a log no reader can
-    // attribute, and the line that says which CPU did what is exactly the one
-    // a second CPU is most likely to be printing.
-    //
-    // The lock is the cross-CPU half and masking is the same-CPU half.  Both
-    // are needed: a tick whose handler prints, arriving between two bytes of
-    // this call, would take the lock on a CPU that already holds it.
-    //
-    // `save_and_disable` rather than a bare disable, so a caller that entered
-    // with interrupts masked (the trap path) does not leave them unmasked.
+    for byte in text.bytes() {
+        push(byte);
+    }
+}
+
+/// Add one byte to this CPU's line, writing the line out at a newline.
+///
+/// Every console function goes through here, including the number formatters:
+/// a formatter that wrote straight to the device would put its digits where
+/// the device was at that instant, which is ahead of the text still waiting in
+/// the buffer.  The first version of this did exactly that and the log read
+/// `2515587protofire: a program sleeps until counter`.
+fn push(byte: u8) {
+    // A slot past the array would be a CPU the kernel never numbered, and the
+    // boot's own bound is what stops one: the last slot is the one a started
+    // hart is given.  Clamping rather than panicking keeps the console usable
+    // from a fault handler, which is where a wrong slot would be discovered.
+    let slot = crate::current_cpu_slot().min(LINE_SLOTS - 1);
+    // SAFETY: the slot is this CPU's own, from `tp`, and no other CPU reads or
+    // writes this buffer.  The buffer's own flush takes the console lock.
+    let line = unsafe { &mut *LINE_BUFFERS[slot].get() };
+    if byte != b'\n' {
+        line.push(byte);
+        return;
+    }
+
+    // The newline ends the line, so everything before it goes out together.
+    // The mask is taken here and not earlier: buffering is this CPU's own
+    // state, and holding the mask across it would lengthen a critical section
+    // for no exclusion.
     let enabled = crate::interrupts::save_and_disable();
-    // SAFETY: interrupts are masked on this CPU for the length of the section,
-    // and the release below is the one matching acquisition.
+    // SAFETY: interrupts are masked on this CPU, and the release below is the
+    // one matching acquisition.
     unsafe {
         CONSOLE_LOCK.acquire();
-        for byte in text.bytes() {
-            write_byte(byte);
+        for buffered in line.drain() {
+            write_byte(buffered);
         }
+        write_byte(b'\n');
         CONSOLE_LOCK.release();
     }
     crate::interrupts::restore(enabled);
+}
+
+/// How long one buffered line may be.
+///
+/// The longest line this tree prints is a boot report of a few hundred bytes.
+/// A line longer than this is written out early rather than truncated: a
+/// console that dropped bytes would be a log that lied, and the cost of the
+/// flush is one lock.
+const LINE_CAPACITY: usize = 512;
+
+/// One line buffer per CPU slot.
+///
+/// A `SyncUnsafeCell` per slot and not one shared buffer: each CPU owns its
+/// own, and no lock is held between two calls that build one line.  The type
+/// is `cell`'s for the reason the crate exists, and the safety argument is the
+/// slot: only the CPU whose `tp` names a slot ever reads or writes it.
+static LINE_BUFFERS: [cell::SyncUnsafeCell<LineBuffer>; LINE_SLOTS] =
+    [const { cell::SyncUnsafeCell::new(LineBuffer::new()) }; LINE_SLOTS];
+
+/// How many line buffers there are: one per CPU slot the kernel can number.
+///
+/// The count is `smp`'s, because this machine starts other CPUs and the kernel
+/// numbers them past the boot one.  The other two machines answer one, and
+/// each says so where its own constant is.
+const LINE_SLOTS: usize = 1 + crate::smp::MAX_SECONDARY_HARTS;
+
+/// A line being assembled, as a fixed array and a length.
+///
+/// Fixed rather than a `Vec`: the console is used before the heap exists and
+/// from inside the allocator's failure path, so it cannot allocate.  The
+/// length is what a flush drains.
+struct LineBuffer {
+    bytes: [u8; LINE_CAPACITY],
+    length: usize,
+}
+
+impl LineBuffer {
+    const fn new() -> LineBuffer {
+        LineBuffer {
+            bytes: [0; LINE_CAPACITY],
+            length: 0,
+        }
+    }
+
+    /// Add one byte, flushing early when the buffer is full.
+    ///
+    /// Flushing here rather than dropping is the choice this makes: a line
+    /// past the capacity is split across two console writes, which is visible
+    /// as two lines rather than as a corrupted one.
+    fn push(&mut self, byte: u8) {
+        if self.length == self.bytes.len() {
+            self.flush();
+        }
+        self.bytes[self.length] = byte;
+        self.length += 1;
+    }
+
+    /// Hand back every buffered byte, in order.
+    fn drain(&mut self) -> impl Iterator<Item = u8> + '_ {
+        let length = core::mem::take(&mut self.length);
+        self.bytes[..length].iter().copied()
+    }
+
+    /// Write what is buffered straight out.
+    ///
+    /// Called by `push` when a line overflows, and it takes the lock itself
+    /// because it is reached from inside a line rather than at its end.
+    fn flush(&mut self) {
+        // SAFETY: the caller is inside `write_str`'s mask, and this is the one
+        // matching release.
+        unsafe {
+            CONSOLE_LOCK.acquire();
+            for byte in self.drain() {
+                write_byte(byte);
+            }
+            CONSOLE_LOCK.release();
+        }
+    }
 }
 
 /// The cross-CPU half of the console's exclusion.
@@ -230,7 +346,7 @@ static CONSOLE_LOCK: cell::RawSpin = cell::RawSpin::new();
 /// Write a `u32` as decimal, without allocating.
 pub fn write_u32(value: u32) {
     if value == 0 {
-        write_byte(b'0');
+        push(b'0');
         return;
     }
     let mut buffer = [0u8; 10];
@@ -242,7 +358,7 @@ pub fn write_u32(value: u32) {
         remaining /= 10;
     }
     for byte in &buffer[position..] {
-        write_byte(*byte);
+        push(*byte);
     }
 }
 
@@ -250,7 +366,7 @@ pub fn write_u32(value: u32) {
 pub fn write_hex(value: u64) {
     write_str("0x");
     if value == 0 {
-        write_byte(b'0');
+        push(b'0');
         return;
     }
     let mut started = false;
@@ -260,7 +376,7 @@ pub fn write_hex(value: u64) {
             continue;
         }
         started = true;
-        write_byte(if digit < 10 {
+        push(if digit < 10 {
             b'0' + digit
         } else {
             b'a' + digit - 10
@@ -290,13 +406,34 @@ mod tests {
     /// This is the arm that makes the console testable at all: the real one
     /// writes a port or an MMIO register that a host does not have, so without
     /// this every assertion about a boot's output would need an emulator.
+    ///
+    /// The unit is a **line**, because the console writes one: text without a
+    /// newline is still buffered, and a test that asserted the buffer's
+    /// contents would be asserting a state the console does not promise.  What
+    /// it promises is that a line arrives whole, which is what this checks.
     #[cfg(not(target_os = "none"))]
     #[test]
-    fn a_host_records_what_was_written() {
+    fn a_host_records_a_whole_line() {
         let _guard = serialize();
         let _ = super::host_console_take();
-        super::write_str("heap");
-        assert_eq!(super::host_console_take(), b"heap");
+        super::write_str("heap\n");
+        assert_eq!(super::host_console_take(), b"heap\r\n");
+    }
+
+    /// Two calls that build one line arrive as one line.
+    ///
+    /// This is the property the buffer exists for: `protofire: cpu 1 id ` is
+    /// one call and `1` is another, and a console that wrote each call's bytes
+    /// as it received them would let a second CPU's line land between them.
+    #[cfg(not(target_os = "none"))]
+    #[test]
+    fn two_calls_build_one_line() {
+        let _guard = serialize();
+        let _ = super::host_console_take();
+        super::write_str("cpu ");
+        super::write_u32(1);
+        super::write_str("\n");
+        assert_eq!(super::host_console_take(), b"cpu 1\r\n");
     }
 
     /// A newline is written as CRLF, because the reader is a terminal.
@@ -323,14 +460,17 @@ mod tests {
         let _guard = serialize();
         let _ = super::host_console_take();
         super::write_hex(0);
-        assert_eq!(super::host_console_take(), b"0x0");
+        super::write_str("\n");
+        assert_eq!(super::host_console_take(), b"0x0\r\n");
 
         let _ = super::host_console_take();
         super::write_hex(0x11d790);
-        assert_eq!(super::host_console_take(), b"0x11d790");
+        super::write_str("\n");
+        assert_eq!(super::host_console_take(), b"0x11d790\r\n");
 
         let _ = super::host_console_take();
         super::write_hex(u64::MAX);
-        assert_eq!(super::host_console_take(), b"0xffffffffffffffff");
+        super::write_str("\n");
+        assert_eq!(super::host_console_take(), b"0xffffffffffffffff\r\n");
     }
 }
