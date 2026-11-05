@@ -469,6 +469,32 @@ impl Gic {
         true
     }
 
+    /// Raise a software interrupt on **every** core but this one.
+    ///
+    /// Bits 23..16 of `GICD_SGIR` are a bit per target core, and bit 0 is this
+    /// one.  The value here is `0xFE`: every core from one up, which is the set
+    /// a boot wants when it has something to tell the cores it started and
+    /// nothing to say to itself — a self-directed SGI would arrive as an
+    /// interrupt the kernel has to acknowledge for a reason it cannot name.
+    ///
+    /// # Safety
+    ///
+    /// As [`raise`]: the window must be the GIC's, mapped uncached, and the
+    /// number must be an SGI.
+    #[cfg(target_os = "none")]
+    pub unsafe fn raise_on_others(&self, number: usize) -> bool {
+        if !Distributor::is_software_interrupt(number) {
+            return false;
+        }
+        // SAFETY: the caller promises the window is the GIC's.
+        unsafe {
+            let request = (number as u32 & 0xFFFF) | (0xFE << 16);
+            write(self.distributor.base + DIST_SGIR, request);
+            core::arch::asm!("dsb sy", options(nostack));
+        }
+        true
+    }
+
     /// Whether the distributor's enable bit for `number` is set.
     ///
     /// # Safety

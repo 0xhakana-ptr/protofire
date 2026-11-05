@@ -276,6 +276,22 @@ pub unsafe extern "C" fn aarch64_secondary_main(slot: usize) -> ! {
         unsafe { gic.enable() };
     }
 
+    // And the timer's line, in **this core's** bank.
+    //
+    // The distributor's `ISENABLER0` covers the SGIs and PPIs, and it is one
+    // bank per core: the boot's write enabled the timer for the boot core and
+    // for no one else.  A started core that skipped this took its own timer's
+    // interrupt nowhere — `0 tick(s)` for the length of a boot — so nothing
+    // preempted it, nothing handed its task back, and the boot core ran the
+    // same task from its own frame.
+    //
+    // SAFETY: the controller is installed and enabled, and this is a PPI this
+    // core is entitled to enable for itself.
+    let timer = crate::timer_interrupt();
+    if !unsafe { crate::enable_interrupt_line(timer) } {
+        crate::serial::write_str("protofire: a started core has no timer line\n");
+    }
+
     // And this core's interrupts, on.  On this machine the lines are enabled in
     // `DAIF`, not per source, so this is the whole of "this core answers
     // interrupts".  `VBAR_EL1` is installed by the entry assembly and the sink

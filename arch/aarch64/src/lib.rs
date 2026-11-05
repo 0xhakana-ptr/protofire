@@ -334,7 +334,16 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
             "isb",
             "eret",
             entry = in(reg) context.elr,
-            stack = in(reg) context.registers[0],
+            // `sp_el0`, not `registers[0]`.
+            //
+            // `registers[0]` is the program's `x0` — its first argument — and
+            // `starting_context` leaves it zero.  Using it as the stack pointer
+            // entered every program with `sp = 0`, which is invisible for a
+            // program that never touches its stack and fatal for one that does:
+            // the pipe reader's first `ldr` and the writer's `ldr x0, [sp]`
+            // both name address zero.  The second core made it visible by
+            // resuming a program that had slept.
+            stack = in(reg) context.sp_el0,
             spsr = in(reg) context.spsr,
             options(noreturn)
         )
@@ -698,7 +707,15 @@ pub fn boot_cpu_owns_this_trap() -> bool {
 /// As the riscv64 arm.  This one touches nothing.
 #[cfg(target_os = "none")]
 pub unsafe fn send_ipi_to_others() -> bool {
-    false
+    // An SGI, raised on every core but this one.  The number is the one the
+    // self-test uses, so the cores that take it are the cores the boot proved
+    // can take an interrupt at all.
+    let Some(gic) = trap::controller() else {
+        return false;
+    };
+    // SAFETY: the controller was installed before any core started, both
+    // windows are mapped uncached, and the number is an SGI.
+    unsafe { gic.raise_on_others(test_interrupt()) }
 }
 
 /// The external interrupt controller this machine drives as a window: none.
