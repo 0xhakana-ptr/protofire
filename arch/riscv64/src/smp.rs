@@ -96,7 +96,9 @@ pub fn secondary_online(slot: usize) -> bool {
 ///
 /// The extension id is the ASCII of `"HSM"`, which is how the specification
 /// names them: three bytes, big-endian, in the register that names them.
+#[cfg(target_os = "none")]
 const SBI_EXT_HSM: u64 = 0x48534D;
+#[cfg(target_os = "none")]
 const SBI_HSM_HART_START: u64 = 0;
 
 /// Ask the firmware to enter `hart` at `start`, handing it `opaque`.
@@ -220,6 +222,7 @@ pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
 /// `sstatus.SIE` is clear, so no interrupt is taken and the loop does not
 /// exit — which is the point: the hart is parked, not idle, and the change
 /// that gives it work is the change that gives it a wake.
+#[cfg(target_os = "none")]
 fn park() -> ! {
     loop {
         // SAFETY: `wfi` is the wait-for-interrupt hint, and with `SIE` clear

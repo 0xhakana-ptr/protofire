@@ -95,7 +95,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let outcome = crate::scheduler::advance(frame, true);
         if !crate::scheduler::has_runnable() {
             let (switches, exited) = crate::scheduler::statistics();
-            let ticks = crate::TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire) as u32;
+            let ticks = crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire) as u32;
             arch::serial::write_str("protofire: every program exited, ");
             arch::serial::write_u32(exited as u32);
             arch::serial::write_str(" exit(s), ");
@@ -258,7 +258,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 // task it would be saved into is asleep with a program context
                 // that must not be clobbered.
                 arch::serial::write_str("protofire: every program is asleep, waiting\n");
-                crate::idle_until_woken();
+                crate::scheduler::idle_until_woken();
                 return crate::scheduler::switch_without_saving(frame);
             }
             None => {
@@ -319,7 +319,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                     // Nothing else can run: wait for a writer's wake the same
                     // way a sleep waits, and the timer's handler is what turns
                     // a blocked task back into a runnable one.
-                    crate::idle_until_woken();
+                    crate::scheduler::idle_until_woken();
                 }
                 // Install whatever can run next; this task's frame was saved
                 // by `block`, so the wake resumes the read.

@@ -4,491 +4,41 @@
 //!
 //! ## What a task is here
 //!
-//! A saved [`Context`] — the whole 800-byte trap frame — and the address space
-//! it runs in.  There is no kernel stack per task, because a task never has one
-//! of its own to be suspended on: a program runs at EL0, so the only time it is
+//! A saved `Context` — the whole trap frame — and the address space it runs
+//! in.  There is no kernel stack per task, because a task never has one of its
+//! own to be suspended on: a program runs at ring 3, so the only time it is
 //! inside the kernel is inside a trap, and the trap path's frame *is* its saved
 //! state.
 //!
-//! ## How a switch happens
+//! ## The three files
 //!
-//! The trap path builds a frame, hands it to the call handler, and then
-//! restores whatever frame it finds and `eret`s.  So a task switch is:
+//! | File | What it holds |
+//! |---|---|
+//! | [`task`] | what a task is: its context, its space, its state |
+//! | [`core`] | the tasks, the current one, and the switch |
+//! | this file | the installed scheduler and the questions a trap asks it |
 //!
-//! 1. copy the current frame into the running task — it is suspended exactly
-//!    where the machine left it;
-//! 2. copy the next task's frame over it;
-//! 3. if the next task lives in a different address space, write `TTBR0_EL1`.
-//!
-//! Steps 1 and 2 are two copies and step 3 is one system register.  There is no
-//! assembly here, because the assembly that matters is the epilogue every trap
-//! already runs through.
+//! The split is by subject: a reader asking "what is a task" reads `task`, one
+//! asking "how does a switch work" reads `scheduler`, and one asking "who is
+//! runnable" reads the free functions here — which are what the trap path, the
+//! timer's handler and the idle loop call.
 //!
 //! ## Why round-robin and nothing else
 //!
 //! A real scheduler decides by priority, by how long a task has run, and by
-//! what it is waiting for.  Those are decisions about *when* to switch, and
-//! this kernel switches at exactly one moment: a program made a call.
-//! Preemption — switching a program that did not ask — needs a timer, and the
-//! timer is not programmed.  So the policy is "the next one", and saying so is
-//! more useful than a weight table that decides nothing.
+//! what it is waiting for.  Those are decisions about *when* to switch.  This
+//! kernel switches at two moments: a program made a call, and the timer fired.
+//! Both are the machine's, not the policy's, so the policy is "the next one",
+//! and saying so is more useful than a weight table that decides nothing.
 
-use alloc::vec::Vec;
+pub mod core;
+pub mod task;
+
+pub use core::Scheduler;
+pub use task::Task;
+pub use task::starting_context;
 
 use arch::CallFrame;
-use arch::CallOutcome;
-use arch::Context;
-
-#[cfg(target_os = "none")]
-use crate::address_space::AddressSpace;
-
-/// The address space a task runs in.
-///
-/// A program's pages are a bare-metal structure: a root table is a frame and a
-/// frame is a physical address, neither of which a host has.  So on a host the
-/// type is empty and every operation on it is absent — which is why the
-/// scheduler's tests exercise the *rotation* and not the switching.  Pretending
-/// a host had address spaces would be testing a fiction.
-#[cfg(not(target_os = "none"))]
-#[derive(Debug, Clone, Copy)]
-pub struct AddressSpace;
-
-/// Whether a program can run, and when a sleeping one can again.
-///
-/// ## Why this is a state and not a flag
-///
-/// The first version had `finished: bool`, which is two states and describes
-/// exactly the two things the scheduler could do before: run a program, or skip
-/// it forever.  Sleeping is a third, and it is not "finished" with a timestamp
-/// — a sleeping task is *runnable later*, and a scheduler that could not tell
-/// the two apart would either wake a dead program or never wake a live one.
-///
-/// The deadline is in the machine's own clock, which is why it is a bare
-/// `u64` here and `arch::timer_counter()` is what fills it: comparing two
-/// readings from the same counter is the only thing this file may assume about
-/// time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum State {
-    /// It can be selected.
-    Runnable,
-    /// It asked to sleep until the counter reads `until`.
-    Sleeping { until: u64 },
-    /// It is waiting for another task to wake it, and no deadline applies.
-    ///
-    /// The difference from `Sleeping` is what ends the wait.  A deadline is the
-    /// clock's answer and the timer delivers it; this is another task's answer
-    /// and nothing but a `wake` delivery ends it.  A scheduler that folded the
-    /// two together would have to invent a deadline for a wait that has none,
-    /// and any number it invented would be a read that gives up early.
-    Blocked,
-    /// It exited, and is never selected again.
-    Finished,
-}
-
-/// One program the scheduler can run.
-pub struct Task {
-    /// Its name, for a boot line that reports what ran.
-    pub name: &'static str,
-    /// Where it is in its execution: everything the epilogue restores.
-    context: Context,
-    /// The pages it can reach, or `None` for a task sharing the kernel's own.
-    space: Option<AddressSpace>,
-    /// Whether it can run, is waiting for a deadline, or has finished.
-    state: State,
-}
-
-impl Task {
-    /// A task that starts at `entry`, with its stack at `stack_top`, in
-    /// `space`.
-    #[cfg(target_os = "none")]
-    pub fn new(name: &'static str, entry: usize, stack_top: usize, space: AddressSpace) -> Task {
-        Task {
-            name,
-            context: starting_context(entry, stack_top),
-            space: Some(space),
-            state: State::Runnable,
-        }
-    }
-
-    /// A task that shares the kernel's address space.
-    ///
-    /// For a test, and for a machine whose `enter_user` has no path: a task
-    /// with no pages is one that would fault the moment it ran, so this exists
-    /// to exercise the rotation and nothing else.
-    pub fn without_space(name: &'static str) -> Task {
-        Task {
-            name,
-            context: starting_context(0, 0),
-            space: None,
-            state: State::Runnable,
-        }
-    }
-
-    /// The address space's root, which is what a switch writes.
-    #[cfg(target_os = "none")]
-    pub fn root(&self) -> Option<usize> {
-        self.space.as_ref().map(AddressSpace::root)
-    }
-
-    /// A host has no root to switch to, but it does hold the space.
-    ///
-    /// Reading the field rather than returning a bare `None` keeps the host
-    /// build honest about the type: a task on a host *has* no address space,
-    /// and the check that says so is this one touching the field it would use.
-    #[cfg(not(target_os = "none"))]
-    pub fn root(&self) -> Option<usize> {
-        self.space.map(|_| None).unwrap_or(None)
-    }
-
-    /// The context a switch installs.
-    pub fn context(&self) -> &Context {
-        &self.context
-    }
-
-    /// The context a switch installs, for a caller replacing it.
-    pub fn context_mut(&mut self) -> &mut Context {
-        &mut self.context
-    }
-}
-
-/// The context a program begins with.
-///
-/// Delegated to the machine, because what a frame holds is the machine's: on
-/// aarch64 every register but `x0` and `ELR_EL1`, on x86_64 the five words
-/// `iretq` pops.  A kernel that built one by naming fields would be a kernel
-/// written against one architecture — which is exactly what this file was
-/// before the second machine had a ring 3.
-pub fn starting_context(entry: usize, stack_top: usize) -> Context {
-    arch::starting_context(entry, stack_top)
-}
-
-/// The tasks, and which one is running.
-pub struct Scheduler {
-    tasks: Vec<Task>,
-    current: usize,
-    /// How many switches have happened, which the boot line reports.
-    switches: usize,
-    /// Programs that have exited.
-    exited: usize,
-}
-
-impl Scheduler {
-    /// A scheduler with no tasks.
-    pub fn new() -> Scheduler {
-        Scheduler {
-            tasks: Vec::new(),
-            current: 0,
-            switches: 0,
-            exited: 0,
-        }
-    }
-
-    /// Add a program to the rotation.
-    pub fn add(&mut self, task: Task) {
-        self.tasks.push(task);
-    }
-
-    /// The number of programs, for a boot line.
-    pub fn len(&self) -> usize {
-        self.tasks.len()
-    }
-
-    /// Whether there are no programs at all.
-    pub fn is_empty(&self) -> bool {
-        self.tasks.is_empty()
-    }
-
-    /// How many switches have happened.
-    pub fn switches(&self) -> usize {
-        self.switches
-    }
-
-    /// How many programs have exited.
-    pub fn exited(&self) -> usize {
-        self.exited
-    }
-
-    /// The task whose context is installed.
-    pub fn current(&self) -> Option<&Task> {
-        self.tasks
-            .get(self.current)
-            .filter(|task| task.state != State::Finished)
-    }
-
-    /// The root the current task runs through, if it has one of its own.
-    #[cfg(target_os = "none")]
-    pub fn current_root(&self) -> Option<usize> {
-        self.current().and_then(Task::root)
-    }
-
-    /// Install the next task's context over `frame`.
-    ///
-    /// Answers what the caller should do with the trap path: `Exit` when
-    /// `exiting` is set, `Return` with whatever the resumed task's `x0` holds
-    /// otherwise.  Either way `frame` now describes the program that runs next,
-    /// so the caller's epilogue resumes the right one.
-    ///
-    /// ## Why the frame is saved even when the task exits
-    ///
-    /// A finished task has nothing to resume, and saving its frame anyway costs
-    /// one copy and removes a branch — the code that decides *whether* to save
-    /// is the code that could get it wrong.  What is not done is selecting it
-    /// again, which the `finished` flag prevents.
-    pub fn schedule(&mut self, frame: &mut Context, exiting: bool) -> CallOutcome {
-        self.schedule_from(frame, exiting, true)
-    }
-
-    /// Select the next task and install it, optionally saving `frame` first.
-    ///
-    /// ## Why `save` exists, and what it prevents
-    ///
-    /// `schedule`'s frame always belongs to the task that is leaving — it is
-    /// the trap frame that task was suspended in.  A caller whose frame is a
-    /// *kernel* frame has no such claim: the boot's idle loop runs on the
-    /// kernel stack, and writing that frame into the sleeping task would put a
-    /// kernel address where a program's `ELR` was.  The symptom is an
-    /// instruction abort from ring 3 at an address inside the kernel, one boot
-    /// in three, and the first version of the sleep path did exactly that.
-    ///
-    /// So the two callers say which they are.  A trap saves; an idle does not.
-    fn schedule_from(&mut self, frame: &mut Context, exiting: bool, save: bool) -> CallOutcome {
-        // Where the current task was, kept exactly.
-        //
-        // `exiting` is the *caller's* claim about what happened, and a sleeping
-        // task is neither running nor finished — it was put to sleep before
-        // this call, so its state is already `Sleeping` and this must not
-        // overwrite it with `Finished`.  That is why the flag only ever sets
-        // `Finished` and never the other way.
-        if save && let Some(task) = self.tasks.get_mut(self.current) {
-            task.context = *frame;
-            if exiting {
-                task.state = State::Finished;
-                self.exited += 1;
-            }
-        }
-
-        let Some(next) = self.next_runnable() else {
-            // Nothing to install.  With every task finished the caller stops
-            // the machine; with some asleep the caller waits for the tick that
-            // wakes one.  The scheduler does not distinguish the two — that
-            // decision belongs to whoever knows whether a timer is armed — so
-            // it answers `Exit` and its context says which case it is.
-            return CallOutcome::Exit;
-        };
-
-        self.current = next;
-        self.switches += 1;
-
-        if let Some(task) = self.tasks.get(self.current) {
-            *frame = task.context;
-        }
-
-        #[cfg(target_os = "none")]
-        if let Some(root) = self.current_root() {
-            // A different address space: write `TTBR0_EL1` before the epilogue
-            // runs, because that epilogue's first fetch is through it.  Every
-            // root shares the kernel's entry 0, so this is safe from anywhere
-            // in the kernel.
-            //
-            // SAFETY: the root is a live table this scheduler's own task owns,
-            // and every root shares the kernel's entry 0 — which covers the
-            // code performing the call.
-            unsafe { arch::switch_address_space(root) };
-        }
-
-        if exiting {
-            CallOutcome::Exit
-        } else {
-            CallOutcome::Return(arch::return_value(frame))
-        }
-    }
-
-    /// The next task to run, wrapping and skipping the ones that cannot.
-    fn next_runnable(&self) -> Option<usize> {
-        if self.tasks.is_empty() {
-            return None;
-        }
-        // One pass from the task after this one: that is the round-robin policy
-        // and also the bound.  With every other task finished and this one not,
-        // the pass comes back to it.
-        for offset in 1..=self.tasks.len() {
-            let candidate = (self.current + offset) % self.tasks.len();
-            if self.tasks[candidate].state == State::Runnable {
-                return Some(candidate);
-            }
-        }
-        None
-    }
-
-    /// Put the current task to sleep until the machine's counter reads `until`.
-    ///
-    /// ## What this does, and what it deliberately does not
-    ///
-    /// It records a deadline and takes the current task out of the rotation.
-    /// It does **not** switch: the caller is a call handler, and the frame it
-    /// holds belongs to the program that just asked.  The switch happens when
-    /// the handler answers `Exit`-shaped — which is what `process::serve` does
-    /// for `Sleep` — and the scheduler then picks the next runnable task.
-    ///
-    /// ## Why the deadline is a counter reading
-    ///
-    /// A duration is what a program asks for and a deadline is what a scheduler
-    /// compares.  Converting once, here, keeps every comparison in one clock:
-    /// the machine's counter, whose rate the caller measured.
-    pub fn sleep_until(&mut self, until: u64, frame: &Context) {
-        if let Some(task) = self.tasks.get_mut(self.current) {
-            // The frame is saved **here**, not by a later `schedule`.
-            //
-            // A task that sleeps must resume where it asked to, and the only
-            // copy of that position is the trap frame the call arrived in.
-            // Leaving the save to whichever scheduling call happens next worked
-            // only while a call always happened: with every task asleep the
-            // boot idles instead, and the task then woke at whatever position
-            // its context last held — the first version resumed program 2 at
-            // its `Sleep` every time, printing the same line forever.
-            task.context = *frame;
-            task.state = State::Sleeping { until };
-        }
-    }
-
-    /// Wake every task whose deadline has passed, answering how many woke.
-    ///
-    /// Called from the timer's interrupt, before the scheduler is asked for the
-    /// next task — a task that slept past its deadline is runnable *now*, and a
-    /// pass that ran first would find nothing to do and stop the machine with
-    /// work left.
-    pub fn wake_expired(&mut self, now: u64) -> usize {
-        let mut woken = 0;
-        for task in &mut self.tasks {
-            if let State::Sleeping { until } = task.state
-                && now >= until
-            {
-                task.state = State::Runnable;
-                woken += 1;
-            }
-        }
-        woken
-    }
-
-    /// Park the current task until another task wakes it.
-    ///
-    /// The frame is saved here for the reason `sleep_until` gives: the position
-    /// to resume at exists only in the trap frame the call arrived in, and a
-    /// blocked task has no later scheduling call to rely on.
-    pub fn block(&mut self, frame: &Context) {
-        if let Some(task) = self.tasks.get_mut(self.current) {
-            task.context = *frame;
-            task.state = State::Blocked;
-        }
-    }
-
-    /// Wake every blocked task, answering how many.
-    ///
-    /// ## Why this wakes all of them
-    ///
-    /// A wait queue would record *which* task waits on *which* object, and this
-    /// kernel has one blocking object and one blocked task in the boot that
-    /// proves it.  Waking all of them is the correct behaviour for a pipe's
-    /// reader and a writer — several readers on one pipe may all make progress
-    /// — and it is wrong for anything that needs one exact waiter.  The queue
-    /// arrives with the second such object; until then a wake that names its
-    /// waiters would be a queue with one entry and a lookup.
-    pub fn wake_blocked(&mut self) -> usize {
-        let mut woken = 0;
-        for task in &mut self.tasks {
-            if task.state == State::Blocked {
-                task.state = State::Runnable;
-                woken += 1;
-            }
-        }
-        woken
-    }
-
-    /// How many tasks are blocked rather than asleep, runnable or finished.
-    pub fn blocked(&self) -> usize {
-        self.tasks
-            .iter()
-            .filter(|task| task.state == State::Blocked)
-            .count()
-    }
-
-    /// How many tasks are asleep.
-    pub fn sleeping(&self) -> usize {
-        self.tasks
-            .iter()
-            .filter(|task| matches!(task.state, State::Sleeping { .. }))
-            .count()
-    }
-
-    /// Whether a task other than the current one can run.
-    ///
-    /// A preemption with only one program is a timer tick, not a switch: the
-    /// frame would be replaced with the same task's context and the total would
-    /// count ticks instead of switches.
-    pub fn has_other_runnable(&self) -> bool {
-        self.tasks
-            .iter()
-            .enumerate()
-            .any(|(index, task)| index != self.current && task.state == State::Runnable)
-    }
-
-    /// Whether any task can still run, or is waiting to.
-    ///
-    /// A sleeping task counts: it will run again, so the boot has work left and
-    /// must not stop the machine.  Only `Finished` is the "nothing left"
-    /// answer, which is why this is not the question a dispatcher asks — see
-    /// [`Scheduler::has_selectable`].
-    pub fn has_runnable(&self) -> bool {
-        self.tasks.iter().any(|task| task.state != State::Finished)
-    }
-
-    /// Whether any task could be selected right now.
-    ///
-    /// The question an idle loop asks, and deliberately different from
-    /// [`Scheduler::has_runnable`]: a task that is asleep is still work the boot
-    /// owes, and a task that is runnable is one the loop can stop waiting for.
-    /// A loop written with `has_runnable` never waits at all, because sleeping
-    /// tasks make it true — which is the defect the first version of the idle
-    /// had.
-    pub fn has_selectable(&self) -> bool {
-        self.tasks.iter().any(|task| task.state == State::Runnable)
-    }
-
-    /// Whether any task is asleep rather than runnable or finished.
-    pub fn has_sleeping(&self) -> bool {
-        self.tasks
-            .iter()
-            .any(|task| matches!(task.state, State::Sleeping { .. } | State::Blocked))
-    }
-
-    /// Release every finished program's pages.
-    ///
-    /// # Safety
-    ///
-    /// Called when nothing is translating through any of them — after the last
-    /// program exited, with the kernel's own root installed.
-    #[cfg(target_os = "none")]
-    pub unsafe fn reap(&mut self) -> usize {
-        let mut reaped = 0;
-        for task in &mut self.tasks {
-            if task.state == State::Finished
-                && let Some(space) = task.space.take()
-            {
-                // SAFETY: the caller promises no task is translating through
-                // this space.
-                unsafe { space.release() };
-                reaped += 1;
-            }
-        }
-        reaped
-    }
-}
-
-impl Default for Scheduler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// The scheduler the boot installed.
 ///
@@ -742,6 +292,50 @@ pub fn sleeping() -> usize {
 /// Whether a call means the program has finished.
 pub fn is_exit(call: &CallFrame) -> bool {
     call.number == syscall::SyscallNumber::Exit as usize
+}
+
+/// Wait here until a sleeping program's deadline passes.
+///
+/// ## What this replaces
+///
+/// A `halt` loop.  When every program is asleep the scheduler has nothing to
+/// resume, and the trap path's return would land on a program that is not
+/// runnable.  The choices are to stop the machine or to wait for the tick that
+/// wakes one; stopping is the boot ending with work left.
+///
+/// ## How the wake happens
+///
+/// The timer keeps firing, and its handler calls [`wake_expired`] — which is
+/// what turns a deadline into a runnable task.  The loop below takes the
+/// interrupt, the handler wakes a task, and `arch::wait_for_a_wakeup` returns
+/// once one is runnable.  The scheduler is then asked for a context and the
+/// trap path resumes it.
+///
+/// ## Why the machine does the waiting
+///
+/// A supervisor call arrives through an **interrupt gate**, which clears the
+/// interrupt flag on entry — so the kernel runs with interrupts masked for the
+/// whole of a served call, and a wait that did not unmask them waits for a tick
+/// that can never be delivered.  x86_64's `sti` is that unmask and aarch64 has
+/// no such flag to clear.  `arch::wait_for_a_wakeup` is the whole of the
+/// machine half: it unmasks where there is something to unmask and stops the
+/// core until an interrupt arrives.  The boot hung once with `every program is
+/// asleep, waiting` and no tick, because the kernel had tried to spell `sti`
+/// itself.
+///
+/// ## Why there is no spin bound
+///
+/// One was here, at a million waits, on the argument that a machine whose timer
+/// does not tick should say so rather than hang.  It fired on a healthy aarch64
+/// boot: a `wfi` returns on every tick whether or not that tick ended the wait,
+/// so the counter measured the boot's speed and not a fault.  What ends the
+/// loop is `wake_expired` turning a deadline into a runnable task, and a
+/// machine that never does that is a machine that hangs — with a log that
+/// already said "every program is asleep, waiting".
+pub fn idle_until_woken() {
+    while has_sleeping() && !has_selectable() {
+        arch::wait_for_a_wakeup();
+    }
 }
 
 #[cfg(test)]
