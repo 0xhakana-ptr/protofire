@@ -33,7 +33,11 @@ extern crate alloc;
 // instruction is a fact about this machine, and the protocol crate is not the
 // machine.
 #[cfg(target_os = "none")]
-core::arch::global_asm!(include_str!("entry.S"));
+core::arch::global_asm!(
+    include_str!("entry.S"),
+    KERNEL_STACK_BYTES = const smp::SECONDARY_STACK_BYTES,
+    KERNEL_STACK_RESERVATION = const smp::kernel_stack_reservation(),
+);
 
 pub mod boot;
 pub mod gic;
@@ -42,7 +46,9 @@ pub mod interrupts;
 pub mod paging;
 pub mod port;
 pub mod program;
+pub mod psci;
 pub mod serial;
+pub mod smp;
 pub mod timer;
 pub mod trap;
 
@@ -258,6 +264,37 @@ pub const SPSR_EL0T: u64 = 0x340;
 /// must be a `user`-accessible page's end, and the caller must have no live
 /// state on the kernel stack that an exception could not restore, the trap
 /// path builds its own frame and resumes through it.
+/// Enter a program on this core, with its root table already installed.
+///
+/// ## Why this is not `enter_user_with_context`
+///
+/// That one is the *first* entry, on the boot core.  This one is a core that
+/// came up on its own and has just been handed a task by the scheduler: what
+/// differs is who chose the context, not what the `eret` does.
+///
+/// # Safety
+///
+/// `context` must be a program's saved frame whose `elr` and `x0` name
+/// EL0-accessible pages in the installed root, and this core must be running on
+/// its own kernel stack.
+#[cfg(target_os = "none")]
+pub unsafe fn enter_program_here(context: &Context) -> ! {
+    // SAFETY: the caller promises the context is a program's and the root is
+    // installed.
+    unsafe { enter_user_with_context(context) }
+}
+
+/// The host build has no EL0 to enter.
+///
+/// # Safety
+///
+/// Never returns and never enters anything: a host has no EL0, so this stops
+/// the process rather than pretending to have run a program.
+#[cfg(not(target_os = "none"))]
+pub unsafe fn enter_program_here(_context: &Context) -> ! {
+    panic!("enter_program_here called on a host: there is no EL0 to enter")
+}
+
 /// Enter EL0 with a context, which is the form a scheduler has.
 ///
 /// `enter_user` takes the two numbers a first program needs; this takes the
@@ -596,46 +633,39 @@ pub fn interrupt_stack_top() -> usize {
     0
 }
 
-/// The most cores past the boot one this machine starts: none.
-pub const MAX_SECONDARY_HARTS: usize = 0;
+/// The most cores past the boot one this machine starts.
+///
+/// This answered zero until the PSCI start existed; now it is the cap the stack
+/// reservation is sized from, and `kernel`'s `per_cpu::MAX_CPUS` derives from
+/// it.  A tree that names more cores than this has a boot that starts the first
+/// of them rather than one that guesses at a larger reservation.
+pub const MAX_SECONDARY_HARTS: usize = 4;
 
-/// Start this machine's other cores: this machine starts none.
-///
-/// A device-tree machine wakes a secondary core through PSCI, the firmware
-/// call its tree names in the `psci` node's `cpu_on` function, but this
-/// machine's boot reads no PSCI node and has no secondary entry to name, so
-/// the honest answer is zero: a machine with more than one core runs one,
-/// and a count without a path behind it is the claim this tree's boot lines
-/// exist to refuse.
-///
-/// # Safety
-///
-/// As the riscv64 arm: called once, from the boot core, with the tables up.
-/// This arm touches nothing, which keeps its half of the promise.
+pub use smp::refused_harts;
+pub use smp::secondary_hart_id;
+pub use smp::secondary_online;
 #[cfg(target_os = "none")]
-pub unsafe fn start_secondary_harts(_timer_slice_us: u64) -> usize {
-    0
+pub use smp::set_finished_sink;
+#[cfg(target_os = "none")]
+pub use smp::set_work_sink;
+#[cfg(target_os = "none")]
+pub use smp::start_secondary_harts;
+
+/// Which CPU this code runs on, as the machine reports it.
+///
+/// `TPIDR_EL1` is the thread pointer, and the trap entry is what puts the slot
+/// there for the length of a trap: it is a register of whatever was
+/// interrupted, so a program's value is its own and is restored from the frame.
+#[cfg(target_os = "none")]
+pub fn current_cpu_slot() -> usize {
+    let slot: usize;
+    // SAFETY: a register read with no side effect.
+    unsafe { core::arch::asm!("mrs {}, tpidr_el1", out(reg) slot, options(nomem, nostack)) };
+    slot
 }
 
-/// The core id started into `slot`: this machine starts none, so every slot
-/// is empty and the answer is zero.
-pub fn secondary_hart_id(_slot: usize) -> usize {
-    0
-}
-
-/// Whether the core started into `slot` came up: this machine starts none, so
-/// no slot is online.
-pub fn secondary_online(_slot: usize) -> bool {
-    false
-}
-
-/// The cores the firmware refused to start: this machine asks for none, so
-/// none were refused.
-pub fn refused_harts() -> usize {
-    0
-}
-
-/// Which CPU this code runs on: this machine runs one, so slot zero.
+/// A host has one CPU and it is slot zero.
+#[cfg(not(target_os = "none"))]
 pub fn current_cpu_slot() -> usize {
     0
 }
@@ -670,29 +700,6 @@ pub fn boot_cpu_owns_this_trap() -> bool {
 pub unsafe fn send_ipi_to_others() -> bool {
     false
 }
-
-/// The kernel's source of work for a started CPU: this machine starts none, so
-/// nothing ever asks and nothing is installed.
-///
-/// The signature exists because the kernel's boot installs it on every machine,
-/// and a machine that had to omit the call would be a boot with an `if` about
-/// which machine it is running on.  The same reason `install_interrupt_table`
-/// answers `false` here rather than not existing.
-///
-/// # Safety
-///
-/// As the riscv64 arm: called once, before any started CPU could ask.
-#[cfg(target_os = "none")]
-pub unsafe fn set_work_sink(_sink: fn(usize) -> Option<(usize, Context)>) {}
-
-/// The kernel's end-of-boot predicate: as `set_work_sink`, this machine starts
-/// no CPU that could ask it.
-///
-/// # Safety
-///
-/// As the riscv64 arm.
-#[cfg(target_os = "none")]
-pub unsafe fn set_finished_sink(_sink: fn() -> bool) {}
 
 /// The external interrupt controller this machine drives as a window: none.
 ///

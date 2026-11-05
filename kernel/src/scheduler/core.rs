@@ -266,18 +266,22 @@ impl Scheduler {
             *frame = task.context;
         }
 
+        // The frame and the root go together, and both are `next`'s.
+        //
+        // Reading the root from `next` rather than back from `running[cpu]`
+        // makes the pair one fact instead of two that agree by arrangement:
+        // `assign` and the read happen with no call between them today, and a
+        // later change to `assign` would break that without breaking a test.
+        //
+        // The write must happen **before the epilogue runs**, because that
+        // epilogue's first fetch is through the new root.  Every root shares
+        // the kernel's entry 0, so it is safe from anywhere in the kernel, and
+        // the register is this CPU's own.
         #[cfg(target_os = "none")]
-        if let Some(root) = self.current_root(cpu) {
-            // A different address space: write `satp` before the epilogue
-            // runs, because that epilogue's first fetch is through it.  Every
-            // root shares the kernel's entry 0, so this is safe from anywhere
-            // in the kernel.  The write is this CPU's own register, which is
-            // what makes it safe to do while another CPU is switching a
-            // different task through a different root.
-            //
+        if let Some(root) = self.tasks.get(next).and_then(Task::root) {
             // SAFETY: the root is a live table this scheduler's own task owns,
-            // and every root shares the kernel's entry 0, which covers the
-            // code performing the call.
+            // and every root shares the kernel's entry 0, which covers the code
+            // performing the call.
             unsafe { arch::switch_address_space(root) };
         }
 

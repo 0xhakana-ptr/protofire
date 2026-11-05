@@ -53,9 +53,21 @@ _start:
     msr elr_el2, x1
     eret
 
-2:  /* At EL1: set up the stack, clear .bss, and call into Rust. */
-    ldr x1, =_stack_top
-    mov sp, x1
+2:  /* At EL1: set up the stack, clear .bss, and call into Rust.
+
+       Slot zero's stack, from the array every core's stack comes from.  One
+       array indexed by slot is one fact about where a kernel stack lives; a
+       separate symbol for the boot core would be a second answer that the
+       secondary entry and `kernel_stack_top` could disagree with. */
+    mov x1, #{KERNEL_STACK_BYTES}
+    adrp x2, kernel_stacks
+    add x2, x2, :lo12:kernel_stacks
+    add sp, x2, x1
+
+    /* Slot zero, for the reason the secondary entry writes its own: this is the
+       register the kernel asks "which CPU am I", and firmware leaves whatever
+       it likes in it. */
+    msr tpidr_el1, xzr
 
     /* FP/SIMD, before the first Rust instruction runs.
      *
@@ -254,6 +266,37 @@ exception_entry:
     stp x28, x29, [sp, #224]
     str x30, [sp, #240]
 
+    /* The kernel's own identity for this core, into a register the interrupted
+       code cannot have claimed.
+
+       **Why it is set on every trap and not restored.**  On riscv64 the trap
+       entry writes `tp` and the epilogue restores the program's value from the
+       frame, because that register is the program's thread pointer and the
+       ABI reserves it.  `TPIDR_EL1` is the same register by name and different
+       in practice: this kernel has no user-space TLS, no program reads it, and
+       `starting_context` does not set it.  So it is the kernel's alone, and
+       writing it on entry without a matching restore is correct — a restore
+       would put back the value the *boot core* wrote, which is the stale answer
+       this write exists to replace.
+
+       Setting it here also fixes a defect a single core could not show: the
+       value a program left in the register is whatever `starting_context`
+       gave it, so a second core running a program reported itself as the boot
+       core and took slot zero's task.
+
+       `TPIDR_EL1` is set **once per core, by that core's entry**, and not here.
+       Computing it from `sp` looks tempting and is wrong: by the time a trap is
+       taken, `sp` has been used by every frame the core pushed since its entry,
+       so the offset from the array's base no longer says which slice it
+       started in.  The first version did that arithmetic, produced
+       `usize::MAX` on the boot core, and the kernel stopped in `per_cpu` with a
+       slot no CPU has.
+
+       So the boot core writes its zero in `_start`, the secondary entry writes
+       its slot, and this path leaves the register alone: `TPIDR_EL1` is kernel
+       state on this machine, no program reads it, and `starting_context` does
+       not set it. */
+
     mrs x0, elr_el1
     str x0, [sp, #248]
     mrs x0, spsr_el1
@@ -344,8 +387,68 @@ exception_entry:
     add sp, sp, #816
     eret
 
+/* The secondary entry, which PSCI's `cpu_on` names.
+   ===================================================
+
+   Firmware enters here at EL1 with the MMU off and `x0` holding the context a
+   `cpu_on` passed.  Nothing of the boot core's environment is inherited: no
+   stack, no `VBAR_EL1`, no `CPACR_EL1`, no device tree pointer in `x19`.  The
+   four are set here, in that order, before any Rust runs — and the trap vector
+   is set before the first instruction that could fault, because a core that
+   faults with `VBAR_EL1` at its reset value takes a vector the machine cannot
+   describe.
+
+   ## Why the stack comes from an array
+
+   Every core needs its own, and the boot core's is a symbol a second core
+   cannot share: two cores on one stack is two frames over one region, and the
+   unwinds after that go into whatever was there.  The array is indexed by the
+   slot the boot core chose, and `kernel_stacks` is the same symbol the boot
+   core's own stack comes from, so one array answers both.
+
+   ## What it deliberately does not do
+
+   It does not clear `.bss`.  The boot core did that before it started anyone,
+   and a second core that repeated it would zero the boot core's data while the
+   boot core was using it. */
+
+.section .text.secondary, "ax"
+.balign 4
+.global secondary_entry
+secondary_entry:
+    /* The slot, handed in `x0`, is the only thing this core needs to index. */
+    mov x19, x0
+
+    /* Its own stack: the top of slice `slot + 1`, because slot zero is the
+       boot core's.  `KERNEL_STACK_BYTES` is interpolated so the array's size
+       and this arithmetic stay one fact. */
+    mov x1, #{KERNEL_STACK_BYTES}
+    add x2, x19, #1
+    mul x1, x2, x1
+    adrp x2, kernel_stacks
+    add x2, x2, :lo12:kernel_stacks
+    add sp, x2, x1
+
+    /* `CPACR_EL1.FPEN`, for the reason `_start` gives: an FP instruction from
+       EL1 traps when it is clear, and the compiler emits them. */
+    mrs x1, cpacr_el1
+    orr x1, x1, #(0b11 << 20)
+    msr cpacr_el1, x1
+    isb
+
+    /* The trap vector, before anything that can fault. */
+    adr x1, exception_vectors
+    msr vbar_el1, x1
+    isb
+
+    mov x0, x19
+    bl aarch64_secondary_main
+
+1:  wfe
+    b 1b
+
 .section .bss.stack, "aw", @nobits
 .balign 4096
-_stack_bottom:
-    .skip 65536
-_stack_top:
+.global kernel_stacks
+kernel_stacks:
+    .skip {KERNEL_STACK_RESERVATION}

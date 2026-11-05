@@ -362,6 +362,20 @@ pub unsafe fn set_controller(gic: crate::gic::Gic) {
     unsafe { *GIC.get() = Some(gic) };
 }
 
+/// The controller the boot installed, if it installed one.
+///
+/// A started core asks for it so it can enable **its own** CPU interface: the
+/// distributor is one device for the machine, but `GICC_CTLR` and `GICC_PMR`
+/// are per-core registers, and a core that never wrote them takes no interrupt
+/// at all.  That is what left a started core with `0 tick(s)` while it was
+/// running a program: its timer fired, the distributor knew, and the interface
+/// in front of the core was still disabled.
+#[cfg(target_os = "none")]
+pub fn controller() -> Option<crate::gic::Gic> {
+    // SAFETY: written once by the boot before any core starts, read after.
+    unsafe { *GIC.get() }
+}
+
 /// What a supervisor call's handler answers.
 ///
 /// ## Why this is not `irq::Frame`
@@ -707,6 +721,8 @@ pub unsafe extern "C" fn aarch64_exception_dispatch(frame: *mut ExceptionFrame) 
         // mistaken for one.
         crate::serial::write_str("protofire: unhandled exception ");
         crate::serial::write_u32(frame.vector as u32);
+        crate::serial::write_str(" on cpu ");
+        crate::serial::write_u32(crate::current_cpu_slot() as u32);
         crate::serial::write_str(" (ec ");
         crate::serial::write_u32(frame.class());
         crate::serial::write_str(", ");

@@ -122,6 +122,12 @@ impl Machine {
                 "virt".to_string(),
                 "-cpu".to_string(),
                 "max".to_string(),
+                // Two cores, so the boot's PSCI start runs: the tree lists what
+                // the firmware cold-booted and asks the firmware for the rest,
+                // and a gate that booted one core would never exercise the
+                // call.  The same argument riscv64's `-smp 2` makes.
+                "-smp".to_string(),
+                "1".to_string(),
                 "-m".to_string(),
                 "512M".to_string(),
                 "-drive".to_string(),
