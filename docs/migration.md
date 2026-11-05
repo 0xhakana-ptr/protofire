@@ -1091,3 +1091,31 @@ What is not here: copy-on-write.  Every page a fork copies is copied whole,
 which is correct and slower than it needs to be; a COW fork needs a write fault
 this kernel does not handle.  And `exec`: a child that wants a different program
 than its parent has no call for it.
+
+### The first device that raised the line
+
+    protofire: console source 10 enabled at the controller
+    protofire: console interrupt(s) taken = 1
+
+The PLIC had been programmed and its claim path had never carried a
+device: every source was disabled, so the external line was a path the machine
+could take and nothing ever made it.  The console's UART is the device this boot
+has, and its transmitter raises the line on its own once asked, so the claim
+path is now something a boot runs.
+
+**Two orderings had to be right, and the first one showed itself as a storm.**
+A 16550 keeps its line raised until something reads `IIR`, so a source completed
+at the controller but not at the device arrives again the moment interrupts are
+unmasked; the first boot printed `unhandled external interrupt 10` without end.
+The device is acknowledged first now, and only then is the source completed.
+
+**The second showed itself as a panic inside the hex printer.**  A transmitter
+interrupt fires whenever the holding register is empty, which is nearly always,
+so leaving the device enabled turns every printed byte into a trap inside the
+print that is trying to report it.  The boot asks for one interrupt and silences
+the device in the handler, which is why the count is one rather than one per
+byte.
+
+Both mutations turn the gate red: never enabling the source loses the
+`console source 10 enabled` line, and a sink that does not claim the number
+loses the count.
