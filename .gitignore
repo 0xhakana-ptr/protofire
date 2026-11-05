@@ -110,15 +110,8 @@ venv/
 #
 # The rule is the tool's output, not the tool: a `.vscode/settings.json` a
 # reader wants to share is theirs to force in.
-#
-# `.zcode/` is the same shape for a coding agent: it holds per-session state and
-# plans, which are one machine's working files and not the tree's.  It is
-# ignored rather than left to each contributor's global config, because a
-# directory that appears in `git status` the first time someone opens the
-# repository is a directory every one of them has to decide about separately.
 .idea/
 .vscode/
-.zcode/
 *.swp
 *.swo
 *~
