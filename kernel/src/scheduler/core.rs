@@ -115,6 +115,21 @@ impl Scheduler {
         exiting: bool,
         save: bool,
     ) -> CallOutcome {
+        self.schedule_with_status(frame, exiting, save, None)
+    }
+
+    /// The same, with the status an exiting program named.
+    ///
+    /// `Some(status)` when the caller is reaping a program that answered
+    /// `Exit`; `None` for every other transition, which is what keeps a
+    /// sleeping or blocked task from being recorded as having exited.
+    pub(crate) fn schedule_with_status(
+        &mut self,
+        frame: &mut Context,
+        exiting: bool,
+        save: bool,
+        status: Option<usize>,
+    ) -> CallOutcome {
         // Where the current task was, kept exactly.
         //
         // `exiting` is the *caller's* claim about what happened, and a sleeping
@@ -126,6 +141,15 @@ impl Scheduler {
             task.context = *frame;
             if exiting {
                 task.state = State::Finished;
+                // What the program answered `Exit` with.  The status travels as
+                // `Exit`'s first argument (`edi` on x86_64, `a0`/`x0` on the
+                // others), which is **not** always the register a call's answer
+                // comes back in — x86_64's `rax` holds `GetPid`'s answer, and
+                // `edi` holds the status.  So the scheduler is told the status
+                // rather than reading a register: a machine-specific guess here
+                // would be wrong on exactly the machine whose convention
+                // differs.
+                task.status = status;
                 self.exited += 1;
             }
         }
@@ -281,6 +305,37 @@ impl Scheduler {
             .iter()
             .filter(|task| matches!(task.state, State::Sleeping { .. }))
             .count()
+    }
+
+    /// The process id of the task that is running.
+    pub fn current_pid(&self) -> Option<u32> {
+        self.tasks.get(self.current).map(Task::pid)
+    }
+
+    /// The parent of the task that is running.
+    pub fn current_parent(&self) -> Option<u32> {
+        self.tasks.get(self.current).map(Task::parent)
+    }
+
+    /// The status a process exited with, if a task with that id exists.
+    pub fn exit_status(&self, pid: u32) -> Option<Option<usize>> {
+        self.tasks
+            .iter()
+            .find(|task| task.pid == pid)
+            .map(Task::status)
+    }
+
+    /// Every task that exited with a status, in the order it was added.
+    pub fn exited_with_status(&self) -> alloc::vec::Vec<(u32, usize)> {
+        self.tasks
+            .iter()
+            .filter_map(|task| task.status.map(|status| (task.pid, status)))
+            .collect()
+    }
+
+    /// The first task that has exited, in the order it was added.
+    pub fn first_exited(&self) -> Option<&Task> {
+        self.tasks.iter().find(|task| task.status.is_some())
     }
 
     /// Whether a task other than the current one can run.

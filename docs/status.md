@@ -40,7 +40,7 @@ requires.  The rows below are the machine's own half.
 | Interrupts | the local APIC; the 8259 masked, not remapped; the self-test raises the timer's own vector | `interrupt delivered to its handler` | — |
 | Timer and clock | the APIC timer, calibrated once against the PIT; the TSC as the monotonic clock, calibrated separately — the two rates differ and the boot proves both | `timer armed at `, `timer counter  ticks apart` | — |
 | Ring 3 | a GDT with DPL-3 code and data segments, a TSS whose `RSP0` names the stack every ring-3 interrupt lands on, a call gate at DPL 3, `iretq` out | `descriptor tables installed, TSS loaded`, `entering ring 3` | — |
-| Scheduler | preemption, sleeping with a deadline, a read blocked on a pipe and woken by a write | `the timer preempted, `, `a write woke ` | — |
+| Scheduler | preemption, sleeping with a deadline, a read blocked on a pipe and woken by a write; each task carries a pid, a parent and the status it exited with | `the timer preempted, `, `a write woke `, `exit statuses ` | no `fork`: nothing creates a process, so every pid is one the boot gave and every parent is the boot |
 | Devices | the PCI scan over the configuration port pair, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci`, `virtio-blk wrote and read back sector ` | — |
 | Second CPU | the APIC can self-address, and nothing starts an application processor: a machine with more than one CPU runs one | — | the AP start and its per-CPU path |
 
@@ -56,7 +56,7 @@ requires.  The rows below are the machine's own half.
 | Interrupts | the GIC; the self-test raises a software interrupt the controller delivers | `interrupt delivered to its handler` | — |
 | Timer and clock | the generic timer — one clock for both the deadline and the counter | `timer armed at ` | — |
 | Ring 3 | `eret` to EL0t, `SP_EL0` carried in the trap frame, FP/SIMD saved because the compiler provably emits them | `entering ring 3` | — |
-| Scheduler | preemption, sleeping with a deadline, a read blocked on a pipe and woken by a write | `the timer preempted, `, `a write woke ` | — |
+| Scheduler | preemption, sleeping with a deadline, a read blocked on a pipe and woken by a write; each task carries a pid, a parent and the status it exited with | `the timer preempted, `, `a write woke `, `exit statuses ` | no `fork`: nothing creates a process, so every pid is one the boot gave and every parent is the boot |
 | Devices | the PCIe ECAM window discovered from the tree, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci` | — |
 | Second CPU | the tree names the machine's cores, and nothing starts one: a machine with more than one core runs one | — | the PSCI start and its per-CPU path |
 

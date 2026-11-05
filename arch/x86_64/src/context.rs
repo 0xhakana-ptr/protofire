@@ -639,7 +639,7 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
 /// bound is real: 0x1000 × 0x10000 was too long, and under the emulator the
 /// trap cost of ten thousand ticks a second left the program unable to reach
 /// its first `int` at all.
-const PROGRAM_BASE: [u8; 64] = [
+const PROGRAM_BASE: [u8; 73] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -654,10 +654,44 @@ const PROGRAM_BASE: [u8; 64] = [
     0xCD, 0x80, // int 0x80
     0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6 (Write, after the wake)
     0xCD, 0x80, // int 0x80
+    // Who am I, last, so the answer is still in `eax` when `Exit` takes it: the
+    // boot reports the exit status, and a status that is the program's own pid
+    // is evidence the identity call ran.
+    0xB8, 0x51, 0x00, 0x00, 0x00, // mov eax, 81 (GetPid)
+    0xCD, 0x80, // int 0x80
+    // `Exit`'s status travels in `edi`, not `eax` — this is the one machine
+    // whose two registers differ, and a program that left the pid in `eax`
+    // exited with whatever `edi` last held.
+    0x89, 0xC7, // mov edi, eax (the pid becomes Exit's argument)
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3 (Exit)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $
 ];
+
+/// The syscall numbers a program's bytes ask for, in order.
+///
+/// Every call is `mov eax, <number>` followed by `int 0x80`, so the pair names
+/// it — a scan for the register write rather than a table of byte offsets.
+#[cfg(test)]
+fn call_numbers(bytes: &[u8]) -> alloc::vec::Vec<u32> {
+    let mut calls = alloc::vec::Vec::new();
+    let mut at = 0;
+    while at + 6 <= bytes.len() {
+        // A `0xB8` is `mov eax, imm32` only when it is not preceded by a REX
+        // prefix: `41 B8` is `mov r8d, imm32`, which is the busy loop's counter
+        // and not a syscall number.
+        let prefixed = at > 0 && bytes[at - 1] & 0xF0 == 0x40;
+        if bytes[at] == 0xB8 && !prefixed {
+            let number =
+                u32::from_le_bytes([bytes[at + 1], bytes[at + 2], bytes[at + 3], bytes[at + 4]]);
+            calls.push(number);
+            at += 5;
+            continue;
+        }
+        at += 1;
+    }
+    calls
+}
 
 #[cfg(test)]
 mod program_tests {
@@ -728,25 +762,28 @@ mod program_tests {
     #[test]
     fn the_program_calls_write_sleep_write_and_exit() {
         let bytes = program_bytes(1);
-        // `mov eax, 6` at 29, `int 0x80` at 34.
-        assert_eq!(&bytes[29..30], &[0xB8]);
-        assert_eq!(&bytes[30..34], &6u32.to_le_bytes(), "Write");
-        assert_eq!(&bytes[34..36], &[0xCD, 0x80], "the call gate");
+        // By call number rather than by offset: an offset a reader has to count
+        // goes stale the moment an instruction is inserted, which is what
+        // happened when the identity call arrived.
+        assert_eq!(
+            super::call_numbers(&bytes),
+            alloc::vec![
+                abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::Sleep as u32,
+                abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::GetPid as u32,
+                abi::SyscallNumber::Exit as u32,
+            ],
+            "the program writes, sleeps, writes, asks who it is, and exits"
+        );
 
-        // `mov edi, 20000` at 36, `mov eax, 49` at 41.
-        assert_eq!(&bytes[36..37], &[0xBF]);
-        assert_eq!(&bytes[37..41], &20_000u32.to_le_bytes(), "the sleep");
-        assert_eq!(&bytes[41..42], &[0xB8]);
-        assert_eq!(&bytes[42..46], &49u32.to_le_bytes(), "Sleep");
-        assert_eq!(&bytes[46..48], &[0xCD, 0x80]);
-
-        // The second `Write` at 48, and `Exit` at 55.
-        assert_eq!(&bytes[48..49], &[0xB8]);
-        assert_eq!(&bytes[49..53], &6u32.to_le_bytes(), "Write again");
-        assert_eq!(&bytes[53..55], &[0xCD, 0x80]);
-        assert_eq!(&bytes[55..56], &[0xB8]);
-        assert_eq!(&bytes[56..60], &3u32.to_le_bytes(), "Exit");
-        assert_eq!(&bytes[60..62], &[0xCD, 0x80]);
+        // And the status travels in `edi`: `mov edi, eax` sits between the
+        // identity answer and the exit, which is the one instruction this
+        // machine's program has that the other two do not.
+        assert!(
+            bytes.windows(2).any(|pair| pair == [0x89, 0xC7]),
+            "the pid is moved into Exit's argument register"
+        );
     }
 
     /// The two branches are backward and land on the instructions the loop

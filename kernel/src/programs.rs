@@ -15,6 +15,13 @@ use crate::scheduler::Scheduler;
 #[cfg(target_os = "none")]
 use crate::scheduler::Task;
 
+/// The process id the boot's own work is done under.
+///
+/// A program the kernel starts is a child of this, which is a fact rather than
+/// a placeholder: there is no `fork`, so nothing in this tree has a program for
+/// a parent.
+pub const BOOT_PROCESS: u32 = 0;
+
 /// How the boot's three programs are arranged.
 ///
 /// One program proves the entry path; it cannot prove a switch, because a
@@ -169,7 +176,7 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
     arch::serial::write_str("\n");
 
     let stack_top = handed_stack_top.unwrap_or_else(|| process::program_stack_top(number));
-    Some(Task::new(
+    let mut task = Task::new(
         match number {
             n if n == process::PIPE_READER => "reader",
             n if n == process::PIPE_WRITER => "writer",
@@ -178,7 +185,13 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
         base,
         stack_top,
         space,
-    ))
+    );
+    // The process tree this boot has: every program the kernel starts is its
+    // own process, and the boot is the parent of each.  A framework that
+    // `fork`ed would fill these from the caller instead; nothing here does,
+    // and saying which is which is better than a zero that could mean either.
+    task.identify(number as u32, BOOT_PROCESS);
+    Some(task)
 }
 
 /// Put a program's pipe end where its first instruction looks for it.

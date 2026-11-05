@@ -125,7 +125,7 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 /// so a log that shows two "says hello" lines before the second program's is a
 /// log where sleeping worked.  The second `Write` after the sleep is what makes
 /// the wake visible: a program that never woke prints one line, not two.
-const fn program_words(number: u16) -> [u32; 18] {
+const fn program_words(number: u16) -> [u32; 19] {
     [
         // A busy loop, so a program outlives a time slice.
         //
@@ -151,7 +151,12 @@ const fn program_words(number: u16) -> [u32; 18] {
         0xD400_0001, // svc #0
         0xD280_00C8, // movz x8, #6       (Write, after the wake)
         0xD400_0001, // svc #0
-        0xD280_0000, // movz x0, #0
+        // Who am I, last, so the answer is still in `x0` when `Exit` takes it:
+        // the boot reports the exit status, and a status that is the program's
+        // own pid is evidence the identity call ran.
+        0xD280_0000 | (abi::SyscallNumber::GetPid as u32 & 0xFFFF) << 5 | 8, /* movz x8, #81
+                                                                              * (GetPid) */
+        0xD400_0001, // svc #0
         0xD280_0068, // movz x8, #3       (Exit)
         0xD400_0001, // svc #0
         0x1400_0000, // b .
@@ -176,6 +181,49 @@ pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
     bytes
 }
 
+/// The syscall numbers a program's words ask for, in order.
+///
+/// Every call is `movz x8, <number>` followed immediately by `svc #0`, so the
+/// pair names it — a scan for the register write rather than a table of indices
+/// a reader would have to count.
+#[cfg(test)]
+fn call_numbers(words: &[u32]) -> alloc::vec::Vec<usize> {
+    let mut calls = alloc::vec::Vec::new();
+    for index in 0..words.len().saturating_sub(1) {
+        if words[index + 1] != 0xD400_0001 {
+            continue;
+        }
+        // `movz x8, #imm`: `movz` is 0xD280_0000 with the register in bits
+        // 0..5.
+        let word = words[index];
+        let is_movz = (word >> 23) & 0x3F == 0b100101 && (word >> 31) & 1 == 1;
+        if is_movz && word & 0x1F == 8 {
+            calls.push(((word >> 5) & 0xFFFF) as usize);
+        }
+    }
+    calls
+}
+
+/// The immediate the `movz reg, #imm` before a call's `svc` carries.
+#[cfg(test)]
+fn immediate_before(words: &[u32], call: abi::SyscallNumber, register: u32) -> i64 {
+    let mut value = 0i64;
+    for index in 0..words.len().saturating_sub(1) {
+        let word = words[index];
+        let is_movz = (word >> 23) & 0x3F == 0b100101 && (word >> 31) & 1 == 1;
+        if words[index + 1] == 0xD400_0001 {
+            if is_movz && word & 0x1F == 8 && ((word >> 5) & 0xFFFF) as usize == call as usize {
+                return value;
+            }
+            continue;
+        }
+        if is_movz && word & 0x1F == register {
+            value = ((word >> 5) & 0xFFFF) as i64;
+        }
+    }
+    0
+}
+
 #[cfg(test)]
 mod program_tests {
     use super::program_bytes;
@@ -187,7 +235,7 @@ mod program_tests {
         let bytes = program_bytes(1);
         assert_eq!(bytes.len(), super::PROGRAM_LEN);
         assert_eq!(&bytes[0..4], &0xD280_0803u32.to_le_bytes());
-        assert_eq!(&bytes[68..72], &0x1400_0000u32.to_le_bytes());
+        assert_eq!(&bytes[72..76], &0x1400_0000u32.to_le_bytes());
     }
 
     /// The loop is a real nested countdown, decoded from the encoding.
@@ -216,28 +264,23 @@ mod program_tests {
     fn the_program_calls_write_sleep_write_and_exit() {
         let words = program_words(1);
         assert_eq!(
-            ((words[7] >> 5) & 0xFFFF) as usize,
-            abi::SyscallNumber::Write as usize,
-            "the first call is Write"
-        );
-        assert_eq!(
-            ((words[10] >> 5) & 0xFFFF) as usize,
-            abi::SyscallNumber::Sleep as usize,
-            "then Sleep"
-        );
-        assert_eq!(
-            ((words[12] >> 5) & 0xFFFF) as usize,
-            abi::SyscallNumber::Write as usize,
-            "then Write again, after the wake"
-        );
-        assert_eq!(
-            ((words[15] >> 5) & 0xFFFF) as usize,
-            abi::SyscallNumber::Exit as usize,
-            "and Exit"
+            super::call_numbers(&words),
+            alloc::vec![
+                abi::SyscallNumber::Write as usize,
+                abi::SyscallNumber::Sleep as usize,
+                abi::SyscallNumber::Write as usize,
+                abi::SyscallNumber::GetPid as usize,
+                abi::SyscallNumber::Exit as usize,
+            ],
+            "the program writes, sleeps, writes, asks who it is, and exits"
         );
 
-        // The sleep's duration is the immediate in `movz x0`.
-        assert_eq!(((words[9] >> 5) & 0xFFFF) as u64, super::SLEEP_MICROSECONDS);
+        // The sleep's duration is the immediate of the `movz x0` that precedes
+        // the Sleep call, found by role rather than counted.
+        assert_eq!(
+            super::immediate_before(&words, abi::SyscallNumber::Sleep, 0) as u64,
+            super::SLEEP_MICROSECONDS
+        );
     }
 
     /// The number is the only word that differs.

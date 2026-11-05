@@ -1038,3 +1038,34 @@ that was right there — its `reg` is one window and everything is an offset
 inside it.  And the source count came from the tree while the driver was
 programming `min(declared, 128)`; those are one number now, and the line reports
 the one the driver used.
+
+### A process, and the register two machines disagree about
+
+    protofire: exit statuses 1 -> 1, 2 -> 0, 3 -> 0
+
+The process layer this tree has is the part that can be honest without
+`fork`.  A task carries a pid, the parent that started it, and the status it
+exited with; `GetPid`, `GetPpid` and `WaitProcess` are served; and the boot's
+three programs are three processes, each a child of the boot because nothing
+here creates a process.
+
+The evidence is a status that is the program's own number: the announcing
+program asks `GetPid` and then exits with the answer, so `1 -> 1` says the
+identity call ran and the status carried its answer.  A constant the kernel
+invented would be the same number for every program, and the gate would still
+see a status.
+
+**`Exit`'s status and a call's answer are not always the same register, and the
+first version read one for the other.**  On aarch64 and riscv64 the answer to
+`GetPid` and `Exit`'s first argument are both `x0`/`a0`, so the program could
+exit with the pid by leaving it where the answer arrived.  On x86_64 they are
+`rax` and `edi`: the boot printed `1 -> 20000`, because `edi` still held the
+sleep's duration from three calls earlier.  The program now moves the answer
+into the argument register, and the scheduler is **told** the status rather
+than reading a register through a machine-neutral accessor that would be right
+on two machines and wrong on the third.
+
+The pipe's two programs have no identity call, so their status is whatever
+their last call left in the register.  The boot reports it as it is: a status
+the kernel tidied up to look like a pid would be exactly the invented answer
+this file keeps warning about.

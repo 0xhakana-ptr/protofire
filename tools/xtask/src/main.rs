@@ -308,6 +308,12 @@ impl Machine {
                 ("program 1 says hello", true),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
+                // The process layer, as an exit status that is the program's
+                // own pid: program 1 asks `GetPid`, then exits with the answer,
+                // so `1 -> 1` is evidence the identity call ran and the status
+                // carried its answer.  A constant the kernel invented would be
+                // the same number for every program.
+                ("protofire: exit statuses 1 -> 1", false),
                 // Sleeping, and the wake that ended it.
                 //
                 // Two lines, because they are two facts: a program asked for a
@@ -368,6 +374,12 @@ impl Machine {
                 // unmapped and the boot stops at an instruction abort; deleting
                 // the context restore resumes program 1 in program 2's space.
                 ("protofire: every program exited, ", false),
+                // The process layer, as an exit status that is the program's
+                // own pid: program 1 asks `GetPid`, then exits with the answer,
+                // so `1 -> 1` is evidence the identity call ran and the status
+                // carried its answer.  A constant the kernel invented would be
+                // the same number for every program.
+                ("protofire: exit statuses 1 -> 1", false),
                 // The policy, asked twice through the real handler.
                 //
                 // A rule the boot installs allows one label and not another,
@@ -409,6 +421,12 @@ impl Machine {
                 // unmapped and the boot stops at an instruction abort; deleting
                 // the context restore resumes program 1 in program 2's space.
                 ("protofire: every program exited, ", false),
+                // The process layer, as an exit status that is the program's
+                // own pid: program 1 asks `GetPid`, then exits with the answer,
+                // so `1 -> 1` is evidence the identity call ran and the status
+                // carried its answer.  A constant the kernel invented would be
+                // the same number for every program.
+                ("protofire: exit statuses 1 -> 1", false),
                 // The whole line, because its tail is the outcome.
                 //
                 // A prefix would accept `pool check FAILED`: the numbers before
@@ -541,6 +559,12 @@ impl Machine {
                 ("program 1 says hello", true),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
+                // The process layer, as an exit status that is the program's
+                // own pid: program 1 asks `GetPid`, then exits with the answer,
+                // so `1 -> 1` is evidence the identity call ran and the status
+                // carried its answer.  A constant the kernel invented would be
+                // the same number for every program.
+                ("protofire: exit statuses 1 -> 1", false),
                 // Sleeping, and the wake that ended it: the deadline is a
                 // firmware call on this machine, and a boot that slept and
                 // never woke prints the sleep line and not the wake.

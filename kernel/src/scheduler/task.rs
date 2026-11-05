@@ -72,6 +72,21 @@ pub struct Task {
     pub(crate) space: Option<AddressSpace>,
     /// Whether it can run, is waiting for a deadline, or has finished.
     pub(crate) state: State,
+    /// This process's identity, for the calls that ask who is running.
+    ///
+    /// Nothing in this kernel creates a process yet, so every task the boot
+    /// builds is its own process: the number is the one the boot gave it, and
+    /// the parent is the boot's — which is the honest answer for a program the
+    /// kernel started rather than one another program forked.
+    pub(crate) pid: u32,
+    /// The process that started this one.
+    pub(crate) parent: u32,
+    /// What the program answered `Exit` with, once it has exited.
+    ///
+    /// `None` while it runs: a status before the program chose one would be a
+    /// number the kernel invented, and a parent waiting for that answer would
+    /// read it as the program's own decision.
+    pub(crate) status: Option<usize>,
 }
 
 impl Task {
@@ -84,6 +99,9 @@ impl Task {
             context: starting_context(entry, stack_top),
             space: Some(space),
             state: State::Runnable,
+            pid: 0,
+            parent: 0,
+            status: None,
         }
     }
 
@@ -98,6 +116,9 @@ impl Task {
             context: starting_context(0, 0),
             space: None,
             state: State::Runnable,
+            pid: 0,
+            parent: 0,
+            status: None,
         }
     }
 
@@ -115,6 +136,30 @@ impl Task {
     #[cfg(not(target_os = "none"))]
     pub fn root(&self) -> Option<usize> {
         self.space.map(|_| None).unwrap_or(None)
+    }
+
+    /// This process's id.
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    /// The process that started this one.
+    pub fn parent(&self) -> u32 {
+        self.parent
+    }
+
+    /// What this process exited with, once it has exited.
+    pub fn status(&self) -> Option<usize> {
+        self.status
+    }
+
+    /// Name this process and its parent.
+    ///
+    /// The boot does this once per task it builds: a program the kernel starts
+    /// has the boot as its parent, which is a fact rather than a placeholder.
+    pub fn identify(&mut self, pid: u32, parent: u32) {
+        self.pid = pid;
+        self.parent = parent;
     }
 
     /// The context a switch installs.

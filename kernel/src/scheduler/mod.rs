@@ -79,6 +79,19 @@ pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
 ///
 /// `None` runs when the boot never installed a scheduler, which is the state a
 /// host build is in.
+pub fn advance_with_status(
+    frame: &mut arch::Context,
+    exiting: bool,
+    status: usize,
+) -> arch::CallOutcome {
+    // SAFETY: the scheduler is written once before any program runs.
+    let scheduler: &mut Option<Scheduler> = unsafe { &mut *SCHEDULER.get() };
+    match scheduler {
+        Some(scheduler) => scheduler.schedule_with_status(frame, exiting, true, Some(status)),
+        None => arch::CallOutcome::Exit,
+    }
+}
+
 pub fn advance(frame: &mut arch::Context, exiting: bool) -> arch::CallOutcome {
     // SAFETY: the scheduler is written once before any program runs, and this
     // read happens after that.
@@ -290,6 +303,61 @@ pub fn sleeping() -> usize {
 }
 
 /// Whether a call means the program has finished.
+/// The process id of the running task, if a scheduler is installed.
+pub fn current_pid() -> Option<u32> {
+    // SAFETY: the scheduler is written once before any program runs.
+    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
+    scheduler?.current_pid()
+}
+
+/// The parent of the running task, if a scheduler is installed.
+pub fn current_parent() -> Option<u32> {
+    // SAFETY: as `current_pid`.
+    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
+    scheduler?.current_parent()
+}
+
+/// The status of the first process that has exited, if any has.
+///
+/// A wait in this boot has one process tree, so "the first exit" is the only
+/// answer it can give; a caller that needs a particular child needs a parent
+/// that exists, which is a later change.
+pub fn first_exit_status() -> Option<usize> {
+    // SAFETY: as `current_pid`.
+    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() }?;
+    scheduler.first_exited().and_then(|task| task.status())
+}
+
+/// Every process that has exited, with its id and status.
+///
+/// Reported as a list rather than looked up by a guessed id: the boot's tasks
+/// are the processes it built, and asking for pids 1..3 would answer nothing on
+/// a boot that numbered them differently.
+pub fn exit_statuses() -> alloc::vec::Vec<(u32, usize)> {
+    // SAFETY: as `current_pid`.
+    let Some(scheduler) = (unsafe { (*SCHEDULER.get()).as_ref() }) else {
+        return alloc::vec::Vec::new();
+    };
+    scheduler.exited_with_status()
+}
+
+/// The status a process exited with, if it has exited.
+pub fn exit_status(pid: u32) -> Option<Option<usize>> {
+    // SAFETY: as `current_pid`.
+    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() }?;
+    scheduler.exit_status(pid)
+}
+
+/// Whether a task other than the running one can be selected.
+///
+/// What a wait asks before it parks: with nothing else runnable no exit can
+/// arrive, and blocking would be a hang rather than a wait.
+pub fn has_runnable_except_current() -> bool {
+    // SAFETY: as `current_pid`.
+    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
+    scheduler.is_some_and(Scheduler::has_other_runnable)
+}
+
 pub fn is_exit(call: &CallFrame) -> bool {
     call.number == syscall::SyscallNumber::Exit as usize
 }

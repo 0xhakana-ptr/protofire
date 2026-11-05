@@ -116,7 +116,7 @@ const BUSY_LOOP: [u32; 6] = [
 /// so a log that shows two "says hello" lines before the second program's is a
 /// log where sleeping worked.  The second `Write` after the sleep is what makes
 /// the wake visible: a program that never woke prints one line, not two.
-const fn program_words(number: u16) -> [u32; 18] {
+const fn program_words(number: u16) -> [u32; 19] {
     [
         BUSY_LOOP[0],
         BUSY_LOOP[1],
@@ -132,7 +132,12 @@ const fn program_words(number: u16) -> [u32; 18] {
         0x0000_0073, // ecall
         addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
         0x0000_0073, // ecall
-        addi(REGISTER_A0 as u32, 0, 0),
+        // Who am I, last, so the answer is still in `a0` when `Exit` takes it:
+        // the boot reports the exit status, and a status that is the program's
+        // own pid is evidence the identity call ran rather than a number the
+        // kernel made up.
+        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::GetPid as i32),
+        0x0000_0073, // ecall
         addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
         0x0000_0073, // ecall
         0x0000_006F, // j .
@@ -226,8 +231,69 @@ pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
     bytes
 }
 
+/// The syscall numbers a program's words ask for, in order.
+///
+/// Every call is `li a7, <number>` followed immediately by `ecall`, so the pair
+/// is what names it — a scan for the register write rather than a table of
+/// indices a reader would have to count.
+#[cfg(test)]
+fn call_numbers(words: &[u32]) -> alloc::vec::Vec<usize> {
+    let mut calls = alloc::vec::Vec::new();
+    for pair in words.windows(2) {
+        if pair[1] != 0x0000_0073 {
+            continue;
+        }
+        // `addi x17, x0, imm` with the number in the low twelve bits.
+        let is_li_a7 = pair[0] & 0x7F == 0x13
+            && (pair[0] >> 7) & 0x1F == REGISTER_A7 as u32
+            && (pair[0] >> 15) & 0x1F == 0;
+        if !is_li_a7 {
+            continue;
+        }
+        calls.push(((pair[0] as i32) >> 20) as usize);
+    }
+    calls
+}
+
+/// The immediate the `li reg, imm` before a call's `ecall` carries.
+///
+/// Found by role: the last `addi reg, x0, imm` before the call's `ecall` whose
+/// destination is `register`.  A program that sets the register earlier and
+/// leaves it alone is one this helper reads correctly, because the last write
+/// wins — which is what the machine does too.
+/// The immediate the `li reg, imm` before a call's `ecall` carries.
+///
+/// A linear scan: remember the last `addi reg, x0, imm` that wrote `register`,
+/// and answer it when the matching `ecall` arrives.  The last write wins, which
+/// is what the machine does too — so a program that sets the register once and
+/// leaves it alone is read correctly.
+#[cfg(test)]
+fn immediate_before(words: &[u32], call: abi::SyscallNumber, register: u32) -> i32 {
+    let mut value = 0;
+    for index in 0..words.len().saturating_sub(1) {
+        let word = words[index];
+        if words[index + 1] != 0x0000_0073 {
+            // Not a call site; remember a `li` if this is one.
+            if word & 0x7F == 0x13 && (word >> 7) & 0x1F == register && (word >> 15) & 0x1F == 0 {
+                value = (word as i32) >> 20;
+            }
+            continue;
+        }
+        // This word is `li a7, n` if it writes a7 from zero.
+        let is_li_a7 = word & 0x7F == 0x13
+            && (word >> 7) & 0x1F == REGISTER_A7 as u32
+            && (word >> 15) & 0x1F == 0;
+        if is_li_a7 && (((word as i32) >> 20) as usize) == call as usize {
+            return value;
+        }
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
+    use super::REGISTER_A0;
+    use super::REGISTER_A1;
     use super::addi;
     use super::bne_against_zero;
     use super::program_bytes;
@@ -301,33 +367,39 @@ mod tests {
     /// and then fail silently, which is the one failure a sleep program could
     /// have and still look healthy.
     #[test]
-    fn the_program_calls_write_sleep_write_and_exit() {
+    fn the_program_writes_sleeps_writes_asks_its_pid_and_exits() {
         let words = program_words(1);
+        // By name, not by index: an index a reader has to count is a number
+        // that goes stale the moment a word is inserted, which is exactly what
+        // happened when the identity call arrived.
+        let calls = super::call_numbers(&words);
         assert_eq!(
-            addi_immediate(words[7]) as usize,
-            abi::SyscallNumber::Write as usize,
-            "the first call is Write"
+            calls,
+            alloc::vec![
+                abi::SyscallNumber::Write as usize,
+                abi::SyscallNumber::Sleep as usize,
+                abi::SyscallNumber::Write as usize,
+                abi::SyscallNumber::GetPid as usize,
+                abi::SyscallNumber::Exit as usize,
+            ],
+            "the program writes, sleeps, writes, asks who it is, and exits"
         );
-        assert_eq!(
-            addi_immediate(words[10]) as usize,
-            abi::SyscallNumber::Sleep as usize,
-            "then Sleep"
-        );
-        assert_eq!(
-            addi_immediate(words[12]) as usize,
-            abi::SyscallNumber::Write as usize,
-            "then Write again, after the wake"
-        );
-        assert_eq!(
-            addi_immediate(words[15]) as usize,
-            abi::SyscallNumber::Exit as usize,
-            "and Exit"
-        );
+        // `GetPid` sits **last** because its answer has to survive into `Exit`:
+        // `a0` is where both the answer and the status travel, and a call in
+        // between would overwrite the one the boot reads.
+        assert_eq!(calls.last(), Some(&(abi::SyscallNumber::Exit as usize)));
 
-        // The sleep's duration is the immediate in `li a0`.
-        assert_eq!(addi_immediate(words[9]) as u64, super::SLEEP_MICROSECONDS);
-        // And the program's own number is the immediate in `li a1`.
-        assert_eq!(addi_immediate(words[6]) as usize, 1);
+        // The sleep's duration is the immediate of the `li a0` that precedes
+        // the Sleep call, and the program's own number is the `li a1` before
+        // its first Write.  Both are found by their role rather than counted.
+        assert_eq!(
+            super::immediate_before(&words, abi::SyscallNumber::Sleep, REGISTER_A0 as u32) as u64,
+            super::SLEEP_MICROSECONDS
+        );
+        assert_eq!(
+            super::immediate_before(&words, abi::SyscallNumber::Write, REGISTER_A1 as u32) as usize,
+            1
+        );
     }
 
     /// The number is the only word that differs.
@@ -338,9 +410,17 @@ mod tests {
         let differing: alloc::vec::Vec<usize> = (0..one.len())
             .filter(|index| one[*index] != two[*index])
             .collect();
-        assert_eq!(differing, alloc::vec![6], "only `li a1` differs");
-        assert_eq!(addi_immediate(one[6]) as usize, 1);
-        assert_eq!(addi_immediate(two[6]) as usize, 2);
+        assert_eq!(differing.len(), 1, "only one word differs");
+        // And it is the one that carries the number: the `li a1` before the
+        // first Write.
+        assert_eq!(
+            super::immediate_before(&one, abi::SyscallNumber::Write, REGISTER_A1 as u32) as usize,
+            1
+        );
+        assert_eq!(
+            super::immediate_before(&two, abi::SyscallNumber::Write, REGISTER_A1 as u32) as usize,
+            2
+        );
     }
 
     /// The writer's fourth call names the pipe: the descriptor is loaded from

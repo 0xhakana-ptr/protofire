@@ -92,7 +92,12 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // the frame.  When nothing is left there is nothing to resume, and
         // `eret`-ing into a program that asked to exit would run it again from
         // the instruction after the `svc` — forever.
-        let outcome = crate::scheduler::advance(frame, true);
+        // The status is `Exit`'s first argument, which is where every
+        // machine's call convention puts it — `edi` on x86_64, `a0`/`x0` on the
+        // others.  Reading a return register instead would be wrong on the one
+        // machine whose two registers differ.
+        let status = call.arguments[0];
+        let outcome = crate::scheduler::advance_with_status(frame, true, status);
         if !crate::scheduler::has_runnable() {
             let (switches, exited) = crate::scheduler::statistics();
             let ticks = crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire) as u32;
@@ -103,6 +108,31 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             arch::serial::write_str(" tick(s), ");
             arch::serial::write_u32(switches as u32);
             arch::serial::write_str(" switch(es)\n");
+
+            // The process tree, as the exits recorded it.
+            //
+            // A program asks `GetPid` and exits with the answer, so a status
+            // that is the program's own number is evidence the identity call
+            // ran and the exit carried its answer — not that the kernel can
+            // count.
+            // The announcing program's status is its own pid because it asks
+            // `GetPid` and exits with the answer.  The pipe's two programs have
+            // no identity call, so their status is whatever their last call
+            // left in the argument register — reported as it is rather than
+            // filtered, because a status the kernel made up to look tidy would
+            // be the defect this tree keeps recording.
+            arch::serial::write_str("protofire: exit statuses ");
+            let mut first = true;
+            for (pid, status) in crate::scheduler::exit_statuses() {
+                if !first {
+                    arch::serial::write_str(", ");
+                }
+                first = false;
+                arch::serial::write_u32(pid);
+                arch::serial::write_str(" -> ");
+                arch::serial::write_u32(status as u32);
+            }
+            arch::serial::write_str("\n");
 
             // Whether the timer preempted, as a fact and not a number.
             //
@@ -327,6 +357,55 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 CallOutcome::Exit
             }
         };
+    }
+
+    // Who is asking, and who started them.
+    //
+    // The answers come from the task the scheduler is running, not from the
+    // call: a program does not send its own id, and one that could would be a
+    // program answering a question about itself.
+    if number == SyscallNumber::GetPid as usize {
+        return match crate::scheduler::current_pid() {
+            Some(pid) => CallOutcome::Return(pid as usize),
+            None => CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented)),
+        };
+    }
+
+    if number == SyscallNumber::GetPpid as usize {
+        return match crate::scheduler::current_parent() {
+            Some(parent) => CallOutcome::Return(parent as usize),
+            None => CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented)),
+        };
+    }
+
+    // Waiting for a process to end.
+    //
+    // This boot has one process tree — the programs the kernel started, all
+    // children of the boot — so the only wait that can be answered is "has any
+    // process finished, and with what".  That is a real answer, and it is the
+    // one a parent in this tree can ask for: a finer wait would need a parent
+    // that exists.
+    //
+    // A wait with nothing finished **blocks** rather than spinning: the caller
+    // is parked like a pipe's reader, and a process exit is what wakes it.  A
+    // wait that answered zero would be a parent told its child exited with
+    // nothing, which is the kind of invented answer this tree refuses.
+    if number == SyscallNumber::WaitProcess as usize {
+        if let Some(status) = crate::scheduler::first_exit_status() {
+            return CallOutcome::Return(status);
+        }
+        if !crate::scheduler::has_runnable_except_current() {
+            // Nothing else can run, so no exit can arrive: answering "no such
+            // process" is the truth, and blocking would be a hang.
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotFound));
+        }
+        crate::scheduler::block(frame);
+        arch::serial::write_str("protofire: a program waits for a child\n");
+        if !crate::scheduler::has_selectable() {
+            crate::scheduler::idle_until_woken();
+        }
+        let _ = crate::scheduler::switch_without_saving(frame);
+        return CallOutcome::Exit;
     }
 
     if number == SyscallNumber::Pipe as usize {
