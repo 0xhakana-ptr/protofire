@@ -21,7 +21,7 @@
 //! definition, and the script that compared two of them is not needed.
 //!
 //! The cost is that everything in here must be `no_std` and allocation-free.
-//! That is not a hardship for a wire format, a syscall argument is a word, //!
+//! That is not a hardship for a wire format, a syscall argument is a word,
 //! and where it would be, the type does not belong in this crate.
 
 #![no_std]

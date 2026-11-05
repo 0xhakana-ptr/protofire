@@ -15,7 +15,7 @@
 //!
 //! Where this image's sections begin and end is the linker script's answer, and
 //! the rules for them are this kernel's policy.  Which addresses are a device's
-//! registers is the **machine's** answer, `arch::paging::device_windows`, //!
+//! registers is the **machine's** answer, `arch::paging::device_windows`,
 //! because an x86_64 finds its devices on a bus and a device-tree machine knows
 //! their addresses from the platform, and a kernel that spelled either would be
 //! naming a machine.

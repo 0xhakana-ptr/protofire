@@ -28,7 +28,7 @@
 //! ## The shape of a table
 //!
 //! A table is 512 entries of eight bytes: 4 KiB, one page.  An entry is a
-//! physical address and a bitfield.  The bottom bits say what the entry is, //!
+//! physical address and a bitfield.  The bottom bits say what the entry is,
 //! present, writable, user-accessible, and whether it names another table or
 //! a page of memory.
 //!

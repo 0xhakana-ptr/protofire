@@ -6,7 +6,7 @@
 //! ## Why this instead of the interrupt pin
 //!
 //! A PCI function with INTx raises one of four wires, and which of the
-//! controller's lines a wire becomes is a table the platform keeps, //!
+//! controller's lines a wire becomes is a table the platform keeps,
 //! `interrupt-map`.  That table is a description of somebody else's decision,
 //! and reading it correctly took two attempts here and produced one answe for
 //! four pins.

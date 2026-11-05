@@ -7,10 +7,19 @@
 //!
 //! The trap path builds a frame, hands it to the call handler, and then
 //! restores whatever frame it finds and returns.  So a task switch is: copy the
-//! current frame into the running task, copy the next task's frame over it, and
-//!, if the next task lives in a different address space, switch the root
-//! register. There is no assembly here, because the assembly that matters is
-//! the epilogue every trap already runs through.
+//! frame into the task this CPU was running, copy the next task's frame over
+//! it, and, if the next task lives in a different address space, switch the
+//! root register.  There is no assembly here, because the assembly that matters
+//! is the epilogue every trap already runs through.
+//!
+//! ## Why every operation takes a CPU
+//!
+//! `running` is one slot per CPU, and a switch is a CPU's own: it saves into the
+//! task that CPU held and marks the next one as that CPU's.  That is what keeps
+//! two CPUs from being handed one task, and it is why the entry points here take
+//! `cpu` rather than reading a single field.  A caller that did not say which
+//! CPU it was would be moving the whole machine's idea of the current task,
+//! which is the state this scheduler had before it could run on two.
 
 use alloc::vec::Vec;
 

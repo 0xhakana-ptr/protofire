@@ -30,9 +30,9 @@
 //! ## Why the register half is gated
 //!
 //! The offsets and the volatile accesses mean nothing on a host: there is no
-//! window, and no test can read one.  What a host *can* check is the arithmetic
-//!, which bank a context uses, so that stays outside the gate and the tests
-//! exercise it.
+//! window, and no test can read one.  What a host *can* check is the
+//! arithmetic: which bank a context uses, so that stays outside the gate and
+//! the tests exercise it.
 
 /// The PLIC's register groups, as byte offsets into the window.
 ///

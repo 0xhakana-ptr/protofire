@@ -6,7 +6,7 @@
 //! ## What mounting does
 //!
 //! Reads the descriptor set from sector 16, picks the tree a reader should see
-//!, Joliet's when there is one, because its names are the author's, and keeps
+//! Joliet's when there is one, because its names are the author's, and keeps
 //! the root record.  Nothing else is read: a directory's extent is read when
 //! someone asks what is in it, and a file's extent when someone reads it.
 //!

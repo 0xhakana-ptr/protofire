@@ -10,7 +10,7 @@
 //! ## No crate-level architecture gate
 //!
 //! The first version of this file had `#![cfg(target_arch = "aarch64")]`, so
-//! that `cargo build --workspace`, which builds every member for the host, //!
+//! that `cargo build --workspace`, which builds every member for the host,
 //! would not try to assemble `wfi` into an x86 binary.  What that also did was
 //! make the whole crate empty on a host, *including its tests*:
 //! `cargo test -p arch_aarch64` reported zero, and every assertion in

@@ -5,7 +5,7 @@
 //! ## The three methods and why each exists
 //!
 //! [`submit`](Service::submit) accepts a request.  It may finish it in the call
-//!, a disk with a cached block does, and the honest way to say so is to
+//! a disk with a cached block does, and the honest way to say so is to
 //! return the completion rather than to queue one and make the caller poll for
 //! something already known.
 //!

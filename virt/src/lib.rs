@@ -43,7 +43,7 @@
 //!   timer that will not tick.
 //!
 //! - **The host side needs a trap handler**, and a trap handler needs the
-//!   interrupt path to be able to return to the code that caused the trap, //!
+//!   interrupt path to be able to return to the code that caused the trap,
 //!   which is the scheduler's problem, so that half arrives after the scheduler
 //!   does.
 //!

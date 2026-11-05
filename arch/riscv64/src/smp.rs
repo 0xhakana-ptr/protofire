@@ -6,7 +6,7 @@
 //! ## What the machine has
 //!
 //! The device tree lists the harts, `/cpus`'s `cpu@` children, each `reg`
-//! naming its hart id and `status` saying whether firmware means to use it, //!
+//! naming its hart id and `status` saying whether firmware means to use it,
 //! and the firmware owns the power state.  A hart that is not running is parked
 //! in M-mode, and S-mode cannot wake one by writing a register: it
 //! **asks**, through the HSM extension, and the firmware enters the hart at

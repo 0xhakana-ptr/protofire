@@ -5,7 +5,7 @@
 //!
 //! ## What makes this the kernel's and not `ipc`'s
 //!
-//! `ipc::ByteRing` is the arithmetic, a fixed buffer, two cursors, a count, //!
+//! `ipc::ByteRing` is the arithmetic, a fixed buffer, two cursors, a count,
 //! and it is deliberately testable on a host.  What it cannot do is *park* a
 //! task: that needs the scheduler, and a crate that needed the scheduler could
 //! not be tested without one.  `scripts/layering.txt` says the same thing in

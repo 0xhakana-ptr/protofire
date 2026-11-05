@@ -8,7 +8,7 @@
 //! The first version had `finished: bool`, which is two states and describes
 //! exactly the two things the scheduler could do before: run a program, or skip
 //! it forever.  Sleeping is a third, and it is not "finished" with a timestamp
-//!, a sleeping task is *runnable later*, and a scheduler that could not tell
+//! a sleeping task is *runnable later*, and a scheduler that could not tell
 //! the two apart would either wake a dead program or never wake a live one.  A
 //! blocked task is a fourth: it waits for another task rather than for a clock,
 //! and folding it into `Sleeping` would mean inventing a deadline for a wait

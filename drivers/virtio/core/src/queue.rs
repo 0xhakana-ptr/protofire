@@ -21,7 +21,7 @@
 //!
 //! The *arithmetic* of those three rings: allocating a descriptor, publishing
 //! it, reading a completion, and wrapping around.  It is not responsible for
-//! allocating the memory they live in, for the doorbell, or for interrupts, //!
+//! allocating the memory they live in, for the doorbell, or for interrupts,
 //! those are the transport's, and splitting them here is what lets the rings be
 //! tested against a `Vec` on a host.
 //!

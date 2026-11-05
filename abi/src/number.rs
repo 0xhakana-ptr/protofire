@@ -11,7 +11,7 @@
 //!
 //! That makes the numbering something both parties name, which is the whole
 //! definition of what belongs in this crate.  It lived in the `syscall` crate,
-//! which is the *implementation*, the table, the context, the validators, //!
+//! which is the *implementation*, the table, the context, the validators,
 //! and an implementation that owns the contract is one a program cannot be
 //! written against without depending on the kernel's internals.
 //!

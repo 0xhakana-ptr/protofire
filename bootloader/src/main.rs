@@ -25,7 +25,7 @@
 //! that is linked; a library can be neither.  Keeping those here means the
 //! `kernel` crate stays a library a host test can build.
 //!
-//! Everything that is a *decision*, what to initialise, in what order, //!
+//! Everything that is a *decision*, what to initialise, in what order,
 //! belongs to `kernel::kernel_main`, where a test can call it.  This file
 //! translates an entry convention into that call and does nothing else.
 //!
