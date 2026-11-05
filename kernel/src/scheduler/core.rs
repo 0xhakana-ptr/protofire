@@ -20,10 +20,18 @@ use arch::Context;
 use super::task::State;
 use super::task::Task;
 
-/// The tasks, and which one is running.
+/// The tasks, and which one each CPU is running.
 pub struct Scheduler {
     pub(crate) tasks: Vec<Task>,
-    pub(crate) current: usize,
+    /// The task each CPU is running, by CPU slot.
+    ///
+    /// One index per CPU and not one index for the machine: with a single
+    /// `current`, a second CPU's switch would overwrite the first's, and the
+    /// task the first was running would be selected again by the other CPU.
+    /// A task in this array is being run by that CPU and is not selectable by
+    /// any other; leaving it is what a switch does, and it is why the array is
+    /// the exclusion set rather than a separate flag.
+    pub(crate) running: [Option<usize>; crate::per_cpu::MAX_CPUS],
     /// How many switches have happened, which the boot line reports.
     pub(crate) switches: usize,
     /// Programs that have exited.
@@ -41,7 +49,7 @@ impl Scheduler {
     pub fn new() -> Scheduler {
         Scheduler {
             tasks: Vec::new(),
-            current: 0,
+            running: [None; crate::per_cpu::MAX_CPUS],
             switches: 0,
             exited: 0,
             next_pid: 1,
@@ -49,13 +57,29 @@ impl Scheduler {
     }
 
     /// Add a program to the rotation.
+    ///
+    /// ## Why the first task is recorded as running
+    ///
+    /// The boot does not reach its first program through a switch: it installs
+    /// that program's context by hand and `enter_user_with_context` never
+    /// returns.  So the scheduler has to know which task that was, or the first
+    /// task would look free and a second CPU would hand it out again while the
+    /// boot CPU was running it.
+    ///
+    /// The first task a scheduler is given is therefore the one the boot is
+    /// about to enter, on the boot CPU.  Every later task is added as free and
+    /// claimed by a switch or a [`claim`](Self::claim).
     pub fn add(&mut self, task: Task) {
         // The id counter follows the ids the boot actually gave, so a forked
         // child cannot collide with a program the boot started.
         if task.pid() >= self.next_pid {
             self.next_pid = task.pid() + 1;
         }
+        let first = self.tasks.is_empty();
         self.tasks.push(task);
+        if first && self.running.iter().all(Option::is_none) {
+            self.running[crate::per_cpu::BOOT_SLOT] = Some(0);
+        }
     }
 
     /// The number of programs, for a boot line.
@@ -78,17 +102,40 @@ impl Scheduler {
         self.exited
     }
 
-    /// The task whose context is installed.
-    pub fn current(&self) -> Option<&Task> {
+    /// The task `cpu` is running, while it is not finished.
+    pub fn current(&self, cpu: usize) -> Option<&Task> {
         self.tasks
-            .get(self.current)
+            .get(self.running.get(cpu).copied().flatten()?)
             .filter(|task| task.state != State::Finished)
     }
 
-    /// The root the current task runs through, if it has one of its own.
+    /// The root the task `cpu` runs through, if it has one of its own.
     #[cfg(target_os = "none")]
-    pub fn current_root(&self) -> Option<usize> {
-        self.current().and_then(Task::root)
+    pub fn current_root(&self, cpu: usize) -> Option<usize> {
+        self.current(cpu).and_then(Task::root)
+    }
+
+    /// Record that `cpu` is running `task`.
+    ///
+    /// What the entry into a program does: a CPU that installs a program's
+    /// context by hand, rather than through a switch, has to say which task it
+    /// took, or the other CPUs would consider that task free.
+    pub fn assign(&mut self, cpu: usize, task: usize) {
+        if let Some(slot) = self.running.get_mut(cpu) {
+            *slot = Some(task);
+        }
+    }
+
+    /// The next task a CPU that has just come up may run.
+    ///
+    /// `None` when nothing is runnable, which is the state a started CPU finds
+    /// before the boot has built any task.  The task is marked as running on
+    /// `cpu` here, so two CPUs claiming at once cannot take the same one.
+    pub fn claim(&mut self, cpu: usize) -> Option<usize> {
+        let next = self.next_runnable(cpu)?;
+        self.assign(cpu, next);
+        self.switches += 1;
+        Some(next)
     }
 
     /// Install the next task's context over `frame`.
@@ -104,8 +151,8 @@ impl Scheduler {
     /// one copy and removes a branch, the code that decides *whether* to save
     /// is the code that could get it wrong.  What is not done is selecting it
     /// again, which the `finished` flag prevents.
-    pub fn schedule(&mut self, frame: &mut Context, exiting: bool) -> CallOutcome {
-        self.schedule_from(frame, exiting, true)
+    pub fn schedule(&mut self, cpu: usize, frame: &mut Context, exiting: bool) -> CallOutcome {
+        self.schedule_from(cpu, frame, exiting, true)
     }
 
     /// Select the next task and install it, optionally saving `frame` first.
@@ -123,71 +170,81 @@ impl Scheduler {
     /// So the two callers say which they are.  A trap saves; an idle does not.
     pub(crate) fn schedule_from(
         &mut self,
+        cpu: usize,
         frame: &mut Context,
         exiting: bool,
         save: bool,
     ) -> CallOutcome {
-        self.schedule_with_status(frame, exiting, save, None)
+        self.schedule_with_status(cpu, frame, exiting, save, None)
     }
 
-    /// The same, with the status an exiting program named.
+    /// The same, for the CPU that is asking.
     ///
-    /// `Some(status)` when the caller is reaping a program that answered
-    /// `Exit`; `None` for every other transition, which is what keeps a
-    /// sleeping or blocked task from being recorded as having exited.
-    pub(crate) fn schedule_with_status(
+    /// Every switch belongs to a CPU: which task it was running is where the
+    /// frame is saved, and which task it will run is what the other CPUs must
+    /// not select.  A caller that did not say which CPU it was would be
+    /// switching the whole machine's idea of the current task, which is the
+    /// state this scheduler no longer has.
+    pub(crate) fn schedule_on(
         &mut self,
+        cpu: usize,
         frame: &mut Context,
         exiting: bool,
         save: bool,
         status: Option<usize>,
     ) -> CallOutcome {
-        // Where the current task was, kept exactly.
+        // Where this CPU's task was, kept exactly.
         //
         // `exiting` is the *caller's* claim about what happened, and a sleeping
         // task is neither running nor finished, it was put to sleep before
         // this call, so its state is already `Sleeping` and this must not
         // overwrite it with `Finished`.  That is why the flag only ever sets
         // `Finished` and never the other way.
-        if save && let Some(task) = self.tasks.get_mut(self.current) {
-            task.context = *frame;
-            if exiting {
-                task.state = State::Finished;
-                // What the program answered `Exit` with.  The status travels as
-                // `Exit`'s first argument (`edi` on x86_64, `a0`/`x0` on the
-                // others), which is **not** always the register a call's answer
-                // comes back in, x86_64's `rax` holds `GetPid`'s answer, and
-                // `edi` holds the status.  So the scheduler is told the status
-                // rather than reading a register: a machine-specific guess here
-                // would be wrong on exactly the machine whose convention
-                // differs.
-                task.status = status;
-                self.exited += 1;
+        let leaving = self.running.get(cpu).copied().flatten();
+        if save && let Some(index) = leaving {
+            if let Some(task) = self.tasks.get_mut(index) {
+                task.context = *frame;
+                if exiting {
+                    task.state = State::Finished;
+                    // What the program answered `Exit` with.  The status
+                    // travels as `Exit`'s first argument (`edi` on x86_64,
+                    // `a0`/`x0` on the others), which is **not** always the
+                    // register a call's answer comes back in, x86_64's `rax`
+                    // holds `GetPid`'s answer, and `edi` holds the status.  So
+                    // the scheduler is told the status rather than reading a
+                    // register: a machine-specific guess here would be wrong on
+                    // exactly the machine whose convention differs.
+                    task.status = status;
+                    self.exited += 1;
+                }
             }
         }
 
-        let Some(next) = self.next_runnable() else {
+        let Some(next) = self.next_runnable(cpu) else {
             // Nothing to install.  With every task finished the caller stops
             // the machine; with some asleep the caller waits for the tick that
             // wakes one.  The scheduler does not distinguish the two, that
             // decision belongs to whoever knows whether a timer is armed, so
             // it answers `Exit` and its context says which case it is.
+            self.assign(cpu, usize::MAX);
             return CallOutcome::Exit;
         };
 
-        self.current = next;
+        self.assign(cpu, next);
         self.switches += 1;
 
-        if let Some(task) = self.tasks.get(self.current) {
+        if let Some(task) = self.tasks.get(next) {
             *frame = task.context;
         }
 
         #[cfg(target_os = "none")]
-        if let Some(root) = self.current_root() {
-            // A different address space: write `TTBR0_EL1` before the epilogue
+        if let Some(root) = self.current_root(cpu) {
+            // A different address space: write `satp` before the epilogue
             // runs, because that epilogue's first fetch is through it.  Every
             // root shares the kernel's entry 0, so this is safe from anywhere
-            // in the kernel.
+            // in the kernel.  The write is this CPU's own register, which is
+            // what makes it safe to do while another CPU is switching a
+            // different task through a different root.
             //
             // SAFETY: the root is a live table this scheduler's own task owns,
             // and every root shares the kernel's entry 0, which covers the
@@ -202,21 +259,71 @@ impl Scheduler {
         }
     }
 
-    /// The next task to run, wrapping and skipping the ones that cannot.
-    fn next_runnable(&self) -> Option<usize> {
+    /// The same, for the CPU that is asking.
+    ///
+    /// *Which* CPU is the argument: a switch saves the frame into the task that
+    /// CPU was running and marks the next one as that CPU's, so two CPUs
+    /// switching at once cannot take the same task.  A caller that did not say
+    /// which CPU it was would be moving the whole machine's idea of the current
+    /// task, which is the single-CPU state this scheduler no longer has.
+    pub(crate) fn schedule_with_status(
+        &mut self,
+        cpu: usize,
+        frame: &mut Context,
+        exiting: bool,
+        save: bool,
+        status: Option<usize>,
+    ) -> CallOutcome {
+        self.schedule_on(cpu, frame, exiting, save, status)
+    }
+
+    /// The next task `cpu` may run, wrapping and skipping the ones that cannot.
+    ///
+    /// ## What "may" excludes
+    ///
+    /// A task another CPU is running.  That is what `running` is for: without
+    /// it, two CPUs asking for the next runnable task at the same moment would
+    /// both be told the same one, and both would install its context.  The task
+    /// one CPU holds is not a candidate for the other, and the pass that finds
+    /// nothing answers `None`, which is the scheduler saying "this CPU has no
+    /// work" rather than "the machine has none".
+    fn next_runnable(&self, cpu: usize) -> Option<usize> {
         if self.tasks.is_empty() {
             return None;
         }
-        // One pass from the task after this one: that is the round-robin policy
-        // and also the bound.  With every other task finished and this one not,
-        // the pass comes back to it.
-        for offset in 1..=self.tasks.len() {
-            let candidate = (self.current + offset) % self.tasks.len();
-            if self.tasks[candidate].state == State::Runnable {
+        let held = self
+            .running
+            .get(cpu)
+            .copied()
+            .flatten()
+            .filter(|index| *index < self.tasks.len());
+        // The round-robin order, and the starting point is what makes it a
+        // rotation rather than a preference.  A CPU already running a task
+        // starts at the one after it, so switching moves the CPU rather than
+        // re-selecting what it already has; a CPU with nothing starts at zero,
+        // which is where a CPU that has just come up looks first.
+        //
+        // Both passes cover every task, so a CPU whose only runnable task is
+        // the one it holds comes back to it, which is what a preemption with
+        // one task must do.
+        let start = held.map(|index| index + 1).unwrap_or(0);
+        for offset in 0..self.tasks.len() {
+            let candidate = (start + offset) % self.tasks.len();
+            if self.tasks[candidate].state == State::Runnable
+                && !self.is_running_elsewhere(cpu, candidate)
+            {
                 return Some(candidate);
             }
         }
         None
+    }
+
+    /// Whether a CPU other than `cpu` is running `task`.
+    fn is_running_elsewhere(&self, cpu: usize, task: usize) -> bool {
+        self.running
+            .iter()
+            .enumerate()
+            .any(|(index, held)| index != cpu && *held == Some(task))
     }
 
     /// Put the current task to sleep until the machine's counter reads `until`.
@@ -234,8 +341,10 @@ impl Scheduler {
     /// A duration is what a program asks for and a deadline is what a scheduler
     /// compares.  Converting once, here, keeps every comparison in one clock:
     /// the machine's counter, whose rate the caller measured.
-    pub fn sleep_until(&mut self, until: u64, frame: &Context) {
-        if let Some(task) = self.tasks.get_mut(self.current) {
+    pub fn sleep_until(&mut self, cpu: usize, until: u64, frame: &Context) {
+        if let Some(index) = self.running.get(cpu).copied().flatten()
+            && let Some(task) = self.tasks.get_mut(index)
+        {
             // The frame is saved **here**, not by a later `schedule`.
             //
             // A task that sleeps must resume where it asked to, and the only
@@ -274,8 +383,10 @@ impl Scheduler {
     /// The frame is saved here for the reason `sleep_until` gives: the position
     /// to resume at exists only in the trap frame the call arrived in, and a
     /// blocked task has no later scheduling call to rely on.
-    pub fn block(&mut self, frame: &Context) {
-        if let Some(task) = self.tasks.get_mut(self.current) {
+    pub fn block(&mut self, cpu: usize, frame: &Context) {
+        if let Some(task) = self.running.get(cpu).copied().flatten()
+            && let Some(task) = self.tasks.get_mut(task)
+        {
             task.context = *frame;
             task.state = State::Blocked;
         }
@@ -341,14 +452,15 @@ impl Scheduler {
     /// **after** the call.  So that is what a child inherits, and the live
     /// frame is also where the parent's answer is written.
     #[cfg(target_os = "none")]
-    pub fn fork_current(&mut self, frame: &Context) -> Option<usize> {
-        let parent_pid = self.tasks.get(self.current)?.pid();
+    pub fn fork_current(&mut self, cpu: usize, frame: &Context) -> Option<usize> {
+        let parent = self.running.get(cpu).copied().flatten()?;
+        let parent_pid = self.tasks.get(parent)?.pid();
         let parent_context = *frame;
 
         // The parent's space, copied.  A task with no space is one sharing the
         // kernel's, which a program never has: a fork of it would be a fork of
         // nothing.
-        let parent_space = self.tasks.get(self.current)?.space?;
+        let parent_space = self.tasks.get(parent)?.space?;
         // SAFETY: the parent's space is live and this boot is the only writer.
         let child_space = unsafe { crate::address_space::fork_from(&parent_space) }?;
 
@@ -370,18 +482,24 @@ impl Scheduler {
     }
 
     /// The running task's saved context, copied.
-    pub fn current_context(&self) -> Option<Context> {
-        self.tasks.get(self.current).map(|task| *task.context())
+    pub fn current_context(&self, cpu: usize) -> Option<Context> {
+        self.tasks
+            .get(self.running.get(cpu).copied().flatten()?)
+            .map(|task| *task.context())
     }
 
     /// The process id of the task that is running.
-    pub fn current_pid(&self) -> Option<u32> {
-        self.tasks.get(self.current).map(Task::pid)
+    pub fn current_pid(&self, cpu: usize) -> Option<u32> {
+        self.tasks
+            .get(self.running.get(cpu).copied().flatten()?)
+            .map(Task::pid)
     }
 
     /// The parent of the task that is running.
-    pub fn current_parent(&self) -> Option<u32> {
-        self.tasks.get(self.current).map(Task::parent)
+    pub fn current_parent(&self, cpu: usize) -> Option<u32> {
+        self.tasks
+            .get(self.running.get(cpu).copied().flatten()?)
+            .map(Task::parent)
     }
 
     /// The status a process exited with, if a task with that id exists.
@@ -410,11 +528,13 @@ impl Scheduler {
     /// A preemption with only one program is a timer tick, not a switch: the
     /// frame would be replaced with the same task's context and the total would
     /// count ticks instead of switches.
-    pub fn has_other_runnable(&self) -> bool {
-        self.tasks
-            .iter()
-            .enumerate()
-            .any(|(index, task)| index != self.current && task.state == State::Runnable)
+    pub fn has_other_runnable(&self, cpu: usize) -> bool {
+        let mine = self.running.get(cpu).copied().flatten();
+        self.tasks.iter().enumerate().any(|(index, task)| {
+            index != mine.unwrap_or(usize::MAX)
+                && task.state == State::Runnable
+                && !self.is_running_elsewhere(cpu, index)
+        })
     }
 
     /// Whether any task can still run, or is waiting to.
@@ -435,8 +555,10 @@ impl Scheduler {
     /// A loop written with `has_runnable` never waits at all, because sleeping
     /// tasks make it true, which is the defect the first version of the idle
     /// had.
-    pub fn has_selectable(&self) -> bool {
-        self.tasks.iter().any(|task| task.state == State::Runnable)
+    pub fn has_selectable(&self, cpu: usize) -> bool {
+        self.tasks.iter().enumerate().any(|(index, task)| {
+            task.state == State::Runnable && !self.is_running_elsewhere(cpu, index)
+        })
     }
 
     /// Whether any task is asleep rather than runnable or finished.

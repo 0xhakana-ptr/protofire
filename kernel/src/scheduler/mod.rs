@@ -80,6 +80,14 @@ fn with_scheduler<R>(f: impl FnOnce(&mut Option<Scheduler>) -> R) -> R {
     f(&mut guard)
 }
 
+/// The CPU this call is running on, which is the one a switch belongs to.
+///
+/// Read before the lock is taken, from the machine's own register, so it cannot
+/// change while the lock is held and cannot be confused with another CPU's.
+fn this_cpu() -> usize {
+    crate::per_cpu::current_slot()
+}
+
 /// Install the scheduler the boot built.
 ///
 /// # Safety
@@ -102,7 +110,7 @@ pub unsafe fn install(scheduler: Scheduler) {
 /// frame was not replaced and the caller decides what to do about it.
 pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
     with_scheduler(|scheduler| match scheduler {
-        Some(scheduler) => scheduler.schedule_from(frame, false, false),
+        Some(scheduler) => scheduler.schedule_on(this_cpu(), frame, false, false, None),
         None => arch::CallOutcome::Exit,
     })
 }
@@ -117,14 +125,16 @@ pub fn advance_with_status(
     status: usize,
 ) -> arch::CallOutcome {
     with_scheduler(|scheduler| match scheduler {
-        Some(scheduler) => scheduler.schedule_with_status(frame, exiting, true, Some(status)),
+        Some(scheduler) => {
+            scheduler.schedule_with_status(this_cpu(), frame, exiting, true, Some(status))
+        }
         None => arch::CallOutcome::Exit,
     })
 }
 
 pub fn advance(frame: &mut arch::Context, exiting: bool) -> arch::CallOutcome {
     with_scheduler(|scheduler| match scheduler {
-        Some(scheduler) => scheduler.schedule(frame, exiting),
+        Some(scheduler) => scheduler.schedule(this_cpu(), frame, exiting),
         None => arch::CallOutcome::Exit,
     })
 }
@@ -147,7 +157,12 @@ pub fn statistics() -> (usize, usize) {
 /// has to translate through the first task's root rather than the kernel's.
 #[cfg(target_os = "none")]
 pub fn first_root() -> Option<usize> {
-    with_scheduler(|scheduler| scheduler.as_ref().and_then(Scheduler::current_root))
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_ref()
+            .and_then(|scheduler| scheduler.current_root(cpu))
+    })
 }
 
 /// Whether a scheduler is installed and still has work.
@@ -188,14 +203,15 @@ pub fn preempt(frame: &mut arch::Context) {
         return;
     }
 
+    let cpu = this_cpu();
     with_scheduler(|scheduler| {
         let Some(scheduler) = scheduler else {
             return;
         };
-        if !scheduler.has_other_runnable() {
+        if !scheduler.has_other_runnable(cpu) {
             return;
         }
-        let _ = scheduler.schedule(frame, false);
+        let _ = scheduler.schedule(cpu, frame, false);
     });
 }
 
@@ -219,8 +235,9 @@ pub fn sleep_for_microseconds(microseconds: u64, frame: &arch::Context) -> Optio
         // SAFETY: read-only.
         let now = unsafe { arch::timer_counter() };
         let until = now.saturating_add(arch::ticks_for_microseconds(frequency, microseconds));
+        let cpu = this_cpu();
         with_scheduler(|scheduler| {
-            scheduler.as_mut()?.sleep_until(until, frame);
+            scheduler.as_mut()?.sleep_until(cpu, until, frame);
             Some(until)
         })
     }
@@ -260,16 +277,22 @@ pub fn wake_expired() -> usize {
 /// another task runnable the switch is a normal one, and with none the boot
 /// waits instead.
 pub fn has_other_runnable() -> bool {
+    let cpu = this_cpu();
     with_scheduler(|scheduler| {
         scheduler
             .as_ref()
-            .is_some_and(Scheduler::has_other_runnable)
+            .is_some_and(|scheduler| scheduler.has_other_runnable(cpu))
     })
 }
 
 /// Whether any installed task could be selected right now.
 pub fn has_selectable() -> bool {
-    with_scheduler(|scheduler| scheduler.as_ref().is_some_and(Scheduler::has_selectable))
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_ref()
+            .is_some_and(|scheduler| scheduler.has_selectable(cpu))
+    })
 }
 
 /// Park the running task until another task wakes it.
@@ -277,9 +300,10 @@ pub fn has_selectable() -> bool {
 /// `None` when no scheduler is installed, which is the state a host build is in
 /// and the state a boot is in before it installs one.
 pub fn block(frame: &arch::Context) -> bool {
+    let cpu = this_cpu();
     with_scheduler(|scheduler| match scheduler {
         Some(scheduler) => {
-            scheduler.block(frame);
+            scheduler.block(cpu, frame);
             true
         }
         None => false,
@@ -334,9 +358,10 @@ pub fn sleeping() -> usize {
 /// Answers the child's pid, or `None` when the copy could not be made.
 #[cfg(target_os = "none")]
 pub fn fork_current(frame: &arch::Context) -> Option<u32> {
+    let cpu = this_cpu();
     with_scheduler(|scheduler| {
         let scheduler = scheduler.as_mut()?;
-        scheduler.fork_current(frame).map(|pid| pid as u32)
+        scheduler.fork_current(cpu, frame).map(|pid| pid as u32)
     })
 }
 
@@ -349,12 +374,14 @@ pub fn fork_current(_frame: &arch::Context) -> Option<u32> {
 
 /// The process id of the running task, if a scheduler is installed.
 pub fn current_pid() -> Option<u32> {
-    with_scheduler(|scheduler| scheduler.as_ref()?.current_pid())
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| scheduler.as_ref()?.current_pid(cpu))
 }
 
 /// The parent of the running task, if a scheduler is installed.
 pub fn current_parent() -> Option<u32> {
-    with_scheduler(|scheduler| scheduler.as_ref()?.current_parent())
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| scheduler.as_ref()?.current_parent(cpu))
 }
 
 /// The status of the first process that has exited, if any has.
@@ -393,10 +420,11 @@ pub fn exit_status(pid: u32) -> Option<Option<usize>> {
 /// What a wait asks before it parks: with nothing else runnable no exit can
 /// arrive, and blocking would be a hang rather than a wait.
 pub fn has_runnable_except_current() -> bool {
+    let cpu = this_cpu();
     with_scheduler(|scheduler| {
         scheduler
             .as_ref()
-            .is_some_and(Scheduler::has_other_runnable)
+            .is_some_and(|scheduler| scheduler.has_other_runnable(cpu))
     })
 }
 

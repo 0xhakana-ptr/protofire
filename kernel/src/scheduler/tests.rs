@@ -49,7 +49,7 @@ fn tasks_take_turns_in_order() {
     let mut frame = starting_context(0, 0);
     let mut order = Vec::new();
     for _ in 0..6 {
-        scheduler.schedule(&mut frame, false);
+        scheduler.schedule(0, &mut frame, false);
         order.push(arch::resume_address(&frame));
     }
     // The first schedule saves task 0 and installs task 1, so the entries
@@ -70,12 +70,12 @@ fn an_exited_task_is_skipped() {
 
     let mut frame = starting_context(0, 0);
     // Task 0 exits.
-    scheduler.schedule(&mut frame, true);
+    scheduler.schedule(0, &mut frame, true);
     assert_eq!(scheduler.exited(), 1);
 
     let mut order = Vec::new();
     for _ in 0..4 {
-        scheduler.schedule(&mut frame, false);
+        scheduler.schedule(0, &mut frame, false);
         order.push(arch::resume_address(&frame));
     }
     assert!(
@@ -93,10 +93,10 @@ fn a_scheduler_with_nothing_runnable_answers_exit() {
     let mut scheduler = Scheduler::new();
     scheduler.add(Task::without_space("only"));
     let mut frame = starting_context(0, 0);
-    scheduler.schedule(&mut frame, true);
+    scheduler.schedule(0, &mut frame, true);
     assert_eq!(scheduler.exited(), 1);
     assert!(!scheduler.has_runnable());
-    assert!(scheduler.current().is_none());
+    assert!(scheduler.current(0).is_none());
 }
 
 /// A sleeping task is not selectable, and waking one makes it so.
@@ -113,17 +113,17 @@ fn a_sleeping_task_is_owed_but_not_selectable() {
     scheduler.add(Task::without_space("b"));
 
     let mut frame = starting_context(0, 0);
-    scheduler.sleep_until(100, &frame);
+    scheduler.sleep_until(0, 100, &frame);
     assert_eq!(scheduler.sleeping(), 1);
     assert!(scheduler.has_sleeping(), "the boot still owes it a run");
     assert!(scheduler.has_runnable(), "which is what this answers");
-    assert!(scheduler.has_selectable(), "and b can still run");
+    assert!(scheduler.has_selectable(0), "and b can still run");
 
     // Now b sleeps too: nothing is selectable, though two tasks are owed.
-    scheduler.schedule(&mut frame, false);
-    scheduler.sleep_until(100, &frame);
+    scheduler.schedule(0, &mut frame, false);
+    scheduler.sleep_until(0, 100, &frame);
     assert_eq!(scheduler.sleeping(), 2);
-    assert!(!scheduler.has_selectable(), "neither can run");
+    assert!(!scheduler.has_selectable(0), "neither can run");
     assert!(scheduler.has_runnable(), "and both are still owed");
 }
 
@@ -134,14 +134,14 @@ fn a_deadline_wakes_only_when_it_has_passed() {
     let mut scheduler = Scheduler::new();
     scheduler.add(Task::without_space("only"));
     let frame = starting_context(0, 0);
-    scheduler.sleep_until(1000, &frame);
+    scheduler.sleep_until(0, 1000, &frame);
 
     assert_eq!(scheduler.wake_expired(999), 0, "not yet");
     assert_eq!(scheduler.sleeping(), 1);
 
     assert_eq!(scheduler.wake_expired(1000), 1, "at the deadline");
     assert_eq!(scheduler.sleeping(), 0);
-    assert!(scheduler.has_selectable());
+    assert!(scheduler.has_selectable(0));
 }
 
 /// A task that sleeps resumes where it asked to.
@@ -162,7 +162,7 @@ fn a_sleeper_keeps_the_position_it_slept_at() {
     let frame = starting_context(0x80_0000_1234, 0x80_0000_2000);
     let slept_at = frame;
 
-    scheduler.sleep_until(50, &frame);
+    scheduler.sleep_until(0, 50, &frame);
 
     // The frame the task holds is the one the sleep was called from, byte
     // for byte.  `Context` is `Copy` and `PartialEq`-free, so the check is
@@ -194,7 +194,7 @@ fn a_resumed_task_finds_the_answer_in_x0() {
     scheduler.add(task);
 
     let mut frame = starting_context(0, 0);
-    let outcome = scheduler.schedule(&mut frame, false);
+    let outcome = scheduler.schedule(0, &mut frame, false);
     match outcome {
         arch::CallOutcome::Return(value) => assert_eq!(value, 42),
         arch::CallOutcome::Exit => panic!("nothing exited"),
@@ -204,4 +204,64 @@ fn a_resumed_task_finds_the_answer_in_x0() {
         42,
         "and it is in the restored frame"
     );
+}
+
+/// Two CPUs asking at once do not take the same task.
+///
+/// This is what the per-CPU `running` array exists for.  A single `current`
+/// index answered both CPUs with the same task, and both installed its
+/// context: one task, two CPUs, and a program that ran its own instructions on
+/// two stacks at once.
+#[test]
+fn a_claim_does_not_hand_the_same_task_to_two_cpus() {
+    let mut scheduler = Scheduler::new();
+    for index in 0..3 {
+        let name: &'static str = ["a", "b", "c"][index];
+        let mut task = Task::without_space(name);
+        arch::set_resume_address(task.context_mut(), index);
+        scheduler.add(task);
+    }
+
+    let first = scheduler.claim(0).expect("cpu 0 has work");
+    let second = scheduler.claim(1).expect("cpu 1 has work");
+    assert_ne!(first, second, "two CPUs took one task: {first} twice");
+
+    // The third CPU gets the one left, and a fourth finds nothing: the machine
+    // is out of tasks, not the CPU out of work.
+    let third = scheduler.claim(2).expect("cpu 2 has work");
+    assert!(third != first && third != second);
+    assert_eq!(scheduler.claim(3), None, "every task is already running");
+}
+
+/// A task a CPU finishes does not come back to another CPU.
+#[test]
+fn a_finished_task_is_not_handed_to_another_cpu() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("a"));
+    scheduler.add(Task::without_space("b"));
+
+    // CPU 0 is running task 0, which the first `add` recorded.
+    let mut frame = starting_context(0, 0);
+    scheduler.schedule(0, &mut frame, true);
+    assert_eq!(scheduler.exited(), 1);
+    assert_ne!(scheduler.claim(0), Some(0), "the finished task came back");
+}
+
+/// A task another CPU is running is not offered, and one it finished is.
+#[test]
+fn one_cpu_running_a_task_hides_it_from_the_other() {
+    let mut scheduler = Scheduler::new();
+    for index in 0..3 {
+        let name: &'static str = ["a", "b", "c"][index];
+        let mut task = Task::without_space(name);
+        arch::set_resume_address(task.context_mut(), index);
+        scheduler.add(task);
+    }
+
+    // Slot zero holds task 0 from the first `add`, and tasks 1 and 2 are free,
+    // so both CPUs have somewhere to go.  What must not happen is CPU 1 being
+    // offered the task CPU 0 is running.
+    assert!(scheduler.has_selectable(0), "tasks 1 and 2 are free");
+    let theirs = scheduler.claim(1).expect("cpu 1 has work");
+    assert_ne!(theirs, 0, "cpu 1 was offered the task cpu 0 is running");
 }

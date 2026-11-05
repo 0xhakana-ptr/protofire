@@ -71,7 +71,11 @@ pub fn run() {
     // brings us back into the kernel and the scheduler takes it from there.  So
     // the entry is the first task's context installed by hand rather than
     // through a switch.
-    let first = scheduler.current().map(|task| *task.context());
+    // The boot CPU is the one entering the first program, so it is the CPU
+    // the scheduler must record as running it.
+    let first = scheduler
+        .current(crate::per_cpu::BOOT_SLOT)
+        .map(|task| *task.context());
     // SAFETY: called once, before any program runs.
     unsafe { crate::scheduler::install(scheduler) };
 
