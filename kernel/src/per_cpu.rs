@@ -29,12 +29,22 @@ use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
-/// The most CPUs this kernel describes.
+/// How many CPUs a machine may start past the boot one.
 ///
-/// Four, which is what the boot's reservation and the assembly's stacks are
-/// sized from.  A machine with more starts the first of them and reports the
-/// count it started.
-pub const MAX_CPUS: usize = 4;
+/// Four is `arch`'s `smp::MAX_SECONDARY_HARTS`, the constant the entry
+/// assembly's stack reservation is sized from.  It is written here as well
+/// because the two crates cannot see each other's constants, and the pair is
+/// kept in step by each naming the other rather than by a number that looks the
+/// same in two files for no stated reason.
+pub const MAX_SECONDARY_CPUS: usize = 4;
+
+/// The most CPUs this kernel describes: the boot CPU and the ones it may start.
+///
+/// Five, not four, and the difference is a slot the fourth secondary would
+/// otherwise share with the boot CPU: the boot is slot zero and a started CPU
+/// is one past its index among the started ones, so four secondaries need
+/// slots 1..=4.
+pub const MAX_CPUS: usize = 1 + MAX_SECONDARY_CPUS;
 
 /// One CPU, as the boot and a trap both see it.
 pub struct Cpu {
@@ -91,7 +101,7 @@ impl Cpu {
 }
 
 /// Every slot, live for the whole boot.
-static CPUS: [Cpu; MAX_CPUS] = [Cpu::new(), Cpu::new(), Cpu::new(), Cpu::new()];
+static CPUS: [Cpu; MAX_CPUS] = [const { Cpu::new() }; MAX_CPUS];
 
 /// The CPU this code is running on.
 fn cpu(slot: usize) -> &'static Cpu {

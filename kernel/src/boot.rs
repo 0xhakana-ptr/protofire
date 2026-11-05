@@ -51,7 +51,12 @@ pub fn kernel_main() -> ! {
 
     // The boot CPU's own slot, before any trap can arrive: a handler that asked
     // which CPU it was on would read a slot nothing had written.
-    crate::per_cpu::register(crate::per_cpu::BOOT_SLOT, arch::current_cpu_slot(), true);
+    //
+    // The **machine's** id for this CPU, not the slot: the slot is the kernel's
+    // numbering, and the boot line that reports `id` is reporting the hart or
+    // core the machine named.  The two coincide on a machine whose firmware
+    // cold-boots CPU zero, which is why passing the slot looked right.
+    crate::per_cpu::register(crate::per_cpu::BOOT_SLOT, arch::current_cpu_id(), true);
 
     let boot = arch::boot_info();
 

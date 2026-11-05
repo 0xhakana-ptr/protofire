@@ -42,6 +42,7 @@ extern crate alloc;
 core::arch::global_asm!(
     include_str!("entry.S"),
     SECONDARY_STACK_BYTES = const smp::SECONDARY_STACK_BYTES,
+    SECONDARY_STACK_RESERVATION = const smp::secondary_stack_reservation(),
 );
 
 pub mod boot;
@@ -104,6 +105,29 @@ pub fn current_cpu_slot() -> usize {
     0
 }
 
+/// The machine's own id for the CPU this code runs on.
+///
+/// `tp` says which **slot** this CPU is, which is the kernel's numbering and
+/// what a trap needs; the machine's id is the hart the firmware named, and the
+/// two differ the moment a machine does not cold-boot hart zero.  A boot line
+/// that reports `id` is reporting the machine's answer, so this is the accessor
+/// that gives it.
+#[cfg(target_os = "none")]
+pub fn current_cpu_id() -> usize {
+    let slot = current_cpu_slot();
+    if slot == 0 {
+        smp::boot_hart()
+    } else {
+        smp::secondary_hart_id(slot - 1)
+    }
+}
+
+/// A host has one CPU and no hart id, so zero is the answer and the slot.
+#[cfg(not(target_os = "none"))]
+pub fn current_cpu_id() -> usize {
+    0
+}
+
 /// Whether the trap being dispatched belongs to the CPU that owns the
 /// scheduler.
 ///
@@ -121,31 +145,43 @@ pub fn boot_cpu_owns_this_trap() -> bool {
     true
 }
 
-/// Send an inter-processor interrupt to every other CPU.
+/// Send an inter-processor interrupt to every started CPU.
 ///
 /// The supervisor software interrupt is per-hart, so "every other hart" is the
 /// firmware's IPI: the SBI extension takes a hart mask, and the mode says which
-/// harts it means.  This asks for every hart but the caller's own.
+/// harts it means.  The mask is built from the harts **this boot started and
+/// saw online**, not from the machine's list: naming a hart the firmware
+/// refused or one that never came up is a call whose error says nothing about
+/// the harts that are running.  The caller's own hart is not in the mask, and
+/// that is a restriction worth stating: a self-directed IPI would make the
+/// boot's own software line pending, which its dispatch would then have to
+/// acknowledge for a reason it cannot name.
+///
+/// Answers whether the firmware accepted the call.  A call with an empty mask
+/// is not made and answers `false`: there is no one to interrupt.
 ///
 /// # Safety
 ///
-/// Called after every hart's trap vector is installed.  The interrupt the
-/// others take is the software line, which their own dispatch answers.
+/// Called after every hart's trap vector is installed and its lines enabled.
+/// The interrupt the others take is the software line, which their own dispatch
+/// answers.
 #[cfg(target_os = "none")]
 pub unsafe fn send_ipi_to_others() -> bool {
     // SBI extension "IPI", function 0: send_ipi.
     const SBI_EXT_IPI: u64 = 0x0073_5049;
-    // `hart_mask_base` of -1 means "the mask's bits are hart ids"; the all-ones
-    // mask is every hart.  The caller's own hart is included and its software
-    // line is harmless.
+    // `hart_mask_base` of zero means "bit N of the mask names hart N".
+    let mask = smp::started_harts_mask();
+    if mask == 0 {
+        return false;
+    }
     let error: i64;
     // SAFETY: the SBI IPI call, with every register the firmware may eat
     // declared late-out.
     unsafe {
         core::arch::asm!(
             "ecall",
-            inlateout("a0") !0u64 => error,
-            inlateout("a1") !0u64 => _,
+            inlateout("a0") mask => error,
+            inlateout("a1") 0u64 => _,
             lateout("a2") _,
             lateout("a3") _,
             lateout("a4") _,

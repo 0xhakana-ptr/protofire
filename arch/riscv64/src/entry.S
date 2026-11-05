@@ -10,9 +10,9 @@
    is zero, so every address is its own physical address — and there is no
    handshake to check: a device-tree machine either loaded us or it did not.
 
-   The hart id is dropped.  This tree boots one hart (`-smp 1` is how the gate
-   runs the machine), and a second hart would need a stack per hart before it
-   needed anything else.  The tree pointer is the one thing kept.
+   The hart id is kept.  A machine that starts its other harts needs each one's
+   identity, and the hart the firmware cold-booted is not necessarily hart zero.
+   The tree pointer is the other thing kept.
 
    ## What has to happen first
 
@@ -291,10 +291,11 @@ _stack_top:
    runs, for the same reason — a stack of the hart's own, `sscratch`, `SUM`,
    the FPU off, and the trap vector.
 
-   Then one flag and a park.  The hart does not run the scheduler (one
-   structure, two harts, nothing locks) and does not take interrupts (`SIE`
-   stays clear, so the park is a park and not a second CPU feeding ticks into
-   code that assumes one hart); what it does is prove it came up. */
+   Then it records that it is online, tells the boot hart it is running, and
+   waits.  It does not run a task: the scheduler is one structure with one
+   owner, and that owner is the boot hart.  What it does do is take its own
+   timer and its own inter-processor interrupts, which is what makes it a CPU
+   the boot can count rather than a flag that says one was asked for. */
 
 .section .text.secondary, "ax"
 .balign 4
@@ -305,12 +306,15 @@ secondary_entry:
     lla gp, __global_pointer$
     .option pop
 
-    /* The slot indexes the stacks below.  The boot hart only ever hands out
-       slots the reservation holds — the count it starts is bounded by the
-       same constant the reservation is sized from — and the multiplication
-       is a real multiply, not a shift, so the size stays one fact. */
-    li t0, {SECONDARY_STACK_BYTES}
-    mul t0, a1, t0
+    /* The slot indexes the stacks below, and the pointer starts at the
+       **top** of the slot's own stack: a downward-growing frame written from a
+       stack's base is a frame below the reservation, which is what the first
+       version of this line did.  The boot hart only ever hands out slots the
+       reservation holds, and the multiplication is a real multiply, not a
+       shift, so the size stays one fact. */
+    addi t0, a1, 1
+    li t1, {SECONDARY_STACK_BYTES}
+    mul t0, t0, t1
     lla sp, secondary_stacks
     add sp, sp, t0
 
@@ -333,8 +337,9 @@ secondary_entry:
 /* One stack per hart the boot may start, indexed by the slot the boot hart
    handed the firmware.  The size is the boot stack's, and the count is the
    constant `smp` owns — both interpolated, so neither is written here a
-   second time. */
+   second time.  The reservation is the product, not one stack: a single
+   stack sized as if it were four is what the first version reserved. */
 .section .bss.secondary, "aw", @nobits
 .balign 4096
 secondary_stacks:
-    .skip {SECONDARY_STACK_BYTES}
+    .skip {SECONDARY_STACK_RESERVATION}

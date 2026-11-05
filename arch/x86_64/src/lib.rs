@@ -554,7 +554,7 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
 /// As the riscv64 arm: called once, from the boot CPU, with the tables up.
 /// This arm touches nothing, which keeps its half of the promise.
 #[cfg(target_os = "none")]
-pub unsafe fn start_secondary_harts() -> usize {
+pub unsafe fn start_secondary_harts(_timer_slice_us: u64) -> usize {
     0
 }
 
@@ -578,6 +578,16 @@ pub fn refused_harts() -> usize {
 
 /// Which CPU this code runs on: this machine runs one, so slot zero.
 pub fn current_cpu_slot() -> usize {
+    0
+}
+
+/// The machine's own id for this CPU.
+///
+/// This machine reads no processor table, so the CPU it runs on is the one the
+/// firmware booted and zero is the only id it has.  A machine that read an APIC
+/// id would answer with it here, and the slot would stay the kernel's
+/// numbering.
+pub fn current_cpu_id() -> usize {
     0
 }
 

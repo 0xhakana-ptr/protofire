@@ -929,17 +929,27 @@ assembly, so the count the boot bounds and the bytes it reserves cannot
 disagree.
 
 What a started hart does is deliberately small: its own stack, the global
-pointer, `sscratch`, `SUM`, the trap vector, one flag stored, and a park.
+pointer, `sscratch`, `SUM`, the trap vector, the kernel's page table in its own
+`satp`, its own timer, the two lines it answers, one flag stored, and a wait.
 
-## What the second CPU is allowed to do, and why the answer is "not much"
+## What the second CPU is allowed to do
 
-Giving the started hart its own timer was tried first, and it produced two
-faults that are worth recording because both were far from their cause: a store
-page fault inside the device tree, and a store to address three.  The reason is
-architectural rather than arithmetic.  `stvec` names **one** address per hart,
-and the kernel's entry at it is the boot CPU's: it swaps `sscratch`, calls the
-sink, and hands a frame to a scheduler that is one structure with no lock.  A
-second hart entering the same path is a second writer to all of it.
+The first attempt gave the started hart its own timer and nothing else, and it
+produced two faults that are worth recording because both were far from their
+cause: a store page fault inside the device tree, and a store to address three.
+What was missing was not a lock.  It was three things the hart had never been
+given, and each of them is a register the firmware leaves alone:
+
+- **`satp`.**  The page table is installed on the hart that builds it.  A
+  started hart is entered with `satp` clear, so it ran untranslated while the
+  boot hart ran through a table.  The addresses still resolve, because the
+  kernel is identity mapped, which is exactly what made the omission invisible:
+  what would not have held is every permission the table encodes.
+- **A deadline.**  Arming the timer is a firmware call, and the firmware keeps
+  one deadline per hart.  The boot hart arming its own left the started hart
+  with a line enabled and nothing to fire it.
+- **`SIE`.**  The firmware enters a started hart with supervisor interrupts
+  masked, and nothing had set them.
 
 There was a smaller defect on the way, and it is the one that made the first
 version confusing: the started hart wrote its own slot index into `tp`, and slot
@@ -949,21 +959,64 @@ scheduler.  Slots are now one past the index among started harts, and the boot
 hart writes its own zero at entry rather than trusting what firmware left in
 the register.
 
-So the boundary this tree can defend is: a started hart comes up, is counted, and
-parks with `SIE` clear.  The trap entry stays gated on the boot CPU, which is
-what makes that boundary explicit in code rather than implied by a flag.  The
-line the boot prints says which is which:
+## The line the trap entry draws, and where it moved
+
+The gate that stopped a second hart was a single `return` at the top of the
+dispatch: a CPU that was not the boot CPU acknowledged its software line and
+returned before the sink.  Removing it was safe because the split it stood in
+for already exists further in, on state that says what it means:
+
+- `interrupts::handle` counts the tick on whichever CPU took it and re-arms that
+  CPU's own clock, then returns early for any CPU that is not the scheduler's
+  owner.
+- `scheduler::preempt` refuses a frame that is not a program's, and a CPU that
+  never enters U-mode never holds one.
+
+So a started hart takes its clock and its inter-processor interrupt, hands both
+to the sink, and touches no task.  What it must not do is claim an external
+source: the `Plic` the boot installed carries the boot hart's context, so a
+claim through it from another hart completes a source nobody finishes.  That
+line stays disabled on a started hart, and if a machine ever enables it the
+dispatch says so rather than claiming through the wrong context.
+
+The boot proves the whole path rather than describing it.  After the started
+hart records that it is online, the boot hart sends one inter-processor
+interrupt through the firmware and waits, bounded, for the count:
 
     protofire: cpus online = 2
-    protofire: cpu 0 id 0, scheduler owner, 3 tick(s)
-    protofire: cpu 1 id 1, parked, 0 tick(s)
+    protofire: ipi to 1 other cpu(s), taken
+    protofire: cpu 0 id 0, scheduler owner, 5 tick(s)
+    protofire: cpu 1 id 1, ticking, 1 ipi(s), 756 tick(s)
 
-The tick counts are the evidence the start alone cannot give: a CPU that stored
-its flag and then stopped prints "online" and nothing else, while a CPU doing
-work prints a number that grew.  Giving the second CPU work needs two things
-this kernel has not designed yet, a trap entry per CPU, and a scheduler that is
-per CPU or locked, and both are named in `docs/status.md` rather than implied
-here.
+The counts are the evidence the start alone cannot give: a hart that stored its
+flag and then stopped prints `not taken` and a tick count of zero.  A taken IPI
+means the firmware delivered, `stvec` was where this hart reads it, the trap
+entry built a frame on this hart's own stack, and the kernel's handler ran far
+enough to count.
+
+Four defects came out of the change, and all four are fixed in what this
+document describes:
+
+- **The per-hart stack reservation held one slot.**  The entry multiplied the
+  hart's slot by the stack size to pick a stack, so slot 1 pointed past the end
+  of the buffer.  It went unnoticed while the started hart only parked, and the
+  moment it took a trap it ran on whatever followed the reservation.
+- **The stack pointer started at the stack's base.**  A downward-growing frame
+  written from there is a frame below the reservation, which is what slot zero
+  did on the very first trap.
+- **A CPU that never came up was still registered as online**, so the activity
+  line could count a CPU the line above it had just called a failure.
+- **The boot CPU's recorded `id` was its slot**, not the hart the machine
+  named.  The two coincide on a machine whose firmware cold-boots hart zero,
+  which is why it looked right.
+
+What is still not done is the reason this stopped here.  A started CPU draws no
+task, because a task switch writes the scheduler, and the scheduler is one
+structure with one owner.  Nothing in this kernel has parallel work to give it:
+there is no SMP scheduler, no parallel driver and no load.  When there is work
+for it, the change that gives it that work is also the change that decides how
+the scheduler becomes per-CPU or locked, and `docs/status.md` records the gap
+rather than implying it here.
 
 ## Kernel
 
@@ -1092,35 +1145,14 @@ which is correct and slower than it needs to be; a COW fork needs a write fault
 this kernel does not handle.  And `exec`: a child that wants a different program
 than its parent has no call for it.
 
-### The second CPU, and why it is parked on purpose
+### The second CPU
 
-The started hart has its own stack and the trap vector, records that it is
-online, and parks. Giving it interrupts was tried and abandoned, and the
-record of why is worth more than the code was.
-
-Two real defects came out of it, and both are fixed in what this document
-describes:
-
-- **The per-hart stack reservation held one slot.** The entry multiplied the
-  hart's slot by the stack size to pick a stack, so slot 1 pointed past the end
-  of the buffer. It went unnoticed while the started hart only parked, and the
-  moment it took a trap it ran on whatever followed the reservation.
-- **Nothing gated the scheduler on the owning CPU.** A started hart that took a
-  timer would run `wake_expired` and the preemption hook, both of which write a
-  single unlocked structure, and the boot showed a user context installed over
-  a kernel frame.
-
-What is left is not a third bug. It is that the trap path itself is a single
-CPU's: the sink writes the console byte by byte with no lock, and the scheduler
-is one structure. A second hart can only enter that path if those three become
-concurrent-safe, and that is a design decision with a cost, not a fix with a
-diff.
-
-Nothing in this kernel has parallel work to give a second CPU: there is no SMP
-scheduler, no parallel driver and no load. So the honest state is the one the
-census records: the hart comes up, the boot can see it, and it does nothing
-else. When there is work for it, the change that gives it that work is also the
-change that decides how the trap path becomes concurrent.
+The started hart comes up, installs the kernel's page table in its own `satp`,
+arms its own timer, enables its own clock and inter-processor lines, records
+that it is online, and then takes interrupts and draws no task.  The four
+defects found on the way, and the trap entry's gate that had to move, are
+recorded in the section above; the census in `docs/status.md` says what it does
+now.
 
 ### The first device that raised the line
 

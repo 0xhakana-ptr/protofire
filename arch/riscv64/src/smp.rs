@@ -15,14 +15,26 @@
 //!
 //! ## What a started hart does, and what it deliberately does not
 //!
-//! A started hart gets a stack of its own, the trap vector, and one job:
-//! record that it is online, and park.  It does not run the scheduler, the
-//! scheduler is a single structure today, and two harts in it would be two
-//! writers nothing locks.  It does not take interrupts: `sstatus.SIE` stays
-//! clear, so the park is a park and not a second CPU feeding ticks into code
-//! that assumes one hart.  What the boot can prove is that the hart came up:
-//! the flag it stores is what the boot hart's line reads, and a hart that
-//! never stores it is a line that says so rather than a boot that hangs.
+//! A started hart gets a stack of its own, the kernel's page table, its own
+//! timer, its own lines, and one job: be a CPU the boot can count.  It takes
+//! its timer interrupt and its inter-processor interrupt, and it hands both to
+//! the kernel's sink, which counts them.  It does **not** run a task: the
+//! scheduler is one structure with one owner, and every task switch writes it,
+//! so a second hart in it would be a second writer to a structure nothing
+//! locks.  That is the same line the previous tree drew, and it is the honest
+//! one until the scheduler grows a per-CPU half.
+//!
+//! ## Why taking interrupts is not the same as running programs
+//!
+//! The two were treated as one thing while this hart parked, and they are not.
+//! A timer that is counted and re-armed on the hart that took it touches no
+//! task: `per_cpu`'s counters are atomics, and the kernel's handler returns
+//! before the scheduling half for any CPU that is not the scheduler's owner.
+//! What the hart must not do is reach `preempt`, and it cannot: `preempt`
+//! refuses a frame that is not a program's, and this hart never leaves the
+//! kernel.  So the boot can prove the CPU runs, takes its own clock, and
+//! receives an interrupt another CPU sent, without the scheduler being
+//! involved at all.
 
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicUsize;
@@ -31,19 +43,30 @@ use core::sync::atomic::Ordering;
 /// How many harts past the boot one this tree starts.
 ///
 /// The gate's machine asks for two harts in total.  The stacks the entry
-/// assembly reserves are sized from this number, one fact, interpolated into
-/// the assembly rather than written there a second time, and a machine whose
-/// tree names more harts than the cap has a boot that starts the first of
-/// them rather than one that guesses at a bigger reservation.
+/// assembly reserves are sized from this number through
+/// [`secondary_stack_reservation`], one fact, interpolated into the assembly
+/// rather than written there a second time, and a machine whose tree names more
+/// harts than the cap has a boot that starts the first of them rather than one
+/// that guesses at a bigger reservation.
 pub const MAX_SECONDARY_HARTS: usize = 4;
 
-/// The stack one parked hart owns, in bytes.
+/// The stack one started hart owns, in bytes.
 ///
-/// The hart runs one function that stores one atomic and parks.  The size is
-/// the boot stack's, not a bound small enough to be clever: a bound that
-/// tight has to be re-derived the first time the hart's job grows, and the
-/// memory it reserves is address space the machine has.
+/// The hart runs the trap path and the kernel's handler, which is the boot's
+/// own code: the size is the boot stack's, and it is generous on purpose.  A
+/// bound that tight has to be re-derived the first time the hart's job grows,
+/// and the memory it reserves is address space the machine has.
 pub const SECONDARY_STACK_BYTES: usize = 65536;
+
+/// How much `.bss` the entry assembly's stack region reserves.
+///
+/// One stack per hart the boot may start, as a single number: the assembly is
+/// `.skip`ped by this and indexes it by `slot + 1`, so a reservation that was
+/// one stack while the indexing assumed four is a fault the boot only shows
+/// once the fourth slot is used.  The first version reserved one.
+pub const fn secondary_stack_reservation() -> usize {
+    SECONDARY_STACK_BYTES * MAX_SECONDARY_HARTS
+}
 
 /// The hart the firmware cold-booted, as the entry assembly recorded it.
 static BOOT_HART: AtomicUsize = AtomicUsize::new(0);
@@ -73,6 +96,21 @@ static ONLINE: [AtomicBool; MAX_SECONDARY_HARTS] =
 /// How many harts the firmware refused to start, if it refused any.
 static REFUSED: AtomicUsize = AtomicUsize::new(0);
 
+/// The root table every started hart installs in its own `satp`.
+///
+/// `satp` is per-hart, so a hart that never writes it runs with translation
+/// off while the boot hart runs through a table.  The two look alike on a
+/// machine whose kernel is identity mapped, which is exactly what makes the
+/// difference easy to miss: with `satp` clear there is no `U` bit, no
+/// read-only text and no device window, and the first permission the kernel
+/// leans on would not be enforced on that hart.
+#[cfg(target_os = "none")]
+static KERNEL_ROOT: AtomicUsize = AtomicUsize::new(0);
+
+/// The timer slice a started hart arms for itself, in microseconds.
+#[cfg(target_os = "none")]
+static TIMER_SLICE_US: AtomicUsize = AtomicUsize::new(0);
+
 /// The firmware's answer for the harts it would not start.
 ///
 /// A refusal is a fact about the machine's state, not a reason to stop: the
@@ -90,6 +128,27 @@ pub fn secondary_hart_id(slot: usize) -> usize {
 /// Whether the hart started into `slot` has recorded that it is running.
 pub fn secondary_online(slot: usize) -> bool {
     ONLINE[slot].load(Ordering::Acquire)
+}
+
+/// The harts this boot started that are online, as SBI's hart mask names them.
+///
+/// Built from what the firmware accepted rather than from the tree's list: a
+/// mask that named a hart the firmware refused is a call the firmware may
+/// answer with an error, and the error would say nothing about the harts that
+/// are running.  Bit N is hart N, which is the encoding `hart_mask_base` of
+/// zero selects; ids past the mask's reach are left out and the count of them
+/// is what a caller learns from the mask being smaller than the list.
+pub fn started_harts_mask() -> u64 {
+    let mut mask = 0u64;
+    let mut slot = 0;
+    while slot < MAX_SECONDARY_HARTS {
+        let hart = SLOT_HART[slot].load(Ordering::Acquire);
+        if ONLINE[slot].load(Ordering::Acquire) && hart < 64 {
+            mask |= 1u64 << hart;
+        }
+        slot += 1;
+    }
+    mask
 }
 
 /// The firmware's HSM extension, and the function that starts a hart.
@@ -141,22 +200,31 @@ unsafe fn sbi_hart_start(hart: u64, start: u64, opaque: u64) -> i64 {
 /// machine has one hart" and "the machine has two and one refused" is the
 /// whole of what a reader of the log needs.
 ///
-/// The boot hart runs this after its own tables are up and the bss is clear,
-/// /// the bss clear is the boot hart's, and a hart started before it would
-/// find whatever the firmware left in the flags it is about to store.
+/// `timer_slice_us` is the slice each started hart arms its own timer with.
+/// It is the kernel's policy and the kernel passes it: this crate knows how to
+/// arm a timer and not how long a slice should be.
+///
+/// The boot hart runs this after its own tables are up and the bss is clear:
+/// the bss clear is the boot hart's, and a hart started before it would find
+/// whatever the firmware left in the flags it is about to store.
 ///
 /// # Safety
 ///
-/// Called once, from the boot hart, with the trap vector installed.  The
-/// started hart is entered at [`secondary_entry_address`], whose path touches
-/// only its own stack, the vector and the flag.
+/// Called once, from the boot hart, with the trap vector installed and the
+/// page table built.  The started hart is entered at
+/// [`secondary_entry_address`], whose path touches only its own stack, the
+/// vector, the page table, its own lines and the flags this module owns.
 #[cfg(target_os = "none")]
-pub unsafe fn start_secondary_harts() -> usize {
+pub unsafe fn start_secondary_harts(timer_slice_us: u64) -> usize {
     let Some((harts, count)) = crate::boot::hart_list() else {
         // A machine that cannot say what it has starts none of it, which is
         // the same answer the device tree's absence gets everywhere else.
         return 0;
     };
+    // The table the started harts must translate through, read here because
+    // the boot is the only caller and its `satp` is the one to copy.
+    KERNEL_ROOT.store(crate::paging::current_root_table(), Ordering::Release);
+    TIMER_SLICE_US.store(timer_slice_us as usize, Ordering::Release);
     let boot = boot_hart();
     let mut asked = 0usize;
     for &hart in &harts[..count] {
@@ -228,36 +296,63 @@ pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
     let cpu_slot = slot + 1;
     unsafe { core::arch::asm!("mv tp, {}", in(reg) cpu_slot, options(nomem, nostack)) };
 
-    // Online, and parked.
+    // The kernel's page table, on this hart.  `satp` is a per-hart register and
+    // the firmware enters a started hart with it clear, so without this write
+    // this hart runs untranslated while the boot hart runs through a table.
+    // The addresses still resolve, which is what made the omission invisible;
+    // what would not have held is every permission the table encodes.
+    let root = KERNEL_ROOT.load(Ordering::Acquire);
+    // SAFETY: the root is the table the boot hart is already running through,
+    // it covers the code performing this call, and this hart has not yet
+    // touched memory through any other mapping.
+    unsafe { crate::paging::install(root) };
+
+    // This hart's own timer.  A deadline is per-hart state the firmware holds,
+    // so the boot hart arming its own would leave this one with none: the
+    // enable without an arm is a line that never fires.
     //
-    // ## Why this hart takes no interrupt
+    // SAFETY: the tree named the counter's rate, which is what the boot checked
+    // before it armed its own, and this hart is about to enable the line.
+    if let Some(frequency) = unsafe { crate::timer::frequency() } {
+        let slice = TIMER_SLICE_US.load(Ordering::Acquire) as u64;
+        // SAFETY: as above, on this hart's own clock.
+        unsafe { crate::timer::arm(crate::timer::ticks_for_microseconds(frequency, slice)) };
+    }
+
+    // The two lines this hart answers: its clock, and the inter-processor
+    // interrupt another CPU sends it.  Not the external line: the controller
+    // object the boot installed is the boot hart's context, and a source
+    // claimed through the wrong context is a source nobody completes.
     //
-    // `stvec` names **one** address for the whole hart, and the kernel's entry
-    // at it assumes the trap is the boot CPU's: it swaps `sscratch`, calls the
-    // kernel's sink, and hands a frame to a scheduler that is one structure and
-    // locks nothing.  A second hart entering the same path is a second writer,
-    // and the two boots it produced were a fault inside the device tree and a
-    // store to address three, neither of them anywhere near the CPU that
-    // caused it.
-    //
-    // So a started hart keeps `SIE` clear and parks.  What the boot can prove
-    // is that it came up and stayed up; giving it work is the change that also
-    // gives it a trap entry of its own, and that is a design this kernel has
-    // not made yet.  Saying so is more useful than a hart that looks busy.
+    // SAFETY: `stvec` is installed by the entry assembly, the sink is installed
+    // by the boot before it starts any hart, and this hart has a stack.
+    unsafe {
+        let _ = crate::enable_interrupt_line(crate::trap::TIMER_INTERRUPT);
+        let _ = crate::enable_interrupt_line(crate::trap::SOFTWARE_INTERRUPT);
+    }
+
+    // Online, and then waiting with the machine's own enable set: `SIE` is what
+    // turns a pending line into a trap, and the firmware leaves it clear on
+    // entry.  The flag is stored **after** the enable, so "online" means the
+    // hart can take an interrupt and not merely that its instructions ran.
+    // SAFETY: this hart's own interrupt enable, set once the vector, the sink
+    // and the stack behind them are all in place.
+    unsafe { core::arch::asm!("csrsi sstatus, 2", options(nomem, nostack)) };
     ONLINE[slot].store(true, Ordering::Release);
-    park()
+    idle()
 }
 
-/// Stop this hart until something it cannot yet name arrives.
+/// Wait for an interrupt, with this hart's lines enabled.
 ///
-/// `sstatus.SIE` is clear, so no interrupt is taken and the loop does not
-/// exit, which is the point: the hart is parked, not idle, and the change
-/// that gives it work is the change that gives it a wake.
+/// A `wfi` returns when an interrupt is pending, whether or not it is taken, so
+/// the loop is what makes this `-> !`.  A trap taken here is the kernel's own:
+/// this hart never leaves S-mode, so its frame is never a program's, and the
+/// scheduling half refuses it.
 #[cfg(target_os = "none")]
-fn park() -> ! {
+fn idle() -> ! {
     loop {
-        // SAFETY: `wfi` is the wait-for-interrupt hint, and with `SIE` clear
-        // no interrupt is taken on this hart.
+        // SAFETY: `wfi` is the wait-for-interrupt hint; `sstatus.SIE` is set,
+        // so an enabled line is delivered rather than only clearing the hint.
         unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
     }
 }

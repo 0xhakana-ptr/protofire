@@ -227,10 +227,20 @@ impl Machine {
     /// said different things.
     fn paired_lines(self) -> &'static [&'static [&'static str]] {
         match self {
-            Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[
+            Self::X8664 | Self::Aarch64 => &[
                 // The parent's status is its child's pid and the child's is
                 // zero: the same call, answered twice, differently.
                 &["exit statuses 1 -> 4", "4 -> 0"],
+            ],
+            Self::Riscv64 => &[
+                &["exit statuses 1 -> 4", "4 -> 0"],
+                // The second CPU, on one line: the slot the kernel numbered it
+                // with, the hart the machine named, that it takes its own
+                // interrupts, and the interrupt this boot aimed at it.  The ipi
+                // count is exact, one, because the boot sends exactly one and
+                // waits for it; the tick count depends on how long the boot ran
+                // before the line, so it is not named here.
+                &["cpu 1 id 1, ticking, 1 ipi(s), "],
             ],
         }
     }
@@ -544,13 +554,19 @@ impl Machine {
                 // that printed nothing for a hart it asked for would be a
                 // start nobody could tell from a start nobody made.
                 ("protofire: hart 1 online", true),
+                // The interrupt the boot aimed at the started CPU, and whether
+                // it arrived.  A hart that stored its flag and stopped prints
+                // `not taken`: this is the line that separates "the firmware
+                // accepted the start" from "a CPU ran the trap path".
+                ("protofire: ipi to 1 other cpu(s), taken", true),
                 // And what each CPU has actually taken: the start alone cannot
                 // tell a CPU that works from one that stored a flag and
                 // stopped.  The boot CPU owns the scheduler and its count is
-                // real; the started CPU is parked, and the line says so.
+                // real; the started CPU takes its own timer and the interrupt
+                // above, and does not run a task, which the line says by
+                // naming the owner on the other CPU.
                 ("protofire: cpus online = 2", true),
                 ("protofire: cpu 0 id 0, scheduler owner, ", false),
-                ("protofire: cpu 1 id 1, parked, 0 tick(s)", true),
                 // The external controller, initialized rather than merely
                 // named: base, the context this hart claims through, the
                 // machine's source count, and the hart line the PLIC reaches
