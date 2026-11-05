@@ -149,6 +149,21 @@ pub fn wait_for_a_wakeup() {
 #[cfg(not(target_os = "none"))]
 pub fn wait_for_a_wakeup() {}
 
+/// Where one interrupt line is, as the machine's controller sees it.
+///
+/// `(pending, group1, enabled)` from the distributor, for the core asking.
+/// TEMPORARY PROBE SUPPORT: reads only, and remove with the call site above.
+///
+/// # Safety
+///
+/// Reads the controller's windows, which must be mapped uncached.
+#[cfg(target_os = "none")]
+pub unsafe fn interrupt_probe_state(number: usize) -> Option<(bool, bool, bool)> {
+    let gic = crate::trap::controller()?;
+    // SAFETY: as the promise above; this reads only.
+    Some(unsafe { gic.probe_state(number) })
+}
+
 /// Install the exception vector table, and prove it delivers.
 ///
 /// Returns whether this machine will now take an exception through

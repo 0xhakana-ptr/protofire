@@ -530,6 +530,12 @@ pub unsafe fn enable_interrupt_line(_number: usize) -> bool {
 ///
 /// Called after [`install_interrupt_table`] with a sink that will claim the
 /// vector.
+///
+/// # Safety
+///
+/// The controller must be enabled and the vector must be one this machine can
+/// raise: on this machine that is the timer's own vector, and the self-test is
+/// the caller that proves the path.
 #[cfg(target_os = "none")]
 pub unsafe fn raise_interrupt(number: usize) -> bool {
     // SAFETY: the caller's contract.
@@ -538,6 +544,17 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
     };
     // SAFETY: `probe` answered a base address and the boot mapped it.
     unsafe { apic.raise_to_self(number as u8) }
+}
+
+/// TEMPORARY PROBE SUPPORT.  `None`: the local APIC's per-line state is not
+/// what this probe is for.
+///
+/// # Safety
+///
+/// Reads only.
+#[cfg(target_os = "none")]
+pub unsafe fn interrupt_probe_state(_number: usize) -> Option<(bool, bool, bool)> {
+    None
 }
 
 /// The most CPUs past the boot one this machine starts: none.

@@ -168,6 +168,12 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                         arch::serial::write_str("protofire: a write woke ");
                         arch::serial::write_u32(woken as u32);
                         arch::serial::write_str(" blocked task(s)\n");
+                        // The task that woke may be held by another CPU, and
+                        // that CPU is parked in a wait whose own clock may not
+                        // move: without this, the woken task stays Runnable
+                        // and unclaimed for ever, and both cores end up
+                        // waiting.
+                        unsafe { arch::send_ipi_to_others() };
                     }
                 }
                 CallOutcome::Return(count)

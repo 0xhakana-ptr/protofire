@@ -163,6 +163,9 @@ pub fn handle(frame: irq::Frame) -> bool {
             arch::serial::write_str("protofire: a program woke, ");
             arch::serial::write_u32(woken as u32);
             arch::serial::write_str(" of them\n");
+            // The woken task may be held by another CPU, whose own clock may
+            // not move; the IPI is what makes it re-check.
+            unsafe { arch::send_ipi_to_others() };
         }
         return true;
     }

@@ -495,6 +495,29 @@ impl Gic {
         true
     }
 
+    /// TEMPORARY PROBE: where the interrupt is, as (pending, group1, enabled).
+    ///
+    /// Reads the distributor directly rather than going through the interface:
+    /// a timer that has fired, a line enabled in this core's bank, and an
+    /// interface reporting nothing pending leaves exactly one place the
+    /// interrupt can be stuck, and this names it.
+    ///
+    /// # Safety
+    ///
+    /// As [`enable`]: the window must be the GIC's, mapped uncached.  Reads
+    /// only.
+    #[cfg(target_os = "none")]
+    pub unsafe fn probe_state(&self, number: usize) -> (bool, bool, bool) {
+        let bit = Distributor::enable_bit(number);
+        let enabled =
+            unsafe { read(self.distributor.base + DIST_ISENABLER + (number / 32) * 4) } & bit != 0;
+        let pending = unsafe { read(self.distributor.base + 0x200 + (number / 32) * 4) } & bit != 0;
+        // A set IGROUPR bit names group 1; a clear one, group 0.
+        let group1 =
+            unsafe { read(self.distributor.array_address(DIST_IGROUPR, number, 32)) } & bit != 0;
+        (pending, group1, enabled)
+    }
+
     /// Whether the distributor's enable bit for `number` is set.
     ///
     /// # Safety

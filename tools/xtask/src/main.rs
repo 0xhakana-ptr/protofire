@@ -127,7 +127,7 @@ impl Machine {
                 // and a gate that booted one core would never exercise the
                 // call.  The same argument riscv64's `-smp 2` makes.
                 "-smp".to_string(),
-                "1".to_string(),
+                "2".to_string(),
                 "-m".to_string(),
                 "512M".to_string(),
                 "-drive".to_string(),
@@ -441,6 +441,18 @@ impl Machine {
                 // first fetch.  `hello from ring 3` is the program's `Write`
                 // reaching the console through the trap path.
                 ("protofire: entering ring 3", true),
+                // Two cores, and the same evidence riscv64 requires: the PSCI
+                // start reached a core that came up and recorded it, the
+                // interrupt the boot sent it arrived, and a program ran on it
+                // to its exit.  A gate at one core would accept a PSCI call
+                // that never worked.
+                ("protofire: hart 1 online", true),
+                ("protofire: ipi to 1 other cpu(s), taken", true),
+                ("protofire: cpu 1 id 1, ticking, 1 ipi(s), ", false),
+                ("protofire: work available, started cpus woken", true),
+                ("protofire: cpu 1 runs process ", false),
+                ("protofire: program ended on cpu 1", true),
+                ("protofire: parallel, programs ended on ", false),
                 // Two programs, each in an address space of its own, at
                 // addresses no other program can reach.
                 ("protofire: program 1 mapped at ", false),

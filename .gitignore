@@ -36,6 +36,11 @@
 # point of writing them anyway: they are a **guard**, not a workaround, and
 # each names why its file is the product.
 #
+# The one alternative would be a second target directory — `target-elf/` was
+# created once, to link the aarch64 image as an ELF with symbols so a gdb
+# session could name addresses — and it is covered by the rule above rather
+# than by a `.gitignore` of its own, for the reason the header states.
+#
 # ## Why there is no entry for a generated file
 #
 # This header used to claim one: `arch/x86_64/src/kaslr_relocs.generated.rs`,
@@ -57,6 +62,13 @@
 
 # `cargo bench` writes criterion's reports here.
 **/criterion/
+
+# A second target directory, created once to link the aarch64 image as an ELF
+# with symbols so a gdb session could name addresses.  The leading slash of the
+# rule above anchors it to the root, which is exactly why a sibling spelling
+# needs its own line: a pattern that covered every directory named `target*`
+# would be a rule with no reason attached.
+/target-elf/
 
 # Build products a document names
 #
