@@ -75,8 +75,13 @@ pub fn run() {
     // running.  A task recorded as taken anywhere else would be a second answer
     // to that question, and the two would disagree the moment a started CPU
     // claimed one at the same time.
-    let first =
-        crate::scheduler::claim(crate::per_cpu::BOOT_SLOT).and_then(crate::scheduler::start_of);
+    let first = match crate::scheduler::claim(crate::per_cpu::BOOT_SLOT) {
+        crate::scheduler::Claim::Took(task) => crate::scheduler::start_of(task),
+        // The boot CPU has not entered a program yet, so it cannot already be
+        // running one, and a boot with no task is a line rather than a stop.
+        // Both are answered the same way: nothing to enter.
+        crate::scheduler::Claim::NothingToRun | crate::scheduler::Claim::AlreadyRunning => None,
+    };
 
     // The other CPUs' source of work, installed before any of them is woken.
     //
@@ -275,7 +280,16 @@ fn hand_over_pipe(
 /// frame of a task the scheduler has marked as running on this CPU.
 #[cfg(target_os = "none")]
 pub fn claim_for_this_cpu(cpu: usize) -> Option<(usize, arch::Context)> {
-    let task = crate::scheduler::claim(cpu)?;
+    let task = match crate::scheduler::claim(cpu) {
+        crate::scheduler::Claim::Took(task) => task,
+        // A core asking for work while it still holds a task is the mistake
+        // this type exists to make visible, and the safe answer is "nothing":
+        // the core waits for its next wake instead of taking a task another CPU
+        // may be running.
+        crate::scheduler::Claim::AlreadyRunning | crate::scheduler::Claim::NothingToRun => {
+            return None;
+        }
+    };
     let (root, context) = crate::scheduler::start_of(task)?;
     let pid = crate::scheduler::pid_of(task).unwrap_or(0);
     arch::serial::write_str("protofire: cpu ");

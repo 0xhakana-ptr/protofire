@@ -9,6 +9,7 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use super::Claim;
 use super::Scheduler;
 use super::Task;
 use super::starting_context;
@@ -48,7 +49,7 @@ fn tasks_take_turns_in_order() {
 
     // The boot claims its first task; a test that did not would be driving a
     // scheduler in a state no boot reaches.
-    assert_eq!(scheduler.claim(0), Some(0));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
     let mut frame = starting_context(0, 0);
     let mut order = Vec::new();
     for _ in 0..6 {
@@ -72,7 +73,7 @@ fn an_exited_task_is_skipped() {
     }
 
     // The boot claims the task it is about to enter, so task 0 is CPU 0's.
-    assert_eq!(scheduler.claim(0), Some(0));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
     let mut frame = starting_context(0, 0);
     // Task 0 exits.
     scheduler.schedule(0, &mut frame, true);
@@ -97,7 +98,7 @@ fn an_exited_task_is_skipped() {
 fn a_scheduler_with_nothing_runnable_answers_exit() {
     let mut scheduler = Scheduler::new();
     scheduler.add(Task::without_space("only"));
-    assert_eq!(scheduler.claim(0), Some(0));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
     let mut frame = starting_context(0, 0);
     scheduler.schedule(0, &mut frame, true);
     assert_eq!(scheduler.exited(), 1);
@@ -120,7 +121,7 @@ fn a_sleeping_task_is_owed_but_not_selectable() {
 
     assert_eq!(
         scheduler.claim(0),
-        Some(0),
+        Claim::Took(0),
         "the boot claims what it enters"
     );
     let mut frame = starting_context(0, 0);
@@ -144,7 +145,7 @@ fn a_sleeping_task_is_owed_but_not_selectable() {
 fn a_deadline_wakes_only_when_it_has_passed() {
     let mut scheduler = Scheduler::new();
     scheduler.add(Task::without_space("only"));
-    assert_eq!(scheduler.claim(0), Some(0));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
     let frame = starting_context(0, 0);
     scheduler.sleep_until(0, 1000, &frame);
 
@@ -171,7 +172,7 @@ fn a_sleeper_keeps_the_position_it_slept_at() {
 
     // A frame that is unmistakably not a fresh one: it is the *reference*
     // the comparison below is against, so nothing has to read a field.
-    assert_eq!(scheduler.claim(0), Some(0));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
     let frame = starting_context(0x80_0000_1234, 0x80_0000_2000);
     let slept_at = frame;
 
@@ -206,7 +207,7 @@ fn a_resumed_task_finds_the_answer_in_x0() {
     arch::set_return_value(task.context_mut(), 42);
     scheduler.add(task);
 
-    assert_eq!(scheduler.claim(0), Some(0));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
     let mut frame = starting_context(0, 0);
     let outcome = scheduler.schedule(0, &mut frame, false);
     match outcome {
@@ -256,7 +257,9 @@ fn a_claim_does_not_hand_the_same_task_to_two_cpus() {
     // claim is checked rather than fed to another claim.
     let mut taken = Vec::new();
     for cpu in 0..cpus {
-        let claimed = scheduler.claim(cpu).expect("this cpu has a task");
+        let Claim::Took(claimed) = scheduler.claim(cpu) else {
+            panic!("cpu {cpu} was refused a task with tasks still free");
+        };
         assert!(
             !taken.contains(&claimed),
             "two CPUs took one task: {claimed} twice"
@@ -270,13 +273,46 @@ fn a_claim_does_not_hand_the_same_task_to_two_cpus() {
     // block does not run; on a machine that starts a second CPU it does, and it
     // is the assertion the whole two-CPU design rests on.
     if cpus < crate::per_cpu::MAX_CPUS
-        && let Some(claimed) = scheduler.claim(cpus)
+        && let Claim::Took(claimed) = scheduler.claim(cpus)
     {
         assert!(
             !taken.contains(&claimed),
             "an idle CPU was handed {claimed}, which another CPU holds"
         );
     }
+}
+
+/// A CPU that already holds a task is refused, not silently given another.
+///
+/// This is the property the old `Option` return could not express.  It used to
+/// answer `Some` for this case by releasing the task the CPU held and taking a
+/// new one, so a loop that claimed until it saw `None` never ended — its `Vec`
+/// grew until the OOM killer stopped the run, three times, and the failure read
+/// as a build too large for the machine.
+///
+/// The type is the fix: `Claim` has no `is_some`, so that loop cannot be
+/// written without naming the case, and a caller that names it has to decide
+/// what happens to the task it was holding.
+#[test]
+fn a_cpu_that_already_holds_a_task_is_refused() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("a"));
+    scheduler.add(Task::without_space("b"));
+
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+    assert_eq!(
+        scheduler.claim(0),
+        Claim::AlreadyRunning,
+        "a second claim by the same CPU is a mistake, and it says so"
+    );
+    // And the refusal changed nothing: task 0 is still this CPU's, and task 1
+    // is still free for a CPU that has nothing.
+    assert_eq!(
+        scheduler.current_pid(0),
+        Some(0),
+        "the refused claim released the task it was holding"
+    );
+    assert_eq!(scheduler.claim(1), Claim::Took(1));
 }
 
 /// A task a CPU finishes does not come back to another CPU.
@@ -287,11 +323,15 @@ fn a_finished_task_is_not_handed_to_another_cpu() {
     scheduler.add(Task::without_space("b"));
 
     // CPU 0 is running task 0, which the first `add` recorded.
-    assert_eq!(scheduler.claim(0), Some(0));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
     let mut frame = starting_context(0, 0);
     scheduler.schedule(0, &mut frame, true);
     assert_eq!(scheduler.exited(), 1);
-    assert_ne!(scheduler.claim(0), Some(0), "the finished task came back");
+    assert_ne!(
+        scheduler.claim(0),
+        Claim::Took(0),
+        "the finished task came back"
+    );
 }
 
 /// A task another CPU is running is not offered, and one it finished is.
@@ -306,10 +346,12 @@ fn one_cpu_running_a_task_hides_it_from_the_other() {
     }
 
     // The boot claims the task it enters, which is task 0 for CPU 0 here.
-    assert_eq!(scheduler.claim(0), Some(0), "cpu 0 takes task 0");
+    assert_eq!(scheduler.claim(0), Claim::Took(0), "cpu 0 takes task 0");
     // Tasks 1 and 2 are free, so both CPUs have somewhere to go.  What must
     // not happen is CPU 1 being offered the task CPU 0 is running.
     assert!(scheduler.has_selectable(0), "tasks 1 and 2 are free");
-    let theirs = scheduler.claim(1).expect("cpu 1 has work");
+    let Claim::Took(theirs) = scheduler.claim(1) else {
+        panic!("cpu 1 was refused a task with two free");
+    };
     assert_ne!(theirs, 0, "cpu 1 was offered the task cpu 0 is running");
 }

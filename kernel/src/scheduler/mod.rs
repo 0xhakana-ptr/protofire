@@ -56,6 +56,7 @@
 pub mod core;
 pub mod task;
 
+pub use core::Claim;
 pub use core::Scheduler;
 pub use task::Task;
 pub use task::starting_context;
@@ -389,9 +390,20 @@ pub fn sleeping() -> usize {
 /// Take a task for `cpu`, answering which one.
 ///
 /// The one operation that marks a task taken.  A started CPU calls this when it
-/// is woken, and gets `None` until the boot has built a task it may run.
-pub fn claim(cpu: usize) -> Option<usize> {
-    with_scheduler(|scheduler| scheduler.as_mut()?.claim(cpu))
+/// is woken, and gets `NothingToRun` until the boot has built a task it may
+/// run.
+///
+/// Answers a [`Claim`] rather than an `Option` so "this CPU already holds a
+/// task" is a value the caller has to name: that case used to be answered by
+/// silently releasing the old task, and a loop written against the old type
+/// exhausted memory before anyone saw what it was doing.
+pub fn claim(cpu: usize) -> Claim {
+    with_scheduler(|scheduler| match scheduler {
+        Some(scheduler) => scheduler.claim(cpu),
+        // No scheduler at all is the same answer as an empty one, and it is the
+        // honest one: there is nothing to take.
+        None => Claim::NothingToRun,
+    })
 }
 
 /// A task's root table and saved frame, for a CPU about to enter it.

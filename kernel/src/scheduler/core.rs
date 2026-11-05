@@ -53,6 +53,32 @@ pub struct Scheduler {
     pub(crate) next_pid: u32,
 }
 
+/// What a claim answered.
+///
+/// Three states, and they are three because a caller has to act differently on
+/// each: a task to run, a machine with no work, and a **mistake**.
+///
+/// ## Why not `Option<usize>`
+///
+/// It was `Option<usize>`, and that type could not say "this CPU already has a
+/// task".  The past implementation answered `Some` for that case by silently
+/// releasing the old task and taking a new one, so a loop that claimed until it
+/// saw `None` never terminated — it exhausted memory and the kernel's own OOM
+/// killer ended the run, three times, before anyone looked inside the loop.
+///
+/// With this type the same loop does not compile: `Claim` has no `is_some`, and
+/// the pattern that would have to be written, `Claim::Took(_)`, makes a reader
+/// ask what happens to the task the CPU was already holding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Claim {
+    /// The CPU may run this task, and is now recorded as running it.
+    Took(usize),
+    /// No task in the machine can run.
+    NothingToRun,
+    /// This CPU already holds a task.  The caller is wrong, not the machine.
+    AlreadyRunning,
+}
+
 impl Scheduler {
     /// A scheduler with no tasks.
     pub fn new() -> Scheduler {
@@ -152,11 +178,24 @@ impl Scheduler {
     /// The hazard is worth this paragraph because the failure is silent:
     /// nothing about a repeated claim looks wrong until two CPUs are running
     /// one task.
-    pub fn claim(&mut self, cpu: usize) -> Option<usize> {
-        let next = self.next_runnable(cpu)?;
+    pub fn claim(&mut self, cpu: usize) -> Claim {
+        // A CPU that already holds a task is refused, and the refusal is a
+        // value rather than an overwrite.
+        //
+        // This is the whole of the fix for what the paragraph above describes.
+        // Returning `None` here instead would be indistinguishable from "no
+        // task is runnable", so a caller could not tell a mistake from an
+        // empty machine — and the mistake is the one that produced an
+        // `illegal instruction` on riscv64 and three out-of-memory kills here.
+        if self.holds_a_task(cpu) {
+            return Claim::AlreadyRunning;
+        }
+        let Some(next) = self.next_runnable(cpu) else {
+            return Claim::NothingToRun;
+        };
         self.assign(cpu, next);
         self.switches += 1;
-        Some(next)
+        Claim::Took(next)
     }
 
     /// Install the next task's context over `frame`.
