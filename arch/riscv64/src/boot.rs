@@ -329,3 +329,48 @@ pub fn managed_pool_bytes() -> Option<usize> {
         .sum();
     Some(total as usize)
 }
+
+/// The most `cpu` nodes this function reads.
+const MAX_HART_NODES: usize = 8;
+
+/// The harts the tree says the machine has, in the tree's own order.
+///
+/// A `cpu` node's `reg` names its hart id, and its `status` says whether
+/// firmware means to use it: a node with no status is usable, which is the
+/// specification's default, and one marked `disabled` is not this boot's to
+/// start.  The boot hart is *not* subtracted here — it is the caller's fact,
+/// and subtracting it is the caller's decision.
+///
+/// `None` when there is no tree: a machine that cannot say what it has starts
+/// none of it, which is the answer the tree's absence gets everywhere else.
+pub fn hart_list() -> Option<([usize; MAX_HART_NODES], usize)> {
+    let tree = device_tree()?;
+    let root = tree.root().ok()?;
+    let cpus = root.by_path("/cpus")?;
+
+    let mut harts = [0usize; MAX_HART_NODES];
+    let mut count = 0;
+    for child in cpus.children() {
+        if !child.name().starts_with("cpu@") {
+            continue;
+        }
+        if child.property("device_type").and_then(|p| p.as_str()) != Some("cpu") {
+            continue;
+        }
+        if child.property("status").and_then(|p| p.as_str()) == Some("disabled") {
+            continue;
+        }
+        // The hart id is the `reg`'s only cell: `/cpus` declares one address
+        // cell and no size, so the register decodes to the id and nothing
+        // else.
+        let Some(region) = child.reg().next() else {
+            continue;
+        };
+        if count == MAX_HART_NODES {
+            break;
+        }
+        harts[count] = region.address as usize;
+        count += 1;
+    }
+    Some((harts, count))
+}

@@ -27,24 +27,38 @@
 extern crate alloc;
 
 // The entry: the global pointer, the stack, `sscratch`, the bss clear and the
-// S-mode hand-off.  The trap path lives in the same file: one entry for every
-// trap, because `stvec` names one address.
+// S-mode hand-off.  The trap path and the secondary harts' entry live in the
+// same file: one entry for every trap, because `stvec` names one address, and
+// one road in for every hart the firmware starts.
+//
+// The constant the assembly needs from the Rust side — how big one parked
+// hart's stack is — is interpolated, so `smp`'s bound and the assembly's
+// reservation are one fact.
 //
 // Here rather than in `bootloader` for the reason the other machines' entries
 // are: every instruction is a fact about this machine, and the protocol crate
 // is not the machine.
 #[cfg(target_os = "none")]
-core::arch::global_asm!(include_str!("entry.S"));
+core::arch::global_asm!(
+    include_str!("entry.S"),
+    SECONDARY_STACK_BYTES = const smp::SECONDARY_STACK_BYTES,
+);
 
 pub mod boot;
 pub mod interrupts;
 pub mod paging;
 pub mod port;
 pub mod serial;
+pub mod smp;
 pub mod stvec;
 pub mod timer;
 pub mod trap;
 
+pub use smp::refused_harts;
+pub use smp::secondary_hart_id;
+pub use smp::secondary_online;
+#[cfg(target_os = "none")]
+pub use smp::start_secondary_harts;
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
 pub use trap::Context;
@@ -67,6 +81,22 @@ pub use trap::set_resume_address;
 pub use trap::set_return_value;
 pub use trap::stack_pointer;
 pub use trap::starting_context;
+
+/// The entry the assembly calls with the boot hart's id, by the name the
+/// linker resolves.
+///
+/// The firmware cold-boots exactly one hart, and which one it chose is a fact
+/// of this entry — not an assumption about hart zero.  It reaches the same
+/// kind of static the device-tree pointer does, for the same reason.
+///
+/// # Safety
+///
+/// Called once, from the entry, with the register the firmware handed over.
+#[cfg(target_os = "none")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn riscv64_set_boot_hart(hart: usize) {
+    smp::set_boot_hart(hart);
+}
 
 // The kernel stack a program's trap lands on.  `sscratch` holds it while a
 // program runs, and the trap entry's swap turns a program's `sp` into this

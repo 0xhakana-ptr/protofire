@@ -594,3 +594,39 @@ pub unsafe fn install_descriptor_tables(_interrupt_stack_top: usize) -> bool {
 pub fn interrupt_stack_top() -> usize {
     0
 }
+
+/// Start this machine's other cores: this machine starts none.
+///
+/// A device-tree machine wakes a secondary core through PSCI, the firmware
+/// call its tree names in the `psci` node's `cpu_on` function — but this
+/// machine's boot reads no PSCI node and has no secondary entry to name, so
+/// the honest answer is zero: a machine with more than one core runs one,
+/// and a count without a path behind it is the claim this tree's boot lines
+/// exist to refuse.
+///
+/// # Safety
+///
+/// As the riscv64 arm: called once, from the boot core, with the tables up.
+/// This arm touches nothing, which keeps its half of the promise.
+#[cfg(target_os = "none")]
+pub unsafe fn start_secondary_harts() -> usize {
+    0
+}
+
+/// The core id started into `slot`: this machine starts none, so every slot
+/// is empty and the answer is zero.
+pub fn secondary_hart_id(_slot: usize) -> usize {
+    0
+}
+
+/// Whether the core started into `slot` came up: this machine starts none, so
+/// no slot is online.
+pub fn secondary_online(_slot: usize) -> bool {
+    false
+}
+
+/// The cores the firmware refused to start: this machine asks for none, so
+/// none were refused.
+pub fn refused_harts() -> usize {
+    0
+}

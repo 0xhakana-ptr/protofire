@@ -68,8 +68,11 @@ _start:
     csrc sstatus, t0
 
     /* `a1` still holds the device tree pointer, which is what the kernel's
-       `boot_info` reads.  `s1` is callee-saved, so it survives the clear. */
+       `boot_info` reads.  `a0` holds the hart the firmware cold-booted, and
+       neither is a register the bss clear can be trusted to keep — `s1` and
+       `s2` are callee-saved, so they survive it. */
     mv s1, a1
+    mv s2, a0
 
     lla t0, __bss_start
     lla t1, __bss_end
@@ -84,6 +87,12 @@ _start:
        the value and the module above asks for it. */
     mv a0, s1
     call riscv64_set_device_tree
+
+    /* The boot hart, recorded for the same reason: which hart the firmware
+       chose is a fact of this entry, and the list of harts to start is the
+       machine's minus this one. */
+    mv a0, s2
+    call riscv64_set_boot_hart
 
     /* The protocol's entry, not the kernel's: `bootloader` is where "a loader
        put us here, so start the kernel" lives, and this file is the machine. */
@@ -259,3 +268,65 @@ trap_entry:
 _stack_bottom:
     .skip 65536
 _stack_top:
+
+/* The other harts' entry, which the boot hart names in the firmware's start
+   call.  The firmware enters here in S-mode with `a0` = the hart's own id and
+   `a1` = the slot the boot hart chose — an index into the stacks below and
+   the flags the Rust side owns.
+
+   ## What it does, and what it does not
+
+   This is the boot entry's list, minus what the boot hart has already done by
+   the time it asks the firmware for anyone: the bss is clear, the device tree
+   is recorded, and there is nothing here to hand `protofire_entry`.  What
+   remains is the global pointer — the same first instruction the boot entry
+   runs, for the same reason — a stack of the hart's own, `sscratch`, `SUM`,
+   the FPU off, and the trap vector.
+
+   Then one flag and a park.  The hart does not run the scheduler (one
+   structure, two harts, nothing locks) and does not take interrupts (`SIE`
+   stays clear, so the park is a park and not a second CPU feeding ticks into
+   code that assumes one hart); what it does is prove it came up. */
+
+.section .text.secondary, "ax"
+.balign 4
+.global secondary_entry
+secondary_entry:
+    .option push
+    .option norelax
+    lla gp, __global_pointer$
+    .option pop
+
+    /* The slot indexes the stacks below.  The boot hart only ever hands out
+       slots the reservation holds — the count it starts is bounded by the
+       same constant the reservation is sized from — and the multiplication
+       is a real multiply, not a shift, so the size stays one fact. */
+    li t0, {SECONDARY_STACK_BYTES}
+    mul t0, a1, t0
+    lla sp, secondary_stacks
+    add sp, sp, t0
+
+    csrw sscratch, x0
+
+    li t0, (1 << 18)
+    csrs sstatus, t0
+    li t0, (3 << 14)
+    csrc sstatus, t0
+
+    lla t0, trap_entry
+    csrw stvec, t0
+
+    call riscv64_secondary_main
+
+1:  /* The Rust side parks; this is the road back if it ever returns. */
+    wfi
+    j 1b
+
+/* One stack per hart the boot may start, indexed by the slot the boot hart
+   handed the firmware.  The size is the boot stack's, and the count is the
+   constant `smp` owns — both interpolated, so neither is written here a
+   second time. */
+.section .bss.secondary, "aw", @nobits
+.balign 4096
+secondary_stacks:
+    .skip {SECONDARY_STACK_BYTES}

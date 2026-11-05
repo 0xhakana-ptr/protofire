@@ -143,12 +143,17 @@ impl Machine {
             // generic CPU is what the previous tree booted and what the device
             // tree describes; the disk rides the PCIe bus, which is the same
             // `virtio-blk-pci` the other two machines are given and the same
-            // modern-only interface request.
+            // modern-only interface request.  `-smp 2` because the boot starts
+            // the machine's second hart — the tree lists what the firmware
+            // cold-booted and asks the firmware for the rest — and a gate that
+            // booted one hart would never exercise the start.
             Self::Riscv64 => vec![
                 "-machine".to_string(),
                 "virt".to_string(),
                 "-cpu".to_string(),
                 "rv64".to_string(),
+                "-smp".to_string(),
+                "2".to_string(),
                 "-m".to_string(),
                 "512M".to_string(),
                 "-drive".to_string(),
@@ -484,6 +489,12 @@ impl Machine {
                 ),
                 ("protofire: interrupt table installed, interrupts on", true),
                 ("protofire: interrupt delivered to its handler", true),
+                // The second hart, started through the firmware and counted
+                // rather than assumed.  The line names the hart: one that
+                // never stored its flag prints "did not come up", and a boot
+                // that printed nothing for a hart it asked for would be a
+                // start nobody could tell from a start nobody made.
+                ("protofire: hart 1 online", true),
                 ("protofire: timer line enabled = 1", true),
                 ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),

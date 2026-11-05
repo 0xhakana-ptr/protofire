@@ -539,3 +539,39 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
     // SAFETY: `probe` answered a base address and the boot mapped it.
     unsafe { apic.raise_to_self(number as u8) }
 }
+
+/// Start this machine's other CPUs: this machine starts none.
+///
+/// The local APIC's ICR can reach another CPU — an INIT-SIPI-SIPI sequence is
+/// how an application processor is woken — but there is no discovery behind it
+/// on this machine: no MADT is read, so there is no list of processors to
+/// start and no place to start them into.  Zero is the honest answer today: a
+/// machine with more than one CPU runs one, and a count without a path behind
+/// it is exactly the claim this tree's boot lines exist to refuse.
+///
+/// # Safety
+///
+/// As the riscv64 arm: called once, from the boot CPU, with the tables up.
+/// This arm touches nothing, which keeps its half of the promise.
+#[cfg(target_os = "none")]
+pub unsafe fn start_secondary_harts() -> usize {
+    0
+}
+
+/// The CPU id started into `slot`: this machine starts none, so every slot is
+/// empty and the answer is zero.
+pub fn secondary_hart_id(_slot: usize) -> usize {
+    0
+}
+
+/// Whether the CPU started into `slot` came up: this machine starts none, so
+/// no slot is online.
+pub fn secondary_online(_slot: usize) -> bool {
+    false
+}
+
+/// The CPUs the firmware refused to start: this machine asks for none, so
+/// none were refused.
+pub fn refused_harts() -> usize {
+    0
+}

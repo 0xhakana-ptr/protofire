@@ -374,6 +374,43 @@ pub fn kernel_main() -> ! {
         }
     }
 
+    // The machine's other CPUs, if it has any, started and counted rather
+    // than assumed.
+    //
+    // A CPU the machine accepts gets its own stack and the trap vector and
+    // one flag to store; the wait below is bounded, because a CPU that never
+    // comes up is a line on the console rather than a boot that hangs.  A
+    // machine whose answer is "none" starts none and prints none — the same
+    // question the interrupt table asks of a machine without a controller.
+    //
+    // The bss was cleared long before this line: the boot CPU cleared it as
+    // its first act, and a CPU started afterwards finds flags that are ready
+    // to be stored rather than whatever firmware left.
+    #[cfg(target_os = "none")]
+    {
+        let started = unsafe { arch::start_secondary_harts() };
+        for slot in 0..started {
+            let hart = arch::secondary_hart_id(slot);
+            let mut spins = 0u64;
+            while !arch::secondary_online(slot) && spins < 50_000_000 {
+                spins += 1;
+            }
+            arch::serial::write_str("protofire: hart ");
+            arch::serial::write_u32(hart as u32);
+            if arch::secondary_online(slot) {
+                arch::serial::write_str(" online\n");
+            } else {
+                arch::serial::write_str(" did not come up\n");
+            }
+        }
+        let refused = arch::refused_harts();
+        if refused > 0 {
+            arch::serial::write_str("protofire: ");
+            arch::serial::write_u32(refused as u32);
+            arch::serial::write_str(" hart(s) the firmware refused to start\n");
+        }
+    }
+
     // Initialise the heap and say where it is.
     //
     // This is not a probe left behind: `bounds()` is what makes the allocator

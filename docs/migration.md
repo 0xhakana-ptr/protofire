@@ -14,7 +14,7 @@ keeping true.
 | Subsystem | What is in |
 |---|---|
 | `abi` | the whole wire format, and the syscall numbering |
-| `arch` | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the GDT and TSS, the local APIC and its timer, the 8259, the PL011, the NS16550A, the device-tree handshake, the GIC, the OpenSBI handoff, ring 3 on two of the three bootable machines |
+| `arch` | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the GDT and TSS, the local APIC and its timer, the 8259, the PL011, the NS16550A, the device-tree handshake, the GIC, the OpenSBI handoff, ring 3 on all three bootable machines |
 | `crypto` | all of it, one module per algorithm — it is a `libs` crate, like `unicode` |
 | `fs` | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; most of the names in the next table are not |
 | `kernel` | the boot sequence, the syscall table, the scheduler, device discovery |
@@ -914,6 +914,39 @@ about to restore: back to a program, it re-arms the kernel stack for the next
 trap; back to the kernel, it zeroes it.  The idle's wait zeroes it too, before
 unmasking — a tick inside that window is the kernel's own trap, and a parked
 user `sp` would misroute it onto a program's stack.
+
+### A second hart, started and counted
+
+    protofire: interrupt delivered to its handler
+    protofire: hart 1 online
+    protofire: timer line enabled = 1
+
+The machine's hart list comes from the tree — `/cpus`'s `cpu@` children, each
+`reg` naming its hart id and `status` saying whether firmware means to use it —
+and the boot hart is not assumed to be any of them: it is whichever hart the
+firmware cold-booted, recorded by the entry in the same kind of static the
+device-tree pointer reaches.  The list to start is the machine's minus that
+one.
+
+Starting is an ask, not a register write.  A hart that is not running is parked
+in M-mode, and S-mode cannot wake it — the HSM extension is the firmware's
+door, and the ask names an entry address and carries one opaque word.  The
+word is the slot: it chooses which stack the hart lands on and which flag it
+stores, and the boot hart only ever hands out slots the reservation holds.
+The reservation is one fact — the constant `smp` owns is interpolated into the
+assembly, so the count the boot bounds and the bytes it reserves cannot
+disagree.
+
+What a started hart does is deliberately small: its own stack, the global
+pointer, `sscratch`, `SUM`, the trap vector, one flag stored, and a park.  It
+does **not** run the scheduler, because the scheduler is a single structure and
+two harts in it would be two writers nothing locks; it does **not** take
+interrupts, because `SIE` stays clear and a parked hart feeding ticks into code
+that assumes one hart is a race wearing a boot's clothes.  What the boot can
+prove is that the hart came up: the flag it stores is what the boot hart's
+bounded wait reads, and a hart that never stores it is a line that says so —
+`did not come up` — rather than a start nobody could tell from a start nobody
+made.
 
 ## Kernel
 

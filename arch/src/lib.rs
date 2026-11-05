@@ -430,6 +430,38 @@ pub use arch_riscv64::raise_interrupt;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::raise_interrupt;
 
+// The machine's other CPUs: started, counted, reported.  Every machine answers
+// the same question — the ones that start none answer zero, which is an answer
+// and not a gap — so a boot asks one question and does not learn which machine
+// it is running on.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::start_secondary_harts;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::start_secondary_harts;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::start_secondary_harts;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::secondary_hart_id;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::secondary_hart_id;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::secondary_hart_id;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::secondary_online;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::secondary_online;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::secondary_online;
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::refused_harts;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::refused_harts;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::refused_harts;
+
 // Making a page-table change visible.  Every machine has an instruction for
 // it, and a caller that changed a table without one changed nothing the CPU
 // observes.
