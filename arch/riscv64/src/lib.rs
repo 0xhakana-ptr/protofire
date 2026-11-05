@@ -730,6 +730,81 @@ pub unsafe fn external_source_enabled(number: usize) -> bool {
     unsafe { plic.source_enabled(number) }
 }
 
+/// The PLIC source the console's UART is wired to.
+///
+/// Read from the tree rather than written here: the platform decides which
+/// source a device is, and a board that moved the UART would have a tree that
+/// says so.  Ten on the `virt` machine.
+#[cfg(target_os = "none")]
+pub fn console_source() -> Option<usize> {
+    let tree = boot::device_tree()?;
+    let node = tree.find_compatible("ns16550a")?;
+    // A cell, not a four-byte read: `interrupts` is a list even when it holds
+    // one number, and a reader that demanded exactly one word refused the
+    // property the tree actually has.
+    node.property("interrupts")?
+        .as_cells()?
+        .next()
+        .map(|cell| cell as usize)
+}
+
+/// Claim the console's interrupt: enable the source at the controller, and ask
+/// the UART to raise it once.
+///
+/// ## Why the console is the device this boot claims
+///
+/// The PLIC was programmed and its claim path had never carried a device's
+/// interrupt: no source was enabled, so nothing ever arrived through the
+/// external line.  The console is the device this boot has and trusts, and its
+/// transmitter raises the line on its own, so enabling it turns the claim path
+/// from something a boot could run into something a boot ran.
+///
+/// Asking for *one* interrupt is deliberate.  A 16550 raises its transmitter
+/// interrupt whenever the holding register is empty, which is nearly always, so
+/// leaving it enabled is an interrupt per printed byte, and every one of those
+/// arrives inside the print that is trying to report it.  The interrupt is
+/// silenced by the handler the first time it is taken.
+///
+/// # Safety
+///
+/// Called once, after [`install_interrupt_table`] and with the console up.
+#[cfg(target_os = "none")]
+pub unsafe fn claim_console_source() -> Option<usize> {
+    let source = console_source()?;
+    // SAFETY: the caller's contract is this function's.
+    if !unsafe { enable_external_source(source) } {
+        return None;
+    }
+    // SAFETY: the source is enabled, so the device's line reaches this hart.
+    unsafe { serial::enable_transmit_interrupt() };
+    Some(source)
+}
+
+/// Stop the console raising its line, and answer whether it had one pending.
+///
+/// The 16550 has no acknowledge register: reading `IIR` is the acknowledge, and
+/// the read also says whether the interrupt was this device's.
+///
+/// # Safety
+///
+/// Called from the trap path for [`console_source`].
+#[cfg(target_os = "none")]
+pub unsafe fn acknowledge_console() -> bool {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { serial::acknowledge() }
+}
+
+/// Stop the console raising its line again.
+///
+/// # Safety
+///
+/// Called from the trap path, after [`acknowledge_console`].
+#[cfg(target_os = "none")]
+pub unsafe fn silence_console() {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { serial::disable_interrupts() };
+}
+
 /// The line a boot raises to prove the interrupt path.
 ///
 /// The software interrupt, because it is the only one this machine can be

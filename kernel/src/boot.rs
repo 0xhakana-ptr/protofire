@@ -108,6 +108,8 @@ pub fn kernel_main() -> ! {
     #[cfg(target_os = "none")]
     crate::tick::bring_up_external();
     #[cfg(target_os = "none")]
+    crate::tick::bring_up_console_source();
+    #[cfg(target_os = "none")]
     crate::tick::bring_up();
 
     // A program, at ring 3, calling back.
@@ -115,6 +117,8 @@ pub fn kernel_main() -> ! {
     // up by now, so the boot CPU's count is real.
     #[cfg(target_os = "none")]
     crate::cpus::report_activity();
+    #[cfg(target_os = "none")]
+    crate::tick::report_console();
 
     crate::programs::run();
 

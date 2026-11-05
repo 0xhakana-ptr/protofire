@@ -670,3 +670,51 @@ pub fn external_controller() -> Option<(usize, usize, usize)> {
 pub const fn external_interrupt() -> usize {
     0
 }
+
+/// The console's interrupt source: none on this machine.
+///
+/// This console is write-only from the kernel's side and raises no line the
+/// kernel asks for, so there is no source to claim.
+#[cfg(target_os = "none")]
+pub fn console_source() -> Option<usize> {
+    None
+}
+
+/// Claim the console's interrupt: there is none to claim.
+///
+/// # Safety
+///
+/// As the riscv64 arm.  This one touches nothing.
+#[cfg(target_os = "none")]
+pub unsafe fn claim_console_source() -> Option<usize> {
+    None
+}
+
+/// Acknowledge the console's interrupt: there is none.
+///
+/// # Safety
+///
+/// As the riscv64 arm.  This one touches nothing.
+#[cfg(target_os = "none")]
+pub unsafe fn acknowledge_console() -> bool {
+    false
+}
+
+/// Silence the console's interrupt: there is none to silence.
+///
+/// # Safety
+///
+/// As the riscv64 arm.  This one touches nothing.
+#[cfg(target_os = "none")]
+pub unsafe fn silence_console() {}
+
+/// Whether a source is enabled at the controller: this machine has no
+/// claim/complete controller, so no source is.
+///
+/// # Safety
+///
+/// Read-only.  This one touches nothing.
+#[cfg(target_os = "none")]
+pub unsafe fn external_source_enabled(_number: usize) -> bool {
+    false
+}

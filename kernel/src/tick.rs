@@ -62,6 +62,48 @@ pub fn bring_up_external() {
     arch::serial::write_str("\n");
 }
 
+/// Claim the console's interrupt source, and report what the controller kept.
+///
+/// ## Why a boot claims one
+///
+/// The controller was programmed and its claim path had never carried a device:
+/// no source was enabled, so nothing arrived through the external line, and
+/// "the claim path works" was a statement about code rather than about a boot.
+/// The console is the device this boot has, and its transmitter raises the line
+/// on its own once asked, which makes the first real claim a thing a boot runs.
+#[cfg(target_os = "none")]
+pub fn bring_up_console_source() {
+    // SAFETY: the interrupt table is installed by now, and this enables one
+    // source at a controller the boot has already programmed.
+    let Some(source) = (unsafe { arch::claim_console_source() }) else {
+        arch::serial::write_str("protofire: console source not claimed\n");
+        return;
+    };
+    // SAFETY: read-only, and the controller is the one the boot programmed.
+    let enabled = unsafe { arch::external_source_enabled(source) };
+    arch::serial::write_str("protofire: console source ");
+    arch::serial::write_u32(source as u32);
+    arch::serial::write_str(if enabled {
+        " enabled at the controller\n"
+    } else {
+        " NOT enabled at the controller\n"
+    });
+}
+
+/// Report how many console interrupts were taken.
+///
+/// A source enabled at the controller and never taken leaves this zero, which
+/// is the difference between a claim path that is installed and one that ran.
+/// The report comes after the boot has written a great deal, because a
+/// transmit interrupt can only arrive after a byte was given to the device.
+#[cfg(target_os = "none")]
+pub fn report_console() {
+    let count = crate::CONSOLE_INTERRUPTS.load(core::sync::atomic::Ordering::Acquire);
+    arch::serial::write_str("protofire: console interrupt(s) taken = ");
+    arch::serial::write_u32(count as u32);
+    arch::serial::write_str("\n");
+}
+
 /// Enable the timer's line, arm it once, and say what the machine reported.
 #[cfg(target_os = "none")]
 pub fn bring_up() {

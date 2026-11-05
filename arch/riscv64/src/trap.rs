@@ -447,6 +447,20 @@ fn finish_external(frame: &mut ExceptionFrame) {
         return;
     };
 
+    // The console's UART is the one source this tree drives, and it is
+    // acknowledged at the *device* before the controller is told the source is
+    // finished.  The order is the point: a 16550 keeps its line raised until
+    // something reads `IIR`, so a source completed at the PLIC but not at the
+    // device arrives again the moment interrupts are unmasked, which is a storm
+    // rather than a handler.
+    let is_console = crate::console_source().is_some_and(|source| source == number);
+    let acknowledged = if is_console {
+        // SAFETY: `number` is the console's own source.
+        unsafe { crate::acknowledge_console() }
+    } else {
+        false
+    };
+
     let handled = match sink() {
         Some(sink) => sink(irq::Frame::device(number)),
         None => false,
@@ -454,6 +468,16 @@ fn finish_external(frame: &mut ExceptionFrame) {
 
     // SAFETY: `number` is what `claim` answered.
     unsafe { controller.complete(number) };
+
+    // And silenced, so the one interrupt this boot asked for is the one it got.
+    // A transmitter interrupt fires whenever the holding register is empty, so
+    // an enabled device turns every printed byte into a trap inside the print
+    // that reports it.
+    if is_console && acknowledged {
+        // SAFETY: `number` is the console's source and the device has been
+        // acknowledged.
+        unsafe { crate::silence_console() };
+    }
 
     // The preemption point, after the source is finished: a switch made before
     // the completion would leave the line claimed in a task that may not run

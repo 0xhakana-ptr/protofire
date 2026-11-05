@@ -560,6 +560,15 @@ impl Machine {
                     "protofire: external controller at 0xc000000, context 1, 95 source(s), hart line on",
                     true,
                 ),
+                // A real device's interrupt, claimed and taken, not merely a
+                // controller that was programmed: the console's UART is source
+                // 10, and the count is one because the boot asks it for exactly
+                // one interrupt and then silences the device.
+                (
+                    "protofire: console source 10 enabled at the controller",
+                    true,
+                ),
+                ("protofire: console interrupt(s) taken = 1", true),
                 ("protofire: timer line enabled = 1", true),
                 ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),

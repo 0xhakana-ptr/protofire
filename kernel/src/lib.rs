@@ -114,6 +114,26 @@ pub use abi::Loader;
 /// reachable through [`boot`] and nowhere else.
 pub use boot::kernel_main;
 
+/// How many console interrupts this boot has taken.
+///
+/// The count is what makes the claim path a fact about a boot rather than
+/// about the code: a source enabled at the controller and never taken leaves
+/// it zero.
+pub static CONSOLE_INTERRUPTS: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Whether an interrupt number belongs to the console.
+#[cfg(target_os = "none")]
+pub fn console_owns(vector: usize) -> bool {
+    arch::console_source().is_some_and(|source| source == vector)
+}
+
+/// Count one console interrupt.
+#[cfg(target_os = "none")]
+pub fn note_console_interrupt() {
+    CONSOLE_INTERRUPTS.fetch_add(1, core::sync::atomic::Ordering::Release);
+}
+
 /// Stop this CPU.
 ///
 /// Delegated to the architecture crate: the instructions belong there, and this

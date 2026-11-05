@@ -168,6 +168,18 @@ pub fn handle(frame: irq::Frame) -> bool {
         return true;
     }
 
+    // The console's transmitter: the one device line this boot claims.
+    //
+    // The device itself was acknowledged in the trap path, because reading a
+    // 16550's `IIR` is what the device counts as an acknowledge; what is left
+    // here is to say the line was taken and to count it.  A boot that did not
+    // claim it printed the same number forever.
+    #[cfg(target_os = "none")]
+    if crate::console_owns(vector) {
+        crate::note_console_interrupt();
+        return true;
+    }
+
     // A device's line: whoever registered for this number is told.
     if irq::dispatch_installed(vector) {
         return true;
