@@ -3,8 +3,6 @@
 //! A pipe: one buffer, two ends, and the two things a task does when its end
 //! cannot make progress.
 //!
-//! ## What makes this the kernel's and not `ipc`'s
-//!
 //! `ipc::ByteRing` is the arithmetic, a fixed buffer, two cursors, a count,
 //! and it is deliberately testable on a host.  What it cannot do is *park* a
 //! task: that needs the scheduler, and a crate that needed the scheduler could
@@ -15,8 +13,6 @@
 //! learns what a thread is: it asks the scheduler to park and wake, and the
 //! scheduler answers.
 //!
-//! ## Why a blocked read is the interesting one
-//!
 //! `Sleep` made a task wait for a clock.  A pipe makes it wait for *another
 //! task*, which is a different thing in every way that matters: there is no
 //! deadline to compare against, the wake comes from a syscall rather than from
@@ -24,14 +20,12 @@
 //! arrived, the write end closed, or the wait was interrupted.  The third is
 //! not implemented and this file says so where it would be.
 //!
-//! ## What is not here
-//!
-//! A wait queue with one entry per object.  There is one pipe in the boot that
-//! proves this, and one blocked task, so a wake wakes every blocked task, see
-//! `scheduler::Scheduler::wake_blocked`, which argues the same point from the
-//! other side.  A second blocking object is what will make a queue necessary,
-//! and a queue written before there is a second one would be a lookup with one
-//! entry.
+//! What is not here is a wait queue with one entry per object.  There is one
+//! pipe in the boot that proves this, and one blocked task, so a wake wakes
+//! every blocked task, see `scheduler::Scheduler::wake_blocked`, which argues
+//! the same point from the other side.  A second blocking object is what will
+//! make a queue necessary, and a queue written before there is a second one
+//! would be a lookup with one entry.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -80,12 +74,10 @@ impl Pipe {
         self.ring.lock().remaining()
     }
 
-    /// Whether any writer is still open.
     pub fn has_writers(&self) -> bool {
         self.writers.load(core::sync::atomic::Ordering::Acquire) > 0
     }
 
-    /// Whether any reader is still open.
     pub fn has_readers(&self) -> bool {
         self.readers.load(core::sync::atomic::Ordering::Acquire) > 0
     }
@@ -187,7 +179,6 @@ impl Clone for End {
 }
 
 impl End {
-    /// A reader over `pipe`.
     pub fn reader(pipe: Arc<Pipe>) -> End {
         End {
             pipe,
@@ -195,7 +186,6 @@ impl End {
         }
     }
 
-    /// A writer over `pipe`.
     pub fn writer(pipe: Arc<Pipe>) -> End {
         End {
             pipe,
@@ -203,12 +193,10 @@ impl End {
         }
     }
 
-    /// Which end this is.
     pub fn kind(&self) -> Kind {
         self.kind
     }
 
-    /// The pipe behind this end.
     pub fn pipe(&self) -> &Arc<Pipe> {
         &self.pipe
     }
@@ -231,7 +219,6 @@ impl End {
             return Ok(Progress::Done(count));
         }
         if !pipe.has_writers() {
-            // The buffer is empty and no writer can fill it again.
             return Ok(Progress::Done(0));
         }
         Ok(Progress::Block)
@@ -267,8 +254,6 @@ impl End {
 /// The table lives here rather than in `syscall` because a pipe outlives one
 /// call and belongs to the kernel's state, not to a handler.
 ///
-/// ## Why there is a lock
-///
 /// This table was reached only from a syscall handler, and one CPU served one
 /// call at a time, so it needed none.  A second CPU serving a call makes
 /// `attach` and `lookup` concurrent, and `lookup` clones an `Arc` out of a
@@ -291,7 +276,6 @@ pub unsafe fn install() {
     *PIPES.lock() = Some(Vec::new());
 }
 
-/// Whether a pipe table is installed.
 pub fn is_installed() -> bool {
     PIPES.lock().is_some()
 }
@@ -312,7 +296,6 @@ pub fn attach(end: End) -> Option<usize> {
     Some(pipes.len() - 1)
 }
 
-/// The pipe a descriptor names, if it names one.
 /// The end a descriptor names, if it names one.
 ///
 /// A clone, because the table owns its entries and a caller that borrowed one

@@ -80,8 +80,6 @@ impl<T> SpinLock<T> {
     ///   from this one, masking interrupts here is exactly what stops the
     ///   acknowledgement.
     ///
-    /// # When this is justified
-    ///
     /// The second hazard needs the critical section to acquire the
     /// memory-manager lock, because that is the lock a TLB shootdown runs
     /// under.  So the precise criterion is: **use this only if the critical

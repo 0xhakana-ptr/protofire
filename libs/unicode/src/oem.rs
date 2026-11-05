@@ -10,9 +10,7 @@ use alloc::vec::Vec;
 
 use super::casefold::fold_char;
 
-// ---------------------------------------------------------------------------
 // OEM code-page → Unicode conversion (FAT32 8.3 short filenames)
-// ---------------------------------------------------------------------------
 
 /// OEM code page identifier for FAT32 short filename (8.3) decoding.
 ///

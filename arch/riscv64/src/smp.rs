@@ -345,15 +345,11 @@ pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
 
 /// Wait here until the kernel has a task for this CPU, then run it.
 ///
-/// ## What this waits for
-///
 /// The boot hart starts the other CPUs *before* it builds the scheduler, so a
 /// started CPU that asked for a task immediately would find none.  It waits for
 /// the boot to say work exists, and the way the boot says it is an
 /// inter-processor interrupt: the same call the boot uses to prove a CPU takes
 /// interrupts at all, sent again once the scheduler is installed.
-///
-/// ## Why the wait is a trap and not a poll
 ///
 /// `wfi` returns on the interrupt, the trap path counts it, and the loop asks
 /// the kernel again.  A CPU spinning on a flag would burn its host's core for
@@ -388,7 +384,7 @@ fn wait_for_work() -> ! {
 /// What a started CPU asks the kernel for: a root table and a frame to enter.
 ///
 /// The kernel's half, injected: `arch` cannot name `kernel` without a cycle,
-/// and the alternative — the kernel polling a flag this crate sets — would put
+/// and the alternative, the kernel polling a flag this crate sets, would put
 /// the scheduler's choice on the wrong side of the boundary.  The shape is the
 /// one every other upward call in this tree uses, a sink installed once before
 /// anything can reach it.

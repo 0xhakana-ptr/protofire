@@ -3,7 +3,7 @@
 //! The kernel: the modules that are not a crate of their own, the allocator
 //! that makes them allocatable, and the names a caller spells.
 //!
-//! ## What lives here
+//! ## The modules
 //!
 //! A subsystem becomes a crate when something else needs to name it without
 //! naming the kernel.  `fs`, `memory`, `net`, `ipc` and `power` are crates for
@@ -187,8 +187,6 @@ pub fn finish_and_halt() -> ! {
 /// The idle a CPU does when its own queue is empty but the machine still has
 /// tasks: another CPU is running one, and this one has nothing to claim.  The
 /// halt is this CPU's `wfi`, and nothing is recorded.
-///
-/// ## Why this exists beside `halt`
 ///
 /// `halt` was the only stop this tree had, and every exit path used it, which
 /// was correct with one CPU because that CPU was the machine.  A second CPU

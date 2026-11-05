@@ -2,8 +2,6 @@
 //!
 //! The boot's programs: build them, map them, and let the scheduler run them.
 //!
-//! ## Why here and not in `process`
-//!
 //! `process` is what the kernel does with a program's *call*, the handler a
 //! trap reaches.  This module is what the *boot* does with a program: pick an
 //! address space, copy the machine code in, hand a pipe end through the stack,
@@ -258,14 +256,10 @@ fn hand_over_pipe(
 
 /// What a started CPU runs: the task the scheduler gives it, and its root.
 ///
-/// ## Why this is here and not in `scheduler`
-///
-/// The answer is two things the scheduler does not know about: which task it
-/// picked, and which root table that task runs through.  The second is the
-/// address space's, and joining them is what a program's *start* is, which is
-/// this module's subject.
-///
-/// ## Why the CPU asks rather than being told
+/// A started CPU is given two things the scheduler does not know about: which
+/// task it picked, and which root table that task runs through.  The second is
+/// the address space's, and joining them is what a program's *start* is, which
+/// is this module's subject.
 ///
 /// A CPU that was handed a task at start would have been handed it before the
 /// scheduler existed: the boot starts the other CPUs before it builds the
@@ -340,8 +334,6 @@ pub fn mark_finished() {
 }
 
 /// Report what the boot's programs did, then stop the machine.
-///
-/// ## Why this is one function now
 ///
 /// The lines were inline in the exit handler, which was right while the CPU
 /// that exited was the CPU that ended the machine.  With two CPUs the exit

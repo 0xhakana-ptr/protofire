@@ -35,10 +35,8 @@
 //! would leave a working CPU idle because of the order firmware brought them
 //! up.
 //!
-//! ## Why this is a separate module
-//!
 //! The call is the machine's, and the constants are the tree's.  Keeping them
-//! here is what lets `smp.rs` be about slots, stacks and flags — the part that
+//! here is what lets `smp.rs` be about slots, stacks and flags: the part that
 //! a second architecture with a different start call could reuse by shape.
 
 /// What the firmware said about a start request.

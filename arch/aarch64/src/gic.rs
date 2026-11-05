@@ -424,8 +424,6 @@ impl Gic {
 
     /// Raise software interrupt `number` on this CPU.
     ///
-    /// ## Why a controller needs this, and why the number is small
-    ///
     /// A device raises its line when it has something to say, and a driver that
     /// wants to test the *path* cannot ask it to.  `GICD_SGIR` is the
     /// specification's own answer, with one restriction that is easy to miss
@@ -474,7 +472,7 @@ impl Gic {
     /// Bits 23..16 of `GICD_SGIR` are a bit per target core, and bit 0 is this
     /// one.  The value here is `0xFE`: every core from one up, which is the set
     /// a boot wants when it has something to tell the cores it started and
-    /// nothing to say to itself — a self-directed SGI would arrive as an
+    /// nothing to say to itself: a self-directed SGI would arrive as an
     /// interrupt the kernel has to acknowledge for a reason it cannot name.
     ///
     /// # Safety

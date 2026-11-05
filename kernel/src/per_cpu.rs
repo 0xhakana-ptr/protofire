@@ -3,8 +3,6 @@
 //! Per-CPU state: which CPUs exist, which is running now, and what each one has
 //! seen.
 //!
-//! ## Why a trap has to ask which CPU it is on
-//!
 //! Every per-CPU decision starts here: which record counts this tick, which
 //! slot the scheduler's `running` array is indexed by, which kernel stack a
 //! trap frame belongs to, which line buffer a console write appends to.  A
@@ -17,13 +15,11 @@
 //! not: the scheduler takes a lock, the page tables take one, and the console
 //! takes one.
 //!
-//! ## How a CPU knows its slot
-//!
-//! The machine answers, in a register.  On riscv64 that is `tp`, which the trap
-//! entry computes from the kernel stack it just switched to — a program's `tp`
-//! is the program's own and is restored from the frame, so the kernel cannot
-//! read it for its own identity.  On the machines that start no second CPU the
-//! answer is always slot zero.
+//! The slot is the machine's own answer, in a register.  On riscv64 that is
+//! `tp`, which the trap entry computes from the kernel stack it just switched
+//! to: a program's `tp` is the program's own and is restored from the frame, so
+//! the kernel cannot read it for its own identity.  On the machines that start
+//! no second CPU the answer is always slot zero.
 //!
 //! A kernel constant would be a second opinion about a value the machine
 //! already has, and the first version's constant is why this file says so: it
@@ -38,7 +34,7 @@ use core::sync::atomic::Ordering;
 ///
 /// Asked rather than written.  This constant used to be a four in this file and
 /// a four in `arch/riscv64/src/smp.rs`, kept in step by a comment telling the
-/// next reader to keep them in step — which is the arrangement that produced
+/// next reader to keep them in step, which is the arrangement that produced
 /// the bug this file's own history records: `MAX_CPUS` was four while the slots
 /// a boot uses were 1..=4, so the fourth started CPU shared the boot CPU's
 /// arrays.
@@ -52,18 +48,16 @@ pub const MAX_SECONDARY_CPUS: usize = arch::MAX_SECONDARY_HARTS;
 /// One plus the cap, because the boot CPU owns slot zero and a started CPU's
 /// slot is one past its index among the started ones.
 ///
-/// ## Why deriving is the guard, and an assertion would not be
-///
 /// The defect this replaces was two fours in two crates kept in step by a
 /// comment, and a compile-time `assert!` tying them is the obvious fix.  It is
 /// the wrong one here: this constant is *derived* from `arch`'s, so an
-/// assertion comparing the two would reduce to `x == x` and could never fail —
+/// assertion comparing the two would reduce to `x == x` and could never fail,
 /// decoration that reads like a proof.
 ///
 /// What actually removes the defect is that there is now one number.  A machine
 /// that raises `arch::MAX_SECONDARY_HARTS` moves this constant with it, every
 /// array sized from `MAX_CPUS` moves too, and the state the old code could
-/// reach — a slot the machine starts and this module has no room for — cannot
+/// reach, a slot the machine starts and this module has no room for, cannot
 /// be written down.  The `panic` in `cpu` is the belt for the case derivation
 /// cannot see: a slot that comes from outside, such as a register.
 pub const MAX_CPUS: usize = 1 + MAX_SECONDARY_CPUS;
@@ -75,13 +69,9 @@ pub struct Cpu {
     /// `usize::MAX` before the boot fills it, so an unstarted slot cannot be
     /// mistaken for a machine whose CPU zero is the one that answered.
     id: AtomicUsize,
-    /// Whether the CPU is running this kernel.
     online: AtomicBool,
-    /// Timer interrupts this CPU has taken.
     ticks: AtomicUsize,
-    /// Inter-processor interrupts this CPU has taken.
     ipis: AtomicUsize,
-    /// Whether this CPU is the boot CPU, which owns the scheduler.
     boot: AtomicBool,
 }
 
@@ -96,27 +86,22 @@ impl Cpu {
         }
     }
 
-    /// The machine's id for this CPU.
     pub fn id(&self) -> usize {
         self.id.load(Ordering::Acquire)
     }
 
-    /// Whether this CPU is running this kernel.
     pub fn online(&self) -> bool {
         self.online.load(Ordering::Acquire)
     }
 
-    /// How many timer interrupts this CPU has taken.
     pub fn ticks(&self) -> usize {
         self.ticks.load(Ordering::Acquire)
     }
 
-    /// How many inter-processor interrupts this CPU has taken.
     pub fn ipis(&self) -> usize {
         self.ipis.load(Ordering::Acquire)
     }
 
-    /// Whether this CPU is the one that owns the scheduler.
     pub fn is_boot_cpu(&self) -> bool {
         self.boot.load(Ordering::Acquire)
     }
@@ -127,10 +112,9 @@ static CPUS: [Cpu; MAX_CPUS] = [const { Cpu::new() }; MAX_CPUS];
 
 /// One CPU's record, by slot.
 ///
-/// ## Why a slot past the end is a panic and not a clamp
-///
-/// This was `slot.min(MAX_CPUS - 1)`, which turned a slot the kernel never
-/// numbered into the last one — and the last one is a CPU that really exists.
+/// A slot past the end is a panic and not a clamp.  This was
+/// `slot.min(MAX_CPUS - 1)`, which turned a slot the kernel never
+/// numbered into the last one, and the last one is a CPU that really exists.
 /// Two CPUs then wrote one record while both believed they were distinct, and
 /// the symptom is a task resumed with another CPU's context, which is the shape
 /// of the defect `MAX_CPUS` was raised to fix.  A clamp is the wrong answer to
@@ -146,7 +130,6 @@ fn cpu(slot: usize) -> &'static Cpu {
     }
 }
 
-/// The boot CPU's slot.
 pub const BOOT_SLOT: usize = 0;
 
 /// Record a CPU the machine reports.
@@ -159,12 +142,10 @@ pub fn register(slot: usize, id: usize, boot: bool) {
     cpu.online.store(true, Ordering::Release);
 }
 
-/// Count a timer interrupt on the CPU that took it.
 pub fn count_tick(slot: usize) {
     cpu(slot).ticks.fetch_add(1, Ordering::Release);
 }
 
-/// Count an inter-processor interrupt on the CPU that took it.
 pub fn count_ipi(slot: usize) {
     cpu(slot).ipis.fetch_add(1, Ordering::Release);
 }
@@ -185,7 +166,6 @@ pub fn current_slot() -> usize {
     }
 }
 
-/// Whether this CPU owns the scheduler.
 pub fn on_boot_cpu() -> bool {
     cpu(current_slot()).is_boot_cpu()
 }
@@ -228,7 +208,7 @@ mod tests {
     ///
     /// This is the property the clamp lacked.  A clamp made a slot the kernel
     /// never numbered read as the highest one it did, so two CPUs wrote one
-    /// record and each believed it was distinct — the arithmetic that made a
+    /// record and each believed it was distinct, the arithmetic that made a
     /// task resume with another CPU's context.  A stop names the slot and the
     /// count, which is the one thing a reader of a broken boot needs.
     #[test]

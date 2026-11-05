@@ -16,7 +16,7 @@ license.workspace = true
 # The consequence is that `arch` has no features at all, and neither does
 # anything depending on it: `cargo build --target <machine>` is the whole
 # selection, and a target no table names fails to build because `arch` has no
-# implementation for it — which is the right error.
+# implementation for it, which is the right error.
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 arch_x86_64 = { path = "x86_64" }
 

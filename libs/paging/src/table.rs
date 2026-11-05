@@ -4,8 +4,6 @@
 //! operations that are the whole of what one needs, map an address, look one
 //! up, and say what a mapping is missing.
 //!
-//! ## What is x86_64's and what is not
-//!
 //! The *entry encoding* is the machine's: x86_64 puts present/writable/user in
 //! bits 0..3 and no-execute in bit 63, and aarch64 puts a different set of
 //! bits in a different order.  So [`Entry`] here is the shape a mapping has,
@@ -14,8 +12,6 @@
 //! The *walk* is not the machine's: given a root table's address, finding the
 //! entry for an address is the same arithmetic everywhere, which is why
 //! [`PageTable`] and [`map`] live here and are tested on a host.
-//!
-//! ## Why this is data and not a machine
 //!
 //! A page table is a page of memory with numbers in it.  It is not privileged
 //! to *write* one, the privilege is in installing it, which is `arch`'s
@@ -93,8 +89,6 @@ impl Entry {
 
     /// An entry naming the table at `address`, reachable from a user program.
     ///
-    /// ## Why a table entry needs this
-    ///
     /// x86_64 checks the user bit at **every** level of the walk, not only at
     /// the leaf: an access from ring 3 to an address under a supervisor-only
     /// table entry is refused with a protection fault even when the leaf is
@@ -153,7 +147,6 @@ impl PageTable {
         self.entries[index].load(Ordering::Acquire)
     }
 
-    /// Install `value` at `index`.
     pub fn set_entry(&self, index: usize, value: u64) {
         self.entries[index].store(value, Ordering::Release);
     }
@@ -204,8 +197,6 @@ pub enum Translation {
 /// A table is a page of numbers the hardware reads; what bit 0 means is the
 /// machine's.  This trait is the seam: [`PageTable`] holds entries as values,
 /// and the machine encodes them for the register that installs the table.
-///
-/// ## Why both directions take a level
 ///
 /// Whether an entry is a leaf, a mapping rather than a pointer to the next
 /// table, is not a property of the word.  On x86_64 bit 7 means "this entry

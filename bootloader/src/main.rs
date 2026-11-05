@@ -19,8 +19,6 @@
 //! same inversion the layering gate exists to prevent, solved at the linker
 //! rather than by an upward `use`.
 //!
-//! ## Why the crate exists at all
-//!
 //! A `no_std` binary needs a `#[panic_handler]` and it needs to be the artifact
 //! that is linked; a library can be neither.  Keeping those here means the
 //! `kernel` crate stays a library a host test can build.
@@ -61,8 +59,6 @@ pub extern "C" fn protofire_entry() -> ! {
 
 /// What a panic does on bare metal: say what happened, then stop.
 ///
-/// ## Why it prints
-///
 /// This handler used to call `arch::halt()` and nothing else, and a boot that
 /// panicked left a serial log ending mid-sentence.  Nothing distinguished "the
 /// kernel halted on purpose" from "an assertion fired", which is the same
@@ -72,8 +68,6 @@ pub extern "C" fn protofire_entry() -> ! {
 /// It cost a session.  A boot stopped after `pci scan found 3 device(s)` with
 /// no exception and no further line, and the cause was a panic in the BAR
 /// mapping whose message had nowhere to go.
-///
-/// ## Why printing here is safe
 ///
 /// The console is the machine's and allocates nothing: `serial::write_str`
 /// walks a `&str` and writes bytes.  A panic that happened inside the allocator

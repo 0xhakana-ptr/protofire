@@ -2,13 +2,9 @@
 //!
 //! One program, running at EL0, calling back into the kernel.
 //!
-//! ## What this is
-//!
 //! What the kernel does with a program's supervisor call: three calls are
 //! served, `Write`, `Exit` and `Sleep`, and everything else answers
 //! `NotImplemented`.
-//!
-//! ## Why the program is not here
 //!
 //! The image a program runs is machine code, so it lives in `arch` and this
 //! file asks for it.  An array here would have to be right for three
@@ -72,8 +68,6 @@ pub const fn program_stack_page(number: u16) -> usize {
 }
 
 /// What the kernel does with a program's supervisor call.
-///
-/// ## What a call can be, today
 ///
 /// `Write` prints a fixed line, the program's arguments are not read, because
 /// a pointer in a register is an address this kernel has no way to validate
@@ -224,8 +218,6 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 // The program is asleep, so the frame must describe whatever
                 // runs next.
                 //
-                // ## Why this is not `advance(frame, false)` unconditionally
-                //
                 // `advance` saves the frame it was given into the *current*
                 // task before choosing the next one, and the current task is
                 // the one that just went to sleep, whose context was saved by
@@ -262,15 +254,11 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // `Read(descriptor, buffer, length)`, where the descriptor names a
         // pipe.
         //
-        // ## Why the descriptor is the first argument and the path is not
-        //
         // The registry's `Read` takes a path through `Arguments::path`, which
         // is a borrow the boot can hand it because the boot owns the string.  A
         // program does not: it passes an address, and an address from ring 3 is
         // a number until something validates it.  So this is the call the
         // validation exists for.
-        //
-        // ## What blocking means here
         //
         // `try_read` answers `Block` only when the pipe could still fill, no
         // bytes now, and a writer alive.  That is the one case where waiting is
@@ -341,7 +329,6 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 arch::serial::write_str("protofire: forked a process, child pid ");
                 arch::serial::write_u32(pid);
                 arch::serial::write_str("\n");
-                // The parent resumes with the child's pid.
                 CallOutcome::Return(pid as usize)
             }
             None => CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory)),
@@ -396,8 +383,6 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // `Pipe()`: make one and answer the read end's descriptor.  The write
         // end is the next number, because a call answers one word and two
         // descriptors do not fit in one.
-        //
-        // ## Why a pipe and not a file
         //
         // A file can be read at an offset and answered from memory; the answer
         // is there before the call.  A pipe's answer may not exist yet, and

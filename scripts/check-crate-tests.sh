@@ -5,8 +5,8 @@
 # ## The rule
 #
 # A crate with source and no tests is a crate nobody has run.  This tree's whole
-# argument for the crate split is that a crate can be tested on its own — that is
-# the reason it exists — so a member of the workspace with a hundred lines and
+# argument for the crate split is that a crate can be tested on its own, which is
+# the reason it exists, so a member of the workspace with a hundred lines and
 # zero assertions is the split not paying for itself.
 #
 # The gate does not demand a number.  A line count is not coverage and a test
@@ -18,19 +18,15 @@
 #   * a crate whose test count falls below the recorded one fails, because a
 #     deleted test is a defect that stopped being caught.
 #
-# ## Why the counts are recorded rather than recomputed
-#
-# Tests are deleted for honest reasons — one that duplicated another, one whose
+# Tests are deleted for honest reasons: one that duplicated another, one whose
 # subject moved to a different crate.  Recording the number makes each deletion a
 # change to this file, which is a sentence a reader can disagree with, instead of
 # a diff nobody notices in a hundred-line move.
 #
-# ## What "has tests" means
-#
 # `cargo test -p <name>` reports how many the harness ran, which is the only
 # number that means anything: a `#[cfg(test)]` module in a crate that does not
 # compile for the host reports zero, and that is exactly the state this gate
-# found `arch_aarch64` and `arch_riscv64` in — their whole bodies behind a
+# found `arch_aarch64` and `arch_riscv64` in: their whole bodies behind a
 # crate-level `cfg(target_arch)`, so their tests had never run once.
 #
 # Usage:
@@ -54,7 +50,7 @@ case "${1:-}" in
     '') ;;
     --record) mode=record ;;
     -h|--help)
-        sed -n '2,38p' "$0"
+        sed -n '2,34p' "$0"
         exit 0
         ;;
     *)
@@ -77,7 +73,7 @@ trap cleanup EXIT INT TERM
     }
 
 # One row per workspace member: `<name> <lines>`, where `lines` is the source the
-# crate owns — the `.rs` files under its directory, minus the `target/` a build
+# crate owns: the `.rs` files under its directory, minus the `target/` a build
 # may have written there.
 python3 - "$work/meta.json" >"$work/crates.txt" <<'PY'
 import json

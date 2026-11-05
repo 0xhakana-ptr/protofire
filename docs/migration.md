@@ -1173,8 +1173,8 @@ asked `tp` which CPU it was on.  `starting_context` zeroes every register a
 program begins with, so a program's `tp` is zero, and a second CPU running a
 program reported itself as CPU 0: both CPUs wrote slot zero and each was handed
 the task the other was running.  The two faults named each other's program.  The
-trap entry now derives the slot from the kernel stack it just switched to — the
-one register an interrupted program cannot have written — and restores the
+trap entry now derives the slot from the kernel stack it just switched to, the
+one register an interrupted program cannot have written, and restores the
 program's `tp` from the frame like every other register.  `tp` at boot is a
 starting value for the window before a program exists, and nothing more.
 
@@ -1243,7 +1243,7 @@ The guard that change deserves is a compile-time assertion.  As the tree stands
 there is none: the kernel's copy is kept in step by a comment asking the next
 reader to keep it in step, which is the arrangement that failed once already.
 The cheapest fix is for each machine to export its own `MAX_CPUS` and for
-`kernel/src/per_cpu.rs` to assert its derived total against it — a machine that
+`kernel/src/per_cpu.rs` to assert its derived total against it: a machine that
 raised a cap without the kernel following would then be a build error rather
 than a slot two CPUs share at run time.  That change is written and not yet
 gated; it belongs in the change that raises a cap, not in a document.

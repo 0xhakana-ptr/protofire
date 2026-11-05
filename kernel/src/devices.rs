@@ -3,8 +3,6 @@
 //! Finding the machine's devices, and handing the ones it has to the driver
 //! that wants them.
 //!
-//! ## Why this is the kernel's and not a crate's
-//!
 //! A scan is a *policy*: which bus, how many of them, which devices are worth
 //! keeping, and what happens when the one you wanted is absent.  The bus crate
 //! knows how to walk a bus; only the kernel knows that this boot wants a block
@@ -113,8 +111,6 @@ impl RegisterFile for MappedBar {
 /// space, so it gets an [`EcamConfig`].  Everything above this function, ///
 /// enumeration, capability walks, BAR decoding, is written against
 /// `ConfigSpace` and never learns which one it is.
-///
-/// ## Why a device-tree machine needed this at all
 ///
 /// Before it, aarch64's scan asked a `PortConfig` about a machine with no I/O
 /// space: `arch::port`'s aarch64 arm returns all ones, so every bus, device and

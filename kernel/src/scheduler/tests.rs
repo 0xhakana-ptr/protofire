@@ -244,8 +244,6 @@ fn a_claim_does_not_hand_the_same_task_to_two_cpus() {
 
     // Each CPU takes one task, and no two are the same.
     //
-    // ## Why this is a bounded loop
-    //
     // It was a `while let Some(x) = scheduler.claim(0)` loop, and it never
     // ended: `claim` on a CPU that already holds a task releases that task and
     // takes another, so the released one is claimable again on the next call
@@ -286,7 +284,7 @@ fn a_claim_does_not_hand_the_same_task_to_two_cpus() {
 ///
 /// This is the property the old `Option` return could not express.  It used to
 /// answer `Some` for this case by releasing the task the CPU held and taking a
-/// new one, so a loop that claimed until it saw `None` never ended — its `Vec`
+/// new one, so a loop that claimed until it saw `None` never ended: its `Vec`
 /// grew until the OOM killer stopped the run, three times, and the failure read
 /// as a build too large for the machine.
 ///

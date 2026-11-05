@@ -11,8 +11,6 @@
 //! | [`space`] | a program's root, its pages, and the frame an image lives in |
 //! | this file | the permission rules, the user window, the install, and the pool's counts |
 //!
-//! ## What is the machine's and what is not
-//!
 //! Where this image's sections begin and end is the linker script's answer, and
 //! the rules for them are this kernel's policy.  Which addresses are a device's
 //! registers is the **machine's** answer, `arch::paging::device_windows`,
@@ -43,8 +41,6 @@ pub const USER_WINDOWS: usize = 4;
 pub const USER_LIMIT: usize = USER_BASE + USER_WINDOW * USER_WINDOWS;
 
 /// Whether `address` is one a program of this kernel could have mapped.
-///
-/// ## Why this is the only check a syscall needs
 ///
 /// A pointer from ring 3 is a number, and a number is not an address: the
 /// kernel must not dereference one because the program said so.  Three things
@@ -248,8 +244,6 @@ pub fn managed_frames() -> usize {
 }
 
 /// Take one frame, as a page table would, and report whether it worked.
-///
-/// ## Why the boot calls this
 ///
 /// The spare tables are enough for every window this machine has, so
 /// `frames_taken_for_tables` is zero on a real boot and the branch that asks

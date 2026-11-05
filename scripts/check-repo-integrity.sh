@@ -7,8 +7,8 @@
 # A `.gitignore` describes what a build writes, and what a build writes must not
 # be committed.  The two halves of that statement fail differently:
 #
-#   * a product this tree committed once — `tools/__pycache__` was, before the
-#     rule that ignores it existed — is a product a clone pays for and nobody
+#   * a product this tree committed once (`tools/__pycache__` was, before the
+#     rule that ignores it existed) is a product a clone pays for and nobody
 #     reads;
 #   * a file that is tracked **and** matches an ignore rule is the worse state,
 #     because git keeps tracking it and the rule silently stops meaning what its
@@ -18,10 +18,8 @@
 # The first is asked by name, against the product extensions this build writes.
 # The second is asked by git itself, and the answer has to be empty.
 #
-# ## Why a gate and not a `.gitignore` per directory
-#
-# The patterns that matter are extension and directory-name patterns — `*.log`,
-# `*.o`, `*.d`, `__pycache__/` — and git applies those at every depth from the
+# The patterns that matter are extension and directory-name patterns (`*.log`,
+# `*.o`, `*.d`, `__pycache__/`), and git applies those at every depth from the
 # file that states them.  A copy in each crate would be fourteen copies of a rule
 # that already fires, and each copy is a file someone has to keep in step.  What
 # a second `.gitignore` buys is a rule scoped to one directory, and this tree has
@@ -29,8 +27,6 @@
 #
 # So the question "does the ignore set still describe the tree" is asked once,
 # here, over the whole repository.
-#
-# ## What this does not check
 #
 # That the patterns are *complete*.  A build product nobody has written a rule
 # for is invisible to the second check, because git has nothing to compare it
@@ -65,7 +61,7 @@ PRODUCTS='*.pyc
 # Check one: tracked and ignored.
 #
 # `--ignored` lists ignored paths, `--cached` restricts that to the index, and
-# `--exclude-standard` applies the whole ignore set a clone would have — the
+# `--exclude-standard` applies the whole ignore set a clone would have: the
 # `.gitignore` chain plus `.git/info/exclude`.
 tracked_but_ignored="$("$GIT" ls-files --ignored --cached --exclude-standard)" || exit 1
 if [ -n "$tracked_but_ignored" ]; then

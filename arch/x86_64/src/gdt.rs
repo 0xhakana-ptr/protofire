@@ -2,8 +2,6 @@
 //!
 //! The descriptor table, the segments in it, and the task state segment.
 //!
-//! ## Why the boot's table is not enough
-//!
 //! `boot-x86-64.S` builds a three-entry table so the kernel can run in long
 //! mode: a null descriptor, a ring-0 code segment and a ring-0 data segment.
 //! That is the whole of what an image needs to execute its first instruction,
@@ -22,8 +20,6 @@
 //! takes a triple fault instead, which is exactly what an empty `RSP0` would
 //! produce.
 //!
-//! ## Why the descriptors are written as constants
-//!
 //! A long-mode descriptor is eight bytes of bit fields, and the three that
 //! matter here are the same three the boot's table already spells: present,
 //! DPL, and the type.  Writing them as named constants with the bit positions
@@ -31,9 +27,7 @@
 //! builder with a dozen arguments would be a second description of the same
 //! bits, and the two would drift.
 //!
-//! ## What this module does not do
-//!
-//! It does not allocate an interrupt stack, and it does not use `IST`.  An
+//! This module allocates no interrupt stack and does not use `IST`.  An
 //! `IST` entry is for a vector that must run even when the current stack is
 //! suspect, a double fault, a machine check, an NMI.  This kernel's ring-3
 //! path uses `RSP0`, which is the ordinary mechanism, and a second stack per
@@ -53,7 +47,6 @@ pub const KERNEL_DATA_SELECTOR: u16 = 0x10;
 /// constant.
 pub const USER_DATA_INDEX: usize = 3;
 
-/// The entry a program's code segment occupies.
 pub const USER_CODE_INDEX: usize = 4;
 
 /// The entry the task state segment's descriptor occupies.
@@ -63,13 +56,10 @@ pub const USER_CODE_INDEX: usize = 4;
 /// That is why the table has seven slots for five descriptors.
 pub const TSS_INDEX: usize = 5;
 
-/// The selector naming the user data segment.
 pub const USER_DATA_SELECTOR: u16 = (USER_DATA_INDEX as u16) * 8;
 
-/// The selector naming the user code segment.
 pub const USER_CODE_SELECTOR: u16 = (USER_CODE_INDEX as u16) * 8;
 
-/// The selector naming the TSS descriptor.
 pub const TSS_SELECTOR: u16 = (TSS_INDEX as u16) * 8;
 
 /// A descriptor for a 64-bit code segment at `dpl`.
@@ -87,8 +77,6 @@ pub const TSS_SELECTOR: u16 = (TSS_INDEX as u16) * 8;
 /// bit  53       L                   long mode: this is a 64-bit segment
 /// bit  55       G                   granularity
 /// ```
-///
-/// ## Why the shifts are 40 and not 8
 ///
 /// The type byte, `S`, the DPL and `P` are the descriptor's **second** byte as
 /// the processor reads it, bits 40..47 of the 64-bit word.  The first version
@@ -254,7 +242,6 @@ impl DescriptorPointer {
         self.limit
     }
 
-    /// The table's address.
     pub const fn base(&self) -> u64 {
         self.base
     }
@@ -305,8 +292,6 @@ mod bare {
     /// `lgdt` whose table was not where the pointer said leaves the processor
     /// on the boot's table, and the first `iretq` to ring 3 then faults on a
     /// missing descriptor rather than at anything this function did.
-    ///
-    /// ## Why the segments are reloaded
     ///
     /// The boot's table already gave `DS`, `ES` and `SS` the value `0x10`, and
     /// this table's entry 2 is the same descriptor, so the reload is not

@@ -9,7 +9,7 @@ license.workspace = true
 # The fault counter's own switch, under the name the previous tree uses.  The
 # code behind it compiles either way; declaring the feature is what makes the
 # gates reachable, and an undeclared name in a `#[cfg]` is a branch nothing can
-# build — which is how three of this tree's feature gates went unexercised.
+# build, which is how three of this tree's feature gates went unexercised.
 fault_profiler = []
 alloc_profiler = ["profiler/alloc_profiler"]
 

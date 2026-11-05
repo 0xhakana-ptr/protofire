@@ -2,8 +2,6 @@
 //!
 //! The timer's line, its time slice, and the count of ticks.
 //!
-//! ## Why the line is enabled here and the timer armed elsewhere
-//!
 //! A tick that arrives while the boot is still at ring 0 is a full trap for
 //! every one of them, and the boot spends its remaining work in trap entry
 //! instead of in starting.  So the line is enabled once, early, and the timer
@@ -63,8 +61,6 @@ pub fn bring_up_external() {
 }
 
 /// Claim the console's interrupt source, and report what the controller kept.
-///
-/// ## Why a boot claims one
 ///
 /// The controller was programmed and its claim path had never carried a device:
 /// no source was enabled, so nothing arrived through the external line, and

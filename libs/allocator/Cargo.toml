@@ -11,7 +11,7 @@ license.workspace = true
 alloc_profiler = ["profiler/alloc_profiler"]
 # The allocator's own audit mode: canaries around every block and a check of
 # them on every free.  It is the feature the previous tree carried under the
-# same name, and the code behind it is in the source either way — declaring it
+# same name, and the code behind it is in the source either way: declaring it
 # here is what tells cargo the gates exist rather than leaving them as
 # conditions nothing can enable.
 heap_audit = []

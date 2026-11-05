@@ -84,8 +84,6 @@ pub const PXN: u64 = 1 << 53;
 /// The mask an output address occupies: bits 12..48.
 pub const OUTPUT_ADDRESS_MASK: u64 = ((1u64 << 48) - 1) & !0xFFFu64;
 
-/// Encode an entry as the descriptor the machine reads.
-///
 /// A leaf at a level that can hold a block gets `TYPE_BLOCK`; the last level
 /// always gets `TYPE_TABLE_OR_PAGE`, because a 4 KiB granule's fourth level has
 /// no block form.
@@ -150,8 +148,6 @@ pub fn encode_at(entry: Entry, level: Level) -> u64 {
     descriptor
 }
 
-/// Encode an entry at the level it will be stored in.
-///
 /// A leaf at `Level::Leaf` is a 4 KiB page descriptor; anywhere higher it is a
 /// block.  The level is a parameter rather than a default because the two are
 /// different descriptors, and a caller that did not say which it meant would
@@ -160,7 +156,6 @@ pub fn encode(entry: Entry, level: Level) -> u64 {
     encode_at(entry, level)
 }
 
-/// Decode a descriptor at `level`.
 pub fn decode(word: u64, level: Level) -> Entry {
     let present = word & TYPE_TABLE_OR_PAGE != 0 || word & TYPE_BLOCK != 0;
     if !present {
@@ -185,7 +180,6 @@ pub fn decode(word: u64, level: Level) -> Entry {
     }
 }
 
-/// The encoding, as the trait `paging` names.
 pub struct Encoding;
 
 impl EntryEncoding for Encoding {
@@ -273,9 +267,8 @@ pub const fn tcr_el1(ips: u64) -> u64 {
 /// how many the table may use; because the encodings agree, "use what the
 /// machine has" is a copy.
 ///
-/// ## What the non-identity version did
-///
-/// It swapped the two low pairs on the belief that the registers disagreed, ///
+/// The non-identity version swapped the two low pairs on the belief that the
+/// registers disagreed, ///
 /// `0b001` to `0b010` and back, which is a belief no table supports.  On a
 /// machine reporting `PARange = 0b010` (40 bits, 1 TiB) it programmed
 /// `IPS = 0b001` (36 bits, **64 GiB**), and the first access above 64 GiB was a
@@ -294,7 +287,6 @@ pub const fn ips_for_parange(parange: u64) -> u64 {
     }
 }
 
-/// Read `ID_AA64MMFR0_EL1.PARange`, bits 3..0.
 #[cfg(target_os = "none")]
 fn physical_address_range() -> u64 {
     let value: u64;
@@ -313,8 +305,6 @@ fn physical_address_range() -> u64 {
 ///
 /// One range on each side of RAM, and the split is the device tree's answer.
 ///
-/// ## Why the complement rather than a list of devices
-///
 /// The tree could be enumerated: a GIC at `0x0800_0000`, a PL011 at
 /// `0x0900_0000`, thirty-two `virtio_mmio` windows, a PCIe ECAM at
 /// `0x40_1000_0000`.  That list would be precise and it would be a list that
@@ -328,14 +318,10 @@ fn physical_address_range() -> u64 {
 /// a device register marked Normal is the defect this whole function exists to
 /// prevent.
 ///
-/// ## Why it is cheap
-///
 /// Two ranges, not forty.  [`build`](crate) asks this once and then asks
 /// the kernel's permission lookup per page of a four-gigabyte identity map; a
 /// list of forty device windows would make that a million times forty
 /// comparisons at boot.
-///
-/// ## What turning the MMU on changed
 ///
 /// With translation off every access is device-like: no caching, no
 /// speculation, the access arrives.  With it on and no rule, the same address
@@ -391,13 +377,11 @@ pub fn device_windows() -> Windows {
     windows
 }
 
-/// The most `memory` nodes this function reads.
 const MAX_MEMORY_NODES: usize = 4;
 
 /// Where `qemu-system-aarch64 -machine virt` puts its RAM.
 const VIRT_RAM_START: usize = 0x4000_0000;
 
-/// Collect the `device_type = "memory"` regions under `node`.
 pub(crate) fn collect_memory(
     node: Node<'_>,
     out: &mut [(u64, u64); MAX_MEMORY_NODES],
@@ -459,10 +443,6 @@ impl Default for Windows {
     }
 }
 
-/// Make a change to the page tables visible to the walk.
-///
-/// ## Why a write to a table is not enough
-///
 /// The machine caches translations in the TLB, and a table changed underneath a
 /// cached translation is a change nothing observes.  A newly created mapping is
 /// the case that bites hardest: the TLB holds no entry for the address, but the
@@ -495,7 +475,6 @@ pub fn flush_translation() {
     }
 }
 
-/// Read the address of the table the machine is translating through, at EL1.
 #[cfg(target_os = "none")]
 pub fn current_root_table() -> usize {
     let value: u64;
@@ -507,7 +486,6 @@ pub fn current_root_table() -> usize {
     (value as usize) & (OUTPUT_ADDRESS_MASK as usize)
 }
 
-/// Read `SCTLR_EL1.M`, which says whether translation is on.
 #[cfg(target_os = "none")]
 pub fn is_enabled() -> bool {
     let value: u64;
@@ -522,8 +500,6 @@ pub fn is_enabled() -> bool {
     value & 1 != 0
 }
 
-/// Install `table` in `ttbr0_el1` and turn the MMU on.
-///
 /// Returns `false` when the machine was already translating through this table
 /// **with translation enabled**, which a second call would be.  Reporting
 /// success for a table that is in `TTBR0_EL1` but not in use was the bug this

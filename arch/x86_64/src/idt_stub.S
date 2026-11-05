@@ -2,8 +2,6 @@
 /* Purpose: The one entry point every gate's handler goes through, and the
    gates themselves.
 
-   ## Why one stub per vector and one common path
-
    A gate names an address, and the CPU does not tell a handler which vector it
    arrived on.  It also pushes an error code for some vectors and not others,
    so a common path that assumed either shape would read the frame from the
@@ -12,7 +10,7 @@
    So each gate points at a stub that pushes its own vector number and jumps to
    the common path.  The stubs for vectors without an error code also push a
    zero where one would be, so the frame the common path sees has the same
-   shape for every vector — which is what lets the Rust side be one function
+   shape for every vector, which is what lets the Rust side be one function
    rather than a macro that generates a signature per vector.
 
    ## The frame
@@ -35,10 +33,8 @@
    the lowest address up, and a structure whose field order disagreed with the
    pushes would read a handler's arguments from the wrong words.
 
-   ## Why the stubs are written out
-
    The assembler's macro syntax is not portable between GNU as and LLVM's
-   integrated assembler — `\param` and a `$` before an immediate are GNU's, and
+   integrated assembler: `\param` and a `$` before an immediate are GNU's, and
    this file is assembled by LLVM's.  A generator would be one more thing to
    keep in step; the file is generated once and read as what it is. */
 
@@ -47,8 +43,6 @@
 
 /* The common path: save every general-purpose register, pass the frame, call
    Rust, restore, and return through `iretq`.
-
-   ## Why all fifteen and not the caller-saved nine
 
    The first version of this saved the nine registers a Rust function may
    clobber, which is all a handler needs: the callee-saved eight survive the
@@ -59,18 +53,16 @@
    is a register the next program inherits from the one that ran before it.  The
    callee-saved eight are exactly the registers a compiled program keeps its
    locals in, so leaving them out hands every program the previous program's
-   variables — a defect that would look like a compiler bug rather than a
+   variables, a defect that would look like a compiler bug rather than a
    scheduler one.
-
-   ## Why the stack is realigned before the call
 
    The ABI requires `rsp` to be 16-byte aligned at a `call`, and a trap arrives
    with whatever alignment the interrupted code had.  `and rsp, -16` makes the
    alignment this file's decision instead of the program's, and `rbp` holds the
-   frame's address across it — `rbp` is already in the frame, so using it as
+   frame's address across it: `rbp` is already in the frame, so using it as
    scratch costs nothing. */
 common_stub:
-    /* Pushed in reverse index order, so `rax` ends up at the lowest address —
+    /* Pushed in reverse index order, so `rax` ends up at the lowest address,
        which is where `Context::registers[0]` is asserted to be. */
     push r15
     push r14

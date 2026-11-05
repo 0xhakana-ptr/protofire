@@ -28,8 +28,6 @@
 //! x86_64's 256 gates and aarch64's sixteen entries pre-decide, this machine
 //! asks.
 //!
-//! ## Why the sinks are statics
-//!
 //! A trap has no context to hand a function, which is the same reason the
 //! other two machines read their sinks from statics.  The kernel installs them
 //! with `set_interrupt_dispatch` and `set_call_sink`; until then every trap is
@@ -127,8 +125,6 @@ pub enum CallOutcome {
     /// The program has ended.  The handler has already chosen what runs next
     /// and has put that program's context where the trap path will find it.
     ///
-    /// ## Why this carries no value
-    ///
     /// A scheduler that answers "resume *this* context" would be answering
     /// about a dead one.  So the handler does the switch itself, writing the
     /// next context into the frame and, if the next program lives somewhere
@@ -219,7 +215,6 @@ pub unsafe fn set_sink(sink: Sink) {
     unsafe { *SINK.get() = Some(sink) };
 }
 
-/// The installed sink, if any.
 #[cfg(target_os = "none")]
 fn sink() -> Option<Sink> {
     // SAFETY: written once by `set_sink` before any vector can be raised, and
@@ -296,7 +291,6 @@ fn trap_entry_address() -> usize {
     core::ptr::addr_of!(trap_entry) as usize
 }
 
-/// What `stvec` holds, as the machine reports it.
 #[cfg(target_os = "none")]
 fn installed_table() -> usize {
     let value: u64;
@@ -361,17 +355,11 @@ pub unsafe fn clear_software_pending() {
     };
 }
 
-/// Serve a program's supervisor call and resume it.
-///
-/// ## Why the frame is written rather than copied back
-///
 /// `entry.S` restores `x1`..`x31` and the system registers from the frame
 /// before `sret`, so a value written into the frame's `a0` *is* the value the
 /// program finds on return.  Copying it somewhere else afterwards would need a
 /// second restore path, which is the one thing the assembly's common epilogue
 /// exists to avoid.
-///
-/// ## Why `sepc` is advanced before the handler runs, not after it answers
 ///
 /// The machine names the `ecall` itself, not the instruction after it, the
 /// opposite of aarch64, whose `ELR` the hardware has already moved past the
@@ -419,8 +407,6 @@ fn serve_user_call(frame: &mut ExceptionFrame) {
 }
 
 /// Claim an external interrupt, hand it over, and finish it.
-///
-/// ## Why claim, handle, complete
 ///
 /// The PLIC's `claim` answers the highest-priority pending source and clears
 /// its pending bit; `complete` with the same number is what lets the source be
@@ -739,7 +725,6 @@ pub fn install_context(frame: &mut ExceptionFrame, context: &Context) {
 mod tests {
     use super::*;
 
-    /// The program's bytes are the words in little-endian order.
     #[test]
     fn the_program_is_little_endian() {
         let bytes = crate::program::program_bytes(1);

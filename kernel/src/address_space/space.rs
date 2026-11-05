@@ -3,8 +3,6 @@
 //! A program's address space: a root of its own that shares the kernel's, and
 //! the mapping a program's pages go through.
 //!
-//! ## Why a program gets a root of its own
-//!
 //! A four-level walk on a 48-bit space has 512 entries in its root, and this
 //! kernel's identity map fills entry 0, the whole first 512 GiB.  A program's
 //! pages in a *separate* root then need only that root's entries 1 and above to
@@ -40,8 +38,6 @@ use super::table::encode;
 use super::table::leaf_for;
 
 /// Where a program's pages live: above 512 GiB.
-///
-/// ## Why that address
 ///
 /// A four-level walk on a 48-bit space has 512 entries in its root, and this
 /// kernel's identity map fills entry 0, the whole first 512 GiB.  A program's
@@ -285,8 +281,6 @@ pub(crate) fn walk_or_create(
 
 /// Map `physical` at `virtual_address`, reachable from EL0.
 ///
-/// ## Why this is not `map_region`
-///
 /// `map_region` re-encodes an existing identity-mapped page with different
 /// permissions: the virtual address and the physical one are the same number.
 /// A program's text is not identity mapped, it lives in a frame the allocator
@@ -345,8 +339,6 @@ pub fn allocate_image_frame() -> Option<usize> {
 }
 
 /// Take one frame, as a page table would, and report whether it worked.
-///
-/// ## Why the boot calls this
 ///
 /// The spare tables are enough for every window this machine has, so
 /// `frames_taken_for_tables` is zero on a real boot and the branch that asks
@@ -410,8 +402,6 @@ pub struct MappedPage {
 }
 
 /// The pages `space` maps in the user window, in address order.
-///
-/// ## Why this walks the tables rather than recording a list
 ///
 /// A list of mappings kept beside the table is a second record of the same
 /// fact, and the first thing to diverge is the one nobody updates.  The table
@@ -496,8 +486,6 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
 
 /// A new address space holding a copy of `parent`'s user pages.
 ///
-/// ## What is copied, and what is shared
-///
 /// Every page the parent maps in the user window gets a **new frame**, and the
 /// bytes are copied into it.  That is `fork`'s contract: a child that wrote to
 /// a page would otherwise change the parent's, and the first program to do that
@@ -532,7 +520,6 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
     let mut child = unsafe { AddressSpace::new() }?;
 
     for page in &pages[..count] {
-        // A frame of its own, and the parent's bytes into it.
         let Some(frame) = allocate_image_frame() else {
             // The child is abandoned: its root and every frame taken so far go
             // back, so a failed fork does not shrink the pool by a program.

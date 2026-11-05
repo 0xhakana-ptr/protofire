@@ -2,9 +2,7 @@
 //!
 //! CPU frequency scaling governors.
 
-// ============================================================================
 // Type definitions
-// ============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GovernorType {
@@ -27,24 +25,18 @@ impl GovernorType {
     }
 }
 
-// ============================================================================
 // Ondemand parameters
-// ============================================================================
 
 const ONDEMAND_UP_THRESHOLD: u8 = 80; // scale up when load > 80%
 const ONDEMAND_DOWN_THRESHOLD: u8 = 25; // scale down when load < 25%
 const ONDEMAND_STEP_PERCENT: u32 = 10; // step up by 10% each time
 
-// ============================================================================
 // Schedutil parameters
-// ============================================================================
 
 const SCHEDUTIL_UP_RATE: u8 = 15; // scale up when load rises 15%
 const SCHEDUTIL_DOWN_RATE: u8 = 10; // scale down when load drops 10%
 
-// ============================================================================
 // Core logic
-// ============================================================================
 
 /// Compute the target frequency for a governor.
 ///
@@ -123,9 +115,7 @@ pub fn calculate_target(
     }
 }
 
-// ============================================================================
 // Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests;

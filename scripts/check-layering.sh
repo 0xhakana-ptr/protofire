@@ -12,11 +12,9 @@
 # A cycle is what this gate exists to prevent, and "no cycles" alone is not the
 # rule: a graph can be acyclic and still be wrong.  `fs` depending on `kernel`
 # is acyclic and is exactly the edge that made the previous tree's modules
-# unauditable — the filesystem would have to know about the scheduler to answer
+# unauditable: the filesystem would have to know about the scheduler to answer
 # a read.  The layers are the statement of what may be above what, so an edge
 # upward is refused even when it happens to close no loop today.
-#
-# ## Why the exceptions are a file and not a `#[allow]`
 #
 # Some edges are real and worth keeping.  `sync` names `arch` because a spinlock
 # has to close the interrupt window, and the interrupt flag is the machine's;
@@ -25,10 +23,10 @@
 # beside the layer it breaks, with the argument.  An exception nobody argued for
 # is what the gate is for; an exception with a reason is what it records.
 #
-# ## What is checked
+# ## The checks
 #
 # The dependency graph cargo itself reports: `cargo metadata --no-deps`.  Not a
-# grep over manifests — a `cfg(target_arch)` table, a workspace inheritance and
+# grep over manifests: a `cfg(target_arch)` table, a workspace inheritance and
 # a feature-forwarded dependency all produce edges a text search would miss.
 #
 # Usage:
@@ -129,7 +127,7 @@ report() {
 
 # Every crate in the workspace has to be in the spec.  A crate the spec does
 # not name is a crate with no layer, and a crate with no layer is one whose
-# dependencies are unchecked — which is the state this gate exists to end.
+# dependencies are unchecked, which is the state this gate exists to end.
 while read -r name; do
     if ! awk -v n="$name" '$1 == n { found = 1 } END { exit !found }' "$work/rank.txt"; then
         report "layering: crate \`$name\` is in the workspace and not in $LAYERS"
@@ -183,7 +181,7 @@ while read -r from to; do
 done <"$work/edges.txt"
 
 # A recorded exception whose edge has gone is stale, and a stale exception is a
-# permission nobody needs any more — it will be used by the next change that
+# permission nobody needs any more: it will be used by the next change that
 # finds the gate in its way.
 while read -r from to; do
     if ! awk -v f="$from" -v t="$to" '$1 == f && $2 == t { found = 1 } END { exit !found }' \

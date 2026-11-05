@@ -8,8 +8,6 @@
 //! riscv64, and there is no handshake to check: the firmware either loaded us
 //! or it did not, and a boot that got this far did.
 //!
-//! ## Where the pointer goes
-//!
 //! The entry assembly hands `x0` to `protofire_entry`, which takes no
 //! arguments: `bootloader` is the protocol and it must not learn which register
 //! held what.  So the machine records the pointer before that call, and this
@@ -18,8 +16,6 @@
 //! A `static` rather than a parameter for the same reason the trap sink is: the
 //! value arrives at an entry convention, and every consumer above is a function
 //! with no business carrying a machine's register.
-//!
-//! ## Why the tree is parsed here and not above
 //!
 //! `fdt` is the *format* and knows nothing about a machine.  Which register the
 //! blob arrived in, how long it is, and whether this machine trusts it are this
@@ -35,8 +31,6 @@ use core::sync::atomic::Ordering;
 /// and the state a boot that arrived some other way would be in.
 static DEVICE_TREE_POINTER: AtomicUsize = AtomicUsize::new(0);
 
-/// Record the device tree pointer the assembly passed.
-///
 /// Called once, from the entry assembly, before anything reads the tree.
 ///
 /// # Safety
@@ -49,8 +43,6 @@ pub unsafe fn set_device_tree(pointer: usize) {
     DEVICE_TREE_POINTER.store(pointer, Ordering::Release);
 }
 
-/// The entry the assembly calls, by the name the linker resolves.
-///
 /// `extern "C"` because `entry.S` calls it and the two files agree only on a
 /// symbol.  It forwards to [`set_device_tree`], whose safety contract this
 /// shares: what the assembly passes is what firmware left in `x0`.
@@ -66,8 +58,6 @@ pub unsafe extern "C" fn aarch64_set_device_tree(pointer: usize) {
     unsafe { set_device_tree(pointer) };
 }
 
-/// The tree firmware handed over, if it handed one over.
-///
 /// `None` when the pointer was zero, when the magic is not `0xd00dfeed`, or
 /// when the header names blocks past the blob.  A boot that gets `None` has a
 /// console and a heap and nothing else, which is a state worth booting into
@@ -98,8 +88,6 @@ pub fn device_tree() -> Option<fdt::Fdt<'static>> {
     }
 }
 
-/// The machine's PCIe configuration window, if the tree describes one.
-///
 /// `(base, length)` of a `pci-host-ecam-generic` node's `reg`, which is where
 /// every function's configuration space is memory-mapped.  `None` when there is
 /// no tree, no such node, or a node whose `reg` does not decode.
@@ -124,8 +112,6 @@ pub fn pcie_ecam_window() -> Option<(usize, usize)> {
 /// (`0x0300_0000`).  That is where a device's BAR can be placed so the CPU can
 /// reach it; the I/O window (`0x0100_0000`) is a range of port numbers and a
 /// machine with no port space has no use for it.
-///
-/// ## Why this is read rather than assumed
 ///
 /// On a machine with firmware, a PCI bus comes up already assigned and this
 /// function is never needed.  A device-tree machine booted directly has no

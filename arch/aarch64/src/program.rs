@@ -2,14 +2,10 @@
 //!
 //! The programs a boot runs, as this machine's machine code.
 //!
-//! ## Why the bytes live with the machine
-//!
 //! A program is machine code, so the array lives with the machine that executes
 //! it: `svc` is the call, `x8` is the number, and `x1` holds this program's own
 //! number because `Write` prints its second argument.  The kernel names
 //! `arch::program_bytes` and gets whichever machine answered.
-//!
-//! ## Why the words are written out
 //!
 //! Every instruction is a literal with its decoding beside it.  AArch64 has no
 //! small-immediate encoding as regular as RISC-V's `addi`, so the words here
@@ -23,23 +19,17 @@
 // number because `Write` prints its second argument.  The kernel names
 // `arch::program_bytes` and gets whichever machine answered.
 
-/// How many words the announcing program has.
-///
 /// Named so a test can find where *this* program ends in a buffer sized for the
 /// longest of the three.
 pub const PROGRAM_WORDS_FOR_TEST: usize = 24;
 
-/// How long a program's image is, in bytes.
-///
 /// The longest of the three images: the announcing program, the pipe writer
 /// and the pipe reader.  A program is copied into a whole page, so this
 /// matters only to the copy.
 pub const PROGRAM_LEN: usize = 25 * 4;
 
-/// The number of the program that reads the pipe.
 pub const PIPE_READER: u16 = 3;
 
-/// The number of the program that writes to it.
 pub const PIPE_WRITER: u16 = 2;
 
 /// The writer: announce, sleep, announce again, then put bytes in the pipe.
@@ -111,8 +101,6 @@ const PIPE_READER_PROGRAM: [u32; 21] = [
     0xD400_0001, // svc #0
 ];
 
-/// How long the program sleeps, in microseconds.
-///
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.  A sleep the timer could
 /// not distinguish from "did not sleep" would be a call that ran and proved
@@ -123,8 +111,6 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 ///
 /// Built rather than stored so the number is a parameter: a table of two
 /// constants would be two things to keep in step with the encoding.
-///
-/// ## Why the order is loop, Write, Sleep, Write, Exit
 ///
 /// The first `Write` says which program ran.  `Sleep` then takes it out of the
 /// rotation for [`SLEEP_MICROSECONDS`], during which the *other* program runs,

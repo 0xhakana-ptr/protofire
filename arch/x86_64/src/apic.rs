@@ -3,8 +3,6 @@
 //! The local APIC: its timer, its spurious-interrupt vector, and the
 //! end-of-interrupt write.
 //!
-//! ## Why the local APIC and not the 8259
-//!
 //! The 8259 is masked by `pic::mask_all` before the kernel enables interrupts,
 //! and that is deliberate: q35 has an IOAPIC, so the legacy controller is a
 //! second source for the same lines.  What is left to drive a timer is the
@@ -146,7 +144,6 @@ impl Apic {
         Some(Apic { base: address })
     }
 
-    /// The address the registers begin at.
     pub const fn base(&self) -> usize {
         self.base
     }
@@ -284,8 +281,6 @@ impl Apic {
     /// needs no APIC identifier and no arbitration.  The high half names a
     /// destination APIC id, and the self-shorthand ignores it.
     ///
-    /// ## Why the delivery is not instantaneous
-    ///
     /// The ICR's bit 12 is "delivery status", and it reads 1 while a send is in
     /// flight.  A second write before it clears is dropped, so this waits for
     /// it, bounded, because a machine whose APIC does not answer should report
@@ -373,8 +368,6 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
 
 /// Measure the APIC timer's frequency against the PIT.
 ///
-/// ## How
-///
 /// Channel 2 is put into mode 0, count down once, then stop, with a known
 /// initial count.  The APIC's timer is started at its maximum count at the same
 /// moment.  When the PIT reaches zero (its output bit in port `0x61` goes
@@ -385,8 +378,6 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
 /// gives the APIC's.  Nothing is assumed about the bus clock, which is the
 /// whole point: a machine whose clock is 100 MHz and one whose clock is 24 MHz
 /// both come out right.
-///
-/// ## Why it also disarms the APIC timer
 ///
 /// The measurement needs the timer running, and a timer left running would fire
 /// before the boot has a handler.  So it is disarmed here and armed again by
@@ -474,8 +465,6 @@ pub unsafe fn calibrate(apic: &Apic) -> Option<u64> {
 }
 
 /// Measure the timestamp counter's rate against the PIT.
-///
-/// ## Why this is a second measurement and not the first one reused
 ///
 /// The APIC's timer and the TSC are different clocks with different rates.  A
 /// deadline is a TSC reading, so converting a duration to a deadline needs the

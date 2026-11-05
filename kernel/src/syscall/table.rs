@@ -3,14 +3,10 @@
 //! The registry: a number in, a handler out, and the descriptor table the
 //! handlers work through.
 //!
-//! ## What a slot means
-//!
 //! Every number the ABI defines has a slot.  A number this kernel does not
 //! serve answers [`Error::NotImplemented`] rather than being absent: an absent
 //! slot would have to be a panic or a silent zero, and both report a lie.
 //! "This kernel does not serve that number" is a fact the caller can act on.
-//!
-//! ## Why the table is static
 //!
 //! A supervisor call arrives from a trap with no context to be handed anything,
 //! so the table it needs has to be reachable without one.  The static is
@@ -130,7 +126,6 @@ impl SyscallTable {
         self.namespace = Some(namespace);
     }
 
-    /// Register a handler for `number`.
     pub fn register(&mut self, number: SyscallNumber, handler: KernelHandler) {
         self.slots[number as usize] = Handler::Served(handler);
     }
@@ -181,7 +176,6 @@ impl SyscallTable {
             .count()
     }
 
-    /// The namespace, if a boot installed one.
     pub(crate) fn namespace(&self) -> Option<&Arc<MountTable>> {
         self.namespace.as_ref()
     }
@@ -242,8 +236,6 @@ impl Default for SyscallTable {
 
 /// The registry, once the boot has installed one.
 ///
-/// ## Why a static
-///
 /// The table was a local in `kernel_main`: the boot built it, served three
 /// calls through it, and dropped it.  That is enough to prove the handlers work
 /// and not enough to be a kernel, a table that exists only inside one function
@@ -291,7 +283,6 @@ pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
         .map(|table| table.dispatch(arguments))
 }
 
-/// Whether a boot installed a registry.
 pub fn has_registry() -> bool {
     REGISTRY.lock().is_some()
 }

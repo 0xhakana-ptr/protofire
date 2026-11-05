@@ -2,8 +2,6 @@
 //!
 //! The COM1 serial port, which is how a boot says anything at all.
 //!
-//! ## Why this is here and not in a driver crate
-//!
 //! A serial port is not a device the kernel discovers, it is part of the
 //! machine the way a register is, present on every PC since the first one, at a
 //! fixed I/O address, with no enumeration and no interrupt required.  The
@@ -38,8 +36,6 @@ const MCR: u16 = 4;
 #[cfg(target_os = "none")]
 const LSR: u16 = 5;
 
-/// Write one byte to a port.
-///
 /// SAFETY (of the callers): `port` must be an I/O port this machine has, and
 /// the value is a byte, so no width question arises.
 #[cfg(target_os = "none")]
@@ -50,8 +46,6 @@ unsafe fn outb(port: u16, value: u8) {
     unsafe { asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack)) };
 }
 
-/// Read one byte from a port.
-///
 /// SAFETY (of the callers): `port` must be an I/O port this machine has.
 #[cfg(target_os = "none")]
 unsafe fn inb(port: u16) -> u8 {
@@ -98,7 +92,6 @@ pub fn init() {
     }
 }
 
-/// Whether the transmitter is ready for a byte.
 #[cfg(target_os = "none")]
 fn transmit_ready() -> bool {
     // Bit 5 of the line status register is "transmit holding register empty".
@@ -157,11 +150,6 @@ pub fn host_console_take() -> alloc::vec::Vec<u8> {
 #[cfg(not(target_os = "none"))]
 pub fn init() {}
 
-/// Write a string, one byte at a time.
-/// Write a string to the console.
-///
-/// ## Why a line is buffered rather than locked
-///
 /// A boot line is not one call.  `protofire: cpu 1 id 1, ticking, 1 ipi(s)`
 /// is eight calls to `write_str`, `write_u32` and `write_hex`, and a lock
 /// taken per call would let a second CPU's line land between any two of them:

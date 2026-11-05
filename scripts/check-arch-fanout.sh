@@ -8,7 +8,7 @@
 # architecture crate's, and nothing above it learns which machine it is running
 # on.  `arch` names its implementation from a `cfg(target_arch)` table in its own
 # manifest, so a target that no crate implements fails to build rather than
-# picking one silently — and that only stays true while nothing outside `arch/`
+# picking one silently, and that only stays true while nothing outside `arch/`
 # spells a `target_arch` gate of its own.
 #
 # A `#[cfg(target_arch = "x86_64")]` in the kernel is not a style problem.  It is
@@ -16,14 +16,10 @@
 # other gate: the build succeeds, the tests pass, and the new machine is wrong
 # in a way only its own boot would show.
 #
-# ## What is counted
-#
 # Every `target_arch = "..."` in a `.rs` file outside `arch/`, with line
-# comments stripped first — prose that mentions a gate is not a gate.  The
+# comments stripped first: prose that mentions a gate is not a gate.  The
 # count is per file, and the baseline records each file with a reason, so a new
 # one has to be argued for rather than merely accepted.
-#
-# ## Why the baseline can shrink but not grow
 #
 # The number is expected to fall to zero and the honest way there is one file at
 # a time: move the question into `arch`, or say why it cannot be moved.  A row
@@ -45,7 +41,7 @@ case "${1:-}" in
     '') ;;
     --record) mode=record ;;
     -h|--help)
-        sed -n '2,40p' "$0"
+        sed -n '2,36p' "$0"
         exit 0
         ;;
     *)

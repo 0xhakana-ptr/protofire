@@ -3,23 +3,17 @@
 //! The machine's other cores: which ones the tree names, and the PSCI call that
 //! starts one.
 //!
-//! ## What the machine has
-//!
 //! The device tree lists the cores, `/cpus`'s `cpu@` children, each `reg`
 //! naming its MPIDR and `enable-method` saying how firmware would start it.
 //! This tree starts a core only when that method is `psci`, because it is the
 //! one method it can drive: a core whose method is anything else is a core
 //! whose start this kernel would be guessing at.
 //!
-//! ## What a started core does
-//!
-//! The same as riscv64's started hart: it gets a stack of its own, the trap
-//! vector, its own clock, and then asks the kernel for a task and enters EL0 on
-//! it.  What differs is how it is started — a firmware call carried by `hvc` or
-//! `smc` rather than an `ecall` — and that is the whole of this file's machine
-//! half.
-//!
-//! ## Why the entry is a physical address
+//! A started core does the same as riscv64's started hart: it gets a stack of
+//! its own, the trap vector, its own clock, and then asks the kernel for a task
+//! and enters EL0 on it.  What differs is how it is started, a firmware call
+//! carried by `hvc` or `smc` rather than an `ecall`.  That is the whole of this
+//! file's machine half.
 //!
 //! A core started through PSCI begins with its MMU off, so the address in `x2`
 //! is fetched without translation.  Every image this tree builds is linked at
@@ -62,12 +56,10 @@ pub const fn kernel_stack_reservation() -> usize {
 /// MPIDR would otherwise index the wrong stack.
 static BOOT_CORE: AtomicUsize = AtomicUsize::new(0);
 
-/// Record the boot core the entry assembly saw.
 pub fn set_boot_core(core: usize) {
     BOOT_CORE.store(core, Ordering::Release);
 }
 
-/// The core the firmware cold-booted.
 pub fn boot_core() -> usize {
     BOOT_CORE.load(Ordering::Acquire)
 }
@@ -76,32 +68,26 @@ pub fn boot_core() -> usize {
 static SLOT_CORE: [AtomicUsize; MAX_SECONDARY_HARTS] =
     [const { AtomicUsize::new(0) }; MAX_SECONDARY_HARTS];
 
-/// The flag a started core stores the moment it is running.
 static ONLINE: [AtomicBool; MAX_SECONDARY_HARTS] =
     [const { AtomicBool::new(false) }; MAX_SECONDARY_HARTS];
 
-/// How many cores the firmware refused to start.
 static REFUSED: AtomicUsize = AtomicUsize::new(0);
 
 /// The root table every started core installs in its own `TTBR0_EL1`.
 #[cfg(target_os = "none")]
 static KERNEL_ROOT: AtomicUsize = AtomicUsize::new(0);
 
-/// The timer slice a started core arms for itself, in microseconds.
 #[cfg(target_os = "none")]
 static TIMER_SLICE_US: AtomicUsize = AtomicUsize::new(0);
 
-/// The firmware's answer for the cores it would not start.
 pub fn refused_harts() -> usize {
     REFUSED.load(Ordering::Acquire)
 }
 
-/// The MPIDR the boot core asked firmware to start into `slot`.
 pub fn secondary_hart_id(slot: usize) -> usize {
     SLOT_CORE[slot].load(Ordering::Acquire)
 }
 
-/// Whether the core started into `slot` has recorded that it is running.
 pub fn secondary_online(slot: usize) -> bool {
     ONLINE[slot].load(Ordering::Acquire)
 }
@@ -265,7 +251,7 @@ pub unsafe extern "C" fn aarch64_secondary_main(slot: usize) -> ! {
     //
     // The distributor is one device for the machine and the boot core
     // programmed it; `GICC_CTLR` and `GICC_PMR` are per-core registers, and a
-    // core that never wrote them takes no interrupt at all — not its own timer,
+    // core that never wrote them takes no interrupt at all: not its own timer,
     // not an IPI.  That is what this core was: it ran a program with
     // `0 tick(s)`, so nothing ever preempted it and nothing ever woke it, and
     // the boot core then ran the same task from its own frame.
@@ -280,10 +266,7 @@ pub unsafe extern "C" fn aarch64_secondary_main(slot: usize) -> ! {
     //
     // The distributor's `ISENABLER0` covers the SGIs and PPIs, and it is one
     // bank per core: the boot's write enabled the timer for the boot core and
-    // for no one else.  A started core that skipped this took its own timer's
-    // interrupt nowhere — `0 tick(s)` for the length of a boot — so nothing
-    // preempted it, nothing handed its task back, and the boot core ran the
-    // same task from its own frame.
+    // for no one else.
     //
     // SAFETY: the controller is installed and enabled, and this is a PPI this
     // core is entitled to enable for itself.
@@ -302,7 +285,6 @@ pub unsafe extern "C" fn aarch64_secondary_main(slot: usize) -> ! {
     wait_for_work()
 }
 
-/// Wait until the kernel has a task for this core, then run it.
 #[cfg(target_os = "none")]
 fn wait_for_work() -> ! {
     loop {
@@ -326,11 +308,8 @@ fn wait_for_work() -> ! {
 /// What a started core asks the kernel for: a root table and a frame to enter.
 pub type WorkSink = fn(cpu: usize) -> Option<(usize, crate::Context)>;
 
-/// The kernel's answer to "what should this core run", if it installed one.
 static WORK: cell::SyncUnsafeCell<Option<WorkSink>> = cell::SyncUnsafeCell::new(None);
 
-/// Install the kernel's work source.
-///
 /// # Safety
 ///
 /// Called once, before any started core can look for work.
@@ -343,8 +322,6 @@ pub unsafe fn set_work_sink(sink: WorkSink) {
 /// The boot's end, as the kernel publishes it.
 static FINISHED: cell::SyncUnsafeCell<Option<fn() -> bool>> = cell::SyncUnsafeCell::new(None);
 
-/// Install the kernel's end-of-boot predicate.
-///
 /// # Safety
 ///
 /// Called once, before any started core can ask.
@@ -353,14 +330,12 @@ pub unsafe fn set_finished_sink(sink: fn() -> bool) {
     unsafe { *FINISHED.get() = Some(sink) };
 }
 
-/// Whether the boot is over.
 #[cfg(target_os = "none")]
 pub fn boot_finished() -> bool {
     // SAFETY: written once before any started core asks, read after.
     unsafe { *FINISHED.get() }.is_some_and(|sink| sink())
 }
 
-/// Ask the kernel what this core should run.
 #[cfg(target_os = "none")]
 fn take_work() -> Option<(usize, crate::Context)> {
     // SAFETY: written once before any started core asks, read after.

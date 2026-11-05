@@ -92,8 +92,6 @@ pub use trap::starting_context;
 
 /// Which CPU this code runs on, as the machine reports it.
 ///
-/// ## Why the answer is in `tp` and how it gets there
-///
 /// `tp` is one register, no memory, and the answer a trap needs without a
 /// lock.  It is **not** where the answer comes from at boot: `tp` belongs to
 /// the interrupted program, and a program's `tp` is whatever it made it.  The
@@ -148,8 +146,6 @@ pub fn current_cpu_id() -> usize {
 
 /// Whether this is the CPU the boot started on.
 ///
-/// ## What the trap path asks it for, today
-///
 /// One thing: whether this CPU may touch the external interrupt controller.
 /// The `Plic` the boot installed carries the boot hart's context, so only the
 /// boot hart can claim and complete a source; a started hart leaves that line
@@ -161,7 +157,7 @@ pub fn current_cpu_id() -> usize {
 /// scheduler has a lock now, so the gate would be wrong as a general answer:
 /// a started CPU takes its own timer, counts it, re-arms its own clock and runs
 /// tasks, all of which need this to be `true` for it.  What keeps the name is
-/// that the controller really is the boot hart's — the reason is narrower than
+/// that the controller really is the boot hart's: the reason is narrower than
 /// it was, not gone.
 #[cfg(target_os = "none")]
 pub fn boot_cpu_owns_this_trap() -> bool {
@@ -251,8 +247,6 @@ unsafe extern "C" {
 
 /// The top of this CPU's kernel stack.
 ///
-/// ## Why this is asked rather than written
-///
 /// `sscratch` holds the stack a program's trap lands on, and it is per-hart: a
 /// value written by the boot hart is a stack the second hart would build its
 /// frame on, which is two frames over one region and an unwind into the wrong
@@ -292,8 +286,6 @@ pub fn halt() -> ! {
 
 /// Stop the core until an interrupt arrives, leaving interrupts enabled.
 ///
-/// ## Why this zeroes `sscratch` first
-///
 /// The trap entry tells "a program's trap" from "the kernel's own" by whether
 /// the `sscratch` swap produced a stack.  While a program runs, `sscratch`
 /// parks the program's `sp`, and a tick taken inside this window is the
@@ -302,9 +294,8 @@ pub fn halt() -> ! {
 /// carries it, and the return path re-arms `sscratch` from the frame it
 /// resumes.  What the zero buys is that a nested tick is routed as what it is.
 ///
-/// ## Why this unmasks
-///
-/// The same reason x86_64's `sti; hlt` does, in this machine's words.  A
+/// It unmasks for the same reason x86_64's `sti; hlt` does, in this machine's
+/// words.  A
 /// program's trap arrives with `SIE` cleared by the hardware, so the kernel
 /// runs with interrupts masked for the whole of a served call, and a wait that
 /// did not unmask them never takes the tick that would end it.  `wfi` alone
@@ -312,7 +303,7 @@ pub fn halt() -> ! {
 /// enable.
 ///
 /// The `csrci` after puts the mask back, and the `sret` that eventually leaves
-/// this trap restores the interrupted state anyway, the mask covers the wait
+/// this trap restores the interrupted state anyway; the mask covers the wait
 /// and nothing else.
 #[cfg(target_os = "none")]
 pub fn wait_for_a_wakeup() {
@@ -334,16 +325,13 @@ pub fn wait_for_a_wakeup() {}
 
 /// Enter a program on this CPU, with its root table already installed.
 ///
-/// ## Why this is not `enter_user_with_context`
-///
-/// That one is the *first* entry on the boot CPU, and it installs the context
+/// This is not `enter_user_with_context`: that one is the *first* entry on
+/// the boot CPU, and it installs the context
 /// it is handed over this CPU's kernel frame.  This one is a CPU that came up
 /// on its own and has just been handed a task by the scheduler: its kernel
 /// stack holds whatever the trap path that woke it left there, and the context
 /// it enters is the task's, which the scheduler chose.  Both end in the same
 /// `sret`; what differs is who chose the context and what is on the stack.
-///
-/// ## Why `sscratch` is written here
 ///
 /// The value is per-hart, and a CPU that entered a program with the boot hart's
 /// stack in its `sscratch` would take its first trap on another CPU's stack.
@@ -600,22 +588,16 @@ pub unsafe fn message_frame() -> Option<()> {
 
 /// Enter U-mode at `entry` with the stack at `stack_top`.
 ///
-/// ## What this does that nothing else in this tree did
-///
 /// Everything up to here runs in S-mode.  Returning to a lower privilege is an
 /// `sret` with `sstatus` naming U-mode and `sepc` naming where in the program
 /// to start, the same instruction the trap path already ends with, pointed
 /// somewhere new.
-///
-/// ## Why it does not return
 ///
 /// Control does not come back here.  The program returns to the kernel through
 /// a trap, a syscall or an exit, and the trap path is what resumes the
 /// kernel.  A function that "returned" would be claiming a program can finish
 /// without trapping, which it cannot: U-mode has no way out except an
 /// exception.
-///
-/// ## Why interrupts are masked across this
 ///
 /// The three CSR writes and the `sret` are one transaction, and a timer tick
 /// between them destroys it: a trap taken here saves the interrupted `sepc`
@@ -689,8 +671,6 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 
 /// Translate through a different root table from now on.
 ///
-/// ## What this does not do
-///
 /// It writes `satp` and flushes and nothing else.  The **caller** must be
 /// running through a mapping both tables share, because the next instruction
 /// fetch happens through the new one: a switch made from an address only the
@@ -701,8 +681,6 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 /// root, so a switch can happen anywhere in the kernel and the trap path does
 /// not have to be careful about where it is.
 ///
-/// ## Why no ASID
-///
 /// An address-space identifier would let two roots' translations coexist in
 /// the TLB and remove the flush.  It also has to be allocated, kept unique and
 /// cleared at the right moment, and this kernel has one CPU and a switch per
@@ -712,7 +690,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 /// # Safety
 ///
 /// `root` must be a page-aligned root table whose entry 0 maps every address
-/// the kernel is running on, its text, its stack and the trap vector, ///
+/// the kernel is running on, its text, its stack and the trap vector,
 /// because the next fetch happens through it.
 #[cfg(target_os = "none")]
 pub unsafe fn switch_address_space(root: usize) -> bool {
@@ -913,8 +891,6 @@ pub fn console_source() -> Option<usize> {
 
 /// Claim the console's interrupt: enable the source at the controller, and ask
 /// the UART to raise it once.
-///
-/// ## Why the console is the device this boot claims
 ///
 /// The PLIC was programmed and its claim path had never carried a device's
 /// interrupt: no source was enabled, so nothing ever arrived through the

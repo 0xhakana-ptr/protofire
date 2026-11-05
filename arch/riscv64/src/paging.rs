@@ -156,7 +156,6 @@ pub fn encode(entry: Entry, _level: Level) -> u64 {
     encode_at(entry, Level::Third)
 }
 
-/// Decode a word the machine wrote, at `level`.
 pub fn decode(word: u64, level: Level) -> Entry {
     if word & VALID == 0 {
         return Entry::default();
@@ -204,7 +203,6 @@ impl core::fmt::Display for CrossMachine {
     }
 }
 
-/// The encoding, as the trait `paging` names.
 pub struct Encoding;
 
 impl EntryEncoding for Encoding {
@@ -226,8 +224,6 @@ impl EntryEncoding for Encoding {
 /// this machine answers this mode, see the header's "The modes".
 pub const SATP_MODE_SV48: u64 = 9 << 60;
 
-/// Make a change to the page tables visible to the walk.
-///
 /// `sfence.vma` is the instruction the architecture requires after a table
 /// change, and with no operands it invalidates every entry.
 ///
@@ -255,8 +251,6 @@ pub fn flush_translation() {}
 /// `0x8000_0000`, so the gap below the first bank is where this machine's
 /// devices live, and the range above the last is where a second bank's
 /// neighbours would.
-///
-/// ## Why the answer comes from the tree and not a constant
 ///
 /// A board's memory map is a fact the firmware states, and the same argument
 /// that puts the UART's address in this crate puts the *gap's* edges there:
@@ -309,13 +303,11 @@ pub fn device_windows() -> Windows {
     windows
 }
 
-/// The most `memory` nodes this function reads.
 const MAX_MEMORY_NODES: usize = 4;
 
 /// Where `qemu-system-riscv64 -machine virt` puts its RAM.
 const VIRT_RAM_START: usize = 0x8000_0000;
 
-/// Collect the `device_type = "memory"` regions under `node`.
 pub(crate) fn collect_memory(
     node: fdt::Node<'_>,
     out: &mut [(u64, u64); MAX_MEMORY_NODES],
@@ -377,7 +369,6 @@ impl Default for Windows {
     }
 }
 
-/// Read the address of the table the machine is translating through.
 #[cfg(target_os = "none")]
 pub fn current_root_table() -> usize {
     let value: u64;
@@ -391,9 +382,6 @@ pub fn current_root_table() -> usize {
     ((value & ((1u64 << 44) - 1)) << PAGE_NUMBER_SHIFT) as usize
 }
 
-/// Install `table` in `satp`, in Sv48 mode, and answer whether this was a
-/// change.
-///
 /// The register's page number is bits 0..43, **not** bits 10..53, which is
 /// where a page-table *entry* keeps its page number above the flag bits.  The
 /// two shifts look alike and the wrong one cost this tree its first boot: the
@@ -581,7 +569,6 @@ mod tests {
         );
     }
 
-    /// An absent entry is zero.
     #[test]
     fn an_absent_entry_is_zero() {
         assert_eq!(encode(Entry::EMPTY, Level::Leaf), 0);

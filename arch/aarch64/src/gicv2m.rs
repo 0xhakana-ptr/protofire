@@ -2,8 +2,6 @@
 //!
 //! The GICv2m frame: where a memory write becomes an interrupt.
 //!
-//! ## What a frame is
-//!
 //! An MSI-X device raises an interrupt by **writing to an address**, and the
 //! platform decides what that write means.  On a GICv2 that decision is a
 //! *frame*: a small window where a write at one offset produces one of a
@@ -16,16 +14,12 @@
 //! | `0x008` | `GICV2M_MSI_TYPER` | the first interrupt number the frame can raise, and how many |
 //! | `0x000` + `4 * n` | `GICV2M_MSI_SET_SPI` | writing here raises the frame's n-th interrupt |
 //!
-//! ## Why a driver does not pick an address freely
-//!
 //! The address a device writes **is** the interrupt selector: the frame decodes
 //! the low bits of the address to choose which of its interrupts to raise, and
 //! the value written is irrelevant.  So an MSI-X entry's address is computed
 //! from the frame's base and a slot index, not chosen, and a driver that wrote
 //! an arbitrary address would raise whichever interrupt that address selected,
 //! or none.
-//!
-//! ## What is here today
 //!
 //! The two registers and the arithmetic that turns a slot into an address.  Not
 //! here: the frame's per-interrupt masking (`GICV2M_MSI_SETSPI_NS` has no mask;
@@ -35,8 +29,6 @@
 /// `GICV2M_MSI_TYPER`: the interrupt range this frame raises.
 pub const MSI_TYPER: usize = 0x008;
 /// The first `GICV2M_MSI_SETSPI_NS` register; slot `n` is four bytes past it.
-///
-/// ## Why `0x40` and not `0x00`
 ///
 /// A GICv2m frame has **two aliases** of the same array: `0x0000` for secure
 /// accesses and `0x0040` for non-secure ones.  A kernel running at non-secure
@@ -85,8 +77,6 @@ impl Frame {
         }
     }
 
-    /// Decode a `MSI_TYPER` reading into the two numbers it holds.
-    ///
     /// The register is two ten-bit fields, not one number: the first interrupt
     /// in bits 0..10 and the count in bits 16..26.  A driver that read it as
     /// one value would treat `count << 16 | first` as an interrupt number.
@@ -98,23 +88,18 @@ impl Frame {
         }
     }
 
-    /// The first interrupt this frame raises.
     pub const fn first_interrupt(&self) -> u32 {
         self.first_interrupt
     }
 
-    /// How many interrupts it raises.
     pub const fn count(&self) -> u32 {
         self.count
     }
 
-    /// Whether `slot` is one the frame can raise.
     pub const fn holds(&self, slot: u32) -> bool {
         slot < self.count
     }
 
-    /// The interrupt number `slot` raises.
-    ///
     /// `None` for a slot past the frame's count, which is an interrupt the
     /// frame would not raise at all, and a driver that used the number anyway
     /// would enable a line nothing can produce.
@@ -152,8 +137,6 @@ impl Frame {
         slot
     }
 
-    /// Read `MSI_TYPER` and build the frame.
-    ///
     /// # Safety
     ///
     /// `base` must be an `arm,gic-v2m-frame` window the machine's device tree

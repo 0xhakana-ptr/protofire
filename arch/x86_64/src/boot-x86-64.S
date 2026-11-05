@@ -24,7 +24,7 @@ multiboot_header_start:
 multiboot_header_end:
 
 /* A second handshake for a second loader.  QEMU's `-kernel` does not read a
-   multiboot2 header — it reads the PVH ELF note and refuses an image without
+   multiboot2 header: it reads the PVH ELF note and refuses an image without
    one ("Error loading uncompressed kernel without PVH ELF Note"), while GRUB
    reads the header above and ignores this.  Shipping both is what lets one
    image boot either way, and it is what the previous tree's `boot.asm` does
@@ -34,7 +34,7 @@ multiboot_header_end:
    than `_start`: a PVH loader enters with `%ebx` holding the device tree
    address and **no multiboot handshake in `%eax`**, so the common `_start`
    would see a magic of zero and refuse.  The note's layout is the generic ELF
-   note convention — namesz, descsz, type, then the name padded to four bytes
+   note convention: namesz, descsz, type, then the name padded to four bytes
    and the descriptor. */
 .pushsection .note.Xen, "a", @note
 .balign 4
@@ -49,7 +49,7 @@ multiboot_header_end:
 /* A PVH loader enters here, in 32-bit protected mode, with the device tree's
    address in `%ebx` and nothing in `%eax`.  It is the same path from here on,
    but the handshake has to be recorded as "PVH" rather than as a multiboot2
-   magic of zero — the difference between a loader that did not use our header
+   magic of zero: the difference between a loader that did not use our header
    and a loader that used our other one. */
 .code32
 .global pvh_entry
@@ -192,7 +192,7 @@ long_mode_start:
 
     /* Then the protocol's entry.  The name is neutral on purpose: this file
        knows how the machine is entered, `bootloader` knows what to do once it
-       is, and the two meet at a symbol rather than at a crate edge — `arch` is
+       is, and the two meet at a symbol rather than at a crate edge: `arch` is
        below `bootloader`, and an upward import would be the one thing this
        tree's layering forbids. */
     call protofire_entry
@@ -223,7 +223,7 @@ boot_stack_bottom:
 /* The kernel stack's top, published: the TSS names it as `RSP0`, so every
    interrupt from ring 3 lands on this stack.  A local label would have left
    `gdt.rs` unable to name it, and a second stack declared there would be a
-   second stack — one the boot is not running on, whose contents nothing
+   second stack, one the boot is not running on, whose contents nothing
    unwinds. */
 .global kstack_top
 kstack_top:

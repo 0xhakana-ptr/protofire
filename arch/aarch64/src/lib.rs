@@ -111,8 +111,6 @@ pub fn halt() -> ! {
 /// the machine's final stop; this one is the idle a scheduler uses when every
 /// program is asleep, so it returns as soon as the timer has something to say.
 ///
-/// ## Why there is no unmask here
-///
 /// x86_64 needs `sti` before its `hlt` because a supervisor call arrives
 /// through an interrupt gate, which clears the flag.  aarch64's exception
 /// entry restores `PSTATE` from `SPSR_EL1` on the way out and masks nothing on
@@ -124,9 +122,8 @@ pub fn halt() -> ! {
 /// thing its caller must not rely on.
 #[cfg(target_os = "none")]
 pub fn wait_for_a_wakeup() {
-    // ## Why this unmasks
-    //
-    // The same reason x86_64's `sti; hlt` does, in this machine's words.  A
+    // This unmasks for the same reason x86_64's `sti; hlt` does, in this
+    // machine's words.  A
     // supervisor call arrives through an exception, and `entry.S` masks `IRQ`
     // on the way in, so the kernel runs with interrupts off for the whole of
     // a served call, and a wait that did not unmask them never takes the tick
@@ -257,16 +254,12 @@ pub const SPSR_EL0T: u64 = 0x340;
 
 /// Enter EL0 at `entry` with the stack at `stack_top`.
 ///
-/// ## What this does that nothing else in this tree did
-///
 /// Everything up to here runs at EL1.  Returning to a lower exception level is
 /// an `eret` with `SPSR_EL1` naming EL0 and `ELR_EL1` naming where in the
 /// program to start, the same instruction the trap path already ends with,
 /// pointed somewhere new.  What made it impossible before is not the
 /// instruction: it is that no mapping was `user` and no frame carried a
 /// program.
-///
-/// ## Why it does not return
 ///
 /// Control does not come back here.  The program returns to the kernel through
 /// a trap, a syscall or an exit, and the trap path is what resumes the
@@ -279,11 +272,11 @@ pub const SPSR_EL0T: u64 = 0x340;
 /// must be a `user`-accessible page's end, and the caller must have no live
 /// state on the kernel stack that an exception could not restore, the trap
 /// path builds its own frame and resumes through it.
+///
 /// Enter a program on this core, with its root table already installed.
 ///
-/// ## Why this is not `enter_user_with_context`
-///
-/// That one is the *first* entry, on the boot core.  This one is a core that
+/// This is not `enter_user_with_context`: that one is the *first* entry, on
+/// the boot core.  This one is a core that
 /// came up on its own and has just been handed a task by the scheduler: what
 /// differs is who chose the context, not what the `eret` does.
 ///
@@ -318,25 +311,24 @@ pub unsafe fn enter_program_here(_context: &Context) -> ! {
 /// # Safety
 ///
 /// As [`enter_user`].
-///  ## Why interrupts are masked across this
 ///
-///  The three `msr`s and the `eret` are one transaction, and a timer tick
-///  between them destroys it.  An exception taken here is taken at EL1, so
-///  `entry.S` saves the interrupted `ELR_EL1`/`SPSR_EL1` **and restores them
-///  on the way out**, clobbering the entry this function just wrote.  The
-///  `eret` then returns to whatever address the tick interrupted, which is
-///  inside this very function, and it does so at EL0 because the `spsr` was
-///  rewritten to EL0t again.  The machine takes an instruction abort on a
-///  kernel address from ring 3.
+/// Interrupts are masked across the whole sequence: the three `msr`s and the
+/// `eret` are one transaction, and a timer tick between them destroys it.  An
+/// exception taken here is taken at EL1, so `entry.S` saves the interrupted
+/// `ELR_EL1`/`SPSR_EL1` **and restores them on the way out**, clobbering the
+/// entry this function just wrote.  The `eret` then returns to whatever
+/// address the tick interrupted, which is inside this very function, and it
+/// does so at EL0 because the `spsr` was rewritten to EL0t again.  The
+/// machine takes an instruction abort on a kernel address from ring 3.
 ///
-///  That is not hypothetical: it is what `unhandled exception 8 (ec 32,
-///  instruction abort) at 0x400c92a0` was, at one to four thousand ticks a
-///  second, and the address moved with whichever `msr` the tick landed after.
+/// That is not hypothetical: it is what `unhandled exception 8 (ec 32,
+/// instruction abort) at 0x400c92a0` was, at one to four thousand ticks a
+/// second, and the address moved with whichever `msr` the tick landed after.
 ///
-///  `daifset` masks IRQ, and `eret` needs no matching unmask: it loads PSTATE
-///  from `SPSR_EL1`, which names EL0t with `I` clear, so the program is
-///  entered with interrupts enabled again.  The mask covers this window and
-///  nothing else.
+/// `daifset` masks IRQ, and `eret` needs no matching unmask: it loads PSTATE
+/// from `SPSR_EL1`, which names EL0t with `I` clear, so the program is
+/// entered with interrupts enabled again.  The mask covers this window and
+/// nothing else.
 #[cfg(target_os = "none")]
 pub unsafe fn enter_user_with_context(context: &Context) -> ! {
     // SAFETY: the caller's contract is `enter_user`'s.
@@ -351,7 +343,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
             entry = in(reg) context.elr,
             // `sp_el0`, not `registers[0]`.
             //
-            // `registers[0]` is the program's `x0` — its first argument — and
+            // `registers[0]` is the program's `x0`, its first argument, and
             // `starting_context` leaves it zero.  Using it as the stack pointer
             // entered every program with `sp = 0`, which is invisible for a
             // program that never touches its stack and fatal for one that does:
@@ -399,8 +391,6 @@ pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
 
 /// Translate through a different root table from now on.
 ///
-/// ## What this does not do
-///
 /// It writes `TTBR0_EL1` and flushes and nothing else.  The **caller** must be
 /// running through a mapping both tables share, because the next instruction
 /// fetch happens through the new one: a switch made from an address only the
@@ -410,8 +400,6 @@ pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
 /// kernel's code, its stack and the trap vectors are reachable through every
 /// root, so a switch can happen anywhere in the kernel and the trap path does
 /// not have to be careful about where it is.
-///
-/// ## Why no ASID
 ///
 /// An address-space identifier would let two roots' translations coexist in the
 /// TLB and remove the flush.  It also has to be allocated, kept unique and

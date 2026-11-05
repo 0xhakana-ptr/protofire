@@ -3,8 +3,6 @@
 //! The boot sequence: what a machine does in order, once, from the point where
 //! it can run Rust to the point where it stops.
 //!
-//! ## Why this is a module and not the crate root
-//!
 //! The crate root keeps what has to be at the root, the allocator, the modules
 //! themselves, and the re-exports that spell the public names.  The *order* of
 //! the boot is a subject with a beginning and an end, and it had grown to more
@@ -16,12 +14,10 @@
 //! function is right, and keeping that function in a file of its own is what
 //! lets a reader find it.
 //!
-//! ## What stays in the root
-//!
-//! `halt` and the allocator: one is the machine's stop spelled once for every
-//! caller, and the other is a `#[global_allocator]`, which the language
-//! requires at the crate root of the binary that links it.  Everything else the
-//! boot touches is named here.
+//! `halt` and the allocator stay in the root: one is the machine's stop
+//! spelled once for every caller, and the other is a `#[global_allocator]`,
+//! which the language requires at the crate root of the binary that links it.
+//! Everything else the boot touches is named here.
 
 use crate::BootStage;
 use crate::halt;
@@ -68,8 +64,6 @@ pub fn kernel_main() -> ! {
 
     crate::console::report_handshake();
 
-    // Replace the boot's page table with one this kernel built.
-    //
     // SAFETY: called once, from the kernel's entry, with the console up so a
     // failure past this point is visible.  The table it installs covers the
     // code performing the install.
@@ -132,8 +126,6 @@ pub fn kernel_main() -> ! {
 
 /// Build the syscall registry, register the handlers a boot serves, and install
 /// it so the calls outlive this function.
-///
-/// ## Why the registry is a static and not a local
 ///
 /// Until this existed the table was a local: built here, used three times,
 /// dropped.  That proves the handlers work and is not a syscall interface, a

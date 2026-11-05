@@ -2,8 +2,6 @@
 //!
 //! What a loader handed over, in terms no machine owns.
 //!
-//! ## Why this is an ABI type
-//!
 //! The architecture crate parses the handshake, multiboot2 registers, a PVH
 //! note, a device tree in a register the machine's own convention names, and
 //! the kernel consumes the result.  If the type lived in the kernel, `arch`
@@ -13,8 +11,6 @@
 //!
 //! A type both sides name belongs where both sides can reach it, which is here.
 //!
-//! ## What it deliberately does not carry
-//!
 //! The information structure's address, the device tree's address, the memory
 //! map.  Those are a loader's own layout, and the architecture crate is what
 //! turns one into the other.  This is the *answer* the kernel needs: which
@@ -22,8 +18,6 @@
 //! step learns for its next stage.
 
 /// What a device tree said, in the terms a boot line reports.
-///
-/// ## Why this is an ABI type
 ///
 /// `arch` produces it and `kernel` prints it, which is the definition this file
 /// gives for "a type both sides name".  It is deliberately a summary and not
@@ -46,15 +40,12 @@ pub struct DeviceTreeSummary {
     pub uart: usize,
 }
 
-/// What the bootloader handed over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BootInfo {
     /// Which loader brought this image up, for the boot's first line.
     pub loader: Loader,
 }
 
-/// The loader that handed the machine over.
-///
 /// Named rather than numbered because it is printed: a reader comparing a log
 /// line against a boot argument is doing the work this enum saves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,8 +73,6 @@ impl Loader {
 mod tests {
     use super::Loader;
 
-    /// Every loader has a word, and no two share one.
-    ///
     /// The words appear in boot logs, and a log line that said "pvh" for a
     /// device-tree boot would send a reader to the wrong code.
     #[test]

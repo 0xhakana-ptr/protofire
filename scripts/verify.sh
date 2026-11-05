@@ -10,7 +10,7 @@
 #
 # p1 adds the boot: the image is built for x86_64, started under QEMU, and its
 # first console line is required.  A tree that compiles and never runs is a tree
-# whose boot path has not been exercised since the last change to it — and every
+# whose boot path has not been exercised since the last change to it, and every
 # defect this project has found in its own boot path was found by a boot.
 #
 # p2 is where the ratchets will go as they arrive: the architecture census (a
@@ -22,11 +22,9 @@
 # p3 is the release floor.  Today it is p2 plus clippy in both configurations;
 # the QEMU matrix grows here as the other two machines get their images.
 #
-# ## Why tiers at all
-#
 # The previous tree learned this the expensive way: a gate nobody runs is a gate
 # that rots, and one that runs everything is a gate people learn to skip.  The
-# tiers are chosen so that the common case — a change to one crate — is answered
+# tiers are chosen so that the common case, a change to one crate, is answered
 # by p0 in seconds, and the release answer is one command.
 #
 # Usage:
@@ -116,7 +114,7 @@ run_p1() {
     # This is the rule the tree keeps relearning: a machine's boot is either
     # exercised or it is not, and a machine that is only built has never had an
     # instruction fetched from it.  aarch64 printed four lines and stopped after
-    # the heap, and a gate that booted only x86_64 called that green — so p1 now
+    # the heap, and a gate that booted only x86_64 called that green, so p1 now
     # boots each machine that has an image, and riscv64 is added when it has
     # one rather than when someone remembers.
     for machine in $BOOTABLE_MACHINES; do
@@ -136,7 +134,7 @@ run_p2() {
 
     # The dependency census: every crate may name only the crates below it, and
     # `scripts/layering.txt` is where the order is stated.  "No cycles" alone
-    # would be the weaker rule — an acyclic graph can still put the filesystem
+    # would be the weaker rule: an acyclic graph can still put the filesystem
     # above the scheduler and be wrong in a way no compiler sees.
     step "scripts/check-layering.sh"
     sh scripts/check-layering.sh || fail "a dependency that crosses a layer upward"

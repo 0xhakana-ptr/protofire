@@ -3,8 +3,6 @@
 //! A program's saved state: the frame an interrupt from ring 3 builds, and the
 //! two instructions that enter and leave ring 3.
 //!
-//! ## Why the frame is the whole context
-//!
 //! A task switch on this machine is a copy of one frame over another, the same
 //! shape aarch64 uses.  That is only sound if the frame holds **every**
 //! register a program can observe, because a switch that left a register in the
@@ -13,9 +11,7 @@
 //! than the nine a Rust function is allowed to clobber: the callee-saved eight
 //! survive the handler, but they do not survive a *switch to another task*.
 //!
-//! ## What the frame does not hold
-//!
-//! `rsp` only, and it holds it as the `iretq` tail's own field.  A trap does
+//! Every register but `rsp`, which the `iretq` tail holds.  A trap does
 //! not change `rsp` in the interrupted context, the processor pushes onto the
 //! kernel stack and the stub works there, so the interrupted stack is exactly
 //! the `rsp` word `iretq` will restore.
@@ -35,7 +31,6 @@ use crate::gdt::USER_DATA_SELECTOR;
 /// Where `rax` sits: the syscall number, its return value, and the first
 /// program's arithmetic.
 pub const RAX: usize = 0;
-/// `rbx`.
 pub const RBX: usize = 1;
 /// `rcx`: the fourth syscall argument, and where `syscall`/`sysret` put the
 /// return address on machines that use them.
@@ -46,23 +41,16 @@ pub const RDX: usize = 3;
 pub const RSI: usize = 4;
 /// `rdi`: the first syscall argument.
 pub const RDI: usize = 5;
-/// `rbp`.
 pub const RBP: usize = 6;
 /// `r8`: the fifth syscall argument.
 pub const R8: usize = 7;
 /// `r9`: the sixth syscall argument.
 pub const R9: usize = 8;
-/// `r10`.
 pub const R10: usize = 9;
-/// `r11`.
 pub const R11: usize = 10;
-/// `r12`.
 pub const R12: usize = 11;
-/// `r13`.
 pub const R13: usize = 12;
-/// `r14`.
 pub const R14: usize = 13;
-/// `r15`.
 pub const R15: usize = 14;
 
 /// How many general-purpose registers the frame holds.  `rsp` is not one of
@@ -156,7 +144,6 @@ impl Context {
         self.registers[index]
     }
 
-    /// Put `value` in the register at `index`.
     pub const fn set_register(&mut self, index: usize, value: u64) {
         self.registers[index] = value;
     }
@@ -179,12 +166,10 @@ impl Default for Context {
     }
 }
 
-/// The context a program begins with.
 pub fn starting_context(entry: usize, stack_top: usize) -> Context {
     Context::user(entry, stack_top)
 }
 
-/// Where a context resumes.
 pub fn resume_address(context: &Context) -> usize {
     context.instruction_pointer as usize
 }
@@ -194,7 +179,6 @@ pub fn set_resume_address(context: &mut Context, address: usize) {
     context.instruction_pointer = address as u64;
 }
 
-/// The stack pointer a context runs on.
 pub fn stack_pointer(context: &Context) -> usize {
     context.stack_pointer as usize
 }
@@ -212,7 +196,6 @@ pub fn set_return_value(context: &mut Context, value: usize) {
     context.registers[RAX] = value as u64;
 }
 
-/// Whether a context is a program's rather than the kernel's.
 pub fn is_user_context(context: &Context) -> bool {
     context.is_user()
 }
@@ -266,17 +249,11 @@ impl UserFrame {
     }
 }
 
-/// Enter ring 3 with `context` and never return.
-///
-/// ## What this does that nothing else in this tree did
-///
 /// Three things have to be true before an `iretq` to ring 3 can succeed, and
 /// before this function existed none of them was: a DPL-3 code and data
 /// descriptor exist (`gdt`), a TSS with an `RSP0` is loaded so the first
 /// interrupt from ring 3 has a stack to land on, and every page the program
 /// touches is mapped with the user bit.
-///
-/// ## Why it does not return
 ///
 /// Control does not come back here.  The program returns to the kernel through
 /// an interrupt, a syscall or an exit, and the trap path resumes whatever
@@ -297,8 +274,6 @@ pub unsafe fn enter_user_with(context: &Context) -> ! {
     // writable ring-3 stack and the selectors `gdt` installed.  `iretq` pops
     // exactly these five values and, because the `CS` it pops is ring 3, takes
     // the stack from the TSS on the next interrupt rather than from this one.
-    //
-    // ## Why interrupts are masked across this
     //
     // The five pushes and the `iretq` are one transaction.  An interrupt taken
     // between them is taken at ring 0, and the stub's epilogue pops from the
@@ -446,8 +421,6 @@ mod tests {
 
 // The program a boot runs, as this machine's machine code.
 //
-// ## Why it lives here and not in the kernel
-//
 // A program is machine code, and every byte below is a decision about this
 // architecture: `int $0x80` is the call gate, `eax` is the number, `esi` is the
 // second argument and `esi` holds the program's own number because `Write`
@@ -477,8 +450,6 @@ mod tests {
 // | `CD 80` | `int 0x80` | |
 // | `EB FE` | `jmp $` | never reached |
 //
-// ## Why the order is loop, Write, Sleep, Write, Exit
-//
 // The first `Write` says which program ran.  `Sleep` then takes it out of the
 // rotation for `SLEEP_MICROSECONDS`, during which the other program runs, so a
 // log that shows two "says hello" lines before the second program's is a log
@@ -490,15 +461,11 @@ mod tests {
 // instructions this table says they are, the same discipline the aarch64
 // program's words had.
 
-/// How long a program's image is, in bytes.
-///
 /// The longer of the two images.  A program is copied into a whole page, so the
 /// exact length matters only to the copy; a shorter array would truncate the
 /// pipe reader's last instruction.
 pub const PROGRAM_LEN: usize = 89;
 
-/// How long the program sleeps, in microseconds.
-///
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.
 pub const SLEEP_MICROSECONDS: u64 = 20_000;
@@ -535,15 +502,11 @@ pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
     bytes
 }
 
-/// The number of the program that reads the pipe.
 pub const PIPE_READER: u16 = 3;
 
-/// The number of the program that writes to it.
 pub const PIPE_WRITER: u16 = 2;
 
 /// The writer: announce, sleep, announce again, then put bytes in the pipe.
-///
-/// ## Why the sleep comes before the write
 ///
 /// The reader has to reach its `Read` first and block, or there is nothing to
 /// prove, a write into a pipe nobody has read yet is an ordinary copy.  The
@@ -588,8 +551,6 @@ const PIPE_WRITER_PROGRAM: [u8; 89] = [
 /// sides already agree on, the boot writes it before the program runs, and the
 /// program's first instruction can reach it without a call.
 ///
-/// ## What it proves
-///
 /// The read blocks: the pipe is empty when this program runs, its writer is
 /// alive, and `try_read` answers `Block`.  The line `a program blocks on a
 /// pipe` is that event.  The `Write` after it says the read returned, which can
@@ -625,8 +586,6 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
 ];
 
 /// The program with a zero number, which [`program_bytes`] patches.
-///
-/// ## Why the counts are what they are
 ///
 /// The loop has to outlive a time slice, or the boot reports a timer that never
 /// preempted whether or not preemption works, the defect aarch64's program had

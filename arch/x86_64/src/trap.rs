@@ -18,8 +18,6 @@
 //! from ring 3 reaches it, and its handler is the call sink, a program asking
 //! the kernel to do something.  Everything else is a fault or a device's line.
 //!
-//! ## Why the sinks are statics
-//!
 //! An interrupt has no context to hand a function, which is the same reason
 //! aarch64's sink is a static.  The kernel installs them; until it does, an
 //! interrupt is unhandled and stops the machine with its vector on the
@@ -158,10 +156,6 @@ pub fn syscall_arguments(frame: &Context) -> [usize; 6] {
     ]
 }
 
-/// Serve a program's supervisor call and resume it.
-///
-/// ## Why the frame is written rather than copied back
-///
 /// `common_stub` reloads every register from the frame before `iretq`, so a
 /// value written into the frame's `rax` *is* the value the program finds on
 /// return.  The instruction pointer needs no change: the processor pushed the
@@ -250,8 +244,6 @@ pub fn needs_end_of_interrupt(vector: usize) -> bool {
 }
 
 /// Hand a non-call vector to the kernel's sink, and give the scheduler a turn.
-///
-/// ## Why this is one function
 ///
 /// An interrupt is three things in order: the kernel claims it or not, the
 /// scheduler may switch away from the program it interrupted, and an

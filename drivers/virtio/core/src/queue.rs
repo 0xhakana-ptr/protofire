@@ -17,8 +17,6 @@
 //! request.  The used ring is the device's answer, which descriptor heads it
 //! finished, and how many bytes it wrote.
 //!
-//! ## What this file is responsible for
-//!
 //! The *arithmetic* of those three rings: allocating a descriptor, publishing
 //! it, reading a completion, and wrapping around.  It is not responsible for
 //! allocating the memory they live in, for the doorbell, or for interrupts,
@@ -111,8 +109,6 @@ pub enum VirtQueueError {
 
 /// The three rings, laid out the way the device reads them.
 ///
-/// ## Why each ring is one allocation
-///
 /// The specification's structures are *one object each*:
 ///
 /// ```text
@@ -176,7 +172,6 @@ impl Rings {
         self.available.as_ptr() as usize
     }
 
-    /// The used ring's address.
     pub fn used_address(&self) -> usize {
         self.used.as_ptr() as usize
     }
@@ -239,17 +234,14 @@ impl Rings {
         self.used[offset + 4..offset + 8].copy_from_slice(&length.to_ne_bytes());
     }
 
-    /// The descriptor at `index`.
     pub fn descriptor(&self, index: usize) -> Descriptor {
         self.descriptors[index]
     }
 
-    /// Set the descriptor at `index`.
     pub fn set_descriptor(&mut self, index: usize, descriptor: Descriptor) {
         self.descriptors[index] = descriptor;
     }
 
-    /// How many entries each ring holds.
     pub fn queue_size(&self) -> usize {
         self.queue_size
     }
@@ -355,7 +347,6 @@ impl VirtQueue {
         }
     }
 
-    /// The queue's size.
     pub fn size(&self) -> usize {
         self.queue_size
     }
@@ -365,12 +356,10 @@ impl VirtQueue {
         self.rings.descriptors_address()
     }
 
-    /// The available ring's address.
     pub fn available_address(&self) -> usize {
         self.rings.available_address()
     }
 
-    /// The used ring's address.
     pub fn used_address(&self) -> usize {
         self.rings.used_address()
     }
@@ -397,7 +386,6 @@ impl VirtQueue {
         self.rings.set_descriptor(from as usize, descriptor);
     }
 
-    /// How many descriptors are still free.
     pub fn free_descriptors(&self) -> u16 {
         self.num_free
     }

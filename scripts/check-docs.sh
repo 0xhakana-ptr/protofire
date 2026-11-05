@@ -2,11 +2,9 @@
 # File: scripts/check-docs.sh
 # Purpose: Fail when a document names a file the tree does not have.
 #
-# ## Why this is a gate and not a habit
-#
 # A document that cites a path is making a claim a reader will follow.  When the
 # path moves and the sentence does not, the reader is sent to a file that is not
-# there — and the document still reads as authoritative, which is what makes this
+# there, and the document still reads as authoritative, which is what makes this
 # class of drift expensive: nobody can tell a claim about the code from a claim
 # about a tree that no longer exists.
 #
@@ -16,15 +14,15 @@
 # forty-four more, and a header rule caught those but only because it happened to
 # look at the first line of every source file.
 #
-# ## What is checked
+# ## The checks
 #
 # The documents checked are every Markdown file at the root of the tree and
-# every one under `docs/`, one level deep — `docs/` and its subdirectories,
+# every one under `docs/`, one level deep: `docs/` and its subdirectories,
 # because a specification under `docs/fmts/` cites paths for the same reason a
 # README does and a gate that skipped it would be checking the documents that
 # cite least.  A crate's own `//!` header is not checked here: the compiler
 # reads it, and a path in a doc comment is a citation a reader follows the same
-# way — but the crate headers are also where a mechanism is stated in prose
+# way, but the crate headers are also where a mechanism is stated in prose
 # that names no files, and a gate over all of them would mostly be checking
 # prose.
 #
@@ -55,7 +53,7 @@ failed=0
 # Every backticked token that looks like a path, with the document and line it
 # came from.
 #
-# The token set is "contains a dot-extension we care about" — a `.sh`, `.txt`,
+# The token set is "contains a dot-extension we care about": a `.sh`, `.txt`,
 # `.md`, `.rs`, `.toml`, `.ld`, `.S`.  That is deliberately narrow: a backticked
 # `VecDeque` is not a path, and a check that guessed would refuse prose.
 for document in README.md AGENTS.md LICENSES/README.md docs/*.md docs/fmts/*.md; do

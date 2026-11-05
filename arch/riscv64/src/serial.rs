@@ -2,8 +2,6 @@
 //!
 //! The NS16550A UART, which is how a boot says anything at all.
 //!
-//! ## Why this is here and not a driver crate
-//!
 //! `qemu-system-riscv64 -machine virt` puts an NS16550A at a fixed address that
 //! OpenSBI hands over in the device tree, and a boot has to be able to speak
 //! before it can parse one.  The same argument as x86_64's COM1 and aarch64's
@@ -52,8 +50,6 @@ pub const IER_TRANSMIT_EMPTY: u8 = 0x02;
 #[cfg(target_os = "none")]
 const IIR: usize = 2;
 
-/// Write one byte to a memory-mapped register.
-///
 /// # Safety
 ///
 /// `address` must be a mapped, writable MMIO address this machine has.
@@ -64,8 +60,6 @@ unsafe fn write_reg(address: usize, value: u8) {
     unsafe { core::ptr::write_volatile(address as *mut u8, value) };
 }
 
-/// Read one byte from a memory-mapped register.
-///
 /// # Safety
 ///
 /// As `write_reg`.
@@ -91,8 +85,6 @@ pub fn init() {
 }
 
 /// Ask the UART to raise its line when the transmitter empties.
-///
-/// ## Why this interrupt and not "a byte arrived"
 ///
 /// The console is the boot's output and the gate reads it as a log; a kernel
 /// that also listened would consume the bytes a reader typed, and the gate's
@@ -193,10 +185,6 @@ pub fn host_console_take() -> alloc::vec::Vec<u8> {
 #[cfg(not(target_os = "none"))]
 pub fn init() {}
 
-/// Write a string to the console.
-///
-/// ## Why a line is buffered rather than locked
-///
 /// A boot line is not one call.  `protofire: cpu 1 id 1, ticking, 1 ipi(s)`
 /// is eight calls to `write_str`, `write_u32` and `write_hex`, and a lock
 /// taken per call would let a second CPU's line land between any two of them:

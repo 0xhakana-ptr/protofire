@@ -2,8 +2,6 @@
 //!
 //! The machine's other CPUs: starting them, and counting them.
 //!
-//! ## Why the boot reports a count instead of a claim
-//!
 //! A machine that starts a CPU and does not wait for it is a boot that cannot
 //! tell "the CPU came up" from "the firmware accepted the request and nothing
 //! ran".  The wait is bounded, a CPU that never comes up is a line on the
@@ -11,15 +9,11 @@
 //! reader of the log can tell a start nobody made from one that made and
 //! failed.
 //!
-//! ## What a machine with one CPU answers
-//!
-//! Zero, and that is an answer rather than a gap: `start_secondary_harts`
-//! answers how many CPUs it *accepted*, and every machine in this tree answers
-//! honestly, zero where nothing starts one.  A caller that asked `is this
-//! machine done starting its CPUs` gets a fact, which is what the boot line
-//! needs.
-//!
-//! ## Why an interrupt is sent after the harts are up
+//! A machine with one CPU gets zero, and zero is an answer rather than a gap:
+//! `start_secondary_harts` answers how many CPUs it *accepted*, and every
+//! machine in this tree answers honestly, zero where nothing starts one.  A
+//! caller that asked `is this machine done starting its CPUs` gets a fact,
+//! which is what the boot line needs.
 //!
 //! "The hart came up" is a flag the hart stored about itself, and a flag is not
 //! a CPU.  What separates the two is a line the hart **took**, and the one line
@@ -77,11 +71,9 @@ pub fn start_the_others() {
 
 /// Wake the started CPUs once there is work for them.
 ///
-/// ## Why a second interrupt
-///
-/// The first one proved the CPUs take interrupts; this one tells them there is
-/// something to run.  The boot starts the other CPUs before it builds the
-/// scheduler, so a CPU that asked for work at start would be told "nothing
+/// The first interrupt proved the CPUs take interrupts; this one tells them
+/// there is something to run.  The boot starts the other CPUs before it builds
+/// the scheduler, so a CPU that asked for work at start would be told "nothing
 /// yet" and would have to poll.  It waits on this instead: the scheduler is
 /// installed by the time this is called, so the answer is a task.
 ///
@@ -106,16 +98,12 @@ pub fn wake_them() {
 
 /// Send one inter-processor interrupt, and require that a CPU took it.
 ///
-/// ## Why this is a separate proof from the start
-///
 /// A hart that stored its flag and then stopped is indistinguishable from a
 /// working CPU in every line the boot has printed so far.  An interrupt it
 /// actually took is not: it means the firmware delivered, `stvec` was installed
 /// where this hart reads it, the trap entry built a frame on this hart's stack,
 /// and the kernel's handler ran far enough to count.  Every one of those is a
 /// step the start alone does not exercise.
-///
-/// ## Why the count and not the answer
 ///
 /// The firmware's answer says the call was accepted, which is the same kind of
 /// claim as `hart N online`.  The count is the CPU's own record, and it is read

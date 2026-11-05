@@ -2,13 +2,11 @@
 //!
 //! Two programs, taking turns.
 //!
-//! ## What a task is here
-//!
-//! A saved `Context`, the whole trap frame, and the address space it runs
-//! in.  There is no kernel stack per task, because a task never has one of its
-//! own to be suspended on: a program runs at ring 3, so the only time it is
-//! inside the kernel is inside a trap, and the trap path's frame *is* its saved
-//! state.
+//! A task here is a saved `Context`, the whole trap frame, and the address
+//! space it runs in.  There is no kernel stack per task, because a task never
+//! has one of its own to be suspended on: a program runs at ring 3, so the
+//! only time it is inside the kernel is inside a trap, and the trap path's
+//! frame *is* its saved state.
 //!
 //! ## The three files
 //!
@@ -23,16 +21,12 @@
 //! runnable" reads the free functions here, which are what the trap path, the
 //! timer's handler and the idle loop call.
 //!
-//! ## Why round-robin and nothing else
-//!
 //! A real scheduler decides by priority, by how long a task has run, and by
 //! what it is waiting for.  Those are decisions about *when* to switch.  This
 //! kernel switches at two moments: a program made a call, and the timer fired.
 //! Both are the machine's, not the policy's, so the policy is "the next one",
 //! and saying so is more useful than a weight table that decides nothing.
 
-//! ## Why the scheduler is behind a lock
-//!
 //! It was one structure reached through a `SyncUnsafeCell` with no lock, which
 //! was sound only because one CPU ever wrote it.  A second CPU taking a timer
 //! tick reaches `preempt`, and a second CPU serving a call reaches `advance`:
@@ -222,16 +216,12 @@ pub fn has_runnable() -> bool {
 
 /// Preempt: put the next task's context in `frame` and switch to its space.
 ///
-/// ## Why this is different from `advance`
-///
 /// `advance` answers a call: the frame it is given belongs to a task that asked
 /// for something, and the caller does something with the answer.  This is
 /// called from an interrupt, where the frame belongs to whatever the program
 /// was doing, so there is no call, no answer, and nothing to report to anyone.
 /// The only thing that matters is that the frame the epilogue restores is the
 /// next task's.
-///
-/// ## Why it does not count a switch when nothing else can run
 ///
 /// A timer that fires in a system with one runnable task is a timer, not a
 /// switch.  Counting it would make the boot's switch total depend on how long
@@ -426,18 +416,14 @@ pub fn pid_of(task: usize) -> Option<u32> {
     with_scheduler(|scheduler| scheduler.as_ref()?.tasks.get(task).map(Task::pid))
 }
 
-/// Whether a call means the program has finished.
 /// Fork the running process: copy its space and context into a new task.
 ///
-/// ## What the child inherits, and what it does not
-///
-/// Its parent's pages (copied, so a write in one does not reach the other), its
-/// parent's context (so it resumes at the instruction after the `fork`), and a
-/// pid of its own.  What it does **not** inherit is the parent's return value:
-/// the fork returns the child's pid to the parent and zero to the child, which
-/// is the one difference the two copies of the same instruction see.
-///
-/// ## Why the context is copied rather than built
+/// The child inherits its parent's pages (copied, so a write in one does not
+/// reach the other), its parent's context (so it resumes at the instruction
+/// after the `fork`), and a pid of its own.  What it does **not** inherit is
+/// the parent's return value: the fork returns the child's pid to the parent
+/// and zero to the child, which is the one difference the two copies of the
+/// same instruction see.
 ///
 /// A forked child resumes exactly where its parent asked, with the parent's
 /// registers, including the stack pointer, which points into the copy.  A
@@ -523,22 +509,16 @@ pub fn is_exit(call: &CallFrame) -> bool {
 
 /// Wait here until a sleeping program's deadline passes.
 ///
-/// ## What this replaces
-///
-/// A `halt` loop.  When every program is asleep the scheduler has nothing to
-/// resume, and the trap path's return would land on a program that is not
-/// runnable.  The choices are to stop the machine or to wait for the tick that
-/// wakes one; stopping is the boot ending with work left.
-///
-/// ## How the wake happens
+/// This replaces a `halt` loop.  When every program is asleep the scheduler
+/// has nothing to resume, and the trap path's return would land on a program
+/// that is not runnable.  The choices are to stop the machine or to wait for
+/// the tick that wakes one; stopping is the boot ending with work left.
 ///
 /// The timer keeps firing, and its handler calls [`wake_expired`], which is
 /// what turns a deadline into a runnable task.  The loop below takes the
 /// interrupt, the handler wakes a task, and `arch::wait_for_a_wakeup` returns
 /// once one is runnable.  The scheduler is then asked for a context and the
 /// trap path resumes it.
-///
-/// ## Why the machine does the waiting
 ///
 /// A supervisor call arrives through an **interrupt gate**, which clears the
 /// interrupt flag on entry, so the kernel runs with interrupts masked for the
@@ -550,15 +530,13 @@ pub fn is_exit(call: &CallFrame) -> bool {
 /// asleep, waiting` and no tick, because the kernel had tried to spell `sti`
 /// itself.
 ///
-/// ## Why there is no spin bound
-///
-/// One was here, at a million waits, on the argument that a machine whose timer
-/// does not tick should say so rather than hang.  It fired on a healthy aarch64
-/// boot: a `wfi` returns on every tick whether or not that tick ended the wait,
-/// so the counter measured the boot's speed and not a fault.  What ends the
-/// loop is `wake_expired` turning a deadline into a runnable task, and a
-/// machine that never does that is a machine that hangs, with a log that
-/// already said "every program is asleep, waiting".
+/// A spin bound was here, at a million waits, on the argument that a machine
+/// whose timer does not tick should say so rather than hang.  It fired on a
+/// healthy aarch64 boot: a `wfi` returns on every tick whether or not that
+/// tick ended the wait, so the counter measured the boot's speed and not a
+/// fault.  What ends the loop is `wake_expired` turning a deadline into a
+/// runnable task, and a machine that never does that is a machine that hangs,
+/// with a log that already said "every program is asleep, waiting".
 pub fn idle_until_woken() {
     while has_sleeping() && !has_selectable() {
         arch::wait_for_a_wakeup();

@@ -2,7 +2,7 @@
 //!
 //! The Interrupt Descriptor Table: 256 gates, and the two forms a gate takes.
 //!
-//! ## What a gate is
+//! ## A gate
 //!
 //! ```text
 //! bits 0..15   offset 0..15      where the handler is, low half
@@ -26,8 +26,6 @@
 //! enabled while an **interrupt** gate clears them, which is why every vector
 //! that a device can raise uses an interrupt gate: a handler that could be
 //! interrupted by the same line spins.
-//!
-//! ## Why the entries are built by hand
 //!
 //! The `x86_64` crate this tree already depends on has an
 //! `InterruptDescriptorTable` type.  It was not used here because its gates
@@ -126,12 +124,10 @@ impl Gate {
             | ((self.offset_high as u64) << 32)
     }
 
-    /// Whether this gate is present.
     pub const fn is_present(self) -> bool {
         self.attributes & (1 << 7) != 0
     }
 
-    /// The gate's type.
     pub const fn kind(self) -> u8 {
         self.attributes & 0x0F
     }
@@ -166,17 +162,14 @@ impl Table {
         }
     }
 
-    /// Install `gate` at `vector`.
     pub fn set(&mut self, vector: usize, gate: Gate) {
         self.gates[vector] = gate;
     }
 
-    /// The gate at `vector`.
     pub fn gate(&self, vector: usize) -> Gate {
         self.gates[vector]
     }
 
-    /// How many gates are present.
     pub fn installed(&self) -> usize {
         self.gates.iter().filter(|gate| gate.is_present()).count()
     }
@@ -213,7 +206,6 @@ impl Descriptor {
         self.limit
     }
 
-    /// The table's address.
     pub const fn base(self) -> u64 {
         self.base
     }
@@ -308,9 +300,7 @@ static TABLE: cell::SyncUnsafeCell<Table> = cell::SyncUnsafeCell::new(Table::new
 /// what they will be, and a trap gate there would let a second request arrive
 /// while the first was being served.
 ///
-/// ## What "installed" means
-///
-/// The answer is not "`lidt` executed".  A table loaded and never exercised is
+/// `lidt` alone is not "installed".  A table loaded and never exercised is
 /// the recurring defect this tree records, so after installing, this raises the
 /// system call vector from ring 0 with `int` and requires that the dispatch saw
 /// it, the same shape as aarch64's `svc` self-test, for the same reason.  The
@@ -419,7 +409,6 @@ impl TableView {
         self.limit
     }
 
-    /// The table's address.
     pub const fn base(self) -> u64 {
         self.base
     }

@@ -14,8 +14,6 @@
 //! an interrupt this kernel has no business receiving, and it is what makes a
 //! boot past `sti` a proof that the path works.
 //!
-//! ## Why the vector is the identity
-//!
 //! On a machine whose controller assigns each line a number, the number *is*
 //! the identity a handler registers under.  A translation table between "the
 //! number the machine printed" and "the number a driver claimed" would be a
@@ -26,8 +24,6 @@
 
 /// Install the interrupt table, the sink, the machine's other CPUs, and prove
 /// the path with one interrupt the machine raises itself.
-///
-/// ## Why the order matters
 ///
 /// The sink is installed first, so a vector that arrived between the table
 /// being loaded and the handler existing would be one the dispatch could not
@@ -69,8 +65,6 @@ pub unsafe fn install() {
         arch::serial::write_str("not installed (this machine has no entry yet)");
     }
 
-    // And enabled, if there is a table behind the flag.
-    //
     // The 8259 is masked first, and that is not tidiness.  Its reset vector
     // bases are 8 and 0x70; vector 8 is the double fault.  A machine whose
     // timer still reaches the 8259 takes its first tick as a double fault
@@ -90,7 +84,6 @@ pub unsafe fn install() {
         arch::interrupts::enable();
         arch::serial::write_str(", interrupts on\n");
 
-        // Then prove the path, rather than reporting it.
         raise_test_interrupt();
     } else {
         arch::serial::write_str("\n");
@@ -106,8 +99,6 @@ pub unsafe fn install() {
 pub fn handle(frame: irq::Frame) -> bool {
     let vector = frame.vector;
 
-    // The timer: count it, and re-arm.
-    //
     // Re-arming here rather than in the preemption path is deliberate: a
     // `CNTP_TVAL_EL0` countdown fires once and stops, so a handler that only
     // counted would get one tick and then silence for the rest of the boot.

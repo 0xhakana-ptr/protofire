@@ -73,7 +73,7 @@ clap = { version = "4.0", features = ["derive"] }
 # Incremental compilation keeps a per-crate query cache under `target/debug/`,
 # and this workspace has thirty-seven members: one `cargo test --workspace`
 # built 1314 incremental directories and grew `target/` to 5.6 GB.  The memory
-# it costs at build time is the reason this line exists — a host with 16 GB ran
+# it costs at build time is the reason this line exists: a host with 16 GB ran
 # out and the build was killed, twice, on the full gate rather than on any one
 # crate.
 #

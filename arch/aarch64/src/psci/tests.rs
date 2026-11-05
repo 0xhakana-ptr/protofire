@@ -11,7 +11,7 @@
 ///
 /// The second half is the one worth pinning.  PSCI's `ALREADY_ON` is `-4`, and
 /// a boot that read every non-zero answer as a refusal would run on fewer cores
-/// than the machine has — while printing that firmware refused one.  The
+/// than the machine has, while printing that firmware refused one.  The
 /// failure is a boot that looks correct and uses half the machine.
 #[test]
 fn already_on_is_a_start_that_succeeded() {

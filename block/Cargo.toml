@@ -11,7 +11,7 @@ abi.workspace = true
 # `sync`, and a device interface that reached up for the kernel's interrupt-
 # aware lock would be an upward edge.  `spin` is what `sync` itself is built
 # on, and the devices here are in-memory ones whose storage is only ever
-# touched from ordinary context — a real driver takes its own lock, in
+# touched from ordinary context: a real driver takes its own lock, in
 # `drivers/`, where the interrupt question is its own to answer.
 spin.workspace = true
 

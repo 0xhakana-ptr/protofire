@@ -25,8 +25,6 @@
 //! [`crate::vbar::entry_offset`] divides by 128, and a test checks the two
 //! agree rather than leaving the arithmetic in two places to drift.
 //!
-//! ## Why the sink is a static
-//!
 //! An exception has no context to hand a function, which is the same reason the
 //! x86_64 dispatch reads its sink from a static.  The kernel installs one with
 //! `set_sink`; until then every exception is unhandled, and an unhandled one
@@ -204,7 +202,6 @@ pub unsafe fn set_sink(sink: Sink) {
     unsafe { *SINK.get() = Some(sink) };
 }
 
-/// The installed sink, if any.
 #[cfg(target_os = "none")]
 fn sink() -> Option<Sink> {
     // SAFETY: written once by `set_sink` before any vector can be raised, and
@@ -227,7 +224,6 @@ fn table_address() -> usize {
     core::ptr::addr_of!(exception_vectors) as usize
 }
 
-/// Read `VBAR_EL1`, which is where the machine looks for an exception.
 #[cfg(target_os = "none")]
 fn installed_table() -> usize {
     let value: u64;
@@ -378,8 +374,6 @@ pub fn controller() -> Option<crate::gic::Gic> {
 
 /// What a supervisor call's handler answers.
 ///
-/// ## Why this is not `irq::Frame`
-///
 /// An interrupt's frame carries a vector and an address; a syscall's carries
 /// six arguments and answers with a word.  Folding the two into one type would
 /// give every IRQ handler six fields it does not have and every syscall handler
@@ -404,8 +398,6 @@ pub enum CallOutcome {
     Return(usize),
     /// The program has ended.  The handler has already chosen what runs next
     /// and has put that program's context where the trap path will find it.
-    ///
-    /// ## Why this carries no value
     ///
     /// A scheduler that answers "resume *this* context" would be answering
     /// about a dead one.  So the handler does the switch itself, writing the
@@ -557,10 +549,6 @@ pub unsafe fn set_call_sink(sink: CallSink) {
     unsafe { *CALL_SINK.get() = Some(sink) };
 }
 
-/// Serve a program's supervisor call and resume it.
-///
-/// ## Why the frame is written rather than copied back
-///
 /// `entry.S` restores `x0..x30` from the frame before `eret`, so a value
 /// written into the frame's `x0` *is* the value the program finds on return.
 /// Copying it somewhere else afterwards would need a second restore path, which
@@ -598,15 +586,11 @@ fn serve_user_call(frame: &mut ExceptionFrame) {
 
 /// Acknowledge the interrupt, hand it to the sink, and finish it.
 ///
-/// ## Why the order is acknowledge, handle, finish
-///
 /// The controller holds the line *active* between the acknowledge and the
 /// finish.  An interrupt at that priority is not delivered again until it is
 /// finished, and a handler that returned without one would leave the machine
 /// taking exactly one interrupt and then appearing to hang, which is the
 /// failure mode a span of code that looks correct produces.
-///
-/// ## Why an unhandled interrupt finishes anyway
 ///
 /// A device the boot has no driver for still raises its line, and a kernel that
 /// stopped the machine for it could never be debugged on a machine that had one

@@ -9,8 +9,8 @@
 # directory cargo never creates, and fourteen copies of a rule that cannot fire
 # are fourteen things to read before finding the one that matters.
 #
-# The patterns that matter here are extension and directory-name patterns —
-# `*.log`, `*.o`, `*.d`, `__pycache__/` — and git applies those at **every depth**
+# The patterns that matter here are extension and directory-name patterns
+# (`*.log`, `*.o`, `*.d`, `__pycache__/`), and git applies those at **every depth**
 # from the file that states them, so a crate beside one needs no copy.  What a
 # second file would buy is a rule scoped to one directory, and this tree has no
 # artifact scoped to one directory: cargo writes one `target/` at the root, and
@@ -36,16 +36,17 @@
 # point of writing them anyway: they are a **guard**, not a workaround, and
 # each names why its file is the product.
 #
-# The one alternative would be a second target directory — `target-elf/` was
+# The one alternative would be a second target directory: `target-elf/` was
 # created once, to link the aarch64 image as an ELF with symbols so a gdb
-# session could name addresses — and it is covered by the rule above rather
-# than by a `.gitignore` of its own, for the reason the header states.
+# session could name addresses (scripts/debug-aarch64-smp.sh rebuilds it when
+# it is missing), and it is covered by the rule above rather than by a
+# `.gitignore` of its own, for the reason the header states.
 #
 # ## Why there is no entry for a generated file
 #
 # This header used to claim one: `arch/x86_64/src/kaslr_relocs.generated.rs`,
 # described as generated and tracked because the `kaslr` build `include!`s it.
-# The tree has no such file — `find` and `git ls-files` both come up empty — so
+# The tree has no such file (`find` and `git ls-files` both come up empty), so
 # the paragraph was describing a file that does not exist.  It is recorded here
 # rather than deleted silently because a reader who remembers it would otherwise
 # think the rule had been dropped by mistake.  When the `kaslr` build does write

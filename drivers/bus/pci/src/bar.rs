@@ -93,7 +93,6 @@ impl Bar {
         self.address != 0
     }
 
-    /// The number of registers this BAR occupies.
     pub const fn register_count(self) -> u8 {
         if self.is_64_bit { 2 } else { 1 }
     }
@@ -117,8 +116,6 @@ pub fn decode(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) ->
 /// The size of the window `register` names, by writing all ones and reading
 /// back.
 ///
-/// ## Why the current value says nothing
-///
 /// The version of this function that returned early when the register read zero
 /// was wrong, and it was wrong in exactly the state a bare-metal boot is in.
 /// **An unaddressed BAR reads zero.**  On a machine with firmware, a PC, or a
@@ -129,8 +126,6 @@ pub fn decode(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) ->
 ///
 /// The current value cannot answer whether a BAR exists.  Only the device can,
 /// and the way to ask is to write all ones and see what it clears.
-///
-/// ## Why memory decoding is turned off first
 ///
 /// Writing all ones into a live BAR is a request the device acts on: until the
 /// restore, it decodes a window at an address nothing chose.  A device that

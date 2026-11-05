@@ -2,11 +2,9 @@
 /* Purpose: Where a bootloader or QEMU's -kernel puts an aarch64 image, and the
    three things a Rust `no_std` target needs done before it can run.
 
-   ## What the firmware guarantees
-
    QEMU's `virt` machine with `-kernel` enters at the image's first byte, at
    EL1, with the MMU off and the caches off.  `%x0` holds the device tree's
-   address — the one thing a device-tree machine hands over — and the rest of
+   address, the one thing a device-tree machine hands over, and the rest of
    the registers are undefined.
 
    There is no handshake to check: a multiboot2 loader passes a magic and a
@@ -14,7 +12,7 @@
    either loaded you or it did not.  So this does not test anything; it sets up
    and calls.
 
-   ## What has to happen first
+   Before any Rust runs, in order:
 
    1. **A stack.**  Nothing can be called without one, and the firmware leaves
       `SP` undefined at EL1.
@@ -22,7 +20,7 @@
       the linker reserved for `.bss` are not in it, and a boot that assumed
       they were zero would find whatever the firmware left.
    3. **The exception level checked.**  This kernel runs at EL1.  A boot that
-      arrived at EL2 — a hypervisor's guest — has to drop, and one that arrived
+      arrived at EL2, a hypervisor's guest, has to drop, and one that arrived
       at EL3 has to drop twice.  Doing that here is simpler than trusting the
       firmware.
 
@@ -72,7 +70,7 @@ _start:
     /* FP/SIMD, before the first Rust instruction runs.
      *
      * `CPACR_EL1.FPEN` (bits 21:20) resets to zero, which traps every FP and
-     * Advanced-SIMD instruction to EL1 — *from EL1 as well as from EL0*.  That
+     * Advanced-SIMD instruction to EL1, *from EL1 as well as from EL0*.  That
      * is not theoretical here: this boot printed four lines and stopped, and
      * the cause was `ESR_EL1.EC` = 7 at a `0x0E01...` word, a NEON instruction
      * LLVM emitted for the `memcpy` that builds the PyroFS image.  Everything
@@ -107,7 +105,7 @@ _start:
      *
      * `protofire_entry` takes no arguments: `bootloader` is the protocol and it
      * must not learn which register held what.  So the machine keeps the value
-     * and the module above asks for it — the same arrangement the trap sink
+     * and the module above asks for it: the same arrangement the trap sink
      * uses, and for the same reason.
      *
      * `x19` holds what `x0` did on entry; the clear of `.bss` above did not
@@ -129,9 +127,7 @@ _start:
 /* The exception vector table: sixteen entries, 128 bytes each, 2 KiB aligned,
    as `VBAR_EL1` requires.
 
-   ## Why each entry sets a number and branches
-
-   The architecture gives each entry 128 bytes — thirty-two instructions — so a
+   The architecture gives each entry 128 bytes, thirty-two instructions, so a
    handler can save what it needs before branching.  The sixteen entries differ
    only in *which* exception they are, so each one records its own index in
    `x16` and branches to the one path that does the work.  `x16` is the
@@ -165,7 +161,7 @@ exception_vectors:
     mov x16, #3
     b exception_entry
     .balign 128
-    /* Current EL with SP_ELx — what the kernel takes: 4..7. */
+    /* Current EL with SP_ELx, which the kernel takes: 4..7. */
     mov x16, #4
     b exception_entry
     .balign 128
@@ -206,19 +202,15 @@ exception_vectors:
 
 /* The one path every entry reaches.
 
-   ## What it saves, and why all of it
-
    Every general register `x0`..`x30`, the four system registers that say where
    the exception came from (`ELR_EL1`, `SPSR_EL1`) and what it was (`ESR_EL1`,
    `FAR_EL1`), and every FP/SIMD register `q0`..`q31`.
 
    The SIMD half is not caution.  `CPACR_EL1.FPEN` is open (the entry code
-   opens it), so the compiler emits NEON for a `memcpy` — which is how this
+   opens it), so the compiler emits NEON for a `memcpy`, which is how this
    boot found the trap in the first place.  A handler that saved only the
    general registers would return to SIMD code whose operands it had destroyed,
    and the corruption would appear wherever the interrupted `memcpy` finished.
-
-   ## The stack
 
    An exception from the kernel runs on `SP_EL1`, which is the stack this path
    uses.  An exception from a lower EL is taken with `PSTATE.SP` set to 1, so it
@@ -233,16 +225,16 @@ exception_vectors:
    |---|---|
    | 0..240 | `x0`..`x29`, in pairs |
    | 240 | `x30`, the link register |
-   | 248 | `ELR_EL1` — where to return |
-   | 256 | `SPSR_EL1` — the state to return to |
-   | 264 | `ESR_EL1` — what the exception was |
-   | 272 | `FAR_EL1` — the address it named |
+   | 248 | `ELR_EL1`: where to return |
+   | 256 | `SPSR_EL1`: the state to return to |
+   | 264 | `ESR_EL1`: what the exception was |
+   | 272 | `FAR_EL1`: the address it named |
    | 280 | this entry's index |
    | 288..800 | `q0`..`q31` |
 
    The total is 800 bytes, and that is a multiple of sixteen so the pairs stay
    aligned.  A structure and an assembly frame that disagreed about any offset
-   would hand Rust a frame of the wrong shape — which is why the two are
+   would hand Rust a frame of the wrong shape, which is why the two are
    documented against each other rather than derived. */
 exception_entry:
     sub sp, sp, #816
@@ -269,13 +261,13 @@ exception_entry:
     /* The kernel's own identity for this core, into a register the interrupted
        code cannot have claimed.
 
-       **Why it is set on every trap and not restored.**  On riscv64 the trap
+       **Set on every trap, and not restored.**  On riscv64 the trap
        entry writes `tp` and the epilogue restores the program's value from the
        frame, because that register is the program's thread pointer and the
        ABI reserves it.  `TPIDR_EL1` is the same register by name and different
        in practice: this kernel has no user-space TLS, no program reads it, and
        `starting_context` does not set it.  So it is the kernel's alone, and
-       writing it on entry without a matching restore is correct — a restore
+       writing it on entry without a matching restore is correct: a restore
        would put back the value the *boot core* wrote, which is the stale answer
        this write exists to replace.
 
@@ -293,9 +285,7 @@ exception_entry:
        slot no CPU has.
 
        So the boot core writes its zero in `_start`, the secondary entry writes
-       its slot, and this path leaves the register alone: `TPIDR_EL1` is kernel
-       state on this machine, no program reads it, and `starting_context` does
-       not set it. */
+       its slot, and this path leaves the register alone. */
 
     mrs x0, elr_el1
     str x0, [sp, #248]
@@ -308,7 +298,7 @@ exception_entry:
 
     /* The interrupted stack pointer.  `SP_EL0` is a system register and the
        hardware does not push it, so a program that used its stack would have it
-       restored from somewhere else — which is what the pipe reader found: it
+       restored from somewhere else, which is what the pipe reader found: it
        resumed with the *previous* task's stack and took a data abort inside
        another program's memory.  Saved here and restored below, so a switch
        carries it like any other register. */
@@ -388,25 +378,20 @@ exception_entry:
     eret
 
 /* The secondary entry, which PSCI's `cpu_on` names.
-   ===================================================
 
    Firmware enters here at EL1 with the MMU off and `x0` holding the context a
    `cpu_on` passed.  Nothing of the boot core's environment is inherited: no
    stack, no `VBAR_EL1`, no `CPACR_EL1`, no device tree pointer in `x19`.  The
-   four are set here, in that order, before any Rust runs — and the trap vector
+   four are set here, in that order, before any Rust runs, and the trap vector
    is set before the first instruction that could fault, because a core that
    faults with `VBAR_EL1` at its reset value takes a vector the machine cannot
    describe.
-
-   ## Why the stack comes from an array
 
    Every core needs its own, and the boot core's is a symbol a second core
    cannot share: two cores on one stack is two frames over one region, and the
    unwinds after that go into whatever was there.  The array is indexed by the
    slot the boot core chose, and `kernel_stacks` is the same symbol the boot
    core's own stack comes from, so one array answers both.
-
-   ## What it deliberately does not do
 
    It does not clear `.bss`.  The boot core did that before it started anyone,
    and a second core that repeated it would zero the boot core's data while the

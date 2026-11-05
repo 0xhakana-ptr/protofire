@@ -192,9 +192,6 @@ pub fn host_console_take() -> alloc::vec::Vec<u8> {
 pub fn init() {}
 
 /// Write a string, one byte at a time.
-/// Write a string to the console.
-///
-/// ## Why a line is buffered rather than locked
 ///
 /// A boot line is not one call.  `protofire: cpu 1 id 1, ticking, 1 ipi(s)`
 /// is eight calls to `write_str`, `write_u32` and `write_hex`, and a lock
@@ -232,8 +229,8 @@ fn push(byte: u8) {
     //
     // This read the constant `0` until the PSCI start existed, on the argument
     // that the machine reports one CPU.  Two cores then wrote one buffer and
-    // the log interleaved at byte level — `ays hello` and two `a program
-    // sleeps` lines spliced together — because a line is assembled across many
+    // the log interleaved at byte level (`ays hello` and two `a program
+    // sleeps` lines spliced together), because a line is assembled across many
     // calls and the buffer was the thing being shared.
     let slot = crate::current_cpu_slot().min(LINE_SLOTS - 1);
     // SAFETY: the slot is this core's own, from `TPIDR_EL1`, and no other core

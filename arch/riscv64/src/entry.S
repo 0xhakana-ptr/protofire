@@ -2,24 +2,22 @@
 /* Purpose: Where OpenSBI hands an S-mode image over, and the things a Rust
    `no_std` target needs done before it can run.
 
-   ## What the firmware guarantees
-
    `qemu-system-riscv64 -machine virt -kernel image.elf` runs OpenSBI first;
    OpenSBI jumps to this image's entry in **S-mode** with `a0` holding the hart
-   id and `a1` a pointer to a flattened device tree.  The MMU is off — `satp`
-   is zero, so every address is its own physical address — and there is no
+   id and `a1` a pointer to a flattened device tree.  The MMU is off: `satp`
+   is zero, so every address is its own physical address.  There is no
    handshake to check: a device-tree machine either loaded us or it did not.
 
    The hart id is kept.  A machine that starts its other harts needs each one's
    identity, and the hart the firmware cold-booted is not necessarily hart zero.
    The tree pointer is the other thing kept.
 
-   ## What has to happen first
+   Before any Rust runs, in order:
 
    1. **The global pointer.**  RISC-V addresses small data relative to `gp`,
       and the linker relaxes absolute references into `gp`-relative ones.  A
       `gp` that was never loaded makes the first relaxed access read whatever
-      register reset to — and the relaxation happens *inside* this sequence,
+      register reset to, and the relaxation happens *inside* this sequence,
       which is why the assembler is told not to relax the very instruction
       that computes it.
    2. **A stack.**  Nothing can be called without one, and OpenSBI's stack is
@@ -33,7 +31,7 @@
       the linker reserved for `.bss` are not in it, and a boot that assumed
       they were zero would find whatever OpenSBI left.
    5. **`SUM` set.**  A RISC-V page with the `U` bit is off-limits to S-mode
-      *unless* `sstatus.SUM` says otherwise — the reverse of x86_64, where a
+      *unless* `sstatus.SUM` says otherwise: the reverse of x86_64, where a
       supervisor may reach user pages unless `SMAP` was switched on.  The pipe
       handlers read and write a program's buffer through the program's own
       root, so the bit is a permission the boot grants once rather than a
@@ -86,7 +84,7 @@ _start:
 
     /* `a1` still holds the device tree pointer, which is what the kernel's
        `boot_info` reads.  `a0` holds the hart the firmware cold-booted, and
-       neither is a register the bss clear can be trusted to keep — `s1` and
+       neither is a register the bss clear can be trusted to keep: `s1` and
        `s2` are callee-saved, so they survive it. */
     mv s1, a1
     mv s2, a0
@@ -121,18 +119,16 @@ _start:
 
 /* The one trap path every trap reaches.
 
-   ## The swap
-
    RISC-V pushes nothing on a trap and switches no stack: the handler starts on
    whatever `sp` the interrupted code held, which for a program is a stack the
    kernel must not build a frame on.  So the first instruction exchanges `sp`
-   with `sscratch` — which holds the kernel stack while a program runs, and
+   with `sscratch`, which holds the kernel stack while a program runs, and
    zero while the kernel does.  The exchange yields zero for the kernel's own
    trap (which then puts its stack back), and the kernel stack for a program's.
 
    The distinction survives because of a rule the Rust side keeps: `sscratch`
    is zeroed for the whole of any kernel window that can take a trap with
-   interrupts enabled — the boot before any program, and the idle's wait.  A
+   interrupts enabled: the boot before any program, and the idle's wait.  A
    parked user `sp` is only ever in `sscratch` while the hart is in U-mode or
    inside a handler running masked.
 
@@ -145,12 +141,12 @@ _start:
    | offset | what |
    |---|---|
    | 0..256 | `x0`..`x31`, eight bytes each; `x0` stored as the zero it reads |
-   | 256 | `sepc` — where to return; for a call, the `ecall` itself |
-   | 264 | `sstatus` — the state to return to |
-   | 272 | `scause` — what the trap was |
-   | 280 | `stval` — the address a fault named |
+   | 256 | `sepc`: where to return; for a call, the `ecall` itself |
+   | 264 | `sstatus`: the state to return to |
+   | 272 | `scause`: what the trap was |
+   | 280 | `stval`: the address a fault named |
 
-   The total is 288 bytes.  `x2` — the stack pointer — is saved last and in a
+   The total is 288 bytes.  `x2`, the stack pointer, is saved last and in a
    place of its own decision: the interrupted `sp` is the user's when the trap
    came from a program and the frame's own top when it came from the kernel,
    and `sstatus.SPP`, set by the hardware before the first instruction here,
@@ -246,7 +242,7 @@ trap_entry:
     /* The restore.  Every register comes home from the frame before the two
        scratch registers are spent on the return itself: `sepc` and `sstatus`
        go back to the machine, then the frame's `x2` decides where `sret` runs,
-       and the `SPP` it carries decides what `sscratch` holds afterwards — the
+       and the `SPP` it carries decides what `sscratch` holds afterwards: the
        kernel stack, for the next program's trap, or zero, for the kernel's
        own.  `ESR` has no counterpart here to skip: `scause` and `stval`
        describe the trap, and an `sret` reads neither. */
@@ -300,16 +296,14 @@ trap_entry:
 
 /* The other harts' entry, which the boot hart names in the firmware's start
    call.  The firmware enters here in S-mode with `a0` = the hart's own id and
-   `a1` = the slot the boot hart chose — an index into the stacks below and
+   `a1` = the slot the boot hart chose, an index into the stacks below and
    the flags the Rust side owns.
-
-   ## What it does, and what it does not
 
    This is the boot entry's list, minus what the boot hart has already done by
    the time it asks the firmware for anyone: the bss is clear, the device tree
    is recorded, and there is nothing here to hand `protofire_entry`.  What
-   remains is the global pointer — the same first instruction the boot entry
-   runs, for the same reason — a stack of the hart's own, `sscratch`, `SUM`,
+   remains is the global pointer, the same first instruction the boot entry
+   runs, for the same reason: a stack of the hart's own, `sscratch`, `SUM`,
    the FPU off, and the trap vector.
 
    Then it records that it is online, tells the boot hart it is running, and

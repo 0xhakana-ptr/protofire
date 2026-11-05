@@ -2,8 +2,6 @@
 //!
 //! Saving, disabling and restoring the local interrupt flag.
 //!
-//! ## Why a lock needs this
-//!
 //! A spinlock that only spins is safe between CPUs and unsafe against itself:
 //! an interrupt taken while the lock is held, whose handler takes the same
 //! lock, spins forever on a CPU that cannot make progress.  Every acquisition
@@ -41,8 +39,6 @@ pub fn are_enabled() -> bool {
 
 /// Silences the legacy 8259 before interrupts are enabled.
 ///
-/// ## Why this is part of enabling
-///
 /// The 8259's reset vector bases are 8 and 0x70, and vector 8 is the double
 /// fault.  A machine whose timer still reaches the 8259 takes its first tick as
 /// a double fault through whatever gate the kernel wrote for vector 8, which
@@ -79,7 +75,6 @@ pub fn disable() {
     unsafe { core::arch::asm!("cli", options(nomem, nostack)) };
 }
 
-/// Enable local interrupts.
 #[cfg(not(target_os = "none"))]
 pub fn enable() {}
 

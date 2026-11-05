@@ -235,9 +235,7 @@ fn properties_stop_at_the_first_child() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // The builder: blobs `dtc` will not produce.
-// ---------------------------------------------------------------------------
 
 /// A structure block assembled token by token.
 struct Builder {

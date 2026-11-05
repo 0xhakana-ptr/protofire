@@ -121,6 +121,12 @@ Then add structure if the module has any:
   //! - `link/`, Link-layer: `device` (NIC trait), `ethernet` (framing)
   ```
 
+- **Headings are for reference, not narration.** A module doc may carry a
+  heading where a reader scans for a section: a table, a rule list, a
+  protocol. A paragraph that explains a decision needs no heading, and a
+  heading that asks a question (`## Why ...`, `## What ...`) is a label on a
+  paragraph that should just say it.
+
 - **Do not invent a tag vocabulary.** There is no `//! Module:`, `//! Author:`,
   `//! File:`, `//! License:`, or `//! Status:` convention in `.rs` files, and
   no `.rs` file carries one. (The `# File:` / `# Purpose:` headers you will see
@@ -190,6 +196,12 @@ this kernel is full of:
 Do not narrate the code. `// increment the counter` above `counter += 1` costs
 the reader a line and returns nothing. If a block needs a comment to say what it
 does, that is usually a signal to extract a named function.
+
+Punctuation is the plain set: comma, colon, parenthesis. The em dash is not
+used; it separated a clause from its gloss on nearly every line of prose before
+one pass removed it from the tree, and a comma carries an aside as well. A
+comment a reader cannot type on one keyboard is a comment half the readers
+stumble over.
 
 Trailing comments are used sparingly, mostly on constants and struct fields
 where a short note fits better beside the value than above it.
@@ -329,7 +341,8 @@ accurate.
       signature.
 - [ ] `# Errors` on `Result`-returning functions; `# Panics` where a panic is
       reachable; no `# Returns` / `# Arguments`.
-- [ ] Section separators use `// ──`, not ASCII `=` / `-` rules.
+- [ ] Section labels are the plain `// Label` form of §6, and no rule lines of
+      dashes, equals signs or box-drawing characters anywhere.
 - [ ] New `TODO` / `NOTE` markers name something actionable; no new `FIXME`,
       `XXX`, `HACK`, or `WARNING`.
 - [ ] All comments are in English.

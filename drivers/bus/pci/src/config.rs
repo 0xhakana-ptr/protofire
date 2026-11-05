@@ -16,8 +16,6 @@
 //! find the region yet: that comes from the device tree, which this tree does
 //! not parse.
 //!
-//! ## Why the trait exists
-//!
 //! Both mechanisms answer the same three questions, read a dword, write a
 //! dword, and say how many bytes there are, and the enumeration above them is
 //! identical.  A trait is what lets that enumeration be written once and tested
@@ -43,7 +41,6 @@ pub struct VendorId {
 pub const NO_DEVICE: u16 = 0xFFFF;
 
 impl VendorId {
-    /// Whether a device answered at this address.
     pub const fn is_present(self) -> bool {
         self.vendor != NO_DEVICE
     }
@@ -106,7 +103,6 @@ impl DeviceAddress {
 pub struct PortConfig;
 
 impl PortConfig {
-    /// The mechanism, as a value.
     pub const fn new() -> Self {
         Self
     }
@@ -144,17 +140,13 @@ impl ConfigSpace for PortConfig {
 /// that address plus `register * 4`; there is no address port and no data port,
 /// because the address is in the address.
 ///
-/// ## Why this exists at all
-///
 /// The port mechanism at `0xCF8`/`0xCFC` is x86_64's, and only x86_64's.  A
 /// device-tree machine gets its configuration space as a memory region the tree
 /// names, and this is what reads it.  Everything above, enumeration,
 /// capability walks, BAR decoding, is written against [`ConfigSpace`] and does
 /// not know which mechanism answered.
 ///
-/// ## Why the base is a parameter
-///
-/// Because it is a device tree's answer, not a constant of the format.  A board
+/// The base is a device tree's answer, not a constant of the format.  A board
 /// puts its ECAM where it likes and the tree says where; a caller that supplied
 /// a constant would be naming a machine, which is the split this tree keeps.
 pub struct EcamConfig {

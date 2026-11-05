@@ -2,16 +2,12 @@
 //!
 //! The programs a boot runs, as this machine's machine code.
 //!
-//! ## Why the bytes live with the machine
-//!
 //! A program is machine code, so the array lives with the machine that executes
 //! it: `ecall` is the call, `a7` carries the number and `a1` holds this
 //! program's own number because `Write` prints its second argument.  The kernel
 //! names `arch::program_bytes` and gets whichever machine answered, an array
 //! in the kernel would have to be right for three architectures, and there is
 //! no array that is.
-//!
-//! ## Why the encoders are functions
 //!
 //! Every immediate the ABI needs is an `addi`, and every loop is one branch.
 //! Written as raw literals those are thirty numbers a reader cannot check;
@@ -25,21 +21,15 @@
 // this program's own number because `Write` prints its second argument.  The
 // kernel names `arch::program_bytes` and gets whichever machine answered.
 
-/// How long a program's image is, in bytes.
-///
 /// The longest of the three images: the announcing program, the pipe writer
 /// and the pipe reader.  A program is copied into a whole page, so this
 /// matters only to the copy.
 pub const PROGRAM_LEN: usize = 24 * 4;
 
-/// The number of the program that reads the pipe.
 pub const PIPE_READER: u16 = 3;
 
-/// The number of the program that writes to it.
 pub const PIPE_WRITER: u16 = 2;
 
-/// How long the program sleeps, in microseconds.
-///
 /// Two thousand, and that is the encoding's answer rather than a preference:
 /// the sleep travels in an `addi` immediate, whose twelve signed bits reach
 /// two thousand and forty-seven, the aarch64 program's twenty thousand needs
@@ -88,8 +78,6 @@ const fn bne_against_zero(rs: u32, offset: i32) -> u32 {
         | 0x63
 }
 
-/// How many words the announcing program has.
-///
 /// Counted once here rather than inferred: the array length and the word list
 /// have to agree, and a literal on both would be two numbers to keep in step.
 pub const PROGRAM_WORDS: usize = 24;
@@ -115,8 +103,6 @@ const BUSY_LOOP: [u32; 6] = [
 ///
 /// Built rather than stored so the number is a parameter: a table of two
 /// constants would be two things to keep in step with the encoding.
-///
-/// ## Why the order is loop, Write, Sleep, Write, Exit
 ///
 /// The first `Write` says which program ran.  `Sleep` then takes it out of the
 /// rotation for [`SLEEP_MICROSECONDS`], during which the *other* program runs,

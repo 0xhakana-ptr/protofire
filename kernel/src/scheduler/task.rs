@@ -3,8 +3,6 @@
 //! What a task is: a saved context, the address space it runs in, and the state
 //! that decides whether it can be selected.
 //!
-//! ## Why the state is an enum and not a flag
-//!
 //! The first version had `finished: bool`, which is two states and describes
 //! exactly the two things the scheduler could do before: run a program, or skip
 //! it forever.  Sleeping is a third, and it is not "finished" with a timestamp
@@ -31,8 +29,6 @@ use crate::address_space::AddressSpace;
 pub struct AddressSpace;
 
 /// Whether a program can run, and when a sleeping one can again.
-///
-/// ## Why this is a state and not a flag
 ///
 /// The first version had `finished: bool`, which is two states and describes
 /// exactly the two things the scheduler could do before: run a program, or skip
@@ -138,7 +134,6 @@ impl Task {
         self.space.map(|_| None).unwrap_or(None)
     }
 
-    /// This process's id.
     pub fn pid(&self) -> u32 {
         self.pid
     }

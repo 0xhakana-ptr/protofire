@@ -3,16 +3,12 @@
 //! The scheduler itself: the tasks, which one is running, and the one operation
 //! a switch is made of.
 //!
-//! ## How a switch happens
-//!
 //! The trap path builds a frame, hands it to the call handler, and then
 //! restores whatever frame it finds and returns.  So a task switch is: copy the
 //! frame into the task this CPU was running, copy the next task's frame over
 //! it, and, if the next task lives in a different address space, switch the
 //! root register.  There is no assembly here, because the assembly that matters
 //! is the epilogue every trap already runs through.
-//!
-//! ## Why every operation takes a CPU
 //!
 //! `running` is one slot per CPU, and a switch is a CPU's own: it saves into
 //! the task that CPU held and marks the next one as that CPU's.  That is what
@@ -58,13 +54,12 @@ pub struct Scheduler {
 /// Three states, and they are three because a caller has to act differently on
 /// each: a task to run, a machine with no work, and a **mistake**.
 ///
-/// ## Why not `Option<usize>`
-///
-/// It was `Option<usize>`, and that type could not say "this CPU already has a
-/// task".  The past implementation answered `Some` for that case by silently
-/// releasing the old task and taking a new one, so a loop that claimed until it
-/// saw `None` never terminated — it exhausted memory and the kernel's own OOM
-/// killer ended the run, three times, before anyone looked inside the loop.
+/// The type was `Option<usize>`, and that type could not say "this CPU already
+/// has a task".  The past implementation answered `Some` for that case by
+/// silently releasing the old task and taking a new one, so a loop that claimed
+/// until it saw `None` never terminated: it exhausted memory and the kernel's
+/// own OOM killer ended the run, three times, before anyone looked inside the
+/// loop.
 ///
 /// With this type the same loop does not compile: `Claim` has no `is_some`, and
 /// the pattern that would have to be written, `Claim::Took(_)`, makes a reader
@@ -80,7 +75,6 @@ pub enum Claim {
 }
 
 impl Scheduler {
-    /// A scheduler with no tasks.
     pub fn new() -> Scheduler {
         Scheduler {
             tasks: Vec::new(),
@@ -117,12 +111,10 @@ impl Scheduler {
         self.tasks.is_empty()
     }
 
-    /// How many switches have happened.
     pub fn switches(&self) -> usize {
         self.switches
     }
 
-    /// How many programs have exited.
     pub fn exited(&self) -> usize {
         self.exited
     }
@@ -165,10 +157,9 @@ impl Scheduler {
     ///
     /// There is no check for "this CPU already has a task".  The assignment is
     /// unconditional, so a CPU that held task A and calls this gets task B and
-    /// A becomes claimable by anyone — including by this CPU on its next call,
+    /// A becomes claimable by anyone, including by this CPU on its next call,
     /// which would then take A back.  A loop that claimed until it got `None`
-    /// never ends, and a test written that way exhausted memory three times
-    /// before anyone looked inside the loop.
+    /// never ends.
     ///
     /// Every caller is written for the other shape: the boot claims once, and a
     /// CPU claims only after giving its task up, through a switch or an exit.
@@ -185,7 +176,7 @@ impl Scheduler {
         // This is the whole of the fix for what the paragraph above describes.
         // Returning `None` here instead would be indistinguishable from "no
         // task is runnable", so a caller could not tell a mistake from an
-        // empty machine — and the mistake is the one that produced an
+        // empty machine, and the mistake is the one that produced an
         // `illegal instruction` on riscv64 and three out-of-memory kills here.
         if self.holds_a_task(cpu) {
             return Claim::AlreadyRunning;
@@ -205,11 +196,10 @@ impl Scheduler {
     /// otherwise.  Either way `frame` now describes the program that runs next,
     /// so the caller's epilogue resumes the right one.
     ///
-    /// ## Why the frame is saved even when the task exits
-    ///
-    /// A finished task has nothing to resume, and saving its frame anyway costs
-    /// one copy and removes a branch, the code that decides *whether* to save
-    /// is the code that could get it wrong.  What is not done is selecting it
+    /// The frame is saved even when the task exits: a finished task has
+    /// nothing to resume, and saving its frame anyway costs one copy and
+    /// removes a branch.  The code that decides *whether* to save is the code
+    /// that could get it wrong.  What is not done is selecting it
     /// again, which the `finished` flag prevents.
     pub fn schedule(&mut self, cpu: usize, frame: &mut Context, exiting: bool) -> CallOutcome {
         self.schedule_from(cpu, frame, exiting, true)
@@ -217,10 +207,9 @@ impl Scheduler {
 
     /// Select the next task and install it, optionally saving `frame` first.
     ///
-    /// ## Why `save` exists, and what it prevents
-    ///
-    /// `schedule`'s frame always belongs to the task that is leaving, it is
-    /// the trap frame that task was suspended in.  A caller whose frame is a
+    /// The flag exists because a frame is not always the leaving task's.
+    /// `schedule`'s frame always belongs to the task that is leaving: the
+    /// trap frame that task was suspended in.  A caller whose frame is a
     /// *kernel* frame has no such claim: the boot's idle loop runs on the
     /// kernel stack, and writing that frame into the sleeping task would put a
     /// kernel address where a program's `ELR` was.  The symptom is an
@@ -242,9 +231,7 @@ impl Scheduler {
     ///
     /// Every switch belongs to a CPU: which task it was running is where the
     /// frame is saved, and which task it will run is what the other CPUs must
-    /// not select.  A caller that did not say which CPU it was would be
-    /// switching the whole machine's idea of the current task, which is the
-    /// state this scheduler no longer has.
+    /// not select.
     pub(crate) fn schedule_on(
         &mut self,
         cpu: usize,
@@ -291,8 +278,8 @@ impl Scheduler {
             // **This CPU owns nothing now.**  Clearing the slot is not
             // bookkeeping: a CPU that kept pointing at a task it had parked
             // would make `is_running_elsewhere` hide that task from every other
-            // CPU, and a task woken from sleep would then be run by nobody —
-            // or worse, by this CPU *and* another, because the slot also says
+            // CPU, and a task woken from sleep would then be run by nobody,
+            // or worse by this CPU *and* another, because the slot also says
             // which task this CPU's frame belongs to.
             self.assign(cpu, usize::MAX);
             return CallOutcome::Exit;
@@ -335,9 +322,7 @@ impl Scheduler {
     ///
     /// *Which* CPU is the argument: a switch saves the frame into the task that
     /// CPU was running and marks the next one as that CPU's, so two CPUs
-    /// switching at once cannot take the same task.  A caller that did not say
-    /// which CPU it was would be moving the whole machine's idea of the current
-    /// task, which is the single-CPU state this scheduler no longer has.
+    /// switching at once cannot take the same task.
     pub(crate) fn schedule_with_status(
         &mut self,
         cpu: usize,
@@ -351,9 +336,8 @@ impl Scheduler {
 
     /// The next task `cpu` may run, wrapping and skipping the ones that cannot.
     ///
-    /// ## What "may" excludes
-    ///
-    /// A task another CPU is running.  That is what `running` is for: without
+    /// A task another CPU is running may not be selected.  That is what
+    /// `running` is for: without
     /// it, two CPUs asking for the next runnable task at the same moment would
     /// both be told the same one, and both would install its context.  The task
     /// one CPU holds is not a candidate for the other, and the pass that finds
@@ -400,15 +384,11 @@ impl Scheduler {
 
     /// Put the current task to sleep until the machine's counter reads `until`.
     ///
-    /// ## What this does, and what it deliberately does not
-    ///
     /// It records a deadline and takes the current task out of the rotation.
     /// It does **not** switch: the caller is a call handler, and the frame it
     /// holds belongs to the program that just asked.  The switch happens when
     /// the handler answers `Exit`-shaped, which is what `process::serve` does
     /// for `Sleep`, and the scheduler then picks the next runnable task.
-    ///
-    /// ## Why the deadline is a counter reading
     ///
     /// A duration is what a program asks for and a deadline is what a scheduler
     /// compares.  Converting once, here, keeps every comparison in one clock:
@@ -466,13 +446,12 @@ impl Scheduler {
 
     /// Wake every blocked task, answering how many.
     ///
-    /// ## Why this wakes all of them
-    ///
-    /// A wait queue would record *which* task waits on *which* object, and this
-    /// kernel has one blocking object and one blocked task in the boot that
-    /// proves it.  Waking all of them is the correct behaviour for a pipe's
-    /// reader and a writer, several readers on one pipe may all make progress
-    ///, and it is wrong for anything that needs one exact waiter.  The queue
+    /// Every blocked task wakes, because a wait queue would record *which*
+    /// task waits on *which* object, and this kernel has one blocking object
+    /// and one blocked task in the boot that proves it.  Waking all of them is
+    /// the correct behaviour for a pipe's reader and a writer, and several
+    /// readers on one pipe may all make progress; it is wrong for anything
+    /// that needs one exact waiter.  The queue
     /// arrives with the second such object; until then a wake that names its
     /// waiters would be a queue with one entry and a lookup.
     pub fn wake_blocked(&mut self) -> usize {
@@ -512,9 +491,9 @@ impl Scheduler {
     /// gets its own answer before the child runs: a child that ran first would
     /// return zero before the parent had learned its pid, and a program that
     /// printed the two would show them in the wrong order.
-    /// ## Why the frame is handed in rather than read from the task
     ///
-    /// The context a task holds is the one its last switch saved, from before
+    /// The frame is handed in rather than read from the task: the context a
+    /// task holds is the one its last switch saved, from before
     /// the call that is running now.  A child resuming there would re-execute
     /// its parent's whole path from the last switch, including the `fork` that
     /// created it, and the boot showed exactly that: one fork became seven,

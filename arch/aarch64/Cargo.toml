@@ -24,7 +24,7 @@ fdt = { path = "../../libs/fdt" }
 # The three crates only a bare-metal build names.
 #
 # A host build has no `vbar_el1`, no sink to install and no `.bss` to put a
-# static in, so those arms do not exist there — and a dependency a build never
+# static in, so those arms do not exist there, and a dependency a build never
 # names is what `cargo` reports as unused.  Putting them behind the same
 # `cfg(target_os)` the code uses is what makes the manifest describe the build
 # rather than hoping the warning is noise.

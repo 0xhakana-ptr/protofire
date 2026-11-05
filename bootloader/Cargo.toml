@@ -14,7 +14,7 @@ bench = false
 [dependencies]
 kernel = { path = "../kernel" }
 # The machine, for one thing: the stop a panic takes.  Every instruction that
-# used to be spelled here — `hlt`, `wfi`, the three `halt_forever` arms — is the
+# used to be spelled here (`hlt`, `wfi`, the three `halt_forever` arms) is the
 # architecture crate's, because this crate is the protocol and `arch` is the
 # machine.  The route is `arch` rather than a machine crate by name: a
 # `cfg(target_arch)` table in this manifest would be a place a fourth machine

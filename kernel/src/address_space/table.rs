@@ -3,8 +3,6 @@
 //! The kernel's identity map: the tables it lives in, and the walk that
 //! re-maps a region.
 //!
-//! ## Why this replaces the boot's table rather than extending it
-//!
 //! The boot assembly builds a table so that Rust can run at all: four gigabytes
 //! of 2 MiB pages, identity-mapped, every one present, writable and *cached*.
 //! Three things it gets wrong past the first instruction: everything is cached
@@ -12,12 +10,10 @@
 //! succeeds instead of faulting), and nothing can be added (a table the kernel
 //! cannot name is one it cannot extend).
 //!
-//! ## Where the tables live
-//!
-//! In `.bss`, as a fixed array, before the frame allocator exists.  A table
-//! built out of allocated frames would have to be built before the thing that
-//! allocates them, which is circular; the fixed array is the boot's own
-//! concession to that and is sized for what this table needs.
+//! The tables live in `.bss`, as a fixed array, before the frame allocator
+//! exists.  A table built out of allocated frames would have to be built
+//! before the thing that allocates them, which is circular; the fixed array is
+//! the boot's own concession to that and is sized for what this table needs.
 
 #[cfg(target_os = "none")]
 use paging::PageTable;
@@ -99,8 +95,6 @@ pub(crate) struct Tables {
     pub(crate) frames_taken: usize,
 }
 
-/// ## Why this is behind a lock
-///
 /// Every field here is mutable state one walk updates: the tables' entries, the
 /// frame allocator's bitmap, and the count of frames taken.  A program's space
 /// is built and released by whichever CPU is serving that program's calls, so
@@ -185,8 +179,6 @@ pub(crate) fn build(tables: &mut Tables) {
 
 /// Map a device region uncached, at the 4 KiB granule.
 ///
-/// ## Why a BAR needs this and the identity map does not
-///
 /// The boot's table maps everything cached.  A device's registers read through
 /// a cached mapping return whatever was true when the line was fetched, and a
 /// store to one may sit in a write-combining buffer instead of reaching the
@@ -223,8 +215,6 @@ pub unsafe fn map_device(start: usize, length: usize) -> bool {
 /// registers are what asks: a PCIe ECAM window sits wherever the firmware put
 /// it, which on the machine this tree boots is three hundred gigabytes past the
 /// identity map's end.
-///
-/// ## Why a 2 MiB block above the limit
 ///
 /// A device region is not memory and has no use for a 4 KiB granule.  One block
 /// per 2 MiB covers a whole ECAM window with a handful of entries, where a page
@@ -325,8 +315,6 @@ pub(crate) fn device_table_for(
         return Some(unsafe { &*(address as *const PageTable) });
     }
 
-    // No table yet: take an unused spare, or a frame when the spares are gone.
-    //
     // The count of frames taken is what the boot reports, and it is the number
     // that says whether this branch has ever run: a machine whose spares were
     // always enough has an allocator here that nothing exercised, which is the

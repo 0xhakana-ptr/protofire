@@ -138,10 +138,6 @@ pub unsafe fn message_frame() -> Option<()> {
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
 
-/// Enter ring 3 at `entry` with the stack at `stack_top`.
-///
-/// ## What had to exist first
-///
 /// The earlier version of this function was `unreachable!`, and its comment
 /// named the three things it needed: a TSS with an `RSP0`, a user-accessible
 /// GDT segment, and a gate at `DPL` 3.  All three exist now, `gdt` builds the
@@ -185,9 +181,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 /// whose low bits held flags would read back as a different number, and the
 /// low twelve bits are cleared by `current_root_table` for that reason.
 ///
-/// ## What this does not do
-///
-/// It does not make the new table's pages reachable.  The **caller** must run
+/// This does not make the new table's pages reachable.  The **caller** must run
 /// through a mapping both tables share, because the next instruction fetch
 /// happens through the new one.  This kernel's program roots copy the kernel's
 /// entry 0 for exactly that reason, the same as aarch64's copy the kernel's
@@ -225,8 +219,6 @@ pub unsafe fn switch_address_space(root: usize) -> bool {
 #[cfg(target_os = "none")]
 pub unsafe fn timer_frequency() -> Option<u64> {
     // Calibrated once and remembered.
-    //
-    // ## Why this is cached and not measured per call
     //
     // The kernel's interrupt handler re-arms the timer on every tick, and it
     // asks for the frequency when it does.  A `timer_frequency` that measured
@@ -271,7 +263,6 @@ static APIC_RATE: cell::SyncUnsafeCell<Option<u64>> = cell::SyncUnsafeCell::new(
 #[cfg(target_os = "none")]
 static CALIBRATED: cell::SyncUnsafeCell<Option<u64>> = cell::SyncUnsafeCell::new(None);
 
-/// The frequency this boot measured, if it has measured one.
 #[cfg(target_os = "none")]
 fn measured_frequency() -> Option<u64> {
     // SAFETY: written once by `timer_frequency` before any timer can fire, and
@@ -279,7 +270,6 @@ fn measured_frequency() -> Option<u64> {
     unsafe { *CALIBRATED.get() }
 }
 
-/// Record the measured frequency.
 #[cfg(target_os = "none")]
 fn set_measured_frequency(frequency: u64) {
     // SAFETY: as above, the only write, and it happens before any tick.
@@ -288,10 +278,9 @@ fn set_measured_frequency(frequency: u64) {
 
 /// The monotonic clock's rate, in ticks per second.
 ///
-/// ## Why this is separate from `timer_frequency`
-///
-/// They are two clocks: `timer_counter` reads the TSC and `arm_timer` loads an
-/// APIC count, and nothing in the architecture says the two run at one rate.
+/// This and `timer_frequency` are two clocks: `timer_counter` reads the TSC
+/// and `arm_timer` loads an APIC count, and nothing in the architecture says
+/// the two run at one rate.
 /// On this emulator they happen to agree, a boot was measured with the sleep
 /// conversion using either number and behaved identically, so this is not a
 /// fix for anything observed.  It is the honest signature: a caller that
@@ -320,7 +309,6 @@ pub unsafe fn clock_frequency() -> Option<u64> {
 #[cfg(target_os = "none")]
 static CLOCK_RATE: cell::SyncUnsafeCell<Option<u64>> = cell::SyncUnsafeCell::new(None);
 
-/// The clock's rate, if this boot has measured one.
 #[cfg(target_os = "none")]
 fn measured_clock() -> Option<u64> {
     // SAFETY: written once by `clock_frequency` before any program runs.
@@ -402,8 +390,6 @@ pub const fn ticks_for_microseconds(frequency: u64, microseconds: u64) -> u64 {
 pub unsafe fn timer_counter() -> u64 {
     // The timestamp counter, not the APIC's count.
     //
-    // ## Why this is the TSC and not the timer
-    //
     // `CNTPCT_EL0` on aarch64 counts **up** from boot and never resets, which
     // is what makes `now >= deadline` a deadline.  The APIC's current count is
     // the opposite in both respects: it counts **down**, and it reloads every
@@ -441,8 +427,6 @@ pub unsafe fn timer_fired() -> bool {
 
 /// The line a boot raises to prove the interrupt path: the timer's.
 ///
-/// ## Why not a spare vector
-///
 /// Vector zero is the divide error, so a self-directed interrupt at zero is a
 /// fault the processor takes and the dispatch never sees, a boot reported
 /// "raised but not delivered" on every run with nothing actually wrong.
@@ -459,7 +443,6 @@ pub const fn test_interrupt() -> usize {
     crate::apic::TIMER_VECTOR as usize
 }
 
-/// The timer's interrupt as a vector.
 pub const fn timer_interrupt() -> usize {
     apic::TIMER_VECTOR as usize
 }
@@ -517,8 +500,6 @@ pub unsafe fn enable_interrupt_line(_number: usize) -> bool {
 
 /// Raise one interrupt from the controller: the local APIC can raise any
 /// vector to itself, and this asks for the boot's test vector.
-///
-/// ## Why this is a software interrupt
 ///
 /// A device raises its line when it has something to say and cannot be asked
 /// to say it on demand.  The local APIC's ICR can send an interrupt to a CPU,

@@ -2,8 +2,6 @@
 //!
 //! Physical frame allocator with free-range tracking, reuse, and coalescing.
 //!
-//! ## Why a bitmap and not a map
-//!
 //! The first version tracked free ranges in a `BTreeMap`.  That is the right
 //! shape for an unbounded set and the wrong one here for a reason that is not
 //! about speed: **this allocator hands out the frames a page table is built
@@ -400,8 +398,6 @@ impl FrameAllocator {
     ///
     /// Returns the number of frames successfully moved.
     ///
-    /// ## Why it no longer takes a bitmap
-    ///
     /// The first version of this method allocated a `Vec` the size of the pool,
     /// which is the thing this file spent a change removing.  The second took
     /// one from its caller, which moved the problem instead of solving it.  The
@@ -439,7 +435,6 @@ impl FrameAllocator {
                     // Unmovable frame, everything below it is now final.
                     break;
                 }
-                // Move the frame contents into the hole.
                 // SAFETY: both frames come from this allocator's pool in the
                 // same pass, `f` is the live frame being moved and `fill` a
                 // hole the invariant above says is free and below it, so the
@@ -483,19 +478,16 @@ impl FrameAllocator {
         Some(())
     }
 
-    /// Whether frame `index` is free.
     fn is_free(&self, index: usize) -> bool {
         index < self.total_frames && self.free[index / 64] & (1 << (index % 64)) != 0
     }
 
-    /// Mark frame `index` free.
     fn set_free(&mut self, index: usize) {
         if index < MAX_FRAMES {
             self.free[index / 64] |= 1 << (index % 64);
         }
     }
 
-    /// Mark frame `index` used.
     fn set_used(&mut self, index: usize) {
         if index < MAX_FRAMES {
             self.free[index / 64] &= !(1 << (index % 64));
@@ -521,7 +513,6 @@ impl FrameAllocator {
         let limit = self.next_frame.min(MAX_FRAMES);
         let mut index = 0;
         while index < limit {
-            // Skip a clear word outright.
             if self.free[index / 64] == 0 {
                 index = (index / 64 + 1) * 64;
                 continue;
