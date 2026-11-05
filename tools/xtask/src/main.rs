@@ -632,6 +632,12 @@ impl Machine {
                 ("protofire: a program sleeps until counter ", false),
                 ("protofire: a program woke, ", false),
                 ("protofire: the timer preempted, ", false),
+                // Parallel execution, as a number rather than a claim: at
+                // least one program ran to its exit on a CPU other than the
+                // boot one.  `cpus online = 2` says a CPU came up; this is the
+                // line that says it ran a program.
+                ("protofire: program ended on cpu 1", true),
+                ("protofire: parallel, programs ended on ", false),
             ],
         }
     }

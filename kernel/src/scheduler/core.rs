@@ -58,28 +58,18 @@ impl Scheduler {
 
     /// Add a program to the rotation.
     ///
-    /// ## Why the first task is recorded as running
-    ///
-    /// The boot does not reach its first program through a switch: it installs
-    /// that program's context by hand and `enter_user_with_context` never
-    /// returns.  So the scheduler has to know which task that was, or the first
-    /// task would look free and a second CPU would hand it out again while the
-    /// boot CPU was running it.
-    ///
-    /// The first task a scheduler is given is therefore the one the boot is
-    /// about to enter, on the boot CPU.  Every later task is added as free and
-    /// claimed by a switch or a [`claim`](Self::claim).
+    /// A task is added free.  Which CPU runs it is decided by
+    /// [`claim`](Self::claim), and the boot claims its own first task through
+    /// the same call a started CPU uses: a default here would be a second
+    /// answer to "who is running this", and the two would disagree the moment
+    /// a second CPU took a task at start.
     pub fn add(&mut self, task: Task) {
         // The id counter follows the ids the boot actually gave, so a forked
         // child cannot collide with a program the boot started.
         if task.pid() >= self.next_pid {
             self.next_pid = task.pid() + 1;
         }
-        let first = self.tasks.is_empty();
         self.tasks.push(task);
-        if first && self.running.iter().all(Option::is_none) {
-            self.running[crate::per_cpu::BOOT_SLOT] = Some(0);
-        }
     }
 
     /// The number of programs, for a boot line.
@@ -122,7 +112,11 @@ impl Scheduler {
     /// took, or the other CPUs would consider that task free.
     pub fn assign(&mut self, cpu: usize, task: usize) {
         if let Some(slot) = self.running.get_mut(cpu) {
-            *slot = Some(task);
+            // `usize::MAX` is this module's "this CPU owns no task".  Storing
+            // it as an index would make `is_running_elsewhere` compare against
+            // a task number no task has, which happens to be harmless and is
+            // not the statement meant: `None` is.
+            *slot = if task == usize::MAX { None } else { Some(task) };
         }
     }
 
@@ -227,6 +221,13 @@ impl Scheduler {
             // wakes one.  The scheduler does not distinguish the two, that
             // decision belongs to whoever knows whether a timer is armed, so
             // it answers `Exit` and its context says which case it is.
+            //
+            // **This CPU owns nothing now.**  Clearing the slot is not
+            // bookkeeping: a CPU that kept pointing at a task it had parked
+            // would make `is_running_elsewhere` hide that task from every other
+            // CPU, and a task woken from sleep would then be run by nobody —
+            // or worse, by this CPU *and* another, because the slot also says
+            // which task this CPU's frame belongs to.
             self.assign(cpu, usize::MAX);
             return CallOutcome::Exit;
         };
@@ -546,6 +547,23 @@ impl Scheduler {
     /// [`Scheduler::has_selectable`].
     pub fn has_runnable(&self) -> bool {
         self.tasks.iter().any(|task| task.state != State::Finished)
+    }
+
+    /// Whether `cpu` holds a task it is running.
+    ///
+    /// The question a caller asks after a switch to tell the two `Exit`s
+    /// apart: one where a next task was installed, and one where the CPU has
+    /// nothing and must stop rather than resume a finished program.
+    pub fn holds_a_task(&self, cpu: usize) -> bool {
+        self.running
+            .get(cpu)
+            .copied()
+            .flatten()
+            .is_some_and(|index| {
+                self.tasks
+                    .get(index)
+                    .is_some_and(|task| task.state != State::Finished)
+            })
     }
 
     /// Whether any task could be selected right now.

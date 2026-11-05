@@ -66,6 +66,10 @@ pub use smp::refused_harts;
 pub use smp::secondary_hart_id;
 pub use smp::secondary_online;
 #[cfg(target_os = "none")]
+pub use smp::set_finished_sink;
+#[cfg(target_os = "none")]
+pub use smp::set_work_sink;
+#[cfg(target_os = "none")]
 pub use smp::start_secondary_harts;
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
@@ -87,14 +91,27 @@ pub use trap::starting_context;
 
 /// Which CPU this code runs on, as the machine reports it.
 ///
-/// `tp` is the thread pointer the RISC-V ABI reserves for exactly this, and the
-/// entry assembly writes the CPU's slot into it before anything Rust runs, one
-/// register, no memory, and the answer a trap needs without a lock.
+/// ## Why the answer is in `tp` and how it gets there
+///
+/// `tp` is one register, no memory, and the answer a trap needs without a
+/// lock.  It is **not** where the answer comes from at boot: `tp` belongs to
+/// the interrupted program, and a program's `tp` is whatever it made it.  The
+/// trap entry computes the slot from the kernel stack it just switched to and
+/// puts it in `tp` for the length of the trap; the epilogue restores the
+/// program's value from the frame like every other register.
+///
+/// So inside the kernel this reads the trap's slot, and outside a trap it
+/// reads whatever the current program left, which is why every caller of this
+/// function is kernel code running under a trap or the boot before any program
+/// exists.  Putting the slot in `tp` at boot instead was the first version, and
+/// it was wrong in a way a single CPU could not show: the second hart's program
+/// zeroed the register and the hart came back as CPU 0.
 #[cfg(target_os = "none")]
 pub fn current_cpu_slot() -> usize {
     let slot: usize;
-    // SAFETY: a register read with no side effect.  The entry assembly wrote
-    // the slot before this could be called.
+    // SAFETY: a register read with no side effect.  `trap_entry` writes the
+    // slot before it calls anything that could ask, and the epilogue restores
+    // the interrupted program's own value.
     unsafe { core::arch::asm!("mv {}, tp", out(reg) slot, options(nomem, nostack)) };
     slot
 }
@@ -302,6 +319,63 @@ pub fn wait_for_a_wakeup() {
 /// The host build: nothing to wait for.
 #[cfg(not(target_os = "none"))]
 pub fn wait_for_a_wakeup() {}
+
+/// Enter a program on this CPU, with its root table already installed.
+///
+/// ## Why this is not `enter_user_with_context`
+///
+/// That one is the *first* entry on the boot CPU, and it installs the context
+/// it is handed over this CPU's kernel frame.  This one is a CPU that came up
+/// on its own and has just been handed a task by the scheduler: its kernel
+/// stack holds whatever the trap path that woke it left there, and the context
+/// it enters is the task's, which the scheduler chose.  Both end in the same
+/// `sret`; what differs is who chose the context and what is on the stack.
+///
+/// ## Why `sscratch` is written here
+///
+/// The value is per-hart, and a CPU that entered a program with the boot hart's
+/// stack in its `sscratch` would take its first trap on another CPU's stack.
+/// [`kernel_stack_top`] is this CPU's, so the trap path's swap lands on the
+/// stack this CPU is already using.
+///
+/// # Safety
+///
+/// `context` must be a program's saved frame whose `sepc` and `sp` name
+/// `user`-mapped pages in the installed root, and this CPU must be running on
+/// its own kernel stack.
+#[cfg(target_os = "none")]
+pub unsafe fn enter_program_here(context: &Context) -> ! {
+    // SAFETY: the caller promises the context is a program's and the root is
+    // installed.  The mask covers the four writes and the `sret`, for the
+    // reason `enter_user_with_context` gives: a trap between them would clobber
+    // `sepc`.
+    unsafe {
+        core::arch::asm!(
+            "csrci sstatus, 2",
+            "csrw sepc, {entry}",
+            "csrw sstatus, {spsr}",
+            "csrw sscratch, {kernel_stack}",
+            "mv sp, {user_stack}",
+            "sret",
+            entry = in(reg) context.sepc,
+            spsr = in(reg) context.sstatus,
+            kernel_stack = in(reg) kernel_stack_top() as u64,
+            user_stack = in(reg) stack_pointer(context) as u64,
+            options(noreturn)
+        )
+    }
+}
+
+/// The host build has no U-mode to enter.
+///
+/// # Safety
+///
+/// Never returns and never enters anything: a host has no U-mode, so this stops
+/// the process rather than pretending to have run a program.
+#[cfg(not(target_os = "none"))]
+pub unsafe fn enter_program_here(_context: &Context) -> ! {
+    panic!("enter_program_here called on a host: there is no U-mode to enter")
+}
 
 /// Install the trap vector.
 ///

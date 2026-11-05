@@ -282,18 +282,20 @@ fn secondary_entry_address() -> usize {
 pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
     let _ = hart;
 
-    // The slot goes into `tp`, which is where `arch::current_cpu_slot` reads
-    // it: the trap this hart takes asks which CPU it is on, and one register is
-    // cheaper than a lock on that path.
+    // The slot, for the window before this hart runs a program: `tp` is where
+    // the kernel asks "which CPU am I", and firmware leaves whatever it likes
+    // in the register.
     //
-    // **One past `slot`**, because slot zero is the boot CPU's: this `slot` is
-    // an index among the harts the boot started, and using it raw made the
-    // first started hart the boot CPU in `per_cpu`'s eyes, so it ran the
-    // scheduling half while the boot hart was still building the scheduler, and
-    // the ring-3 entry that followed faulted at an address no program was ever
-    // given.
-    // SAFETY: `tp` is the thread pointer, reserved by the ABI for exactly this.
+    // **One past `slot`**, because slot zero is the boot CPU's.
+    //
+    // This is a *starting* value and not the identity.  Once a program runs,
+    // `trap_entry` computes the slot from the kernel stack it switched to and
+    // restores the program's own `tp` on the way out, because a program's
+    // register is the program's: the first version relied on this write alone,
+    // and a program that zeroed `tp` made this hart report itself as CPU 0 and
+    // take slot zero's task.
     let cpu_slot = slot + 1;
+    // SAFETY: `tp` is the thread pointer, reserved by the ABI for exactly this.
     unsafe { core::arch::asm!("mv tp, {}", in(reg) cpu_slot, options(nomem, nostack)) };
 
     // The kernel's page table, on this hart.  `satp` is a per-hart register and
@@ -339,20 +341,106 @@ pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
     // and the stack behind them are all in place.
     unsafe { core::arch::asm!("csrsi sstatus, 2", options(nomem, nostack)) };
     ONLINE[slot].store(true, Ordering::Release);
-    idle()
+    wait_for_work()
 }
 
-/// Wait for an interrupt, with this hart's lines enabled.
+/// Wait here until the kernel has a task for this CPU, then run it.
 ///
-/// A `wfi` returns when an interrupt is pending, whether or not it is taken, so
-/// the loop is what makes this `-> !`.  A trap taken here is the kernel's own:
-/// this hart never leaves S-mode, so its frame is never a program's, and the
-/// scheduling half refuses it.
+/// ## What this waits for
+///
+/// The boot hart starts the other CPUs *before* it builds the scheduler, so a
+/// started CPU that asked for a task immediately would find none.  It waits for
+/// the boot to say work exists, and the way the boot says it is an
+/// inter-processor interrupt: the same call the boot uses to prove a CPU takes
+/// interrupts at all, sent again once the scheduler is installed.
+///
+/// ## Why the wait is a trap and not a poll
+///
+/// `wfi` returns on the interrupt, the trap path counts it, and the loop asks
+/// the kernel again.  A CPU spinning on a flag would burn its host's core for
+/// the length of the boot, which on an emulator is the difference between two
+/// CPUs and one CPU running twice as hot.
 #[cfg(target_os = "none")]
-fn idle() -> ! {
+fn wait_for_work() -> ! {
     loop {
-        // SAFETY: `wfi` is the wait-for-interrupt hint; `sstatus.SIE` is set,
-        // so an enabled line is delivered rather than only clearing the hint.
+        // The boot's own end, which a CPU has to notice for itself: `halt` on
+        // another CPU stops that CPU, and this one is still running.
+        if crate::smp::boot_finished() {
+            crate::halt();
+        }
+        // The kernel's answer, asked as often as a wake arrives: `None` means
+        // the scheduler has no task for this CPU, and the next IPI will ask
+        // again.
+        if let Some((root, context)) = take_work() {
+            // SAFETY: the scheduler handed this CPU a task, so its root is a
+            // live table, and the context is that task's saved frame, whose
+            // entry and stack are `user` pages in it.
+            unsafe {
+                crate::paging::install(root);
+                crate::enter_program_here(&context);
+            }
+        }
+        // SAFETY: `SIE` is set, so an enabled line is taken rather than only
+        // clearing the hint; the trap path re-arms this CPU's clock.
         unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
     }
+}
+
+/// What a started CPU asks the kernel for: a root table and a frame to enter.
+///
+/// The kernel's half, injected: `arch` cannot name `kernel` without a cycle,
+/// and the alternative — the kernel polling a flag this crate sets — would put
+/// the scheduler's choice on the wrong side of the boundary.  The shape is the
+/// one every other upward call in this tree uses, a sink installed once before
+/// anything can reach it.
+pub type WorkSink = fn(cpu: usize) -> Option<(usize, crate::Context)>;
+
+/// The boot's end, as the kernel publishes it.
+///
+/// A second injected value beside the work source, and for the same reason:
+/// `arch` cannot name `kernel`.  A direct call would be the cycle the layering
+/// refuses; the flag lives in the kernel and this crate asks.
+static FINISHED: cell::SyncUnsafeCell<Option<fn() -> bool>> = cell::SyncUnsafeCell::new(None);
+
+/// Install the kernel's end-of-boot predicate.
+///
+/// # Safety
+///
+/// Called once, before any started CPU can ask.
+pub unsafe fn set_finished_sink(sink: fn() -> bool) {
+    // SAFETY: the caller promises this is the only write, and that it happens
+    // before a started CPU looks.
+    unsafe { *FINISHED.get() = Some(sink) };
+}
+
+/// Whether the boot is over.
+///
+/// Public because the trap path asks it: a CPU that takes any trap after the
+/// boot ended must stop rather than resume a task whose pages are gone.
+#[cfg(target_os = "none")]
+pub fn boot_finished() -> bool {
+    // SAFETY: written once before any started CPU asks, read after.
+    unsafe { *FINISHED.get() }.is_some_and(|sink| sink())
+}
+
+/// The kernel's answer to "what should this CPU run", if it has installed one.
+static WORK: cell::SyncUnsafeCell<Option<WorkSink>> = cell::SyncUnsafeCell::new(None);
+
+/// Install the kernel's work source.
+///
+/// # Safety
+///
+/// Called once, before any started CPU can look for work.
+pub unsafe fn set_work_sink(sink: WorkSink) {
+    // SAFETY: the caller promises this is the only write, and that it happens
+    // before a started CPU asks.
+    unsafe { *WORK.get() = Some(sink) };
+}
+
+/// Ask the kernel what this CPU should run.
+#[cfg(target_os = "none")]
+fn take_work() -> Option<(usize, crate::Context)> {
+    // SAFETY: written once before any started CPU asks, read after.
+    let sink = unsafe { *WORK.get() };
+    sink?(crate::current_cpu_slot())
 }

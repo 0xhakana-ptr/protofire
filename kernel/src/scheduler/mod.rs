@@ -124,11 +124,60 @@ pub fn advance_with_status(
     exiting: bool,
     status: usize,
 ) -> arch::CallOutcome {
+    let cpu = this_cpu();
+    if schedule_on_this_cpu(cpu, frame, exiting, status) {
+        return arch::CallOutcome::Exit;
+    }
+
+    // Nothing was installed, so the frame is still the *finished* program's:
+    // returning `Exit` would tell the trap path to `sret` to the instruction
+    // after its last one, past the end of its image, which on this machine is a
+    // zero word and the fault is `illegal instruction` at offset 21 words.
+    //
+    // So this CPU waits here instead.  Two ways out, and they are different
+    // questions:
+    //
+    // - **Another CPU still has work.**  This one waits for the interrupt that
+    //   changes that, and tries again.  It must not stop the machine: the other
+    //   CPU is inside a program, and a boot that stopped here would end with
+    //   programs that had not run.
+    // - **Nothing anywhere is runnable.**  The machine is finished, and every
+    //   CPU should stop.  That is the only case that ends a boot.
+    loop {
+        if !has_runnable() {
+            // The machine is finished: report what ran, then stop every CPU.
+            crate::programs::report_and_finish()
+        }
+        arch::wait_for_a_wakeup();
+        if schedule_on_this_cpu(cpu, frame, false, 0) {
+            return arch::CallOutcome::Exit;
+        }
+    }
+}
+
+/// Install the next task for `cpu`, answering whether one was installed.
+///
+/// One spelling of the switch, because the two callers differ only in whether
+/// they save the frame: an exiting program's frame is its own last one, and a
+/// CPU waiting between tasks holds a kernel frame that no task owns.
+fn schedule_on_this_cpu(
+    cpu: usize,
+    frame: &mut arch::Context,
+    exiting: bool,
+    status: usize,
+) -> bool {
     with_scheduler(|scheduler| match scheduler {
         Some(scheduler) => {
-            scheduler.schedule_with_status(this_cpu(), frame, exiting, true, Some(status))
+            if exiting {
+                scheduler.schedule_with_status(cpu, frame, true, true, Some(status));
+            } else {
+                // The frame belongs to no task here: this CPU is between
+                // programs, so there is nothing to save into.
+                scheduler.schedule_with_status(cpu, frame, false, false, None);
+            }
+            scheduler.holds_a_task(cpu)
         }
-        None => arch::CallOutcome::Exit,
+        None => false,
     })
 }
 
@@ -335,6 +384,34 @@ pub fn has_sleeping() -> bool {
 /// How many installed tasks are asleep, for a boot line that reports it.
 pub fn sleeping() -> usize {
     with_scheduler(|scheduler| scheduler.as_ref().map_or(0, Scheduler::sleeping))
+}
+
+/// Take a task for `cpu`, answering which one.
+///
+/// The one operation that marks a task taken.  A started CPU calls this when it
+/// is woken, and gets `None` until the boot has built a task it may run.
+pub fn claim(cpu: usize) -> Option<usize> {
+    with_scheduler(|scheduler| scheduler.as_mut()?.claim(cpu))
+}
+
+/// A task's root table and saved frame, for a CPU about to enter it.
+///
+/// The two together are what an entry into a program needs, and neither is
+/// useful alone: the frame says where to start, the root says which mapping
+/// that address is in.  `None` for a task that has no space of its own, which
+/// no program the boot builds has.
+#[cfg(target_os = "none")]
+pub fn start_of(task: usize) -> Option<(usize, arch::Context)> {
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_ref()?;
+        let root = scheduler.tasks.get(task)?.root()?;
+        Some((root, *scheduler.tasks.get(task)?.context()))
+    })
+}
+
+/// The process id a task index names.
+pub fn pid_of(task: usize) -> Option<u32> {
+    with_scheduler(|scheduler| scheduler.as_ref()?.tasks.get(task).map(Task::pid))
 }
 
 /// Whether a call means the program has finished.

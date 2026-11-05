@@ -97,63 +97,18 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // others.  Reading a return register instead would be wrong on the one
         // machine whose two registers differ.
         let status = call.arguments[0];
-        let outcome = crate::scheduler::advance_with_status(frame, true, status);
-        if !crate::scheduler::has_runnable() {
-            let (switches, exited) = crate::scheduler::statistics();
-            let ticks = crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire) as u32;
-            arch::serial::write_str("protofire: every program exited, ");
-            arch::serial::write_u32(exited as u32);
-            arch::serial::write_str(" exit(s), ");
-            arch::serial::write_u32(ticks);
-            arch::serial::write_str(" tick(s), ");
-            arch::serial::write_u32(switches as u32);
-            arch::serial::write_str(" switch(es)\n");
-
-            // The process tree, as the exits recorded it.
-            //
-            // A program asks `GetPid` and exits with the answer, so a status
-            // that is the program's own number is evidence the identity call
-            // ran and the exit carried its answer, not that the kernel can
-            // count.
-            // The announcing program's status is its own pid because it asks
-            // `GetPid` and exits with the answer.  The pipe's two programs have
-            // no identity call, so their status is whatever their last call
-            // left in the argument register, reported as it is rather than
-            // filtered, because a status the kernel made up to look tidy would
-            // be the defect this tree keeps recording.
-            arch::serial::write_str("protofire: exit statuses ");
-            let mut first = true;
-            for (pid, status) in crate::scheduler::exit_statuses() {
-                if !first {
-                    arch::serial::write_str(", ");
-                }
-                first = false;
-                arch::serial::write_u32(pid);
-                arch::serial::write_str(" -> ");
-                arch::serial::write_u32(status as u32);
-            }
-            arch::serial::write_str("\n");
-
-            // Whether the timer preempted, as a fact and not a number.
-            //
-            // The switch count depends on how fast the emulator runs the
-            // program's loop, so a line that required a particular count would
-            // be a gate on the host's speed.  What does not depend on that is
-            // whether *any* switch came from a tick rather than from an exit:
-            // with two programs and two exits, more than one switch means the
-            // timer moved the CPU.
-            //
-            // A boot whose preemption sink was not installed prints
-            // `1 switch(es)`, one, from the first exit, and says so.
-            if switches > 1 && ticks > 0 {
-                arch::serial::write_str("protofire: the timer preempted, ");
-                arch::serial::write_u32((switches - 1) as u32);
-                arch::serial::write_str(" switch(es) from ticks\n");
-            } else {
-                arch::serial::write_str("protofire: the timer did not preempt\n");
-            }
-            arch::halt()
+        // Which CPU ran this program to its end, reported once per exit so the
+        // log says how many programs finished on a CPU other than the boot's.
+        // This is the evidence parallel execution leaves: the two CPUs' switch
+        // counts alone cannot say whether a program ran anywhere but CPU 0.
+        let cpu = crate::per_cpu::current_slot();
+        if cpu != crate::per_cpu::BOOT_SLOT {
+            crate::programs::note_program_ran_on(cpu);
         }
+        // A CPU that gets no next task waits for work, or reports and stops
+        // when the machine is finished; neither returns an uninstalled frame,
+        // which is what makes the `sret` that follows always a real program.
+        let outcome = crate::scheduler::advance_with_status(frame, true, status);
         return outcome;
     }
     // A write to a pipe, recognised by the descriptor naming one.

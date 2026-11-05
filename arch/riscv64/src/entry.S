@@ -66,12 +66,13 @@ _start:
     /* No program is running, so no trap is a program's yet. */
     csrw sscratch, x0
 
-    /* The CPU's own slot, which is what a trap reads to learn where it is.
-       This is the hart the firmware cold-booted, and it is slot zero by the
-       kernel's own numbering — the machine's hart id, which is a different
-       number, is recorded separately.  A `tp` left as firmware left it would
-       make the boot CPU read as whichever slot the garbage happened to name,
-       and the first trap would split the scheduling half the wrong way. */
+    /* Slot zero, which is this hart's until a program takes `tp` for its own.
+       The kernel asks this register for "which CPU am I" everywhere, and
+       before a program exists there is no other writer: firmware leaves
+       whatever it likes here, and a boot that did not say would read it as
+       whichever slot that happened to name.  Once a program runs, `trap_entry`
+       is what writes the register, and its epilogue restores the program's own
+       value. */
     mv tp, x0
 
     /* SUM: S-mode may reach a page whose `U` bit is set.  Bit 18. */
@@ -164,6 +165,27 @@ trap_entry:
     csrrw sp, sscratch, x0
 1:
     addi sp, sp, -288
+
+    /* The kernel's own identity for this hart, put in `tp` for the length of
+       the trap.
+
+       `tp` is the *program's* thread pointer, and `starting_context` zeroes
+       every register a program begins with, so a program's `tp` is zero and
+       `arch::current_cpu_slot` read it as the boot CPU.  A second hart running
+       a program therefore reported itself as CPU 0, and the scheduler gave
+       both CPUs slot zero's task: the two `instruction page fault` lines this
+       produced named each other's program.
+
+       The stack is what tells the harts apart, and it is already in `sp`: the
+       entry assembly gave each slot a slice of `kernel_stacks`, and `sscratch`
+       carried this hart's top.  So the slot is the offset divided by the slice
+       size, and the program's own `tp` is saved in the frame at offset 32 and
+       restored by the epilogue like every other register. */
+    lla t0, kernel_stacks
+    sub t0, sp, t0
+    li t1, {SECONDARY_STACK_BYTES}
+    divu t0, t0, t1
+    mv tp, t0
 
     /* Everything but `x2`, before anything is clobbered: the two scratch
        registers the code below needs are ordinary slots by the time their

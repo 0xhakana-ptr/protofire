@@ -664,6 +664,29 @@ pub unsafe fn send_ipi_to_others() -> bool {
     false
 }
 
+/// The kernel's source of work for a started CPU: this machine starts none, so
+/// nothing ever asks and nothing is installed.
+///
+/// The signature exists because the kernel's boot installs it on every machine,
+/// and a machine that had to omit the call would be a boot with an `if` about
+/// which machine it is running on.  The same reason `install_interrupt_table`
+/// answers `false` here rather than not existing.
+///
+/// # Safety
+///
+/// As the riscv64 arm: called once, before any started CPU could ask.
+#[cfg(target_os = "none")]
+pub unsafe fn set_work_sink(_sink: fn(usize) -> Option<(usize, Context)>) {}
+
+/// The kernel's end-of-boot predicate: as `set_work_sink`, this machine starts
+/// no CPU that could ask it.
+///
+/// # Safety
+///
+/// As the riscv64 arm.
+#[cfg(target_os = "none")]
+pub unsafe fn set_finished_sink(_sink: fn() -> bool) {}
+
 /// The external interrupt controller this machine drives as a window: none.
 ///
 /// x86_64 reaches its devices through the local APIC and an IOAPIC the boot

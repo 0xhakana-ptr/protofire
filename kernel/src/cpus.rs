@@ -75,6 +75,35 @@ pub fn start_the_others() {
     prove_an_ipi_reaches_them(started);
 }
 
+/// Wake the started CPUs once there is work for them.
+///
+/// ## Why a second interrupt
+///
+/// The first one proved the CPUs take interrupts; this one tells them there is
+/// something to run.  The boot starts the other CPUs before it builds the
+/// scheduler, so a CPU that asked for work at start would be told "nothing
+/// yet" and would have to poll.  It waits on this instead: the scheduler is
+/// installed by the time this is called, so the answer is a task.
+///
+/// Called after the scheduler exists and before the boot enters its own first
+/// program, so a started CPU and the boot CPU begin at nearly the same moment,
+/// which is what makes the concurrency observable rather than theoretical.
+#[cfg(target_os = "none")]
+pub fn wake_them() {
+    if crate::per_cpu::online_count() < 2 {
+        return;
+    }
+    // SAFETY: every started CPU installed its vector and enabled its software
+    // line before it recorded that it was online.
+    let sent = unsafe { arch::send_ipi_to_others() };
+    arch::serial::write_str("protofire: work available, ");
+    arch::serial::write_str(if sent {
+        "started cpus woken\n"
+    } else {
+        "no started cpu took the wake\n"
+    });
+}
+
 /// Send one inter-processor interrupt, and require that a CPU took it.
 ///
 /// ## Why this is a separate proof from the start

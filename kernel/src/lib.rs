@@ -145,6 +145,61 @@ pub fn halt() -> ! {
     arch::halt()
 }
 
+/// Whether the boot is over, as every CPU can see it.
+///
+/// A `halt` stops **one** CPU, and a machine with two of them does not stop
+/// when one does: the boot's last program exits on whichever CPU ran it, and
+/// the other was in `wait_for_work` or inside a program at that instant.  A
+/// CPU left running after the scheduler is done is a CPU that resumes a task
+/// whose pages have been reaped, which showed as an `illegal instruction` at
+/// a program address **after** `every program exited`.
+///
+/// So the boot says it is over once, and every CPU that looks at this flag
+/// stops itself.
+#[cfg(target_os = "none")]
+pub static FINISHED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Record that the boot is over and stop this CPU.
+///
+/// ## Two different stops, which were one and are now two
+///
+/// A CPU whose own queue is empty is **idle**: it stops itself, and the
+/// machine carries on with the CPUs that still have work.  A CPU that reaches
+/// here has decided the machine is finished: every task is gone, and every
+/// CPU should stop.
+///
+/// Conflating them was the defect a first attempt made: a CPU that found
+/// nothing to run after its *own* last exit set the flag, the other CPU saw it,
+/// and the boot ended with programs that had not run.  So this sets the flag
+/// and stops, and [`idle_this_cpu`] does neither.
+///
+/// The other CPUs see [`FINISHED`] at their next trap or their next look, and
+/// stop on their own: nothing can stop a CPU that is mid-instruction, and the
+/// only way to stop one is its own `wfi`.
+#[cfg(target_os = "none")]
+pub fn finish_and_halt() -> ! {
+    FINISHED.store(true, core::sync::atomic::Ordering::Release);
+    arch::halt()
+}
+
+/// Stop this CPU only, leaving the machine running.
+///
+/// The idle a CPU does when its own queue is empty but the machine still has
+/// tasks: another CPU is running one, and this one has nothing to claim.  The
+/// halt is this CPU's `wfi`, and nothing is recorded.
+///
+/// ## Why this exists beside `halt`
+///
+/// `halt` was the only stop this tree had, and every exit path used it, which
+/// was correct with one CPU because that CPU was the machine.  A second CPU
+/// makes the difference load-bearing: a CPU that stopped the whole machine
+/// because *it* had no work ended the boot early.  This is the same instruction
+/// with a different statement attached to it, and the statement is the point.
+#[cfg(target_os = "none")]
+pub fn idle_this_cpu() -> ! {
+    arch::halt()
+}
+
 #[cfg(test)]
 mod tests {
     use super::BootStage;

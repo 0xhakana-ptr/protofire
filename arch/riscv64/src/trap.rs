@@ -556,6 +556,16 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     // one ever did: say so rather than claim through the wrong context.
     let owns_scheduler = crate::boot_cpu_owns_this_trap();
 
+    // A CPU that took a trap after the boot ended stops here.
+    //
+    // `halt` on the exiting CPU stops that CPU only, and this one may be
+    // mid-program on a page the reaper has already taken back: resuming it is
+    // an instruction fetch from a frame the pool now owns, which showed as an
+    // `illegal instruction` at a program address after the last exit.
+    if crate::smp::boot_finished() {
+        crate::halt()
+    }
+
     if cause.interrupt {
         // An external source is claimed from the controller, handed to the
         // sink by its number, and finished.  Without the claim the trap has no
@@ -632,7 +642,9 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
         crate::serial::write_u32(cause.code as u32);
         crate::serial::write_str(" (");
         crate::serial::write_str(cause.name());
-        crate::serial::write_str(") at ");
+        crate::serial::write_str(") on cpu ");
+        crate::serial::write_u32(crate::current_cpu_slot() as u32);
+        crate::serial::write_str(" at ");
         crate::serial::write_hex(frame.sepc);
         if frame.stval != 0 {
             crate::serial::write_str(", address ");
