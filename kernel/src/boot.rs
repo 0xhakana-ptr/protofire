@@ -49,6 +49,10 @@ pub fn kernel_main() -> ! {
     // inside a failed allocation.
     unsafe { allocator::diag::set_writer(Some(crate::console::write_to_console)) };
 
+    // The boot CPU's own slot, before any trap can arrive: a handler that asked
+    // which CPU it was on would read a slot nothing had written.
+    crate::per_cpu::register(crate::per_cpu::BOOT_SLOT, arch::current_cpu_slot(), true);
+
     let boot = arch::boot_info();
 
     arch::serial::write_str("protofire 0.1.0: entered via ");
@@ -98,11 +102,20 @@ pub fn kernel_main() -> ! {
     }
     arch::serial::write_str("\n");
 
-    // The timer's line, before anything can be preempted by it.
+    // The external controller's line, then the timer's: a device's interrupt
+    // has to be deliverable before a driver registers for one, and the timer is
+    // what preempts.
+    #[cfg(target_os = "none")]
+    crate::tick::bring_up_external();
     #[cfg(target_os = "none")]
     crate::tick::bring_up();
 
     // A program, at ring 3, calling back.
+    // What each CPU has taken so far, before the programs start: the timer is
+    // up by now, so the boot CPU's count is real.
+    #[cfg(target_os = "none")]
+    crate::cpus::report_activity();
+
     crate::programs::run();
 
     halt()

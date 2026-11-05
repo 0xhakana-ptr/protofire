@@ -47,6 +47,7 @@ core::arch::global_asm!(
 pub mod boot;
 pub mod interrupts;
 pub mod paging;
+pub mod plic;
 pub mod port;
 pub mod program;
 pub mod serial;
@@ -265,7 +266,40 @@ pub fn wait_for_a_wakeup() {}
 pub unsafe fn install_interrupt_table() -> bool {
     // SAFETY: the caller's contract is this function's — once, with the sink
     // installed and the stack valid.
-    unsafe { trap::install_table() }
+    let installed = unsafe { trap::install_table() };
+    if !installed {
+        return false;
+    }
+
+    // And the external controller, which is what turns a source into an
+    // interrupt.  A vector table with no controller behind it takes traps the
+    // machine raises itself and nothing a device raises.
+    let Some((base, _contexts)) = boot::interrupt_controller() else {
+        return true;
+    };
+    let Some(sources) = boot::plic_sources() else {
+        return true;
+    };
+    let Some(context) = boot::plic_context_for_hart(boot_hart_id()) else {
+        return true;
+    };
+    let plic = plic::Plic::new(base, context, sources);
+    // SAFETY: the window is the tree's `reg`, the boot mapped it below RAM as
+    // device memory, and this runs once on the boot hart.
+    unsafe {
+        plic.enable();
+        trap::set_controller(plic);
+    }
+    true
+}
+
+/// This hart's id as the entry recorded it, for a PLIC context lookup.
+#[cfg(target_os = "none")]
+fn boot_hart_id() -> usize {
+    // The hart the firmware cold-booted, recorded by the entry: the PLIC's
+    // context list is per hart, and which hart this is decides which context
+    // claims.
+    crate::smp::boot_hart()
 }
 
 /// Install the sink a trap frame goes to.
@@ -307,6 +341,13 @@ pub unsafe fn enable_interrupt_line(number: usize) -> bool {
             unsafe { set_sie_bit(1 << trap::SOFTWARE_INTERRUPT) };
             true
         }
+        trap::EXTERNAL_INTERRUPT => {
+            // SAFETY: the external line's own enable bit in `sie`; the PLIC's
+            // per-source enable is the controller's half and is turned on by
+            // the driver that wants the source.
+            unsafe { set_sie_bit(1 << trap::EXTERNAL_INTERRUPT) };
+            true
+        }
         _ => false,
     }
 }
@@ -343,6 +384,7 @@ pub unsafe fn interrupt_line_enabled(number: usize) -> bool {
     match number {
         trap::TIMER_INTERRUPT => sie & timer::ENABLE_TIMER != 0,
         trap::SOFTWARE_INTERRUPT => sie & (1 << trap::SOFTWARE_INTERRUPT) != 0,
+        trap::EXTERNAL_INTERRUPT => sie & (1 << trap::EXTERNAL_INTERRUPT) != 0,
         _ => false,
     }
 }
@@ -625,6 +667,69 @@ pub unsafe fn timer_fired() -> bool {
     unsafe { timer::has_fired() }
 }
 
+/// The external controller, as the boot found and enabled it.
+///
+/// `(windows, context, sources)` — the PLIC's base and size from the tree, the
+/// context this hart claims through, and how many sources the tree declares.
+/// `None` on a machine whose tree names no controller, which is a fact a boot
+/// reports rather than a failure it works around.
+#[cfg(target_os = "none")]
+pub fn external_controller() -> Option<(usize, usize, usize)> {
+    // From the controller the trap path holds, not from the device tree: a line
+    // built from the tree prints the same words on a boot whose driver was
+    // never installed, which is exactly what a mutation showed.
+    let plic = trap::controller()?;
+    Some((plic.base(), plic.context(), plic.sources()))
+}
+
+/// Enable one source at the controller, and answer whether it did.
+///
+/// The line's own enable is [`enable_interrupt_line`]`(EXTERNAL_INTERRUPT)`;
+/// this is the controller's per-source bit, and both are needed — a source
+/// enabled at the PLIC still needs the hart's external line, and a hart taking
+/// the external line still needs the source's bit.
+///
+/// # Safety
+///
+/// Called after [`install_interrupt_table`], before the device that raises the
+/// source is told to start signalling.
+#[cfg(target_os = "none")]
+pub unsafe fn enable_external_source(number: usize) -> bool {
+    let Some((base, _contexts)) = boot::interrupt_controller() else {
+        return false;
+    };
+    let Some(sources) = boot::plic_sources() else {
+        return false;
+    };
+    let Some(context) = boot::plic_context_for_hart(smp::boot_hart()) else {
+        return false;
+    };
+    let plic = plic::Plic::new(base, context, sources);
+    // SAFETY: the caller's contract is this function's.
+    unsafe { plic.enable_source(number) }
+}
+
+/// Whether a source's enable bit is set at the controller, read back.
+///
+/// # Safety
+///
+/// Read-only.
+#[cfg(target_os = "none")]
+pub unsafe fn external_source_enabled(number: usize) -> bool {
+    let Some((base, _contexts)) = boot::interrupt_controller() else {
+        return false;
+    };
+    let Some(sources) = boot::plic_sources() else {
+        return false;
+    };
+    let Some(context) = boot::plic_context_for_hart(smp::boot_hart()) else {
+        return false;
+    };
+    let plic = plic::Plic::new(base, context, sources);
+    // SAFETY: the caller's contract is this function's.
+    unsafe { plic.source_enabled(number) }
+}
+
 /// The line a boot raises to prove the interrupt path.
 ///
 /// The software interrupt, because it is the only one this machine can be
@@ -637,6 +742,11 @@ pub const fn test_interrupt() -> usize {
 /// The timer's interrupt number, as the cause reports it.
 pub const fn timer_interrupt() -> usize {
     trap::TIMER_INTERRUPT
+}
+
+/// The external interrupt's number, as the cause reports it.
+pub const fn external_interrupt() -> usize {
+    trap::EXTERNAL_INTERRUPT
 }
 
 /// There is no descriptor table on this machine, and no boot entry to load one

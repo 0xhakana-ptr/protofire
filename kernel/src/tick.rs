@@ -34,6 +34,34 @@ fn timer_interrupt() -> usize {
     arch::timer_interrupt()
 }
 
+/// Report the external interrupt controller, and enable its hart line.
+///
+/// The two halves are separate and both needed: the controller's per-source
+/// bit decides whether a source reaches the PLIC's pending array, and the
+/// hart's `sie` bit decides whether the PLIC can reach the hart at all.  A
+/// machine whose tree names no controller prints that and boots on — every
+/// machine here is useful without one.
+#[cfg(target_os = "none")]
+pub fn bring_up_external() {
+    let Some((base, context, sources)) = arch::external_controller() else {
+        arch::serial::write_str("protofire: no external interrupt controller\n");
+        return;
+    };
+
+    // SAFETY: the trap table is installed by now, and this is the line the
+    // controller reaches this hart on.
+    let line = unsafe { arch::enable_interrupt_line(arch::external_interrupt()) };
+    arch::serial::write_str("protofire: external controller at ");
+    arch::serial::write_hex(base as u64);
+    arch::serial::write_str(", context ");
+    arch::serial::write_u32(context as u32);
+    arch::serial::write_str(", ");
+    arch::serial::write_u32(sources as u32);
+    arch::serial::write_str(" source(s), hart line ");
+    arch::serial::write_str(if line { "on" } else { "off" });
+    arch::serial::write_str("\n");
+}
+
 /// Enable the timer's line, arm it once, and say what the machine reported.
 #[cfg(target_os = "none")]
 pub fn bring_up() {

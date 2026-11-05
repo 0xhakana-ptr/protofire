@@ -67,6 +67,8 @@ pub const SOFTWARE_INTERRUPT: usize = 1;
 pub const TIMER_INTERRUPT: usize = 5;
 /// An environment call from U-mode: a program asking the kernel for something.
 pub const USER_ECALL: usize = 8;
+/// The supervisor external interrupt, which a PLIC source reaches a hart as.
+pub const EXTERNAL_INTERRUPT: usize = 9;
 
 /// The saved context of an interrupted instruction.
 ///
@@ -412,6 +414,88 @@ fn serve_user_call(frame: &mut ExceptionFrame) {
     }
 }
 
+/// Claim an external interrupt, hand it over, and finish it.
+///
+/// ## Why claim, handle, complete
+///
+/// The PLIC's `claim` answers the highest-priority pending source and clears
+/// its pending bit; `complete` with the same number is what lets the source be
+/// delivered again.  A handler that returned after only the claim would leave a
+/// device able to raise one interrupt and then silence for the rest of the boot
+/// — the same failure a GIC without its `EOIR` produces, and just as invisible
+/// until the device's second event is the one that mattered.
+///
+/// A claim of nothing is not a failure: an interrupt can be withdrawn between
+/// the line arriving and the claim being read, and the honest answer is to
+/// return and let the machine continue.
+#[cfg(target_os = "none")]
+fn finish_external(frame: &mut ExceptionFrame) {
+    // SAFETY: the controller is written once by the boot before any line is
+    // enabled.
+    let Some(controller) = (unsafe { *CONTROLLER.get() }) else {
+        crate::serial::write_str("protofire: external interrupt with no controller\n");
+        crate::halt()
+    };
+
+    // SAFETY: the window is the tree's `reg` and this runs in the trap path,
+    // where nothing else touches it.
+    let Some(number) = (unsafe { controller.claim() }) else {
+        return;
+    };
+
+    let handled = match sink() {
+        Some(sink) => sink(irq::Frame::device(number)),
+        None => false,
+    };
+
+    // SAFETY: `number` is what `claim` answered.
+    unsafe { controller.complete(number) };
+
+    // The preemption point, after the source is finished: a switch made before
+    // the completion would leave the line claimed in a task that may not run
+    // again for a while.
+    if handled && let Some(preempt) = preempt_sink() {
+        preempt(frame);
+    }
+
+    if !handled {
+        crate::serial::write_str("protofire: unhandled external interrupt ");
+        crate::serial::write_u32(number as u32);
+        crate::serial::write_str("\n");
+    }
+}
+
+/// Record the controller the boot enabled, so an external interrupt can be
+/// claimed.
+///
+/// # Safety
+///
+/// Called once, after [`crate::plic::Plic::enable`], before any source is
+/// enabled.  The window must stay mapped for the life of the boot.
+#[cfg(target_os = "none")]
+pub unsafe fn set_controller(plic: crate::plic::Plic) {
+    // SAFETY: the caller promises this is the only write, and it happens before
+    // any source can be enabled.
+    unsafe { *CONTROLLER.get() = Some(plic) };
+}
+
+/// The controller the boot installed, if it installed one.
+///
+/// What a boot line reads to report the controller it is actually using: a
+/// line built from the device tree would print the same words on a boot whose
+/// driver was never installed.
+#[cfg(target_os = "none")]
+pub fn controller() -> Option<crate::plic::Plic> {
+    // SAFETY: written once by the boot before any source is enabled, read
+    // after.
+    unsafe { *CONTROLLER.get() }
+}
+
+/// The controller, once the boot has found and enabled one.
+#[cfg(target_os = "none")]
+static CONTROLLER: cell::SyncUnsafeCell<Option<crate::plic::Plic>> =
+    cell::SyncUnsafeCell::new(None);
+
 /// The dispatch the assembly calls.
 ///
 /// # Safety
@@ -448,6 +532,14 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     }
 
     if cause.interrupt {
+        // An external source is claimed from the controller, handed to the
+        // sink by its number, and finished.  Without the claim the trap has no
+        // identity — the PLIC answers one on request and a handler needs it —
+        // and without the finish the source is never delivered a second time.
+        if cause.code == EXTERNAL_INTERRUPT {
+            return finish_external(frame);
+        }
+
         // The software line silences its own source before the handler sees
         // it: the bit that raised it stays set until something clears it, and
         // a return to a still-set source is the same interrupt again.

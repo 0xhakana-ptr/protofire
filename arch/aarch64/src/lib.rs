@@ -653,3 +653,20 @@ pub fn boot_cpu_owns_this_trap() -> bool {
 pub unsafe fn send_ipi_to_others() -> bool {
     false
 }
+
+/// The external interrupt controller this machine drives as a window: none.
+///
+/// x86_64 reaches its devices through the local APIC and an IOAPIC the boot
+/// does not programme; aarch64 has a GIC whose lines arrive through its own
+/// vector table rather than a claim/complete pair.  Neither is the shape this
+/// question asks about, and `None` is the answer a boot reports.
+#[cfg(target_os = "none")]
+pub fn external_controller() -> Option<(usize, usize, usize)> {
+    None
+}
+
+/// The external interrupt's number, as this machine reports it: zero, because
+/// no line of this machine is delivered as a claimable external source.
+pub const fn external_interrupt() -> usize {
+    0
+}

@@ -215,33 +215,102 @@ pub fn pcie_memory_window() -> Option<(u64, u64)> {
 /// truncated list.
 const MAX_RANGES_CELLS: usize = 64;
 
-/// The interrupt controller's two windows, as the tree describes them.
+/// The interrupt controller's window, as the tree describes it.
 ///
-/// `(priorities, contexts)`.  A PLIC's `reg` has two entries — the priority
-/// array, where every source's level is set, and the contexts, where a hart
-/// claims and completes what is pending for it — and both are needed: the
-/// first decides which sources exist, the second is what this hart would
-/// acknowledge through.  The compatible strings name the PLIC this tree's
-/// tree describes; the platform's other spelling, `sifive,plic-1.0.0`, is the
-/// same register layout under the original implementor's name.
+/// `(base, size)`.  A PLIC's `reg` is **one** window: its register groups —
+/// priorities, pending, enables and the context blocks — are all offsets inside
+/// it, which is what this module's `plic` sibling reads.  The first version of
+/// this reader asked for two regions, because that is a GIC's shape, and the
+/// answer on this machine was `None` for a controller that was right there.
 ///
-/// Nothing drives this controller yet, and the windows are the answer a
-/// driver would need rather than a claim that one runs: `None` is what a
-/// machine without a PLIC answers, and a tree that parsed is what makes the
-/// difference.
+/// The compatible strings are the two spellings of the same register layout:
+/// `riscv,plic0` is the specification's and `sifive,plic-1.0.0` the original
+/// implementor's, and this tree's machine declares both.
 pub fn interrupt_controller() -> Option<(usize, usize)> {
     let tree = device_tree()?;
     let node = tree
         .find_compatible("riscv,plic0")
         .or_else(|| tree.find_compatible("sifive,plic-1.0.0"))?;
 
-    let mut regions = node.reg();
-    let priorities = regions.next()?;
-    let contexts = regions.next()?;
-    if priorities.address == 0 || contexts.address == 0 {
+    let region = node.region()?;
+    if region.address == 0 || region.size == 0 {
         return None;
     }
-    Some((priorities.address as usize, contexts.address as usize))
+    Some((region.address as usize, region.size as usize))
+}
+
+/// This hart's PLIC context number, as the tree's `interrupts-extended` lists
+/// it.
+///
+/// The property is a list of `(phandle, number)` pairs, one per consumer: the
+/// `number` is the interrupt the PLIC delivers to that consumer, and the
+/// per-hart interrupt controller's are **M-mode 11 and S-mode 9** (`0x0b` and
+/// `0x09`).  So a context's index in the PLIC is not the hart id: it is the
+/// consumer's position, and S-mode on hart N is context `2N+1` because each
+/// hart contributes its M-mode consumer first.
+///
+/// This reads the tree rather than computing `2N+1`, because the numbering is
+/// the platform's and a board with a different arrangement would number them
+/// differently.
+pub fn plic_context_for_hart(hart: usize) -> Option<usize> {
+    let tree = device_tree()?;
+    let root = tree.root().ok()?;
+    // By compatible, not by path: the window's address is the platform's and
+    // a board that moved it would have a tree that says so.
+    let node = tree
+        .find_compatible("riscv,plic0")
+        .or_else(|| tree.find_compatible("sifive,plic-1.0.0"))?;
+    let property = node.property("interrupts-extended")?;
+    let mut cells = [0u32; MAX_INTERRUPTS_EXTENDED_CELLS];
+    let mut cell_count = 0;
+    for cell in property.as_cells()? {
+        if cell_count == MAX_INTERRUPTS_EXTENDED_CELLS {
+            return None;
+        }
+        cells[cell_count] = cell;
+        cell_count += 1;
+    }
+
+    // Which phandle belongs to this hart: its `cpu@<hart>` child's
+    // `interrupt-controller` node.
+    let cpus = root.by_path("/cpus")?;
+    let cpu = cpus.children().find(|child| {
+        child
+            .reg()
+            .next()
+            .is_some_and(|region| region.address as usize == hart)
+    })?;
+    let intc = cpu.child("interrupt-controller")?;
+    let wanted = intc.property("phandle")?.as_u32()?;
+
+    // The pairs, in order; a pair whose number is 9 is this hart's S-mode
+    // consumer, and its index among the pairs is the context number.
+    let mut context = 0;
+    let mut at = 0;
+    while at + 1 < cell_count {
+        if cells[at] == wanted && cells[at + 1] == 9 {
+            return Some(context);
+        }
+        context += 1;
+        at += 2;
+    }
+    None
+}
+
+/// The most cells [`plic_context_for_hart`] reads.
+///
+/// Sixteen consumers is thirty-two cells: a machine with more harts than this
+/// tree describes (four) has more, and the answer for one past the bound is
+/// "no context" rather than the first of a truncated list.
+const MAX_INTERRUPTS_EXTENDED_CELLS: usize = 32;
+
+/// How many sources the tree says the PLIC has.
+pub fn plic_sources() -> Option<usize> {
+    let tree = device_tree()?;
+    let node = tree
+        .find_compatible("riscv,plic0")
+        .or_else(|| tree.find_compatible("sifive,plic-1.0.0"))?;
+    Some(node.property("riscv,ndev")?.as_u32()? as usize)
 }
 
 /// The GICv2m frame's window: none, because this machine has no GIC.

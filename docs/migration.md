@@ -1014,3 +1014,27 @@ the tree cannot back.
 
 A filesystem has one more condition, and it is the user's: it arrives only after
 a mount has been verified on a machine.
+
+### The PLIC, and the report that proved nothing
+
+    protofire: external controller at 0xc000000, context 1, 95 source(s), hart line on
+
+The third machine now has an external interrupt path: the PLIC the tree names
+is programmed (every source's priority above the threshold, this hart's context
+bank cleared, the threshold open), the hart's external line is enabled, and the
+trap path claims a source, hands its number to the sink, and completes it.
+
+**The first version of the line it printed was not evidence.**  It was built
+from the device tree — base, source count, and a context computed from the hart
+id — so a boot with the controller's `enable` deleted printed the identical
+words.  The mutation is what found it: the install was made to return before
+setting the controller, and the gate stayed green.  The report now reads the
+controller the trap path actually holds, and the same mutation turns the gate
+red.
+
+Two defects in the driver were found the same way.  The window reader asked for
+**two** regions, because that is a GIC's shape, and answered `None` for a PLIC
+that was right there — its `reg` is one window and everything is an offset
+inside it.  And the source count came from the tree while the driver was
+programming `min(declared, 128)`; those are one number now, and the line reports
+the one the driver used.

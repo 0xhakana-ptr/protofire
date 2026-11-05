@@ -502,6 +502,15 @@ impl Machine {
                 ("protofire: cpus online = 2", true),
                 ("protofire: cpu 0 id 0, scheduler owner, ", false),
                 ("protofire: cpu 1 id 1, parked, 0 tick(s)", true),
+                // The external controller, initialized rather than merely
+                // named: base, the context this hart claims through, the
+                // machine's source count, and the hart line the PLIC reaches
+                // it on.  A tree that named the window and a driver that did
+                // not program it would print the first three and "off".
+                (
+                    "protofire: external controller at 0xc000000, context 1, 95 source(s), hart line on",
+                    true,
+                ),
                 ("protofire: timer line enabled = 1", true),
                 ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),
