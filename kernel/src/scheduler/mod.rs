@@ -31,6 +31,28 @@
 //! Both are the machine's, not the policy's, so the policy is "the next one",
 //! and saying so is more useful than a weight table that decides nothing.
 
+//! ## Why the scheduler is behind a lock
+//!
+//! It was one structure reached through a `SyncUnsafeCell` with no lock, which
+//! was sound only because one CPU ever wrote it.  A second CPU taking a timer
+//! tick reaches `preempt`, and a second CPU serving a call reaches `advance`:
+//! two `&mut Scheduler` over one `Vec<Task>` is undefined behaviour, and the
+//! symptom, a task resumed with another CPU's context, is a fault far from its
+//! cause.
+//!
+//! So every entry below takes one lock.  It is a **global** lock and not one
+//! queue per CPU, and the choice is deliberate: a per-CPU queue needs task
+//! migration, migration needs TLB shootdown on a machine whose flush is local,
+//! and a load balancer to decide where a task goes.  A global queue needs none
+//! of those and pays for it in contention, which this kernel has no load to
+//! produce.  The change that adds per-CPU queues is the change that also adds
+//! the three things they require.
+//!
+//! The lock masks interrupts while it is held, which is what keeps a tick from
+//! arriving on this CPU mid-update and taking the lock again.  Callers that
+//! take several of these entry points in sequence are holding nothing between
+//! them, so the nesting that would deadlock does not exist.
+
 pub mod core;
 pub mod task;
 
@@ -40,12 +62,23 @@ pub use task::starting_context;
 
 use arch::CallFrame;
 
-/// The scheduler the boot installed.
+/// The scheduler the boot installed, behind the lock every CPU takes.
 ///
 /// A `static` for the same reason the syscall registry is one: a supervisor
 /// call arrives from a trap with no context to be handed anything, so the table
 /// it needs has to be reachable without one.
-static SCHEDULER: cell::SyncUnsafeCell<Option<Scheduler>> = cell::SyncUnsafeCell::new(None);
+static SCHEDULER: sync::Mutex<Option<Scheduler>> = sync::Mutex::new(None);
+
+/// Run `f` with the installed scheduler, holding the lock.
+///
+/// One place that spells the lock, so no entry point can forget it and no
+/// caller can hold it across another.  The closure receives the `Option`
+/// rather than the scheduler because "nothing installed" is a state every
+/// entry point answers differently.
+fn with_scheduler<R>(f: impl FnOnce(&mut Option<Scheduler>) -> R) -> R {
+    let mut guard = SCHEDULER.lock();
+    f(&mut guard)
+}
 
 /// Install the scheduler the boot built.
 ///
@@ -54,8 +87,9 @@ static SCHEDULER: cell::SyncUnsafeCell<Option<Scheduler>> = cell::SyncUnsafeCell
 /// Called once, before any program runs.
 pub unsafe fn install(scheduler: Scheduler) {
     // SAFETY: the caller promises this is the only write and that it happens
-    // before EL0 is entered.
-    unsafe { *SCHEDULER.get() = Some(scheduler) };
+    // before EL0 is entered.  The lock is what makes the write visible to a
+    // second CPU that installs a trap later.
+    *SCHEDULER.lock() = Some(scheduler);
 }
 
 /// Install the next task's context without saving the frame it was given.
@@ -67,12 +101,10 @@ pub unsafe fn install(scheduler: Scheduler) {
 /// Answers what `advance` answers, and for the same reason: `Exit` means the
 /// frame was not replaced and the caller decides what to do about it.
 pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler = unsafe { (&mut *SCHEDULER.get()).as_mut() };
-    match scheduler {
+    with_scheduler(|scheduler| match scheduler {
         Some(scheduler) => scheduler.schedule_from(frame, false, false),
         None => arch::CallOutcome::Exit,
-    }
+    })
 }
 
 /// Save the current task, install the next one's context, and answer.
@@ -84,32 +116,27 @@ pub fn advance_with_status(
     exiting: bool,
     status: usize,
 ) -> arch::CallOutcome {
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler: &mut Option<Scheduler> = unsafe { &mut *SCHEDULER.get() };
-    match scheduler {
+    with_scheduler(|scheduler| match scheduler {
         Some(scheduler) => scheduler.schedule_with_status(frame, exiting, true, Some(status)),
         None => arch::CallOutcome::Exit,
-    }
+    })
 }
 
 pub fn advance(frame: &mut arch::Context, exiting: bool) -> arch::CallOutcome {
-    // SAFETY: the scheduler is written once before any program runs, and this
-    // read happens after that.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_mut() };
-    match scheduler {
+    with_scheduler(|scheduler| match scheduler {
         Some(scheduler) => scheduler.schedule(frame, exiting),
         None => arch::CallOutcome::Exit,
-    }
+    })
 }
 
 /// How many switches and exits the installed scheduler has seen.
 ///
 /// `(switches, exited)`, or `(0, 0)` when nothing ran.
 pub fn statistics() -> (usize, usize) {
-    // SAFETY: as `advance`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.map_or((0, 0), |scheduler| {
-        (scheduler.switches(), scheduler.exited())
+    with_scheduler(|scheduler| {
+        scheduler.as_ref().map_or((0, 0), |scheduler| {
+            (scheduler.switches(), scheduler.exited())
+        })
     })
 }
 
@@ -120,16 +147,12 @@ pub fn statistics() -> (usize, usize) {
 /// has to translate through the first task's root rather than the kernel's.
 #[cfg(target_os = "none")]
 pub fn first_root() -> Option<usize> {
-    // SAFETY: as `advance`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.and_then(|scheduler| scheduler.current_root())
+    with_scheduler(|scheduler| scheduler.as_ref().and_then(Scheduler::current_root))
 }
 
 /// Whether a scheduler is installed and still has work.
 pub fn has_runnable() -> bool {
-    // SAFETY: as `advance`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.is_some_and(Scheduler::has_runnable)
+    with_scheduler(|scheduler| scheduler.as_ref().is_some_and(Scheduler::has_runnable))
 }
 
 /// Preempt: put the next task's context in `frame` and switch to its space.
@@ -165,15 +188,15 @@ pub fn preempt(frame: &mut arch::Context) {
         return;
     }
 
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_mut() };
-    let Some(scheduler) = scheduler else {
-        return;
-    };
-    if !scheduler.has_other_runnable() {
-        return;
-    }
-    let _ = scheduler.schedule(frame, false);
+    with_scheduler(|scheduler| {
+        let Some(scheduler) = scheduler else {
+            return;
+        };
+        if !scheduler.has_other_runnable() {
+            return;
+        }
+        let _ = scheduler.schedule(frame, false);
+    });
 }
 
 /// Put the running program to sleep for `microseconds`.
@@ -196,12 +219,10 @@ pub fn sleep_for_microseconds(microseconds: u64, frame: &arch::Context) -> Optio
         // SAFETY: read-only.
         let now = unsafe { arch::timer_counter() };
         let until = now.saturating_add(arch::ticks_for_microseconds(frequency, microseconds));
-        // SAFETY: the scheduler is written once before any program runs, and
-        // `as_mut` on the raw pointer is what a single writer holding the only
-        // reference is allowed to do.
-        let scheduler: &mut Option<Scheduler> = unsafe { &mut *SCHEDULER.get() };
-        scheduler.as_mut()?.sleep_until(until, frame);
-        Some(until)
+        with_scheduler(|scheduler| {
+            scheduler.as_mut()?.sleep_until(until, frame);
+            Some(until)
+        })
     }
     #[cfg(not(target_os = "none"))]
     {
@@ -221,11 +242,11 @@ pub fn wake_expired() -> usize {
     {
         // SAFETY: read-only.
         let now = unsafe { arch::timer_counter() };
-        // SAFETY: as `sleep_for_microseconds`.
-        let scheduler: &mut Option<Scheduler> = unsafe { &mut *SCHEDULER.get() };
-        scheduler
-            .as_mut()
-            .map_or(0, |scheduler| scheduler.wake_expired(now))
+        with_scheduler(|scheduler| {
+            scheduler
+                .as_mut()
+                .map_or(0, |scheduler| scheduler.wake_expired(now))
+        })
     }
     #[cfg(not(target_os = "none"))]
     {
@@ -239,16 +260,16 @@ pub fn wake_expired() -> usize {
 /// another task runnable the switch is a normal one, and with none the boot
 /// waits instead.
 pub fn has_other_runnable() -> bool {
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.is_some_and(Scheduler::has_other_runnable)
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_ref()
+            .is_some_and(Scheduler::has_other_runnable)
+    })
 }
 
 /// Whether any installed task could be selected right now.
 pub fn has_selectable() -> bool {
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.is_some_and(Scheduler::has_selectable)
+    with_scheduler(|scheduler| scheduler.as_ref().is_some_and(Scheduler::has_selectable))
 }
 
 /// Park the running task until another task wakes it.
@@ -256,15 +277,13 @@ pub fn has_selectable() -> bool {
 /// `None` when no scheduler is installed, which is the state a host build is in
 /// and the state a boot is in before it installs one.
 pub fn block(frame: &arch::Context) -> bool {
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler = unsafe { (&mut *SCHEDULER.get()).as_mut() };
-    match scheduler {
+    with_scheduler(|scheduler| match scheduler {
         Some(scheduler) => {
             scheduler.block(frame);
             true
         }
         None => false,
-    }
+    })
 }
 
 /// Wake every blocked task, answering how many.
@@ -272,16 +291,12 @@ pub fn block(frame: &arch::Context) -> bool {
 /// Called when something a blocked task was waiting for changed, a pipe's
 /// writer putting bytes in, or its write end closing.
 pub fn wake_blocked() -> usize {
-    // SAFETY: as `block`.
-    let scheduler = unsafe { (&mut *SCHEDULER.get()).as_mut() };
-    scheduler.map_or(0, Scheduler::wake_blocked)
+    with_scheduler(|scheduler| scheduler.as_mut().map_or(0, Scheduler::wake_blocked))
 }
 
 /// How many installed tasks are blocked, for a boot line that reports it.
 pub fn blocked() -> usize {
-    // SAFETY: as `block`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.map_or(0, Scheduler::blocked)
+    with_scheduler(|scheduler| scheduler.as_ref().map_or(0, Scheduler::blocked))
 }
 
 /// Whether any installed task is asleep rather than runnable or finished.
@@ -290,16 +305,12 @@ pub fn blocked() -> usize {
 /// runnable, the boot has to wait for a tick instead of stopping, and this is
 /// what says the wait has a reason.
 pub fn has_sleeping() -> bool {
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.is_some_and(Scheduler::has_sleeping)
+    with_scheduler(|scheduler| scheduler.as_ref().is_some_and(Scheduler::has_sleeping))
 }
 
 /// How many installed tasks are asleep, for a boot line that reports it.
 pub fn sleeping() -> usize {
-    // SAFETY: as `has_sleeping`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.map_or(0, Scheduler::sleeping)
+    with_scheduler(|scheduler| scheduler.as_ref().map_or(0, Scheduler::sleeping))
 }
 
 /// Whether a call means the program has finished.
@@ -323,10 +334,10 @@ pub fn sleeping() -> usize {
 /// Answers the child's pid, or `None` when the copy could not be made.
 #[cfg(target_os = "none")]
 pub fn fork_current(frame: &arch::Context) -> Option<u32> {
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler: &mut Option<Scheduler> = unsafe { &mut *SCHEDULER.get() };
-    let scheduler = scheduler.as_mut()?;
-    scheduler.fork_current(frame).map(|pid| pid as u32)
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        scheduler.fork_current(frame).map(|pid| pid as u32)
+    })
 }
 
 /// A host has no address space to copy, so a fork is a call the machine
@@ -338,16 +349,12 @@ pub fn fork_current(_frame: &arch::Context) -> Option<u32> {
 
 /// The process id of the running task, if a scheduler is installed.
 pub fn current_pid() -> Option<u32> {
-    // SAFETY: the scheduler is written once before any program runs.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler?.current_pid()
+    with_scheduler(|scheduler| scheduler.as_ref()?.current_pid())
 }
 
 /// The parent of the running task, if a scheduler is installed.
 pub fn current_parent() -> Option<u32> {
-    // SAFETY: as `current_pid`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler?.current_parent()
+    with_scheduler(|scheduler| scheduler.as_ref()?.current_parent())
 }
 
 /// The status of the first process that has exited, if any has.
@@ -356,9 +363,12 @@ pub fn current_parent() -> Option<u32> {
 /// answer it can give; a caller that needs a particular child needs a parent
 /// that exists, which is a later change.
 pub fn first_exit_status() -> Option<usize> {
-    // SAFETY: as `current_pid`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() }?;
-    scheduler.first_exited().and_then(|task| task.status())
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_ref()?
+            .first_exited()
+            .and_then(|task| task.status())
+    })
 }
 
 /// Every process that has exited, with its id and status.
@@ -367,18 +377,15 @@ pub fn first_exit_status() -> Option<usize> {
 /// are the processes it built, and asking for pids 1..3 would answer nothing on
 /// a boot that numbered them differently.
 pub fn exit_statuses() -> alloc::vec::Vec<(u32, usize)> {
-    // SAFETY: as `current_pid`.
-    let Some(scheduler) = (unsafe { (*SCHEDULER.get()).as_ref() }) else {
-        return alloc::vec::Vec::new();
-    };
-    scheduler.exited_with_status()
+    with_scheduler(|scheduler| match scheduler.as_ref() {
+        Some(scheduler) => scheduler.exited_with_status(),
+        None => alloc::vec::Vec::new(),
+    })
 }
 
 /// The status a process exited with, if it has exited.
 pub fn exit_status(pid: u32) -> Option<Option<usize>> {
-    // SAFETY: as `current_pid`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() }?;
-    scheduler.exit_status(pid)
+    with_scheduler(|scheduler| scheduler.as_ref()?.exit_status(pid))
 }
 
 /// Whether a task other than the running one can be selected.
@@ -386,9 +393,11 @@ pub fn exit_status(pid: u32) -> Option<Option<usize>> {
 /// What a wait asks before it parks: with nothing else runnable no exit can
 /// arrive, and blocking would be a hang rather than a wait.
 pub fn has_runnable_except_current() -> bool {
-    // SAFETY: as `current_pid`.
-    let scheduler = unsafe { (*SCHEDULER.get()).as_ref() };
-    scheduler.is_some_and(Scheduler::has_other_runnable)
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_ref()
+            .is_some_and(Scheduler::has_other_runnable)
+    })
 }
 
 pub fn is_exit(call: &CallFrame) -> bool {
