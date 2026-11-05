@@ -364,6 +364,29 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // The answers come from the task the scheduler is running, not from the
     // call: a program does not send its own id, and one that could would be a
     // program answering a question about itself.
+    // Fork: the running process copied into a child.
+    //
+    // ## The one instruction that answers two ways
+    //
+    // Both processes resume at the instruction after the `int`/`svc`/`ecall`;
+    // the kernel distinguishes them by what it writes into the return register.
+    // The **parent** learns the child's pid, and the **child** learns zero.
+    // That is the whole of `fork`'s interface, and it is why the answer is not
+    // put in the frame here for the child: the child's frame is its parent's,
+    // copied, and the value this writes is the value only the parent sees.
+    if number == SyscallNumber::Fork as usize {
+        return match crate::scheduler::fork_current(frame) {
+            Some(pid) => {
+                arch::serial::write_str("protofire: forked a process, child pid ");
+                arch::serial::write_u32(pid);
+                arch::serial::write_str("\n");
+                // The parent resumes with the child's pid.
+                CallOutcome::Return(pid as usize)
+            }
+            None => CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory)),
+        };
+    }
+
     if number == SyscallNumber::GetPid as usize {
         return match crate::scheduler::current_pid() {
             Some(pid) => CallOutcome::Return(pid as usize),

@@ -303,6 +303,39 @@ pub fn sleeping() -> usize {
 }
 
 /// Whether a call means the program has finished.
+/// Fork the running process: copy its space and context into a new task.
+///
+/// ## What the child inherits, and what it does not
+///
+/// Its parent's pages (copied, so a write in one does not reach the other), its
+/// parent's context (so it resumes at the instruction after the `fork`), and a
+/// pid of its own.  What it does **not** inherit is the parent's return value:
+/// the fork returns the child's pid to the parent and zero to the child, which
+/// is the one difference the two copies of the same instruction see.
+///
+/// ## Why the context is copied rather than built
+///
+/// A forked child resumes exactly where its parent asked, with the parent's
+/// registers — including the stack pointer, which points into the copy.  A
+/// context built from scratch would start the child at the beginning of its
+/// program, which is `exec`, not `fork`.
+///
+/// Answers the child's pid, or `None` when the copy could not be made.
+#[cfg(target_os = "none")]
+pub fn fork_current(frame: &arch::Context) -> Option<u32> {
+    // SAFETY: the scheduler is written once before any program runs.
+    let scheduler: &mut Option<Scheduler> = unsafe { &mut *SCHEDULER.get() };
+    let scheduler = scheduler.as_mut()?;
+    scheduler.fork_current(frame).map(|pid| pid as u32)
+}
+
+/// A host has no address space to copy, so a fork is a call the machine
+/// cannot serve — reported as such rather than as a pid nobody can use.
+#[cfg(not(target_os = "none"))]
+pub fn fork_current(_frame: &arch::Context) -> Option<u32> {
+    None
+}
+
 /// The process id of the running task, if a scheduler is installed.
 pub fn current_pid() -> Option<u32> {
     // SAFETY: the scheduler is written once before any program runs.

@@ -23,6 +23,12 @@
 // number because `Write` prints its second argument.  The kernel names
 // `arch::program_bytes` and gets whichever machine answered.
 
+/// How many words the announcing program has.
+///
+/// Named so a test can find where *this* program ends in a buffer sized for the
+/// longest of the three.
+pub const PROGRAM_WORDS_FOR_TEST: usize = 24;
+
 /// How long a program's image is, in bytes.
 ///
 /// The longest of the three images: the announcing program, the pipe writer
@@ -125,7 +131,7 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 /// so a log that shows two "says hello" lines before the second program's is a
 /// log where sleeping worked.  The second `Write` after the sleep is what makes
 /// the wake visible: a program that never woke prints one line, not two.
-const fn program_words(number: u16) -> [u32; 19] {
+const fn program_words(number: u16) -> [u32; 24] {
     [
         // A busy loop, so a program outlives a time slice.
         //
@@ -154,9 +160,18 @@ const fn program_words(number: u16) -> [u32; 19] {
         // Who am I, last, so the answer is still in `x0` when `Exit` takes it:
         // the boot reports the exit status, and a status that is the program's
         // own pid is evidence the identity call ran.
-        0xD280_0000 | (abi::SyscallNumber::GetPid as u32 & 0xFFFF) << 5 | 8, /* movz x8, #81
-                                                                              * (GetPid) */
+        // Fork, at the very end: the two processes that result are told apart
+        // by what it answered, and by nothing else.
+        0xD280_07C8, // movz x8, #62      (Fork)
         0xD400_0001, // svc #0
+        // The answer is kept in `x19`, which no call here writes: `Write` fills
+        // `x0`, and `Exit` reads `x0`, so the fork's answer left in `x0` would
+        // be the write's count by the time the status is taken.
+        0xAA00_03F3, // mov x19, x0       (keep the fork's answer)
+        0xAA13_03E1, // mov x1, x19       (Write prints it)
+        0xD280_00C8, // movz x8, #6       (Write)
+        0xD400_0001, // svc #0
+        0xAA13_03E0, // mov x0, x19       (the answer becomes Exit's status)
         0xD280_0068, // movz x8, #3       (Exit)
         0xD400_0001, // svc #0
         0x1400_0000, // b .

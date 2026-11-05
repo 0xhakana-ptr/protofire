@@ -340,11 +340,19 @@ pub use table::map_region;
 
 #[cfg(target_os = "none")]
 pub use space::AddressSpace;
+#[cfg(target_os = "none")]
+pub use space::MAX_FORK_PAGES;
+#[cfg(target_os = "none")]
+pub use space::MappedPage;
 pub use space::USER_BASE;
 #[cfg(target_os = "none")]
 pub use space::allocate_image_frame;
 #[cfg(target_os = "none")]
+pub use space::fork_from;
+#[cfg(target_os = "none")]
 pub use space::map_user_page;
+#[cfg(target_os = "none")]
+pub use space::mapped_pages;
 
 #[cfg(test)]
 mod tests;

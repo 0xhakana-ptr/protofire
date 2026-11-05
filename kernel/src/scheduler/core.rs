@@ -28,6 +28,12 @@ pub struct Scheduler {
     pub(crate) switches: usize,
     /// Programs that have exited.
     pub(crate) exited: usize,
+    /// The next process id this scheduler will hand out.
+    ///
+    /// Above every id the boot gave, so a boot's programs and a forked child
+    /// cannot collide: the boot numbers its programs 1..=n, and this starts at
+    /// n+1 once the boot has added them.
+    pub(crate) next_pid: u32,
 }
 
 impl Scheduler {
@@ -38,11 +44,17 @@ impl Scheduler {
             current: 0,
             switches: 0,
             exited: 0,
+            next_pid: 1,
         }
     }
 
     /// Add a program to the rotation.
     pub fn add(&mut self, task: Task) {
+        // The id counter follows the ids the boot actually gave, so a forked
+        // child cannot collide with a program the boot started.
+        if task.pid() >= self.next_pid {
+            self.next_pid = task.pid() + 1;
+        }
         self.tasks.push(task);
     }
 
@@ -305,6 +317,61 @@ impl Scheduler {
             .iter()
             .filter(|task| matches!(task.state, State::Sleeping { .. }))
             .count()
+    }
+
+    /// Fork the running task.
+    ///
+    /// Bare metal only: a host has no address space to copy, and a fork that
+    /// answered a pid it could not give a space to would be a promise the
+    /// machine cannot keep.
+    ///
+    /// The child is added to the end of the run queue, so a parent that forks
+    /// gets its own answer before the child runs: a child that ran first would
+    /// return zero before the parent had learned its pid, and a program that
+    /// printed the two would show them in the wrong order.
+    /// ## Why the frame is handed in rather than read from the task
+    ///
+    /// The context a task holds is the one its last switch saved — from before
+    /// the call that is running now.  A child resuming there would re-execute
+    /// its parent's whole path from the last switch, including the `fork` that
+    /// created it, and the boot showed exactly that: one fork became seven,
+    /// each child forking in turn.
+    ///
+    /// The frame the trap path holds is the one that names the instruction
+    /// **after** the call.  So that is what a child inherits, and the live
+    /// frame is also where the parent's answer is written.
+    #[cfg(target_os = "none")]
+    pub fn fork_current(&mut self, frame: &Context) -> Option<usize> {
+        let parent_pid = self.tasks.get(self.current)?.pid();
+        let parent_context = *frame;
+
+        // The parent's space, copied.  A task with no space is one sharing the
+        // kernel's, which a program never has: a fork of it would be a fork of
+        // nothing.
+        let parent_space = self.tasks.get(self.current)?.space?;
+        // SAFETY: the parent's space is live and this boot is the only writer.
+        let child_space = unsafe { crate::address_space::fork_from(&parent_space) }?;
+
+        let pid = self.next_pid;
+        self.next_pid += 1;
+
+        let mut child = Task::new("child", 0, 0, child_space);
+        child.identify(pid, parent_pid);
+        // The context, not a fresh one: the child resumes at the instruction
+        // after its parent's `fork`, on the copied stack.
+        *child.context_mut() = parent_context;
+        // And the child's answer is zero, written into its own copy of the
+        // frame.  The parent's register is untouched, so the same instruction
+        // returns the pid in one process and zero in the other — which is the
+        // whole of what `fork` answers.
+        arch::set_return_value(child.context_mut(), 0);
+        self.tasks.push(child);
+        Some(pid as usize)
+    }
+
+    /// The running task's saved context, copied.
+    pub fn current_context(&self) -> Option<Context> {
+        self.tasks.get(self.current).map(|task| *task.context())
     }
 
     /// The process id of the task that is running.

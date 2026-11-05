@@ -1069,3 +1069,35 @@ The pipe's two programs have no identity call, so their status is whatever
 their last call left in the register.  The boot reports it as it is: a status
 the kernel tidied up to look like a pid would be exactly the invented answer
 this file keeps warning about.
+
+### A fork, and the frame that has to be the live one
+
+    protofire: forked a process, child pid 4
+    protofire: exit statuses 1 -> 4, 2 -> 0, 3 -> 0, 4 -> 0
+
+`Fork` copies the running process — every page it maps, and the context it is
+in — into a task of its own.  Both resume at the instruction after the call;
+what tells them apart is the answer, and it is the only difference: the parent
+learns the child's pid, the child learns zero.
+
+**The first version forked once and produced seven children, because it copied
+the wrong frame.**  A task's saved context is the one its last switch wrote —
+from *before* the call that is running.  A child resuming there re-executes its
+parent's whole path from that switch, including the `fork` that created it, and
+the boot showed exactly that in the log: one `forked a process` line, then
+seven.  What a child inherits is the frame the trap path is holding, whose
+program counter already names the instruction after the call.
+
+**The second version copied every page and still answered the wrong status,
+because the answer and the status are different registers.**  `Fork`'s answer
+arrives in the return register; `Exit`'s status is read from the first argument.
+On aarch64 and riscv64 those are both `x0`/`a0`, and on x86_64 they are `rax`
+and `edi`.  The boot printed `1 -> 21` — 21 is what `Write` answers — because
+the `Write` between the fork and the exit had overwritten the answer.  Both
+programs now keep the answer in a register no call in this program writes, and
+the status the boot reports is the fork's own answer.
+
+What is not here: copy-on-write.  Every page a fork copies is copied whole,
+which is correct and slower than it needs to be; a COW fork needs a write fault
+this kernel does not handle.  And `exec`: a child that wants a different program
+than its parent has no call for it.

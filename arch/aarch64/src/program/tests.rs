@@ -58,7 +58,12 @@ fn the_program_is_little_endian() {
     let bytes = program_bytes(1);
     assert_eq!(bytes.len(), crate::program::PROGRAM_LEN);
     assert_eq!(&bytes[0..4], &0xD280_0803u32.to_le_bytes());
-    assert_eq!(&bytes[72..76], &0x1400_0000u32.to_le_bytes());
+    // The announcing program ends with `b .`; the buffer is sized for the
+    // longest of the three, so the word sits where *this* program ends rather
+    // than at the buffer's end.
+    let announcing_words = crate::program::PROGRAM_WORDS_FOR_TEST;
+    let last = announcing_words * 4 - 4;
+    assert_eq!(&bytes[last..last + 4], &0x1400_0000u32.to_le_bytes());
 }
 
 /// The loop is a real nested countdown, decoded from the encoding.
@@ -79,12 +84,12 @@ fn the_busy_loop_branches_back_to_itself() {
 
 /// Every syscall number the program uses is the ABI's own.
 ///
-/// Four calls: `Write`, `Sleep`, `Write`, `Exit`.  A program compiled
-/// against a number this build does not serve would print its first line
-/// and then fail silently, which is the one failure a sleep program could
-/// have and still look healthy.
+/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `Exit`.  A program compiled
+/// against a number this build does not serve would print its first line and
+/// then fail silently, which is the one failure a sleep program could have and
+/// still look healthy.
 #[test]
-fn the_program_calls_write_sleep_write_and_exit() {
+fn the_program_writes_sleeps_writes_forks_writes_and_exits() {
     let words = program_words(1);
     assert_eq!(
         call_numbers(&words),
@@ -92,10 +97,11 @@ fn the_program_calls_write_sleep_write_and_exit() {
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Sleep as usize,
             abi::SyscallNumber::Write as usize,
-            abi::SyscallNumber::GetPid as usize,
+            abi::SyscallNumber::Fork as usize,
+            abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the program writes, sleeps, writes, asks who it is, and exits"
+        "the program writes, sleeps, writes, forks, writes and exits"
     );
 
     // The sleep's duration is the immediate of the `movz x0` that precedes

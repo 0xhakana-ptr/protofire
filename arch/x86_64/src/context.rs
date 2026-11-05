@@ -639,7 +639,7 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
 /// bound is real: 0x1000 × 0x10000 was too long, and under the emulator the
 /// trap cost of ten thousand ticks a second left the program unable to reach
 /// its first `int` at all.
-const PROGRAM_BASE: [u8; 73] = [
+const PROGRAM_BASE: [u8; 87] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -657,12 +657,16 @@ const PROGRAM_BASE: [u8; 73] = [
     // Who am I, last, so the answer is still in `eax` when `Exit` takes it: the
     // boot reports the exit status, and a status that is the program's own pid
     // is evidence the identity call ran.
-    0xB8, 0x51, 0x00, 0x00, 0x00, // mov eax, 81 (GetPid)
+    0xB8, 0x3E, 0x00, 0x00, 0x00, // mov eax, 62 (Fork)
     0xCD, 0x80, // int 0x80
-    // `Exit`'s status travels in `edi`, not `eax` — this is the one machine
-    // whose two registers differ, and a program that left the pid in `eax`
-    // exited with whatever `edi` last held.
-    0x89, 0xC7, // mov edi, eax (the pid becomes Exit's argument)
+    // The answer is kept in `r8d`, which no call here writes: `Write` fills
+    // `eax`, and `Exit` reads `edi`, so the fork's answer left in `eax` would
+    // be the write's count by the time the status is taken.
+    0x41, 0x89, 0xC0, // mov r8d, eax (keep the fork's answer)
+    0x44, 0x89, 0xC6, // mov esi, r8d (Write prints it)
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6 (Write)
+    0xCD, 0x80, // int 0x80
+    0x44, 0x89, 0xC7, // mov edi, r8d (the answer becomes Exit's argument)
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3 (Exit)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $
@@ -760,7 +764,7 @@ mod program_tests {
     /// and then fail silently, which is the one failure a sleep program could
     /// have and still look healthy.
     #[test]
-    fn the_program_calls_write_sleep_write_and_exit() {
+    fn the_program_writes_sleeps_writes_forks_writes_and_exits() {
         let bytes = program_bytes(1);
         // By call number rather than by offset: an offset a reader has to count
         // goes stale the moment an instruction is inserted, which is what
@@ -771,10 +775,11 @@ mod program_tests {
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Sleep as u32,
                 abi::SyscallNumber::Write as u32,
-                abi::SyscallNumber::GetPid as u32,
+                abi::SyscallNumber::Fork as u32,
+                abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Exit as u32,
             ],
-            "the program writes, sleeps, writes, asks who it is, and exits"
+            "the program writes, sleeps, writes, forks, writes and exits"
         );
 
         // And the status travels in `edi`: `mov edi, eax` sits between the

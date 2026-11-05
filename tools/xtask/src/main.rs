@@ -219,6 +219,22 @@ impl Machine {
     /// this one asks "did it reach it again after sleeping".  One program's
     /// `Write` appears twice in its image, and a boot that never woke prints
     /// it once.
+    /// Fragments that have to appear on **one** line, together.
+    ///
+    /// A separate list from `required_lines` because it answers a question
+    /// neither of the other two can: a line that names the fork's two answers
+    /// is one fact, and two separate prefix checks would pass on two lines that
+    /// said different things.
+    fn paired_lines(self) -> &'static [&'static [&'static str]] {
+        match self {
+            Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[
+                // The parent's status is its child's pid and the child's is
+                // zero: the same call, answered twice, differently.
+                &["exit statuses 1 -> 4", "4 -> 0"],
+            ],
+        }
+    }
+
     fn repeated_lines(self) -> &'static [(&'static str, usize)] {
         match self {
             Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[(" says hello", 6)],
@@ -308,12 +324,17 @@ impl Machine {
                 ("program 1 says hello", true),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
-                // The process layer, as an exit status that is the program's
-                // own pid: program 1 asks `GetPid`, then exits with the answer,
-                // so `1 -> 1` is evidence the identity call ran and the status
-                // carried its answer.  A constant the kernel invented would be
-                // the same number for every program.
-                ("protofire: exit statuses 1 -> 1", false),
+                // The fork, as two statuses that are the same call's two
+                // answers: the parent (pid 1) exits with its child's pid, and
+                // that child (pid 4) exits with zero.  A fork that copied
+                // nothing, or answered the same value to both, prints neither
+                // pair.
+                ("protofire: forked a process, child pid 4", true),
+                // The fork's two answers, checked as a pair on one line: the
+                // parent (pid 1) exits with its child's pid 4, and pid 4 exits
+                // with zero.  The pipe's two programs have no identity call, so
+                // their statuses are whatever their last call left behind —
+                // reported, and deliberately not asserted.
                 // Sleeping, and the wake that ended it.
                 //
                 // Two lines, because they are two facts: a program asked for a
@@ -374,12 +395,17 @@ impl Machine {
                 // unmapped and the boot stops at an instruction abort; deleting
                 // the context restore resumes program 1 in program 2's space.
                 ("protofire: every program exited, ", false),
-                // The process layer, as an exit status that is the program's
-                // own pid: program 1 asks `GetPid`, then exits with the answer,
-                // so `1 -> 1` is evidence the identity call ran and the status
-                // carried its answer.  A constant the kernel invented would be
-                // the same number for every program.
-                ("protofire: exit statuses 1 -> 1", false),
+                // The fork, as two statuses that are the same call's two
+                // answers: the parent (pid 1) exits with its child's pid, and
+                // that child (pid 4) exits with zero.  A fork that copied
+                // nothing, or answered the same value to both, prints neither
+                // pair.
+                ("protofire: forked a process, child pid 4", true),
+                // The fork's two answers, checked as a pair on one line: the
+                // parent (pid 1) exits with its child's pid 4, and pid 4 exits
+                // with zero.  The pipe's two programs have no identity call, so
+                // their statuses are whatever their last call left behind —
+                // reported, and deliberately not asserted.
                 // The policy, asked twice through the real handler.
                 //
                 // A rule the boot installs allows one label and not another,
@@ -421,12 +447,17 @@ impl Machine {
                 // unmapped and the boot stops at an instruction abort; deleting
                 // the context restore resumes program 1 in program 2's space.
                 ("protofire: every program exited, ", false),
-                // The process layer, as an exit status that is the program's
-                // own pid: program 1 asks `GetPid`, then exits with the answer,
-                // so `1 -> 1` is evidence the identity call ran and the status
-                // carried its answer.  A constant the kernel invented would be
-                // the same number for every program.
-                ("protofire: exit statuses 1 -> 1", false),
+                // The fork, as two statuses that are the same call's two
+                // answers: the parent (pid 1) exits with its child's pid, and
+                // that child (pid 4) exits with zero.  A fork that copied
+                // nothing, or answered the same value to both, prints neither
+                // pair.
+                ("protofire: forked a process, child pid 4", true),
+                // The fork's two answers, checked as a pair on one line: the
+                // parent (pid 1) exits with its child's pid 4, and pid 4 exits
+                // with zero.  The pipe's two programs have no identity call, so
+                // their statuses are whatever their last call left behind —
+                // reported, and deliberately not asserted.
                 // The whole line, because its tail is the outcome.
                 //
                 // A prefix would accept `pool check FAILED`: the numbers before
@@ -559,12 +590,17 @@ impl Machine {
                 ("program 1 says hello", true),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
-                // The process layer, as an exit status that is the program's
-                // own pid: program 1 asks `GetPid`, then exits with the answer,
-                // so `1 -> 1` is evidence the identity call ran and the status
-                // carried its answer.  A constant the kernel invented would be
-                // the same number for every program.
-                ("protofire: exit statuses 1 -> 1", false),
+                // The fork, as two statuses that are the same call's two
+                // answers: the parent (pid 1) exits with its child's pid, and
+                // that child (pid 4) exits with zero.  A fork that copied
+                // nothing, or answered the same value to both, prints neither
+                // pair.
+                ("protofire: forked a process, child pid 4", true),
+                // The fork's two answers, checked as a pair on one line: the
+                // parent (pid 1) exits with its child's pid 4, and pid 4 exits
+                // with zero.  The pipe's two programs have no identity call, so
+                // their statuses are whatever their last call left behind —
+                // reported, and deliberately not asserted.
                 // Sleeping, and the wake that ended it: the deadline is a
                 // firmware call on this machine, and a boot that slept and
                 // never woke prints the sleep line and not the wake.
@@ -787,6 +823,26 @@ fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()> {
             let mut message = String::new();
             writeln!(message, "check failed: {problem}")?;
             writeln!(message, "  serial log ({} bytes):", log.len())?;
+            for line in log.lines() {
+                writeln!(message, "    {line}")?;
+            }
+            bail!("{message}");
+        }
+    }
+
+    // Lines that have to carry several fragments at once.
+    for fragments in machine.paired_lines().iter() {
+        let found = log.lines().any(|line| {
+            let line = line.trim_end_matches('\r');
+            fragments.iter().all(|fragment| line.contains(fragment))
+        });
+        if !found {
+            let mut message = String::new();
+            writeln!(
+                message,
+                "check failed: no line carries all of {:?} together",
+                fragments
+            )?;
             for line in log.lines() {
                 writeln!(message, "    {line}")?;
             }

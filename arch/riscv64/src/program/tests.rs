@@ -137,16 +137,18 @@ fn the_busy_loop_branches_back_to_itself() {
 
 /// Every syscall number the program uses is the ABI's own.
 ///
-/// Four calls: `Write`, `Sleep`, `Write`, `Exit`.  A program compiled
-/// against a number this build does not serve would print its first line
-/// and then fail silently, which is the one failure a sleep program could
-/// have and still look healthy.
+/// The calls this program makes, in order.
+///
+/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `Exit`.  A program compiled
+/// against a number this build does not serve would print its first line and
+/// then fail silently, which is the one failure a sleep program could have and
+/// still look healthy.
 #[test]
-fn the_program_writes_sleeps_writes_asks_its_pid_and_exits() {
+fn the_program_writes_sleeps_writes_forks_writes_and_exits() {
     let words = program_words(1);
-    // By name, not by index: an index a reader has to count is a number
-    // that goes stale the moment a word is inserted, which is exactly what
-    // happened when the identity call arrived.
+    // By name, not by index: an index a reader has to count goes stale the
+    // moment a word is inserted, which is what happened twice while this
+    // program grew.
     let calls = call_numbers(&words);
     assert_eq!(
         calls,
@@ -154,19 +156,29 @@ fn the_program_writes_sleeps_writes_asks_its_pid_and_exits() {
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Sleep as usize,
             abi::SyscallNumber::Write as usize,
-            abi::SyscallNumber::GetPid as usize,
+            abi::SyscallNumber::Fork as usize,
+            abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the program writes, sleeps, writes, asks who it is, and exits"
+        "the program writes, sleeps, writes, forks, writes and exits"
     );
-    // `GetPid` sits **last** because its answer has to survive into `Exit`:
-    // `a0` is where both the answer and the status travel, and a call in
-    // between would overwrite the one the boot reads.
-    assert_eq!(calls.last(), Some(&(abi::SyscallNumber::Exit as usize)));
+    // The `Write` after the fork is the one that reports it: both processes
+    // reach it, and the number each prints is the fork's answer — the child's
+    // pid in the parent, zero in the child.
+    assert_eq!(
+        calls[4],
+        abi::SyscallNumber::Write as usize,
+        "the call after the fork is a write"
+    );
+    assert_eq!(
+        calls.last(),
+        Some(&(abi::SyscallNumber::Exit as usize)),
+        "and the program ends where both processes end"
+    );
 
-    // The sleep's duration is the immediate of the `li a0` that precedes
-    // the Sleep call, and the program's own number is the `li a1` before
-    // its first Write.  Both are found by their role rather than counted.
+    // The sleep's duration is the immediate of the `li a0` that precedes the
+    // Sleep call, and the program's own number is the `li a1` before its first
+    // Write.  Both are found by their role rather than counted.
     assert_eq!(
         immediate_before(&words, abi::SyscallNumber::Sleep, REGISTER_A0 as u32) as u64,
         crate::program::SLEEP_MICROSECONDS

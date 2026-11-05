@@ -159,6 +159,10 @@ pub(crate) const REGISTER_A1: usize = 11;
 /// where aarch64 uses `x8` and x86_64 the gate's own vector.
 pub(crate) const REGISTER_A7: usize = 17;
 
+/// `a6`, which no call in this tree writes — used by a program to keep a value
+/// across a call that would overwrite `a0`.
+pub(crate) const REGISTER_A6: usize = 16;
+
 impl ExceptionFrame {
     /// The syscall number a program put in `a7`.
     ///

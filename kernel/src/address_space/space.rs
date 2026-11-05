@@ -58,14 +58,28 @@ use super::table::leaf_for;
 /// `0x80_0000_0000` is root entry 1: 512 GiB, one entry past the identity map.
 pub const USER_BASE: usize = 0x80_0000_0000;
 
+/// The most frames one address space records as its own.
+///
+/// An image and a stack, and the pair a `fork` copies.  A program that forks
+/// twice is one this bound refuses rather than silently forgetting — the
+/// refusal is `own` answering `false`, which the caller reports.
+pub const MAX_OWNED_FRAMES: usize = 4;
+
 /// A program's address space: a root of its own, sharing the kernel's entry 0.
 #[cfg(target_os = "none")]
 #[derive(Debug, Clone, Copy)]
 pub struct AddressSpace {
     /// The root table's frame.
     root: usize,
-    /// The frames the program owns: its image and its stack.
-    frames: [usize; 2],
+    /// The frames the program owns: its image, its stack, and — for a program
+    /// that forked — a copy of each of those per child it made.
+    ///
+    /// Four rather than two because `fork` copies both frames, and a limit that
+    /// silently dropped the third would be a leak whose symptom is a pool that
+    /// shrinks with no line in the log to say why.  A `Vec` would grow past
+    /// this, and a `Vec` in a `Copy` type is not one: the fixed bound is the
+    /// honest statement of what this kernel has decided to own per process.
+    frames: [usize; MAX_OWNED_FRAMES],
     /// How many of `frames` are in use.
     used: usize,
 }
@@ -105,7 +119,7 @@ impl AddressSpace {
 
         Some(AddressSpace {
             root,
-            frames: [0; 2],
+            frames: [0; MAX_OWNED_FRAMES],
             used: 0,
         })
     }
@@ -181,11 +195,22 @@ impl AddressSpace {
     }
 
     /// Record a frame this space owns, so freeing the space frees it.
-    pub fn own(&mut self, frame: usize) {
-        if self.used < self.frames.len() {
-            self.frames[self.used] = frame;
-            self.used += 1;
+    ///
+    /// Answers whether it did: a space at its bound refuses the frame rather
+    /// than dropping it, because a frame nobody records is a leak the pool
+    /// will report as exhaustion much later.
+    pub fn own(&mut self, frame: usize) -> bool {
+        if self.used == self.frames.len() {
+            return false;
         }
+        self.frames[self.used] = frame;
+        self.used += 1;
+        true
+    }
+
+    /// The frames this space owns, in the order it took them.
+    pub fn owned(&self) -> &[usize] {
+        &self.frames[..self.used]
     }
 
     /// Give every frame back.
@@ -375,3 +400,178 @@ pub unsafe fn self_check_frame_pool() -> bool {
     let after = tables.frames.free_frames() + tables.frames.available_frames();
     zeroed && released && after == before
 }
+
+/// One page a program has mapped, as the walk found it.
+///
+/// The virtual address, the frame behind it, and whether it is writable —
+/// everything a copy needs and nothing about the page tables themselves, so a
+/// caller that only reads this list cannot corrupt a walk by holding a
+/// reference into it.
+#[cfg(target_os = "none")]
+#[derive(Debug, Clone, Copy)]
+pub struct MappedPage {
+    /// Where the program sees it.
+    pub virtual_address: usize,
+    /// The frame behind it.
+    pub physical: usize,
+    /// Whether writes are permitted, which a copy carries over.
+    pub writable: bool,
+}
+
+/// The pages `space` maps in the user window, in address order.
+///
+/// ## Why this walks the tables rather than recording a list
+///
+/// A list of mappings kept beside the table is a second record of the same
+/// fact, and the first thing to diverge is the one nobody updates.  The table
+/// is the truth; this reads it.
+///
+/// Only the user window is read: everything below it is the kernel's shared
+/// entry, identical in every root, and copying it would be copying the kernel.
+///
+/// `None` when the walk finds a table it cannot descend — a root entry naming
+/// something that is not a table, which is a bug in whoever wrote it rather
+/// than a state to tolerate.
+#[cfg(target_os = "none")]
+pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usize> {
+    let root = unsafe { &*(space.root() as *const PageTable) };
+    let mut count = 0;
+
+    // The user window's root entry is `index(Root, USER_BASE)` and everything a
+    // program maps lives under it, so the walk starts there rather than at
+    // entry zero — which is the kernel's.
+    let base_root_index = index(Level::Root, USER_BASE);
+    for root_index in base_root_index..paging::ENTRIES_PER_TABLE {
+        let word = root.entry(root_index);
+        if word == 0 {
+            continue;
+        }
+        let second = arch::paging::decode(word, Level::Root);
+        if !second.present || second.is_leaf {
+            return None;
+        }
+        let second_table = unsafe { &*(second.address as *const PageTable) };
+        for second_index in 0..paging::ENTRIES_PER_TABLE {
+            let word = second_table.entry(second_index);
+            if word == 0 {
+                continue;
+            }
+            let third = arch::paging::decode(word, Level::Second);
+            if !third.present || third.is_leaf {
+                return None;
+            }
+            let third_table = unsafe { &*(third.address as *const PageTable) };
+            for third_index in 0..paging::ENTRIES_PER_TABLE {
+                let word = third_table.entry(third_index);
+                if word == 0 {
+                    continue;
+                }
+                let leaf_table_entry = arch::paging::decode(word, Level::Third);
+                if !leaf_table_entry.present || leaf_table_entry.is_leaf {
+                    return None;
+                }
+                let leaf_table = unsafe { &*(leaf_table_entry.address as *const PageTable) };
+                for leaf_index in 0..paging::ENTRIES_PER_TABLE {
+                    let word = leaf_table.entry(leaf_index);
+                    if word == 0 {
+                        continue;
+                    }
+                    let page = arch::paging::decode(word, Level::Leaf);
+                    if !page.present || !page.is_leaf {
+                        continue;
+                    }
+                    if count == out.len() {
+                        return None;
+                    }
+                    // The address is the four indices the walk just read, put
+                    // back together — not a counter, so a hole in the range is
+                    // a hole in the answer too.
+                    let virtual_address = (root_index << Level::Root.shift())
+                        | (second_index << Level::Second.shift())
+                        | (third_index << Level::Third.shift())
+                        | (leaf_index << Level::Leaf.shift());
+                    out[count] = MappedPage {
+                        virtual_address,
+                        physical: page.address,
+                        writable: page.permissions.writable,
+                    };
+                    count += 1;
+                }
+            }
+        }
+    }
+    Some(count)
+}
+
+/// A new address space holding a copy of `parent`'s user pages.
+///
+/// ## What is copied, and what is shared
+///
+/// Every page the parent maps in the user window gets a **new frame**, and the
+/// bytes are copied into it.  That is `fork`'s contract: a child that wrote to
+/// a page would otherwise change the parent's, and the first program to do that
+/// would corrupt the program it came from — a defect whose symptom is a
+/// corrupted value much later, in a process that never wrote it.
+///
+/// Copy-on-write would be the answer a kernel with a fault path for writes
+/// uses, and this kernel has no such path: a write to a read-only page is a
+/// fault nobody handles.  Whole-page copy is the honest version of what this
+/// tree can do, and it is correct — only slower than it needs to be once a
+/// program maps many pages.
+///
+/// The kernel's own entry 0 is shared, not copied: it is the same table in
+/// every root, which is what makes a switch cost one register write.
+///
+/// # Safety
+///
+/// `parent` must be a live space whose pages are readable, and the caller must
+/// own the result — the new root is a frame nothing else holds.
+#[cfg(target_os = "none")]
+pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
+    // The parent's page table lists the pages; a copy needs them all in a
+    // buffer first, because allocating while the walk holds a borrow of the
+    // allocator's own state would be a second borrow of the same static.
+    let mut pages = [MappedPage {
+        virtual_address: 0,
+        physical: 0,
+        writable: false,
+    }; MAX_FORK_PAGES];
+    let count = mapped_pages(parent, &mut pages)?;
+
+    let mut child = unsafe { AddressSpace::new() }?;
+
+    for page in &pages[..count] {
+        // A frame of its own, and the parent's bytes into it.
+        let Some(frame) = allocate_image_frame() else {
+            // The child is abandoned: its root and every frame taken so far go
+            // back, so a failed fork does not shrink the pool by a program.
+            unsafe { child.release() };
+            return None;
+        };
+        // SAFETY: both frames are live, and one frame is `GRANULE` bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(page.physical as *const u8, frame as *mut u8, GRANULE);
+        }
+        if !child.own(frame) {
+            unsafe { child.release() };
+            return None;
+        }
+        // SAFETY: the frame is the child's, and the address is the parent's own
+        // user address, which this space does not map yet.
+        if !unsafe { child.map(page.virtual_address, frame, page.writable) } {
+            unsafe { child.release() };
+            return None;
+        }
+    }
+
+    Some(child)
+}
+
+/// The most pages one `fork` copies.
+///
+/// The boot's programs map two each — an image and a stack — and this bound is
+/// generous relative to that.  A program with more pages than this is one whose
+/// fork is refused rather than one whose copy is silently partial, which is the
+/// only other way this could go wrong.
+#[cfg(target_os = "none")]
+pub const MAX_FORK_PAGES: usize = 8;
