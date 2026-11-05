@@ -1,1 +1,89 @@
-/target
+# File: .gitignore
+# Purpose: What is built, not written — and the one generated file that is
+#          tracked anyway.
+#
+# ## Why a root file and no others
+#
+# Cargo puts every workspace member's output in **one** `target/` at the root,
+# because the members are one workspace.  A `/target` in each crate ignores a
+# directory cargo never creates, and fourteen copies of a rule that cannot fire
+# are fourteen things to read before finding the one that matters.  A crate that
+# ever gains an artifact of its own gets a `.gitignore` then, beside it; until
+# then this file is the whole of the answer.
+#
+# ## What is *not* ignored
+#
+# `arch/x86_64/src/kaslr_relocs.generated.rs` is generated and **tracked**: the
+# `kaslr` build `include!`s it, so a clone without it cannot build that
+# configuration at all.  It is the one generated file whose absence is a build
+# failure rather than an inconvenience, so it is named here rather than covered
+# by a pattern.
+
+# --- Cargo ------------------------------------------------------------------
+#
+# The workspace's one output directory.  The leading slash anchors it to this
+# repository's root, so a path a document cites is not silently swallowed.
+/target/
+
+# Cargo's incremental state, when a crate is built outside the workspace.
+**/target/debug/incremental/
+
+# `cargo bench` writes criterion's reports here.
+**/criterion/
+
+# --- Build products a document names ----------------------------------------
+#
+# `cargo xtask run` writes the serial log and the disk image it boots with.
+*.log
+*.disk
+
+# An ISO or a disc image built for a gate.
+*.iso
+*.img
+
+# Object, dependency and disassembly files a tool may drop beside an image.
+*.o
+*.d
+*.dSYM/
+
+# --- Rust -------------------------------------------------------------------
+#
+# `cargo fmt` backups and rust-analyzer's cache.
+*.rs.bk
+.rust-analyzer/
+rustc-ice-*.txt
+
+# --- Python -----------------------------------------------------------------
+#
+# `tools/extract_tests.py` is the only Python in the tree, and it is a tool
+# rather than a package: no build directory, no egg.  What it leaves is a
+# bytecode cache, which was committed once before this rule existed.
+__pycache__/
+*.py[cod]
+.pytype/
+
+# A virtual environment, if a reader makes one to run the tool.
+.venv/
+venv/
+
+# --- Editors ----------------------------------------------------------------
+#
+# The rule is the editor's output, not the editor: a `.vscode/settings.json` a
+# reader wants to share is theirs to force in.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Operating systems ------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Local, not shared ------------------------------------------------------
+#
+# A scratch file a reader keeps beside the tree.  `.zcode/` is the agent's own
+# working directory, which is not part of the product.
+.zcode/
+*.local
