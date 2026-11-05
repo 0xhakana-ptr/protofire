@@ -13,28 +13,27 @@
 //! the address the ask names, with the hart's id in `a0` and the asker's
 //! opaque word in `a1`.
 //!
-//! ## What a started hart does, and what it deliberately does not
+//! ## What a started hart does
 //!
 //! A started hart gets a stack of its own, the kernel's page table, its own
-//! timer, its own lines, and one job: be a CPU the boot can count.  It takes
-//! its timer interrupt and its inter-processor interrupt, and it hands both to
-//! the kernel's sink, which counts them.  It does **not** run a task: the
-//! scheduler is one structure with one owner, and every task switch writes it,
-//! so a second hart in it would be a second writer to a structure nothing
-//! locks.  That is the same line the previous tree drew, and it is the honest
-//! one until the scheduler grows a per-CPU half.
+//! timer, its own lines, and then asks the kernel for a task.  It takes its
+//! timer and inter-processor interrupts on its own, and it enters U-mode on the
+//! task it was given: two harts run two programs at once, and the scheduler,
+//! which is one lock, is what keeps them from being handed the same one.
 //!
-//! ## Why taking interrupts is not the same as running programs
+//! ## What it does not do
 //!
-//! The two were treated as one thing while this hart parked, and they are not.
-//! A timer that is counted and re-armed on the hart that took it touches no
-//! task: `per_cpu`'s counters are atomics, and the kernel's handler returns
-//! before the scheduling half for any CPU that is not the scheduler's owner.
-//! What the hart must not do is reach `preempt`, and it cannot: `preempt`
-//! refuses a frame that is not a program's, and this hart never leaves the
-//! kernel.  So the boot can prove the CPU runs, takes its own clock, and
-//! receives an interrupt another CPU sent, without the scheduler being
-//! involved at all.
+//! It does not claim an external interrupt.  The `Plic` the boot installed
+//! carries the boot hart's context, so a claim through it from another hart
+//! completes a source nobody finishes.  The line stays disabled on a started
+//! hart, and the dispatch says so if a machine ever enables it.
+//!
+//! It also has no load balancing and no task migration: a task stays on the CPU
+//! that claimed it, because moving one would need a TLB shootdown and
+//! `paging::flush_translation` is local to the hart that calls it.  A machine
+//! with more work than CPUs runs what it has; one with more CPUs than work
+//! leaves the extra CPUs in `wait_for_work`, which is the shape this tree
+//! scales in.
 
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicUsize;

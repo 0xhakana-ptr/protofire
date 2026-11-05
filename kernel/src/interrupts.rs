@@ -132,14 +132,24 @@ pub fn handle(frame: irq::Frame) -> bool {
             unsafe { arch::arm_timer(frequency, crate::tick::TIME_SLICE_US) };
         }
 
-        // The scheduling half belongs to the boot CPU alone.
+        // The scheduling half is the boot CPU's, and it is a policy now rather
+        // than a safety requirement.
         //
-        // The scheduler is one structure with no lock: wake_expired and the
-        // preemption hook both write it.  A second CPU that ran them would be a
-        // second writer, and the failure, a task resumed with another CPU's
-        // context, is the sort this tree refuses to leave in.  So another CPU
-        // counts its tick and re-arms its clock, and the boot CPU does the
-        // deciding until the scheduler grows a per-CPU half.
+        // It was both until the scheduler grew a lock: the comment here used to
+        // say the structure had no lock, so a second writer would resume a task
+        // with another CPU's context.  `scheduler::SCHEDULER` is a `sync::Mutex`
+        // now, and `wake_expired` takes it like every other entry point, so any
+        // CPU could call it and be correct.
+        //
+        // What keeps the gate is that it would be *wasteful* and *noisy*, not
+        // wrong: every CPU takes its own timer, so every CPU would walk the same
+        // task list to find the same expired sleepers, and the boot's `a program
+        // woke` line is printed by whichever CPU found them first.  One CPU
+        // waking them once is the shape the report describes.
+        //
+        // Removing this gate is part of making the scheduler shard per CPU, and
+        // that change has to decide what the wake line means when several CPUs
+        // can each wake a different task.
         if !crate::per_cpu::on_boot_cpu() {
             return true;
         }

@@ -1207,6 +1207,126 @@ hart that calls it.  Nor is a release proven against every CPU's frame: the
 boot releases nothing until it ends, which is why the deferred-release rule
 this section first proposed was not needed to land it.
 
+## What it takes to run on more than two CPUs
+
+The path from one CPU to two is behind us, and the path from two to four is
+mostly arithmetic.  This section says what each step costs, in the order the cost
+grows, because "does it scale" has three different answers depending on how far
+the question is asking.
+
+### Two to four: constants, and one gate
+
+Nothing in the kernel assumes two CPUs.  The start loop is
+`for slot in 0..started`, the scheduler's `running` array is one slot per CPU,
+`per_cpu::CPUS` is one record per slot, and the trap entry derives the slot from
+the kernel stack rather than from a count.  The limits are constants:
+
+| Where | What | Why it is that number |
+|---|---|---|
+| `arch/riscv64/src/smp.rs` | `MAX_SECONDARY_HARTS = 4` | the `kernel_stacks` reservation is sized from it, and the entry assembly indexes that array by slot |
+| `kernel/src/per_cpu.rs` | `MAX_SECONDARY_CPUS = 4` | the kernel's copy of the same number |
+| `kernel/src/per_cpu.rs` | `MAX_CPUS = 1 + MAX_SECONDARY_CPUS` | slot zero is the boot hart's |
+| `kernel/src/scheduler/core.rs` | `running: [Option<usize>; MAX_CPUS]` | one current task per CPU |
+| `kernel/src/scheduler/core.rs` | `running: [Option<usize>; MAX_CPUS]` | one current task per CPU |
+| `arch/riscv64/src/serial.rs` | `LINE_SLOTS` | one console line buffer per CPU |
+| `arch/riscv64/src/boot.rs` | `MAX_HART_NODES = 8` | how many `/cpus` children the tree walk reads |
+| `tools/xtask/src/main.rs` | `-smp 2` | the gate's machine, not a kernel limit |
+
+The numbers that matter are the first three rows: the machine's cap and the
+kernel's copy of it are the same four written in two crates, and the defect
+two-CPU support cost the most to find was exactly a disagreement between them.
+`MAX_CPUS` here was four while the slots a boot uses are 1..=4, so the fourth CPU
+shared the boot CPU's arrays, and the symptom was a task resumed with another
+CPU's context.
+
+The guard that change deserves is a compile-time assertion.  As the tree stands
+there is none: the kernel's copy is kept in step by a comment asking the next
+reader to keep it in step, which is the arrangement that failed once already.
+The cheapest fix is for each machine to export its own `MAX_CPUS` and for
+`kernel/src/per_cpu.rs` to assert its derived total against it — a machine that
+raised a cap without the kernel following would then be a build error rather
+than a slot two CPUs share at run time.  That change is written and not yet
+gated; it belongs in the change that raises a cap, not in a document.
+
+The cost of raising the cap is memory, and it is small here: the stack
+reservation is `(MAX_SECONDARY_HARTS + 1) * 64 KiB`, so four secondaries are
+320 KiB of `.bss` and eight are 576 KiB, against a `.bss` that is already
+sixty-four megabytes.  The line buffers are 512 bytes per CPU.
+
+What four CPUs would actually exercise, and what a `-smp 4` gate variant is
+worth: the start loop's bound, the stack indexing for slots 2 and 3, and the
+scheduler's `running` array under three concurrent claims.  Those are the paths
+a two-CPU machine never reaches, and the ones a hard-coded two would break.
+
+### Past eight: the hart list, and the interrupt mask
+
+Two limits change shape rather than size:
+
+- **`MAX_HART_NODES = 8`** is a fixed array the device-tree walk fills.  A
+  machine with more harts needs a larger array or a walk that yields rather than
+  copies, and the choice is the same one this tree made for the frame pool: a
+  fixed bound with a report, or an allocator that does not exist yet at the
+  point the tree is read.
+- **The inter-processor interrupt's hart mask is a `u64`.**  SBI names harts by
+  a bit per hart id, so an id at or past 64 cannot be addressed by one call.
+  `started_harts_mask` already skips those rather than truncating, which is the
+  honest failure, but a machine with such an id needs a second SBI mechanism or
+  a different interrupt.  That is a fact about SBI, not a limit this tree chose.
+
+Neither is hard.  Both are the kind of change that is cheap to make when the
+machine that needs it exists, and expensive to guess at before.
+
+### The real threshold: one scheduler, one lock
+
+Past four or eight CPUs the limit stops being a constant and becomes a shape.
+Everything above scales because every CPU shares one scheduler behind one
+`sync::Mutex`.  That is correct, and it is what made two CPUs landable: a task a
+CPU holds is excluded from every other CPU, and nobody had to decide what happens
+when a task moves.
+
+The cost it pays is contention.  Every tick, on every CPU, takes the same lock to
+walk the same task list looking for expired sleepers.  With two CPUs and a
+handful of tasks that is invisible; with sixteen CPUs and a hundred tasks it is a
+queue, and the fix is not a bigger lock.
+
+What a sharded scheduler needs, in the order it becomes necessary:
+
+1. **One run queue per CPU**, with a task staying where it was queued.  This
+   alone removes the contention and is the smallest version of the change: the
+   global lock becomes per-queue, and the questions that cross queues (who may be
+   woken, who may be stolen) are the next two.
+2. **A migration rule.**  A CPU with an empty queue takes a task from another,
+   or the machine idles one CPU while another has work.  Migration is where the
+   `running` array stops being enough: the task's pages have to be reachable
+   from the new CPU, and every CPU that ever translated through that address
+   space may hold a stale translation.
+3. **A TLB shootdown.**  `arch::flush_translation` flushes the calling hart's TLB
+   and no other, which is correct for the address spaces this tree runs: the
+   kernel's entry 0 is identical in every root, so a switch costs one register
+   write and no flush at all.  A migrated task is the first case where one CPU's
+   translation must be invalidated from another, and that is an IPI, a wait for
+   acknowledgement, and a rule about what happens if the target is in a trap.
+   `sync::SpinLock::lock_without_irq_disable`'s documentation already describes
+   the shape of that hazard.
+
+The order matters.  Sharding without migration is a safe intermediate that buys
+the contention away and changes no semantics.  Migration without a shootdown is a
+use-after-free that shows up as a fault in a program that never ran.
+
+### What this tree should not do yet
+
+Add CPUs to the machine before adding work for them.  The boot's programs are
+three, plus one forked child, and two CPUs already leave one idle for part of the
+run; four would leave two idle.  A sharded scheduler written against a machine
+with nothing to shard it for would be a design argued from a diagram rather than
+from a boot, which is the argument this document makes in the other direction
+everywhere else.
+
+So the order is: raise the cap to four and gate `-smp 4` when there is a reason
+to, shard when a tick's lock contention is measurable, and migrate when there is
+load to balance.  Each step is a change with a measurement in front of it rather
+than a preparation for a load no boot in this tree produces.
+
 ### The first device that raised the line
 
     protofire: console source 10 enabled at the controller
