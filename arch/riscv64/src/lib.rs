@@ -558,19 +558,6 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
     true
 }
 
-/// Where one interrupt line is, as the machine's controller sees it.
-///
-/// TEMPORARY PROBE SUPPORT.  `None`: the PLIC's pending bit is readable, but
-/// this machine's hang is not the one being diagnosed.
-///
-/// # Safety
-///
-/// Reads only.
-#[cfg(target_os = "none")]
-pub unsafe fn interrupt_probe_state(_number: usize) -> Option<(bool, bool, bool)> {
-    None
-}
-
 /// The machine's message-signalled interrupt frame: none this crate drives.
 ///
 /// A PLIC is a level controller a hart claims through, and an IMSIC, the
