@@ -7,9 +7,21 @@
 # Cargo puts every workspace member's output in **one** `target/` at the root,
 # because the members are one workspace.  A `/target` in each crate ignores a
 # directory cargo never creates, and fourteen copies of a rule that cannot fire
-# are fourteen things to read before finding the one that matters.  A crate that
-# ever gains an artifact of its own gets a `.gitignore` then, beside it; until
-# then this file is the whole of the answer.
+# are fourteen things to read before finding the one that matters.
+#
+# The patterns that matter here are extension and directory-name patterns —
+# `*.log`, `*.o`, `*.d`, `__pycache__/` — and git applies those at **every depth**
+# from the file that states them, so a crate beside one needs no copy.  What a
+# second file would buy is a rule scoped to one directory, and this tree has no
+# artifact scoped to one directory: cargo writes one `target/` at the root, and
+# `cargo xtask` writes its logs and disks into `target/` or the system's
+# temporary directory.
+#
+# That absence is checked rather than trusted: `scripts/check-repo-integrity.sh`
+# refuses a file that is tracked and ignored, and refuses a tracked build
+# product whatever the ignore set says.  A crate that ever does gain an artifact
+# of its own gets a `.gitignore` beside it, and the gate is what makes the
+# difference between "nobody needed one" and "nobody noticed".
 #
 # ## Why there are `!` rules
 #
@@ -24,13 +36,15 @@
 # point of writing them anyway: they are a **guard**, not a workaround, and
 # each names why its file is the product.
 #
-# ## What is *not* ignored
+# ## Why there is no entry for a generated file
 #
-# `arch/x86_64/src/kaslr_relocs.generated.rs` is generated and **tracked**: the
-# `kaslr` build `include!`s it, so a clone without it cannot build that
-# configuration at all.  It is the one generated file whose absence is a build
-# failure rather than an inconvenience, so it is named here rather than covered
-# by a pattern.
+# This header used to claim one: `arch/x86_64/src/kaslr_relocs.generated.rs`,
+# described as generated and tracked because the `kaslr` build `include!`s it.
+# The tree has no such file — `find` and `git ls-files` both come up empty — so
+# the paragraph was describing a file that does not exist.  It is recorded here
+# rather than deleted silently because a reader who remembers it would otherwise
+# think the rule had been dropped by mistake.  When the `kaslr` build does write
+# one, it belongs in the section above, named, with the reason it must survive.
 
 # Cargo
 #
@@ -79,12 +93,19 @@ __pycache__/
 .venv/
 venv/
 
-# Editors
+# Editors and agents
 #
-# The rule is the editor's output, not the editor: a `.vscode/settings.json` a
+# The rule is the tool's output, not the tool: a `.vscode/settings.json` a
 # reader wants to share is theirs to force in.
+#
+# `.zcode/` is the same shape for a coding agent: it holds per-session state and
+# plans, which are one machine's working files and not the tree's.  It is
+# ignored rather than left to each contributor's global config, because a
+# directory that appears in `git status` the first time someone opens the
+# repository is a directory every one of them has to decide about separately.
 .idea/
 .vscode/
+.zcode/
 *.swp
 *.swo
 *~

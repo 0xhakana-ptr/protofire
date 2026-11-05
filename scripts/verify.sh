@@ -146,6 +146,12 @@ run_p2() {
     # that stopped being caught.
     step "scripts/check-crate-tests.sh"
     sh scripts/check-crate-tests.sh || fail "a crate with no tests, or one whose tests fell"
+
+    # The repository itself: a file that is ignored and tracked is one a reader
+    # misunderstands, and a committed build product is one a clone pays for.
+    # Neither is a defect a compiler or a boot can see.
+    step "scripts/check-repo-integrity.sh"
+    sh scripts/check-repo-integrity.sh || fail "an ignored file is tracked, or a product is"
 }
 
 run_p3() {

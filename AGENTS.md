@@ -60,6 +60,7 @@ that argues for it in the baseline's own prose, which is why
 | `scripts/check-layering.sh` | every dependency points downward |
 | `scripts/check-arch-fanout.sh` | nothing outside `arch/` names a machine |
 | `scripts/check-crate-tests.sh` | every crate with code has tests, and none lost any |
+| `scripts/check-repo-integrity.sh` | nothing ignored is tracked, and no build product is |
 | `scripts/check-docs.sh` | every path a document cites exists |
 
 The architecture census is at **zero** and stays there.  Its one historical row
