@@ -166,7 +166,7 @@ the editor template).
 |---|-------|-----------------|
 | 1 | A subject line exists | `empty subject line` |
 | 2 | No leading/trailing whitespace on the subject | `subject must not have leading/trailing whitespace` |
-| 3 | `Merge …` and `Revert …` subjects exit **0 here**, skipping every check below |, |
+| 3 | `Merge …` and `Revert …` subjects exit **0 here**, skipping every check below | |
 | 4 | The subject does not end in `.` | `subject must not end with a period` |
 | 5 | The subject is not a bare generic word | `subject '<word>' carries no information` |
 | 6 | The subject is at most 72 **bytes**, only if it is pure ASCII | `subject too long (N > 72 chars)` |

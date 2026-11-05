@@ -6,7 +6,7 @@ Two licences cover this tree, and which one applies depends on what the file is:
 |---|---|---|
 | Source code, every `.rs`, `.S`, `.ld`, `Cargo.toml`, `justfile`, script | Apache-2.0 | [`Apache-2.0`](Apache-2.0.txt) |
 | Prose, every `.md`, this file included | CC BY-SA 4.0 | [`CC-BY-SA-4.0`](CC-BY-SA-4.0.txt) |
-| The certificate fixtures under `certs/` | as their own files state |, |
+| The certificate fixtures under `certs/` | as their own files state | |
 
 ## Why two
 

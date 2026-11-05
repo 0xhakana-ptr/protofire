@@ -34,15 +34,15 @@ requires.  The rows below are the machine's own half.
 
 | What | Now | Verified by | Missing |
 |------|-----|-------------|---------|
-| Boot | Multiboot2 or PVH handoff; the entry assembly's 2 MiB identity map | the gate's `entered via pvh` line |, |
-| Console | COM1, reached through the port pair | every line the gate reads |, |
-| Page table | the kernel's own 4 KiB-granule table replacing the boot's; text read-execute, read-only data read, device windows uncached | `page table built and installed, 4 KiB granule` |, |
-| Interrupts | the local APIC; the 8259 masked, not remapped; the self-test raises the timer's own vector | `interrupt delivered to its handler` |, |
-| Timer and clock | the APIC timer, calibrated once against the PIT; the TSC as the monotonic clock, calibrated separately, the two rates differ and the boot proves both | `timer armed at `, `timer counter  ticks apart` |, |
-| Ring 3 | a GDT with DPL-3 code and data segments, a TSS whose `RSP0` names the stack every ring-3 interrupt lands on, a call gate at DPL 3, `iretq` out | `descriptor tables installed, TSS loaded`, `entering ring 3` |, |
+| Boot | Multiboot2 or PVH handoff; the entry assembly's 2 MiB identity map | the gate's `entered via pvh` line | |
+| Console | COM1, reached through the port pair | every line the gate reads | |
+| Page table | the kernel's own 4 KiB-granule table replacing the boot's; text read-execute, read-only data read, device windows uncached | `page table built and installed, 4 KiB granule` | |
+| Interrupts | the local APIC; the 8259 masked, not remapped; the self-test raises the timer's own vector | `interrupt delivered to its handler` | |
+| Timer and clock | the APIC timer, calibrated once against the PIT; the TSC as the monotonic clock, calibrated separately, the two rates differ and the boot proves both | `timer armed at `, `timer counter  ticks apart` | |
+| Ring 3 | a GDT with DPL-3 code and data segments, a TSS whose `RSP0` names the stack every ring-3 interrupt lands on, a call gate at DPL 3, `iretq` out | `descriptor tables installed, TSS loaded`, `entering ring 3` | |
 | Scheduler | preemption, sleeping with a deadline, a read blocked on a pipe and woken by a write; each task carries a pid, a parent and the status it exited with; `Fork` copies the running process, its pages and its context, into a child | `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `exit statuses 1 -> 4` | copy-on-write: a fork copies every page whole, so a program with many pages pays for all of them; no `exec` |
-| Devices | the PCI scan over the configuration port pair, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci`, `virtio-blk wrote and read back sector ` |, |
-| Second CPU | the APIC can self-address, and nothing starts an application processor: a machine with more than one CPU runs one |, | the AP start and its per-CPU path |
+| Devices | the PCI scan over the configuration port pair, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci`, `virtio-blk wrote and read back sector ` | |
+| Second CPU | the APIC can self-address, and nothing starts an application processor: a machine with more than one CPU runs one | | the AP start and its per-CPU path |
 
 ---
 
@@ -50,15 +50,15 @@ requires.  The rows below are the machine's own half.
 
 | What | Now | Verified by | Missing |
 |------|-----|-------------|---------|
-| Boot | QEMU's `-kernel` raw image at EL1; the device-tree pointer recorded by the entry | the gate's `entered via dtb` line |, |
-| Console | the PL011, at the address the tree names | every line the gate reads |, |
-| Page table | the kernel's own 4 KiB table; `TCR_EL1` sized for the full 48-bit walk; the tree's device windows uncached | `page table built and installed, 4 KiB granule` |, |
-| Interrupts | the GIC; the self-test raises a software interrupt the controller delivers | `interrupt delivered to its handler` |, |
-| Timer and clock | the generic timer, one clock for both the deadline and the counter | `timer armed at ` |, |
-| Ring 3 | `eret` to EL0t, `SP_EL0` carried in the trap frame, FP/SIMD saved because the compiler provably emits them | `entering ring 3` |, |
+| Boot | QEMU's `-kernel` raw image at EL1; the device-tree pointer recorded by the entry | the gate's `entered via dtb` line | |
+| Console | the PL011, at the address the tree names | every line the gate reads | |
+| Page table | the kernel's own 4 KiB table; `TCR_EL1` sized for the full 48-bit walk; the tree's device windows uncached | `page table built and installed, 4 KiB granule` | |
+| Interrupts | the GIC; the self-test raises a software interrupt the controller delivers | `interrupt delivered to its handler` | |
+| Timer and clock | the generic timer, one clock for both the deadline and the counter | `timer armed at ` | |
+| Ring 3 | `eret` to EL0t, `SP_EL0` carried in the trap frame, FP/SIMD saved because the compiler provably emits them | `entering ring 3` | |
 | Scheduler | preemption, sleeping with a deadline, a read blocked on a pipe and woken by a write; each task carries a pid, a parent and the status it exited with; `Fork` copies the running process, its pages and its context, into a child | `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `exit statuses 1 -> 4` | copy-on-write: a fork copies every page whole, so a program with many pages pays for all of them; no `exec` |
-| Devices | the PCIe ECAM window discovered from the tree, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci` |, |
-| Second CPU | the tree names the machine's cores, and nothing starts one: a machine with more than one core runs one |, | the PSCI start and its per-CPU path |
+| Devices | the PCIe ECAM window discovered from the tree, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci` | |
+| Second CPU | the tree names the machine's cores, and nothing starts one: a machine with more than one core runs one | | the PSCI start and its per-CPU path |
 
 ---
 
@@ -66,12 +66,12 @@ requires.  The rows below are the machine's own half.
 
 | What | Now | Verified by | Missing |
 |------|-----|-------------|---------|
-| Boot | OpenSBI hands the entry S-mode with the device tree in `a1`; the image is an ELF at the loader's conventional address | the gate's `entered via dtb` line |, |
-| Console | the NS16550A, at the emulated platform's address | every line the gate reads |, |
-| Page table | Sv48, the mode whose four-level walk is the shape the kernel's shared arithmetic defines; `satp`'s page number at the register's own bits | `page table built and installed, 4 KiB granule` |, |
+| Boot | OpenSBI hands the entry S-mode with the device tree in `a1`; the image is an ELF at the loader's conventional address | the gate's `entered via dtb` line | |
+| Console | the NS16550A, at the emulated platform's address | every line the gate reads | |
+| Page table | Sv48, the mode whose four-level walk is the shape the kernel's shared arithmetic defines; `satp`'s page number at the register's own bits | `page table built and installed, 4 KiB granule` | |
 | Interrupts | four lines, all bits in `sie`: the timer's, the software one the machine raises on itself, and the external one a PLIC source arrives on. The PLIC is programmed, and the console's UART is claimed as a real source: enabled at the controller, asked for one transmitter interrupt, acknowledged at the device before the source is completed | `interrupt delivered to its handler`, `external controller at `, `console interrupt(s) taken = 1` | no AIA/IMSIC; one source is claimed, so a second device's interrupt has no handler |
-| Timer and clock | the SBI's legacy set_timer, arming is a trap into M-mode, with every clobbered register declared; the counter's rate comes from the tree, there being no register that states it | `timer armed at 10000 ticks/ms` |, |
-| Ring 3 | `sret` to U-mode, `sscratch` holding the kernel stack for the trap back, `sepc` advanced before a handler can park the frame, `SUM` granted once at the entry | `entering ring 3` |, |
-| Scheduler | preemption, sleeping with a deadline, the largest duration one `addi` immediate can express, a read blocked on a pipe and woken by a write | `the timer preempted, `, `a write woke ` |, |
-| Devices | the PCIe ECAM window discovered from the tree, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci` |, |
-| Second CPU | the tree's hart list minus the hart the firmware cold-booted, started through the HSM call; a started hart takes its own stack and the trap vector, records that it is online, and parks | `hart 1 online` | the started hart runs nothing: no ticks, no scheduler, the scheduler is a single structure, and its per-hart path is the change that grows it |
+| Timer and clock | the SBI's legacy set_timer, arming is a trap into M-mode, with every clobbered register declared; the counter's rate comes from the tree, there being no register that states it | `timer armed at 10000 ticks/ms` | |
+| Ring 3 | `sret` to U-mode, `sscratch` holding the kernel stack for the trap back, `sepc` advanced before a handler can park the frame, `SUM` granted once at the entry | `entering ring 3` | |
+| Scheduler | preemption, sleeping with a deadline, the largest duration one `addi` immediate can express, a read blocked on a pipe and woken by a write | `the timer preempted, `, `a write woke ` | |
+| Devices | the PCIe ECAM window discovered from the tree, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci` | |
+| Second CPU | the tree's hart list minus the hart the firmware cold-booted, started through the HSM call; a started hart takes its own stack and the trap vector, records that it is online, and parks | `hart 1 online` | **deliberately deferred**: giving a started hart an interrupt means reaching the sink, the console and the scheduler, and all three assume one CPU. Making that path concurrent is a design decision rather than a fix, and nothing in this kernel has parallel work to give a second CPU yet |

@@ -1092,6 +1092,36 @@ which is correct and slower than it needs to be; a COW fork needs a write fault
 this kernel does not handle.  And `exec`: a child that wants a different program
 than its parent has no call for it.
 
+### The second CPU, and why it is parked on purpose
+
+The started hart has its own stack and the trap vector, records that it is
+online, and parks. Giving it interrupts was tried and abandoned, and the
+record of why is worth more than the code was.
+
+Two real defects came out of it, and both are fixed in what this document
+describes:
+
+- **The per-hart stack reservation held one slot.** The entry multiplied the
+  hart's slot by the stack size to pick a stack, so slot 1 pointed past the end
+  of the buffer. It went unnoticed while the started hart only parked, and the
+  moment it took a trap it ran on whatever followed the reservation.
+- **Nothing gated the scheduler on the owning CPU.** A started hart that took a
+  timer would run `wake_expired` and the preemption hook, both of which write a
+  single unlocked structure, and the boot showed a user context installed over
+  a kernel frame.
+
+What is left is not a third bug. It is that the trap path itself is a single
+CPU's: the sink writes the console byte by byte with no lock, and the scheduler
+is one structure. A second hart can only enter that path if those three become
+concurrent-safe, and that is a design decision with a cost, not a fix with a
+diff.
+
+Nothing in this kernel has parallel work to give a second CPU: there is no SMP
+scheduler, no parallel driver and no load. So the honest state is the one the
+census records: the hart comes up, the boot can see it, and it does nothing
+else. When there is work for it, the change that gives it that work is also the
+change that decides how the trap path becomes concurrent.
+
 ### The first device that raised the line
 
     protofire: console source 10 enabled at the controller

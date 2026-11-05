@@ -45,7 +45,7 @@ machine will check.
 | No architecture gate outside `arch/` | [`scripts/check-arch-fanout.sh`](../../scripts/check-arch-fanout.sh) | `p2` |
 | Every crate with code has tests, and none lost any | [`scripts/check-crate-tests.sh`](../../scripts/check-crate-tests.sh) | `p2` |
 | Lints, and every undocumented `unsafe` | `cargo clippy -- -D warnings` | `p3` |
-| **Everything else in this directory** | **Review** |, |
+| **Everything else in this directory** | **Review** | |
 
 The rules a machine does not check are the naming conventions, doc-comment
 coverage, panic discipline, and the parts of the syscall contract that are not a
