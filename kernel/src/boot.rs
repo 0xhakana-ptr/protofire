@@ -101,9 +101,9 @@ pub fn kernel_main() -> ! {
     }
     arch::serial::write_str("\n");
 
-    // The external controller's line, then the timer's: a device's interrupt
-    // has to be deliverable before a driver registers for one, and the timer is
-    // what preempts.
+    // The external controller's line, then the console's source.  The timer
+    // itself was brought up before the other CPUs started, and the code that
+    // enters a program arms it.
     #[cfg(target_os = "none")]
     crate::tick::bring_up_external();
     #[cfg(target_os = "none")]

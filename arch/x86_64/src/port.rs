@@ -44,6 +44,18 @@ pub fn outb(port: u16, value: u8) {
     }
 }
 
+/// Write one 16-bit word to `port`.
+///
+/// The firmware configuration interface's selector is a 16-bit field, which is
+/// the one thing this kernel writes as a word.
+#[cfg(target_os = "none")]
+pub fn outw(port: u16, value: u16) {
+    // SAFETY: as `outb`, a ring-0 write to two bytes of the I/O space.
+    unsafe {
+        core::arch::asm!("out dx, ax", in("dx") port, in("ax") value, options(nomem, nostack, preserves_flags));
+    }
+}
+
 /// Read one 32-bit word from `port`.
 #[cfg(target_os = "none")]
 pub fn inl(port: u16) -> u32 {

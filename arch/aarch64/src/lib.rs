@@ -518,6 +518,14 @@ pub const fn test_interrupt() -> usize {
     0
 }
 
+/// The vector one CPU's wake arrives on at another: the same software
+/// interrupt the self-test raises, which is the number the inter-processor
+/// interrupt carries by design, so the cores the boot proved can take one are
+/// the cores a wake reaches.
+pub const fn ipi_interrupt() -> usize {
+    0
+}
+
 /// The timer's interrupt as a private interrupt number.
 pub const fn timer_interrupt() -> usize {
     timer::TIMER_INTERRUPT

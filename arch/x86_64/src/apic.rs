@@ -54,6 +54,8 @@ pub mod register {
     pub const TASK_PRIORITY: usize = 0x080;
     /// The end-of-interrupt register.
     pub const END_OF_INTERRUPT: usize = 0x0B0;
+    /// The local APIC's own id, in the byte at bits 24..31.
+    pub const ID: usize = 0x020;
     /// The timer's initial count.
     pub const TIMER_INITIAL_COUNT: usize = 0x380;
     /// The timer's current count, which counts *down* to zero.
@@ -77,6 +79,17 @@ pub const SPURIOUS_VECTOR: u8 = 0xFF;
 /// PC's interrupts start for the reason the 8259's remapped base is 0x20: a
 /// device's line must not be numbered like a fault.
 pub const TIMER_VECTOR: u8 = 32;
+
+/// The vector one CPU raises to reach another: the inter-processor interrupt.
+///
+/// The first vector above the timer's, because the timer was the first thing
+/// this machine delivered and the IPI is the second; the vectors above the
+/// exceptions are this kernel's to assign, and assigning them in delivery
+/// order is one fact where a table of chosen numbers would be several.  It is
+/// above the 32 exceptions, which is the only architectural bound, and below
+/// the spurious vector, which is the convention that keeps the highest one
+/// unassigned.
+pub const IPI_VECTOR: u8 = 33;
 
 // The relation a test cannot assert without checking a literal: a device's
 // vector is above every processor exception, of which there are 32.
@@ -146,6 +159,21 @@ impl Apic {
 
     pub const fn base(&self) -> usize {
         self.base
+    }
+
+    /// This CPU's APIC id, from the id register's byte at bits 24..31.
+    ///
+    /// The register is per-CPU at one address, which is why the id is readable
+    /// this way: every CPU reads its own.
+    ///
+    /// # Safety
+    ///
+    /// The base must be mapped as device memory, which is the caller's
+    /// promise from [`Apic::probe`].
+    pub unsafe fn id(&self) -> u32 {
+        // SAFETY: the caller promises the base is a mapped device page.
+        let raw = unsafe { self.read(register::ID) };
+        raw >> 24
     }
 
     /// Read a register.
@@ -315,13 +343,118 @@ impl Apic {
         }
         true
     }
+
+    /// Send an INIT interrupt to the CPU whose APIC id is `target`.
+    ///
+    /// The target CPU resets and waits for a start-up interrupt.  One write,
+    /// asserted: the deassert half of the pair the old machines wanted is a
+    /// broadcast, the manuals' arbitration-id sync for systems whose APICs
+    /// latch the level, and on this machine it arrives at every CPU including
+    /// the sender, which is the sender resetting itself mid-boot.  The target
+    /// that needs resetting got the assert.
+    ///
+    /// # Safety
+    ///
+    /// The base must be a mapped device page.  The target CPU must have a
+    /// page to be started into, because a reset CPU that takes a start-up
+    /// interrupt for a vector nothing mapped is reset twice and lost.
+    pub unsafe fn send_init(&self, target: u32) -> bool {
+        // SAFETY: the caller's contract.
+        unsafe { self.icr(target << 24, ICR_DELIVERY_INIT | ICR_LEVEL_ASSERT) }
+    }
+
+    /// Send a start-up interrupt: the target CPU begins at `vector * 0x1000`
+    /// in 16-bit real mode.
+    ///
+    /// The convention is to send it twice, the second covering a target that
+    /// had not finished resetting when the first arrived; the caller sends
+    /// both, because the sequence is the caller's to own.
+    ///
+    /// # Safety
+    ///
+    /// As [`Apic::send_init`], and `vector * 0x1000` must name the page a
+    /// started CPU should execute.
+    pub unsafe fn send_startup(&self, target: u32, vector: u8) -> bool {
+        // SAFETY: the caller's contract.
+        unsafe {
+            self.icr(
+                target << 24,
+                ICR_DELIVERY_STARTUP | ICR_LEVEL_ASSERT | vector as u32,
+            )
+        }
+    }
+
+    /// Send a fixed interrupt on `vector` to every CPU but this one.
+    ///
+    /// The destination shorthand `0b11` names them all without an id, which is
+    /// what makes this a wake rather than an address: a CPU that has nothing
+    /// enabled on the vector takes nothing, and one that does re-checks its
+    /// wait because of it.
+    ///
+    /// # Safety
+    ///
+    /// The base must be a mapped device page, and every other CPU must have a
+    /// handler for `vector`.
+    pub unsafe fn send_to_others(&self, vector: u8) -> bool {
+        // SAFETY: the caller's contract.
+        unsafe { self.icr(0, ICR_SHORTHAND_OTHERS | vector as u32) }
+    }
+
+    /// The ICR write every send is: wait for any previous send to clear, name
+    /// the destination, write the command.
+    ///
+    /// The ICR's bit 12 reads 1 while a send is in flight, and a second write
+    /// before it clears is dropped, so the wait is what makes two sends in a
+    /// row two sends.  Bounded, because a controller that never clears should
+    /// report `false` rather than hang the boot.
+    ///
+    /// # Safety
+    ///
+    /// The base must be a mapped device page, and the target must have a
+    /// handler for whatever the command delivers.
+    unsafe fn icr(&self, destination: u32, command: u32) -> bool {
+        let mut spins = 0u32;
+        loop {
+            // SAFETY: the caller promises the base is a mapped device page.
+            let status = unsafe { self.read(ICR_COMMAND) };
+            if status & (1 << 12) == 0 {
+                break;
+            }
+            spins += 1;
+            if spins > 1_000_000 {
+                return false;
+            }
+        }
+        // SAFETY: as above.
+        unsafe {
+            self.write(ICR_DESTINATION, destination);
+            self.write(ICR_COMMAND, command);
+        }
+        true
+    }
 }
 
 /// The ICR's high half: where the destination goes.
+///
+/// The destination is the field's **top byte**, bits 24..31 of this dword,
+/// which are bits 56..63 of the 64-bit register: a destination of 1 is written
+/// as `1 << 24`, and a value written whole names no CPU at all, which is the
+/// mistake that sends an INIT to the sender.
 pub const ICR_DESTINATION: usize = 0x310;
 /// The ICR's low half: the vector, the delivery mode and the destination
 /// shorthand.
 pub const ICR_COMMAND: usize = 0x300;
+
+/// The ICR's delivery-mode field, bits 8..10: `0b101` is INIT, `0b110` is
+/// start-up, and both name the target CPU rather than using the shorthand.
+pub const ICR_DELIVERY_INIT: u32 = 0b101 << 8;
+pub const ICR_DELIVERY_STARTUP: u32 = 0b110 << 8;
+/// The ICR's level bit, bit 14: set is assert, clear is deassert.  An INIT
+/// pairs the two; a start-up asserts.
+pub const ICR_LEVEL_ASSERT: u32 = 1 << 14;
+/// The destination shorthand, bits 18..19: `0b11` is every CPU but this one,
+/// which is what an inter-processor interrupt means.
+pub const ICR_SHORTHAND_OTHERS: u32 = 0b11 << 18;
 
 /// Read a model-specific register.
 ///

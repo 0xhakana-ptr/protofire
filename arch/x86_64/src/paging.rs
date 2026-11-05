@@ -185,30 +185,52 @@ pub fn flush_translation() {}
 /// is the machine's, which is why the question is asked here and not in the
 /// code that builds a table.
 pub fn device_windows() -> Windows {
-    Windows::new()
+    // The page a started CPU is entered at.  The boot CPU writes the per-start
+    // handoff into it before every start-up interrupt, and the target CPU
+    // executes the page once, through the boot page table.  Uncached, so the
+    // words the boot CPU wrote are the words the target reads; the code runs
+    // exactly once per CPU and nothing on this machine touches the page after
+    // the handoff is read.
+    let mut windows = Windows::new();
+    windows.push(
+        crate::smp::TRAMPOLINE_ADDRESS,
+        crate::smp::TRAMPOLINE_ADDRESS + 0x1000,
+    );
+    windows
 }
 
 /// A small set of address ranges that are a device's rather than memory's.
 ///
-/// Empty on this machine, and the type is shared with the ones whose answer is
-/// not: `kernel::address_space` asks every machine the same question and gets
-/// the same shape back, which is what keeps the caller from knowing which
-/// machine answered.
+/// The trampoline page is this machine's one entry, and the type is shared with
+/// the machines whose answer is longer: `kernel::address_space` asks every
+/// machine the same question and gets the same shape back, which is what keeps
+/// the caller from knowing which machine answered.
 #[derive(Debug, Clone, Copy)]
 pub struct Windows {
+    entries: [(usize, usize); 4],
     length: usize,
 }
 
 impl Windows {
-    /// No windows.
+    /// No windows: every address keeps its rule.
     pub const fn new() -> Windows {
-        Windows { length: 0 }
+        Windows {
+            entries: [(0, 0); 4],
+            length: 0,
+        }
     }
 
-    /// The ranges, in no order.  Empty here.
+    /// Add one half-open range.  A full set drops it rather than growing.
+    pub fn push(&mut self, start: usize, end: usize) {
+        if self.length < self.entries.len() {
+            self.entries[self.length] = (start, end);
+            self.length += 1;
+        }
+    }
+
+    /// The ranges, in the order they were added.
     pub fn as_slice(&self) -> &[(usize, usize)] {
-        let _ = self.length;
-        &[]
+        &self.entries[..self.length]
     }
 }
 

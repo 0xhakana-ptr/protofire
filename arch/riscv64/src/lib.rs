@@ -940,6 +940,13 @@ pub const fn test_interrupt() -> usize {
     trap::SOFTWARE_INTERRUPT
 }
 
+/// The software interrupt's number, as the cause reports it: the one line an
+/// inter-processor interrupt arrives on, which is the self-test's number by
+/// the same reasoning.
+pub const fn ipi_interrupt() -> usize {
+    trap::SOFTWARE_INTERRUPT
+}
+
 /// The timer's interrupt number, as the cause reports it.
 pub const fn timer_interrupt() -> usize {
     trap::TIMER_INTERRUPT

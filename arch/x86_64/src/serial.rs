@@ -181,14 +181,12 @@ pub fn write_str(text: &str) {
 fn push(byte: u8) {
     // A slot past the array would be a CPU the kernel never numbered, and the
     // boot's own bound is what stops one: the last slot is the one a started
-    // hart is given.  Clamping rather than panicking keeps the console usable
+    // CPU is given.  Clamping rather than panicking keeps the console usable
     // from a fault handler, which is where a wrong slot would be discovered.
-    // One buffer, because this machine reports one CPU: the slot is zero and
-    // the array holds it.  A machine that started a second CPU would index by
-    // its slot instead, which is what the riscv64 arm does.
-    let slot = 0;
-    // SAFETY: the slot is this CPU's own, from `tp`, and no other CPU reads or
-    // writes this buffer.  The buffer's own flush takes the console lock.
+    let slot = crate::current_cpu_slot().min(LINE_SLOTS - 1);
+    // SAFETY: the slot is this CPU's own, from its `GS` base, and no other CPU
+    // reads or writes this buffer.  The buffer's own flush takes the console
+    // lock.
     let line = unsafe { &mut *LINE_BUFFERS[slot].get() };
     if byte != b'\n' {
         line.push(byte);
@@ -232,9 +230,10 @@ static LINE_BUFFERS: [cell::SyncUnsafeCell<LineBuffer>; LINE_SLOTS] =
 
 /// How many line buffers there are: one per CPU slot the kernel can number.
 ///
-/// This machine starts no second processor, so one CPU is one line buffer; a
-/// machine that read a MADT would change this beside its AP start.
-const LINE_SLOTS: usize = 1;
+/// The boot CPU's plus one for every CPU the machine may start, the same
+/// derivation the kernel stacks use, so a started CPU has a buffer of its own
+/// and two CPUs assembling lines never share one.
+const LINE_SLOTS: usize = crate::smp::MAX_SECONDARY_HARTS + 1;
 
 /// A line being assembled, as a fixed array and a length.
 ///

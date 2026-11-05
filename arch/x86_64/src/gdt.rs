@@ -269,22 +269,32 @@ mod bare {
     use super::TaskStateSegment;
     use super::table_words;
 
-    /// The table the machine is loaded with.
-    ///
-    /// Written by [`install`] and read back by [`installed`]: the words depend
-    /// on the TSS's address, which is only known at run time.
-    static TABLE: cell::SyncUnsafeCell<[u64; TABLE_WORDS]> =
-        cell::SyncUnsafeCell::new([0; TABLE_WORDS]);
+    /// How many slots the tables describe: the boot CPU's and one per CPU the
+    /// machine may start.
+    const SLOTS: usize = crate::smp::MAX_SECONDARY_HARTS + 1;
 
-    /// The TSS itself.
+    /// The tables the CPUs are loaded with, one per slot.
+    ///
+    /// Written by [`install_for`] and read back by [`installed`]: the words
+    /// depend on the TSS's address, which is only known at run time.  One
+    /// table per slot and not one shared table with several TSS descriptors,
+    /// because a table is what `lgdt` loads and each CPU loads its own; the
+    /// selectors are the same in every one, which is why the kernel's names
+    /// for them do not change per CPU.
+    static TABLE: cell::SyncUnsafeCell<[[u64; TABLE_WORDS]; SLOTS]> =
+        cell::SyncUnsafeCell::new([[0; TABLE_WORDS]; SLOTS]);
+
+    /// The task state segments, one per slot.
     ///
     /// A `static` rather than an allocation because `ltr` takes a selector and
     /// the descriptor names an address, and an address into the heap would
     /// become invalid the moment the heap moved anything, which nothing does,
     /// but a TSS whose location is a promise about an allocator is a worse
-    /// promise than one whose location is a symbol.
-    static TSS: cell::SyncUnsafeCell<TaskStateSegment> =
-        cell::SyncUnsafeCell::new(TaskStateSegment::new());
+    /// promise than one whose location is a symbol.  One per CPU because
+    /// `RSP0` is per-CPU: two CPUs pointing one TSS at two stacks is two
+    /// interrupts landing on whichever stack was written last.
+    static TSS: cell::SyncUnsafeCell<[TaskStateSegment; SLOTS]> =
+        cell::SyncUnsafeCell::new([const { TaskStateSegment::new() }; SLOTS]);
 
     /// Load the table, load the TSS, and reload every segment selector.
     ///
@@ -304,20 +314,23 @@ mod bare {
     ///
     /// # Safety
     ///
-    /// Called once, after the console is up and before anything enters ring 3.
-    /// `stack_top` must be a writable kernel stack with room for a trap frame,
-    /// because it is what every interrupt from ring 3 will run on.
-    pub unsafe fn install(stack_top: usize) -> bool {
-        // SAFETY: both statics are this module's, and this is the only writer.
+    /// Called once per CPU, after the console is up and before anything enters
+    /// ring 3 on that CPU.  `stack_top` must be a writable kernel stack with
+    /// room for a trap frame, because it is what every interrupt from ring 3
+    /// will run on, and it must be that CPU's own: the TSS is where the
+    /// processor finds it.
+    pub unsafe fn install_for(slot: usize, stack_top: usize) -> bool {
+        // SAFETY: both statics are this module's, and this is the only writer
+        // of `slot`'s entries.
         let tss = unsafe { &mut *TSS.get() };
-        tss.set_rsp0(stack_top);
+        tss[slot].set_rsp0(stack_top);
 
-        let tss_address = tss as *mut TaskStateSegment as u64;
+        let tss_address = &tss[slot] as *const TaskStateSegment as u64;
         // SAFETY: as above, the table's only writer.
         let table = unsafe { &mut *TABLE.get() };
-        *table = table_words(tss_address);
+        table[slot] = table_words(tss_address);
 
-        let descriptor = DescriptorPointer::new(table.as_ptr() as u64);
+        let descriptor = DescriptorPointer::new(table[slot].as_ptr() as u64);
         let address = &descriptor as *const DescriptorPointer;
         // SAFETY: `descriptor` names the table just filled, which is a
         // seven-word static; `lgdt` takes effect for the next descriptor load.
@@ -327,6 +340,10 @@ mod bare {
 
         // The data segments, then the TSS.  `ltr` reads entry 5, which is why
         // it comes after `lgdt` and not before.
+        //
+        // `ax` is named as an output: the writes below go through it, and the
+        // compiler is entitled to keep a value in the register across the
+        // block, which an undeclared clobber would silently truncate.
         //
         // SAFETY: the selectors name entries of the table just loaded, and the
         // ring-0 data descriptor is entry 2, the same bits the boot loaded.
@@ -338,6 +355,7 @@ mod bare {
                 "mov fs, ax",
                 "mov gs, ax",
                 "mov ss, ax",
+                out("ax") _,
                 options(nostack, preserves_flags)
             );
             core::arch::asm!("ltr ax", in("ax") super::TSS_SELECTOR, options(nostack, preserves_flags));
@@ -347,7 +365,17 @@ mod bare {
         // answers: a selector, so a machine that ignored `ltr` reports zero.
         let loaded = installed();
         let task = task_register();
-        loaded.base() == table.as_ptr() as u64 && task == super::TSS_SELECTOR
+        loaded.base() == table[slot].as_ptr() as u64 && task == super::TSS_SELECTOR
+    }
+
+    /// Load slot zero's table, which is the boot CPU's.
+    ///
+    /// # Safety
+    ///
+    /// As [`install_for`].
+    pub unsafe fn install(stack_top: usize) -> bool {
+        // SAFETY: the caller's contract, for the boot CPU's slot.
+        unsafe { install_for(0, stack_top) }
     }
 
     /// The table the processor is reading, from `sgdt`.
@@ -389,12 +417,14 @@ mod bare {
     pub fn rsp0_in_memory() -> u64 {
         // SAFETY: the static is this module's, and the read is after `install`.
         let tss = unsafe { &*TSS.get() };
-        tss.rsp0()
+        tss[0].rsp0()
     }
 }
 
 #[cfg(target_os = "none")]
 pub use bare::install;
+#[cfg(target_os = "none")]
+pub use bare::install_for;
 #[cfg(target_os = "none")]
 pub use bare::installed;
 #[cfg(target_os = "none")]

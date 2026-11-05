@@ -1218,35 +1218,30 @@ the question is asking.
 
 Nothing in the kernel assumes two CPUs.  The start loop is
 `for slot in 0..started`, the scheduler's `running` array is one slot per CPU,
-`per_cpu::CPUS` is one record per slot, and the trap entry derives the slot from
-the kernel stack rather than from a count.  The limits are constants:
+`per_cpu::CPUS` is one record per slot, and each machine's trap path answers
+"which CPU am I" from the machine's own register: riscv64 derives the slot from
+the kernel stack in the trap entry, aarch64 keeps it in `TPIDR_EL1`, and
+x86_64 in its `GS` base.  The limits are constants:
 
 | Where | What | Why it is that number |
 |---|---|---|
-| `arch/riscv64/src/smp.rs` | `MAX_SECONDARY_HARTS = 4` | the `kernel_stacks` reservation is sized from it, and the entry assembly indexes that array by slot |
-| `kernel/src/per_cpu.rs` | `MAX_SECONDARY_CPUS = 4` | the kernel's copy of the same number |
-| `kernel/src/per_cpu.rs` | `MAX_CPUS = 1 + MAX_SECONDARY_CPUS` | slot zero is the boot hart's |
+| `arch/riscv64/src/smp.rs`, `arch/aarch64/src/smp.rs`, `arch/x86_64/src/smp.rs` | `MAX_SECONDARY_HARTS = 4` | each machine's `kernel_stacks` reservation is sized from it, and each entry assembly indexes that array by slot |
+| `kernel/src/per_cpu.rs` | `MAX_SECONDARY_CPUS = arch::MAX_SECONDARY_HARTS` | the kernel asks the machine rather than copying the number, so the two cannot disagree |
+| `kernel/src/per_cpu.rs` | `MAX_CPUS = 1 + MAX_SECONDARY_CPUS` | slot zero is the boot CPU's |
 | `kernel/src/scheduler/core.rs` | `running: [Option<usize>; MAX_CPUS]` | one current task per CPU |
-| `kernel/src/scheduler/core.rs` | `running: [Option<usize>; MAX_CPUS]` | one current task per CPU |
-| `arch/riscv64/src/serial.rs` | `LINE_SLOTS` | one console line buffer per CPU |
+| `arch/*/src/serial.rs` | `LINE_SLOTS` | one console line buffer per CPU, on every machine |
 | `arch/riscv64/src/boot.rs` | `MAX_HART_NODES = 8` | how many `/cpus` children the tree walk reads |
-| `tools/xtask/src/main.rs` | `-smp 2` | the gate's machine, not a kernel limit |
+| `tools/xtask/src/main.rs` | `-smp 2` | the gate's machines, not a kernel limit: all three boot with two |
 
 The numbers that matter are the first three rows: the machine's cap and the
-kernel's copy of it are the same four written in two crates, and the defect
-two-CPU support cost the most to find was exactly a disagreement between them.
+kernel's copy of it are one derivation, and the defect two-CPU support cost the
+most to find was exactly a disagreement between them.
 `MAX_CPUS` here was four while the slots a boot uses are 1..=4, so the fourth CPU
 shared the boot CPU's arrays, and the symptom was a task resumed with another
-CPU's context.
-
-The guard that change deserves is a compile-time assertion.  As the tree stands
-there is none: the kernel's copy is kept in step by a comment asking the next
-reader to keep it in step, which is the arrangement that failed once already.
-The cheapest fix is for each machine to export its own `MAX_CPUS` and for
-`kernel/src/per_cpu.rs` to assert its derived total against it: a machine that
-raised a cap without the kernel following would then be a build error rather
-than a slot two CPUs share at run time.  That change is written and not yet
-gated; it belongs in the change that raises a cap, not in a document.
+CPU's context.  The guard that defect deserved is now in place: the kernel's
+constant is derived from the machine's, so a machine that raises its cap moves
+the kernel's with it, and the `panic` in `per_cpu::cpu` is the belt for a slot
+that comes from outside the derivation, such as a register.
 
 The cost of raising the cap is memory, and it is small here: the stack
 reservation is `(MAX_SECONDARY_HARTS + 1) * 64 KiB`, so four secondaries are

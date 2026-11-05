@@ -344,16 +344,36 @@ pub unsafe fn install() -> bool {
     // syntax is `lidt [mem]`, the brackets mean "the structure is at this
     // address", not "load the value".  Built on the stack, two bytes then
     // eight, which is what the register reads.
+    //
+    // SAFETY: the table was built above and is fully filled.
+    unsafe { load_on_this_cpu() }
+
+    gates > 0 && loaded().base() == table as *const Table as u64 && self_test()
+}
+
+/// Load the built table into this CPU's `IDTR`.
+///
+/// The table itself is shared memory the boot CPU built once; the register is
+/// per-CPU, which is why a started CPU loads it again.  A CPU that skipped
+/// this would take its first vector through whatever the reset left in the
+/// register, which is nothing at all.
+///
+/// # Safety
+///
+/// The table must have been built by [`install`]; this loads what exists,
+/// unchanged.
+#[cfg(target_os = "none")]
+pub unsafe fn load_on_this_cpu() {
+    // SAFETY: the static is this module's, built by `install` before any CPU
+    // was started.
+    let table = unsafe { &*TABLE.get() };
     let descriptor = table.descriptor();
     let address = &descriptor as *const Descriptor;
-    // SAFETY: `descriptor` names this table, which is a page-aligned static and
-    // is fully filled above.  `lidt` loads it and takes effect for the next
-    // interrupt.
+    // SAFETY: `descriptor` names the built table.  `lidt` loads it and takes
+    // effect for the next interrupt.
     unsafe {
         core::arch::asm!("lidt [{}]", in(reg) address, options(readonly, nostack));
     }
-
-    gates > 0 && loaded().base() == table as *const Table as u64 && self_test()
 }
 
 /// The address the last fault named, or zero for a vector that did not fault.

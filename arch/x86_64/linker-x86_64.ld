@@ -46,6 +46,7 @@ SECTIONS
     __rodata_start = .;
     .rodata : {
         *(.rodata .rodata.*)
+        KEEP(*(.trampoline))
     }
     __rodata_end = .;
 

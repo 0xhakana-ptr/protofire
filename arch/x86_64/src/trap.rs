@@ -220,14 +220,33 @@ pub unsafe fn timer_controller() -> Option<crate::apic::Apic> {
 ///
 /// The local APIC holds a line in service until this is written.  A handler
 /// that returned without it takes exactly one interrupt and then appears to
-/// hang, the same failure aarch64's `EOIR` exists to prevent.
+/// hang: the line stays in service, and the processor will not deliver a
+/// second interrupt of the same priority class while one is, which for a
+/// vector beside the timer's is the timer itself.
+///
+/// The recorded controller is the fast answer, and the probe is the honest
+/// one: the recording happens in the timer's bring-up, which is *after* the
+/// boot's self-test raises its vector, and an EOI skipped because the record
+/// did not exist yet is a line in service for the rest of the boot.  A probe
+/// is one MSR read, and it runs only while the record is absent.
 #[cfg(target_os = "none")]
 fn end_of_interrupt() {
-    // SAFETY: the controller was recorded before the timer was armed, and this
-    // runs in the handler for the vector it raised.
-    if let Some(apic) = unsafe { *TIMER.get() } {
-        // SAFETY: as above.
-        unsafe { apic.end_of_interrupt() };
+    // SAFETY: the controller was recorded before the timer was armed, and
+    // this runs in the handler for the vector it raised.
+    let recorded = unsafe { *TIMER.get() };
+    match recorded {
+        Some(apic) => {
+            // SAFETY: as above.
+            unsafe { apic.end_of_interrupt() };
+        }
+        None => {
+            // SAFETY: the probe reads the APIC's base MSR, and the window it
+            // names is mapped; this is the CPU's own controller.
+            if let Some(apic) = unsafe { crate::apic::Apic::probe() } {
+                // SAFETY: the vector that ran is this controller's.
+                unsafe { apic.end_of_interrupt() };
+            }
+        }
     }
 }
 

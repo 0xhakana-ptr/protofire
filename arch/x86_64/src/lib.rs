@@ -23,6 +23,7 @@ pub mod paging;
 pub mod pic;
 pub mod port;
 pub mod serial;
+pub mod smp;
 pub mod trap;
 
 /// The local APIC, by name: the boot asks the machine whether it has one, and
@@ -425,22 +426,21 @@ pub unsafe fn timer_fired() -> bool {
     false
 }
 
-/// The line a boot raises to prove the interrupt path: the timer's.
+/// The line a boot raises to prove the interrupt path: the IPI's.
 ///
-/// Vector zero is the divide error, so a self-directed interrupt at zero is a
-/// fault the processor takes and the dispatch never sees, a boot reported
-/// "raised but not delivered" on every run with nothing actually wrong.
+/// The timer's vector was the instrument once, for a reason that has since
+/// moved: a spare vector's delivery leaves the controller with a line in
+/// service that the kernel's sink did not claim, and the state a real tick
+/// never produces.  The IPI vector has a claiming handler now, which is the
+/// whole of what that reason asked for, and proving the gate this boot's own
+/// inter-processor interrupts arrive through is worth more than proving the
+/// timer's twice.
 ///
-/// A spare vector above the timer's is worse rather than better: the local APIC
-/// records what it delivers as in-service, and a vector the kernel's sink does
-/// not claim leaves the controller in a state a real tick never produces.  The
-/// boot then reported the test as delivered and took no tick afterwards.
-///
-/// So the instrument is the timer's own vector.  Nothing has armed the timer
-/// when the boot raises it, so this is the only delivery on that vector, and a
-/// sink that counts it is a sink that will count the real ones.
+/// Nothing has armed the timer when the boot raises it, so the vector arrives
+/// once, and a sink that counts it is a sink that will count the ones another
+/// CPU sends.
 pub const fn test_interrupt() -> usize {
-    crate::apic::TIMER_VECTOR as usize
+    apic::IPI_VECTOR as usize
 }
 
 pub const fn timer_interrupt() -> usize {
@@ -527,103 +527,108 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
     unsafe { apic.raise_to_self(number as u8) }
 }
 
-/// The most CPUs past the boot one this machine starts: none.
-pub const MAX_SECONDARY_HARTS: usize = 0;
+/// The most CPUs past the boot one this tree starts.
+pub const MAX_SECONDARY_HARTS: usize = smp::MAX_SECONDARY_HARTS;
 
-/// Start this machine's other CPUs: this machine starts none.
+/// Start this machine's other CPUs: the INIT-SIPI-SIPI sequence, one CPU at a
+/// time.
 ///
-/// The local APIC's ICR can reach another CPU, an INIT-SIPI-SIPI sequence is
-/// how an application processor is woken, but there is no discovery behind it
-/// on this machine: no MADT is read, so there is no list of processors to
-/// start and no place to start them into.  Zero is the honest answer today: a
-/// machine with more than one CPU runs one, and a count without a path behind
-/// it is exactly the claim this tree's boot lines exist to refuse.
+/// How many to ask is the firmware configuration interface's answer, and the
+/// sequence is the local APIC's ICR: an INIT resets the target, a start-up
+/// interrupt names the page it begins at.  The page and the handoff are
+/// [`smp`]'s, and so is the wait between starts.
 ///
 /// # Safety
 ///
-/// As the riscv64 arm: called once, from the boot CPU, with the tables up.
-/// This arm touches nothing, which keeps its half of the promise.
+/// Called once, from the boot CPU, with the tables up.
 #[cfg(target_os = "none")]
-pub unsafe fn start_secondary_harts(_timer_slice_us: u64) -> usize {
-    0
+pub unsafe fn start_secondary_harts(timer_slice_us: u64) -> usize {
+    // SAFETY: the caller's contract is this function's, once, from the boot
+    // CPU, with the tables up.
+    unsafe { smp::start_secondary_harts(timer_slice_us) }
 }
 
-/// The CPU id started into `slot`: this machine starts none, so every slot is
-/// empty and the answer is zero.
-pub fn secondary_hart_id(_slot: usize) -> usize {
-    0
+/// The APIC id this boot asked to start into `slot`.
+pub fn secondary_hart_id(slot: usize) -> usize {
+    smp::secondary_hart_id(slot)
 }
 
-/// Whether the CPU started into `slot` came up: this machine starts none, so
-/// no slot is online.
-pub fn secondary_online(_slot: usize) -> bool {
-    false
+/// Whether the CPU started into `slot` came up and recorded that it is running.
+pub fn secondary_online(slot: usize) -> bool {
+    smp::secondary_online(slot)
 }
 
-/// The CPUs the firmware refused to start: this machine asks for none, so
-/// none were refused.
+/// The CPUs the start sequence refused: none, because a start-up interrupt to
+/// an id no CPU has is ignored by the machine rather than refused, and a CPU
+/// that never came up is reported per slot by the boot.
 pub fn refused_harts() -> usize {
     0
 }
 
-/// Which CPU this code runs on: this machine runs one, so slot zero.
+/// Which CPU this code runs on, from the `GS` base this CPU wrote at start.
 pub fn current_cpu_slot() -> usize {
-    0
+    smp::current_cpu_slot()
 }
 
-/// The machine's own id for this CPU.
-///
-/// This machine reads no processor table, so the CPU it runs on is the one the
-/// firmware booted and zero is the only id it has.  A machine that read an APIC
-/// id would answer with it here, and the slot would stay the kernel's
-/// numbering.
+/// The machine's own id for this CPU: the local APIC's id register, which is
+/// per-CPU at one address.
 pub fn current_cpu_id() -> usize {
-    0
+    smp::current_cpu_id()
 }
 
-/// Whether this is the CPU the boot started on: this machine starts one, so it
-/// always is.
+/// Whether this is the CPU the boot started on.
 ///
-/// The same question `arch_riscv64` answers by reading its slot.  What the trap
-/// path asks it for is whether this CPU may touch the external interrupt
-/// controller, and a machine with one CPU has one controller context.
+/// Slot zero is the boot CPU's by the kernel's numbering, and the question is
+/// the slot's, so the answer is the slot's comparison.
 pub fn boot_cpu_owns_this_trap() -> bool {
-    true
+    current_cpu_slot() == 0
 }
 
-/// Send an inter-processor interrupt: this machine starts no second CPU, so
-/// there is none to send to.
+/// Send an inter-processor interrupt to every other CPU.
+///
+/// The local APIC's ICR names them all with its destination shorthand, on the
+/// vector the kernel's sink claims as the wake.
 ///
 /// # Safety
 ///
-/// As the riscv64 arm.  This one touches nothing.
+/// Every other CPU must have the vector's gate installed and its local APIC
+/// enabled, which is what a started CPU does before it records that it is
+/// running.
 #[cfg(target_os = "none")]
 pub unsafe fn send_ipi_to_others() -> bool {
-    false
+    // SAFETY: the caller's contract: every started CPU answers this vector.
+    match unsafe { Apic::probe() } {
+        Some(apic) => unsafe { apic.send_to_others(apic::IPI_VECTOR) },
+        None => false,
+    }
 }
 
-/// The kernel's source of work for a started CPU: this machine starts none, so
-/// nothing ever asks and nothing is installed.
-///
-/// The signature exists because the kernel's boot installs it on every machine,
-/// and a machine that had to omit the call would be a boot with an `if` about
-/// which machine it is running on.  The same reason `install_interrupt_table`
-/// answers `false` here rather than not existing.
+/// The kernel's source of work for a started CPU: what a wake asks for.
 ///
 /// # Safety
 ///
-/// As the riscv64 arm: called once, before any started CPU could ask.
+/// Called once, before any started CPU could ask.
 #[cfg(target_os = "none")]
-pub unsafe fn set_work_sink(_sink: fn(usize) -> Option<(usize, Context)>) {}
+pub unsafe fn set_work_sink(sink: fn(usize) -> Option<(usize, Context)>) {
+    // SAFETY: the caller's contract is this function's, once.
+    unsafe { smp::set_work_sink(sink) };
+}
 
-/// The kernel's end-of-boot predicate: as `set_work_sink`, this machine starts
-/// no CPU that could ask it.
+/// The kernel's end-of-boot predicate, as the started CPUs read it.
 ///
 /// # Safety
 ///
-/// As the riscv64 arm.
+/// Called once, before any started CPU could ask.
 #[cfg(target_os = "none")]
-pub unsafe fn set_finished_sink(_sink: fn() -> bool) {}
+pub unsafe fn set_finished_sink(sink: fn() -> bool) {
+    // SAFETY: the caller's contract is this function's, once.
+    unsafe { smp::set_finished_sink(sink) };
+}
+
+/// The vector one CPU's wake arrives on at another.
+pub const fn ipi_interrupt() -> usize {
+    apic::IPI_VECTOR as usize
+}
 
 /// The external interrupt controller this machine drives as a window: none.
 ///

@@ -95,6 +95,13 @@ impl Machine {
                 "q35".to_string(),
                 "-cpu".to_string(),
                 "max".to_string(),
+                // Two CPUs, so the boot's INIT-SIPI start runs: the boot asks
+                // the firmware configuration interface how many exist and
+                // starts the rest, and a gate that booted one CPU would never
+                // exercise the start.  The same argument aarch64's `-smp 2`
+                // and riscv64's make.
+                "-smp".to_string(),
+                "2".to_string(),
                 "-m".to_string(),
                 "512M".to_string(),
                 "-drive".to_string(),
@@ -323,6 +330,18 @@ impl Machine {
                 // exceptions, because vector zero is the divide error and the
                 // APIC will happily deliver a fault.
                 ("protofire: interrupt delivered to its handler", true),
+                // Two CPUs, and the same evidence aarch64 requires: the
+                // INIT-SIPI start reached a CPU that came up and recorded it,
+                // the interrupt the boot sent it arrived, and a program ran on
+                // it to its exit.  A gate at one CPU would accept an ICR write
+                // that never started anyone.
+                ("protofire: hart 1 online", true),
+                ("protofire: ipi to 1 other cpu(s), taken", true),
+                ("protofire: cpu 1 id 1, ticking, 1 ipi(s), ", false),
+                ("protofire: work available, started cpus woken", true),
+                ("protofire: cpu 1 runs process ", false),
+                ("protofire: program ended on cpu 1", true),
+                ("protofire: parallel, programs ended on ", false),
                 // Two programs in ring 3, each in an address space of its own.
                 //
                 // `1` and `2` are the programs' own numbers: one program

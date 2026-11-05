@@ -161,11 +161,14 @@ pub fn handle(frame: irq::Frame) -> bool {
         return true;
     }
 
-    // A machine whose self-check uses a vector of its own records it here.
-    // x86_64's uses the timer's, so it never reaches this; aarch64's uses a
-    // software interrupt, which is not a timer and not a fault.
+    // A wake from another CPU, and the machine's own self-test interrupt,
+    // which on every machine here is the same line an inter-processor
+    // interrupt arrives on: aarch64's software interrupt, riscv64's software
+    // cause, x86_64's IPI vector.  Counting it is what separates "the CPU
+    // took an interrupt" from "the CPU is running this kernel", which is the
+    // evidence the boot's own IPI proof reads.
     #[cfg(target_os = "none")]
-    if vector == test_interrupt() && vector != arch::timer_interrupt() {
+    if vector == arch::ipi_interrupt() {
         let slot = crate::per_cpu::current_slot();
         crate::per_cpu::count_ipi(slot);
         TEST_INTERRUPT_RAISED.store(vector, core::sync::atomic::Ordering::Release);
