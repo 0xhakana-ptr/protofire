@@ -27,5 +27,7 @@
 #![no_std]
 
 pub mod cell;
+pub mod spin;
 
 pub use cell::SyncUnsafeCell;
+pub use spin::RawSpin;

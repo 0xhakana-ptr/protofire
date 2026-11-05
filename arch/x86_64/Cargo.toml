@@ -6,11 +6,15 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+# The boot's tables and sinks live in `static`s the trap path writes once
+# and every dispatch reads, and the console's cross-CPU lock is one atomic
+# bit.  `SyncUnsafeCell` and `RawSpin` are both this crate's, and both are
+# named by the host arm too, so the dependency is not target-gated.
+cell = { path = "../../libs/cell" }
 abi.workspace = true
 x86_64.workspace = true
 # The handshake slot, and the type the answer is stated in.  No `kernel`: this
 # crate is below it, and an edge upward is the one this tree forbids.
-cell = { path = "../../libs/cell" }
 # The page-table types and the index arithmetic.  A machine encodes an entry
 # and installs a table; what a table *is*, and the arithmetic that walks one,
 # is `paging`'s — which is why this crate names it and not `memory`.

@@ -99,9 +99,8 @@ impl AddressSpace {
     /// root is never one of them: its entry 0 is *read* here.
     #[cfg(target_os = "none")]
     pub unsafe fn new() -> Option<AddressSpace> {
-        let tables = TABLES.get();
-        // SAFETY: the static is this module's, and this runs after `install`.
-        let tables = unsafe { &mut *tables };
+        let mut guard = TABLES.lock();
+        let tables = &mut *guard;
 
         let frame = tables.frames.allocate(1)?;
         if frame.is_null() {
@@ -144,10 +143,8 @@ impl AddressSpace {
         if virtual_address < USER_BASE || !virtual_address.is_multiple_of(GRANULE) {
             return false;
         }
-        let tables = TABLES.get();
-        // SAFETY: the static is this module's; the frames it reaches are this
-        // address space's own root.
-        let tables = unsafe { &mut *tables };
+        let mut guard = TABLES.lock();
+        let tables = &mut *guard;
 
         // The root's entry for this address, and a second-level table under it.
         let root_index = index(Level::Root, virtual_address);
@@ -224,10 +221,8 @@ impl AddressSpace {
     /// `self` must not be the installed address space: freeing the root the
     /// machine is translating through is a fault on the next instruction.
     pub unsafe fn release(self) {
-        let tables = TABLES.get();
-        // SAFETY: the static is this module's, and the caller promises this
-        // space is not the installed one.
-        let tables = unsafe { &mut *tables };
+        let mut guard = TABLES.lock();
+        let tables = &mut *guard;
         for frame in &self.frames[..self.used] {
             let _ = tables.frames.deallocate(*frame as *mut u8, 1);
         }
@@ -310,9 +305,8 @@ pub(crate) fn walk_or_create(
 /// mapping owns.
 #[cfg(target_os = "none")]
 pub unsafe fn map_user_page(virtual_address: usize, physical: usize) -> bool {
-    let tables = TABLES.get();
-    // SAFETY: the static is this module's, and this runs after `install`.
-    let tables = unsafe { &mut *tables };
+    let mut guard = TABLES.lock();
+    let tables = &mut *guard;
 
     if virtual_address >= IDENTITY_LIMIT || !virtual_address.is_multiple_of(GRANULE) {
         return false;
@@ -345,10 +339,8 @@ pub unsafe fn map_user_page(virtual_address: usize, physical: usize) -> bool {
 /// as the program does.
 #[cfg(target_os = "none")]
 pub fn allocate_image_frame() -> Option<usize> {
-    let tables = TABLES.get();
-    // SAFETY: the static is this module's, and this runs after `install`.
-    let tables = unsafe { &mut *tables };
-    let frame = tables.frames.allocate(1)?;
+    let mut guard = TABLES.lock();
+    let frame = guard.frames.allocate(1)?;
     (!frame.is_null()).then_some(frame as usize)
 }
 
@@ -373,9 +365,8 @@ pub fn allocate_image_frame() -> Option<usize> {
 /// allocates from it.  The frame is released before this returns.
 #[cfg(target_os = "none")]
 pub unsafe fn self_check_frame_pool() -> bool {
-    let tables = TABLES.get();
-    // SAFETY: the static is this module's, and this runs after `install`.
-    let tables = unsafe { &mut *tables };
+    let mut guard = TABLES.lock();
+    let tables = &mut *guard;
 
     let before = tables.frames.free_frames() + tables.frames.available_frames();
     let Some(frame) = tables.frames.allocate(1) else {

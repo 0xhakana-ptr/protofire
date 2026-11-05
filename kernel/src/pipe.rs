@@ -45,12 +45,15 @@ use ipc::ByteRing;
 /// Shared by both ends, because a reader has to know whether a writer still
 /// exists, that is what turns "no bytes yet" into "no bytes ever".
 pub struct Pipe {
-    /// The buffer, inside a cell because both ends reach it through one `Arc`
-    /// and neither owns it.  This kernel serves one call at a time, so the
-    /// exclusive borrow a caller takes is the only one there is, the argument
-    /// `syscall`'s registry makes for its own static, and the note that stops
-    /// being true with a second CPU belongs in the same place here.
-    ring: cell::SyncUnsafeCell<ByteRing>,
+    /// The buffer, behind a lock because both ends reach it through one `Arc`
+    /// and neither owns it.  It used to be a cell with the argument that one
+    /// CPU serves one call at a time, which stops being true with a second CPU:
+    /// a reader on one CPU and a writer on the other would be two mutable
+    /// borrows of one ring, moving the same two cursors.
+    ///
+    /// The lock is per-pipe and held only for one `read_from` or `write_to`, so
+    /// two pipes never wait on each other.
+    ring: sync::Mutex<ByteRing>,
     /// How many write ends are open.  Zero means a reader will see end-of-file.
     writers: core::sync::atomic::AtomicUsize,
     /// How many read ends are open.  Zero means a writer's bytes go nowhere.
@@ -61,7 +64,7 @@ impl Pipe {
     /// A pipe with a buffer of `capacity` bytes and one end of each kind.
     pub fn new(capacity: usize) -> Pipe {
         Pipe {
-            ring: cell::SyncUnsafeCell::new(ByteRing::new(capacity)),
+            ring: sync::Mutex::new(ByteRing::new(capacity)),
             writers: core::sync::atomic::AtomicUsize::new(1),
             readers: core::sync::atomic::AtomicUsize::new(1),
         }
@@ -69,12 +72,12 @@ impl Pipe {
 
     /// How many bytes are waiting.
     pub fn available(&self) -> usize {
-        self.ring_ref().available()
+        self.ring.lock().available()
     }
 
     /// How much room a writer has.
     pub fn remaining(&self) -> usize {
-        self.ring_ref().remaining()
+        self.ring.lock().remaining()
     }
 
     /// Whether any writer is still open.
@@ -87,38 +90,14 @@ impl Pipe {
         self.readers.load(core::sync::atomic::Ordering::Acquire) > 0
     }
 
-    /// The ring, borrowed.
-    ///
-    /// # Safety
-    ///
-    /// One caller at a time.  This kernel serves one call at a time and the
-    /// buffer is touched only inside a handler; two CPUs serving two calls on
-    /// one pipe is the state that would make this unsound, and it is the state
-    /// this kernel does not have.
-    fn ring_ref(&self) -> &ByteRing {
-        // SAFETY: see above.
-        unsafe { &*self.ring.get() }
-    }
-
-    /// The ring, borrowed exclusively.
-    ///
-    /// # Safety
-    ///
-    /// As `ring_ref`.
-    #[allow(clippy::mut_from_ref)]
-    fn ring_mut(&self) -> &mut ByteRing {
-        // SAFETY: as `ring_ref`.
-        unsafe { &mut *self.ring.get() }
-    }
-
     /// Take what is buffered into `destination`, answering how many bytes.
     pub fn read_available(&self, destination: &mut [u8]) -> usize {
-        self.ring_mut().read_from(destination)
+        self.ring.lock().read_from(destination)
     }
 
     /// Put as much of `source` as fits, answering how many bytes.
     pub fn write_available(&self, source: &[u8]) -> usize {
-        self.ring_mut().write_to(source)
+        self.ring.lock().write_to(source)
     }
 
     /// Record that one end of a kind was closed.
@@ -288,14 +267,18 @@ impl End {
 /// The table lives here rather than in `syscall` because a pipe outlives one
 /// call and belongs to the kernel's state, not to a handler.
 ///
-/// ## Why there is no lock
+/// ## Why there is a lock
 ///
-/// This kernel has one CPU and serves one call at a time; the table is reached
-/// only from a syscall handler, which is never re-entered while it runs. That
-/// is the same argument `syscall`'s registry makes for its own static, and it
-/// stops being true the moment a second CPU serves a call, at which point this
-/// needs one and the note belongs here.
-static PIPES: cell::SyncUnsafeCell<Option<Vec<Option<End>>>> = cell::SyncUnsafeCell::new(None);
+/// This table was reached only from a syscall handler, and one CPU served one
+/// call at a time, so it needed none.  A second CPU serving a call makes
+/// `attach` and `lookup` concurrent, and `lookup` clones an `Arc` out of a
+/// `Vec` that `attach` may reallocate: a grow between the two is a read of a
+/// buffer that has moved.  The lock is what makes the table one object again.
+///
+/// It is held for the length of one lookup or one attach and never across a
+/// blocking operation.  A caller that is about to block clones the `End` first
+/// and releases the lock before it does.
+static PIPES: sync::Mutex<Option<Vec<Option<End>>>> = sync::Mutex::new(None);
 
 /// Install the pipe table.
 ///
@@ -305,13 +288,12 @@ static PIPES: cell::SyncUnsafeCell<Option<Vec<Option<End>>>> = cell::SyncUnsafeC
 pub unsafe fn install() {
     // SAFETY: the caller promises this is the only write, and it happens before
     // any call can reach the table.
-    unsafe { *PIPES.get() = Some(Vec::new()) };
+    *PIPES.lock() = Some(Vec::new());
 }
 
 /// Whether a pipe table is installed.
 pub fn is_installed() -> bool {
-    // SAFETY: written once by `install`, read after.
-    unsafe { (*PIPES.get()).is_some() }
+    PIPES.lock().is_some()
 }
 
 /// Register `pipe` and answer its descriptor.
@@ -320,8 +302,8 @@ pub fn is_installed() -> bool {
 /// meaningful together with the table it indexes, which is why the answer is
 /// not a bare number a caller could invent.
 pub fn attach(end: End) -> Option<usize> {
-    // SAFETY: as `is_installed`.
-    let pipes = unsafe { (*PIPES.get()).as_mut() }?;
+    let mut guard = PIPES.lock();
+    let pipes = guard.as_mut()?;
     if let Some(free) = pipes.iter().position(Option::is_none) {
         pipes[free] = Some(end);
         return Some(free);
@@ -338,16 +320,15 @@ pub fn attach(end: End) -> Option<usize> {
 /// what makes the clone cheap, and what keeps the pipe alive while the borrow
 /// is out.
 pub fn lookup(descriptor: usize) -> Option<End> {
-    // SAFETY: as `is_installed`.
-    let pipes = unsafe { (*PIPES.get()).as_ref() }?;
+    let guard = PIPES.lock();
+    let pipes = guard.as_ref()?;
     pipes.get(descriptor).and_then(Option::as_ref).cloned()
 }
 
 /// How many pipes this boot has made.
 pub fn attached() -> usize {
-    // SAFETY: as `is_installed`.
-    let pipes = unsafe { (*PIPES.get()).as_ref() };
-    pipes.map_or(0, |pipes| {
+    let guard = PIPES.lock();
+    guard.as_ref().map_or(0, |pipes| {
         pipes.iter().filter(|slot| slot.is_some()).count()
     })
 }

@@ -6,6 +6,11 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+# The boot's tables and sinks live in `static`s the trap path writes once
+# and every dispatch reads, and the console's cross-CPU lock is one atomic
+# bit.  `SyncUnsafeCell` and `RawSpin` are both this crate's, and both are
+# named by the host arm too, so the dependency is not target-gated.
+cell = { path = "../../libs/cell" }
 abi.workspace = true
 # The device tree firmware hands over.  The *format* is this crate's dependency
 # and not the kernel's: what arrives in `a1` is a machine's business, and a
@@ -27,8 +32,6 @@ paging = { path = "../../libs/paging" }
 # between this machine and the kernel's handler table, so it belongs to
 # neither.
 irq = { path = "../../libs/irq" }
-# The sinks the trap path writes once and every dispatch reads.
-cell = { path = "../../libs/cell" }
 
 # The host arm of the console records bytes behind a lock; a host build is
 # multi-threaded in its tests, and the recording is not the kernel's single-CPU

@@ -253,7 +253,7 @@ impl Default for SyscallTable {
 /// A `SyncUnsafeCell` for the same reason the machine's trap sink uses one:
 /// there is one table per boot, it is written once, and every later reader is a
 /// call that arrived without a context to be handed one.
-static REGISTRY: cell::SyncUnsafeCell<Option<SyscallTable>> = cell::SyncUnsafeCell::new(None);
+static REGISTRY: sync::Mutex<Option<SyscallTable>> = sync::Mutex::new(None);
 
 /// Install the registry the boot built.
 ///
@@ -267,9 +267,9 @@ static REGISTRY: cell::SyncUnsafeCell<Option<SyscallTable>> = cell::SyncUnsafeCe
 /// Nothing may serve a call concurrently with this write.
 pub unsafe fn install(table: SyscallTable) {
     // SAFETY: the caller promises this is the only write and that no call is in
-    // flight.  The write is a whole-table store, so a reader either sees the
-    // old table or the new one and never a half-built one.
-    unsafe { *REGISTRY.get() = Some(table) };
+    // flight.  The write is a whole-table store under the lock, so a reader
+    // either sees the old table or the new one and never a half-built one.
+    *REGISTRY.lock() = Some(table);
 }
 
 /// Serve one call through the installed registry.
@@ -282,24 +282,26 @@ pub unsafe fn install(table: SyscallTable) {
 /// built it, the thing that was missing, and so the boot can serve a call
 /// through the same entry point a later trap will.
 pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
-    // SAFETY: the table is written once, before any call can arrive, and this
-    // read happens after that write.  The borrow it takes is exclusive for the
-    // length of the call, which is what the table's methods require.
-    let table = unsafe { (*REGISTRY.get()).as_mut() };
-    table.map(|table| table.dispatch(arguments))
+    // The borrow is exclusive for the length of the call, which is what the
+    // table's methods require, and the lock is what makes it exclusive across
+    // CPUs rather than across one CPU's calls.
+    REGISTRY
+        .lock()
+        .as_mut()
+        .map(|table| table.dispatch(arguments))
 }
 
 /// Whether a boot installed a registry.
 pub fn has_registry() -> bool {
-    // SAFETY: as `serve`.
-    unsafe { (*REGISTRY.get()).is_some() }
+    REGISTRY.lock().is_some()
 }
 
 /// How many descriptors the installed table holds open.
 pub fn open_descriptors() -> usize {
-    // SAFETY: as `serve`.
-    let table = unsafe { (*REGISTRY.get()).as_ref() };
-    table.map_or(0, SyscallTable::open_descriptors)
+    REGISTRY
+        .lock()
+        .as_ref()
+        .map_or(0, SyscallTable::open_descriptors)
 }
 
 /// How many numbers the installed table serves.
@@ -308,7 +310,5 @@ pub fn open_descriptors() -> usize {
 /// [`Handler::Unimplemented`], and the count is what makes "the table is
 /// installed" a claim with a number beside it.
 pub fn served_numbers() -> usize {
-    // SAFETY: as `serve`.
-    let table = unsafe { (*REGISTRY.get()).as_ref() };
-    table.map_or(0, SyscallTable::served)
+    REGISTRY.lock().as_ref().map_or(0, SyscallTable::served)
 }

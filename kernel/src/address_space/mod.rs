@@ -214,10 +214,10 @@ pub(crate) fn permissions_for(
 /// already writing is what makes that visible.
 #[cfg(target_os = "none")]
 pub unsafe fn install() -> bool {
-    let tables = TABLES.get();
-    // SAFETY: the static is this module's, and `install` is called once before
-    // anything else can touch it.
-    let tables = unsafe { &mut *tables };
+    // The lock is taken and dropped inside this call: `build` and the machine's
+    // `install` both need to see a complete table, and neither is re-entered.
+    let mut guard = TABLES.lock();
+    let tables = &mut *guard;
 
     // Frames for the tables past the spare ones.
     //
@@ -244,11 +244,7 @@ pub unsafe fn install() -> bool {
 /// that difference is the one thing a reader of the boot log needs to see.
 #[cfg(target_os = "none")]
 pub fn managed_frames() -> usize {
-    let tables = TABLES.get();
-    // SAFETY: the static is this module's; `install` is the only writer and
-    // this read happens after it.
-    let tables = unsafe { &*tables };
-    tables.frames.total_frames()
+    TABLES.lock().frames.total_frames()
 }
 
 /// Take one frame, as a page table would, and report whether it worked.
@@ -272,9 +268,8 @@ pub fn managed_frames() -> usize {
 /// allocates from it.  The frame is released before this returns.
 #[cfg(target_os = "none")]
 pub unsafe fn self_check_frame_pool() -> bool {
-    let tables = TABLES.get();
-    // SAFETY: the static is this module's, and this runs after `install`.
-    let tables = unsafe { &mut *tables };
+    let mut guard = TABLES.lock();
+    let tables = &mut *guard;
 
     let before = tables.frames.free_frames() + tables.frames.available_frames();
     let Some(frame) = tables.frames.allocate(1) else {
@@ -307,10 +302,7 @@ pub unsafe fn self_check_frame_pool() -> bool {
 /// allocator is exercised by a boot or only by its tests.
 #[cfg(target_os = "none")]
 pub fn frames_taken_for_tables() -> usize {
-    let tables = TABLES.get();
-    // SAFETY: as `managed_frames`.
-    let tables = unsafe { &*tables };
-    tables.frames_taken
+    TABLES.lock().frames_taken
 }
 
 /// How many of those frames can still be handed out.
@@ -320,9 +312,7 @@ pub fn frames_taken_for_tables() -> usize {
 /// memory left", the opposite of the truth on a fresh boot.
 #[cfg(target_os = "none")]
 pub fn free_frames() -> usize {
-    let tables = TABLES.get();
-    // SAFETY: as `managed_frames`.
-    let tables = unsafe { &*tables };
+    let tables = TABLES.lock();
     tables.frames.free_frames() + tables.frames.available_frames()
 }
 

@@ -195,10 +195,37 @@ pub fn init() {}
 
 /// Write a string, one byte at a time.
 pub fn write_str(text: &str) {
-    for byte in text.bytes() {
-        write_byte(byte);
+    // One line is dozens of writes, and two CPUs printing at once would
+    // interleave them: a boot log with two half-lines is a log no reader can
+    // attribute, and the line that says which CPU did what is exactly the one
+    // a second CPU is most likely to be printing.
+    //
+    // The lock is the cross-CPU half and masking is the same-CPU half.  Both
+    // are needed: a tick whose handler prints, arriving between two bytes of
+    // this call, would take the lock on a CPU that already holds it.
+    //
+    // `save_and_disable` rather than a bare disable, so a caller that entered
+    // with interrupts masked (the trap path) does not leave them unmasked.
+    let enabled = crate::interrupts::save_and_disable();
+    // SAFETY: interrupts are masked on this CPU for the length of the section,
+    // and the release below is the one matching acquisition.
+    unsafe {
+        CONSOLE_LOCK.acquire();
+        for byte in text.bytes() {
+            write_byte(byte);
+        }
+        CONSOLE_LOCK.release();
     }
+    crate::interrupts::restore(enabled);
 }
+
+/// The cross-CPU half of the console's exclusion.
+///
+/// A lock here rather than in `kernel`: the console is the machine's, the
+/// function that writes it is the machine's, and every caller of `write_str`
+/// would otherwise have to remember to take one first.  `sync::SpinLock` cannot
+/// be named from an architecture crate, which is why `cell` carries the bit.
+static CONSOLE_LOCK: cell::RawSpin = cell::RawSpin::new();
 
 /// Write a `u32` as decimal, without allocating.
 pub fn write_u32(value: u32) {

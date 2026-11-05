@@ -204,12 +204,30 @@ pub fn write_str(text: &str) {
     //
     // `save_and_disable` rather than a bare disable: a caller that entered with
     // interrupts already masked (a trap handler) must not leave them unmasked.
+    //
+    // And the mask only closes this CPU's window: another core printing at the
+    // same time interleaves its bytes with this line's, so the cross-CPU half
+    // is the lock below.
     let enabled = crate::interrupts::save_and_disable();
-    for byte in text.bytes() {
-        write_byte(byte);
+    // SAFETY: interrupts are masked on this core for the length of the
+    // section, and the release below is the one matching acquisition.
+    unsafe {
+        CONSOLE_LOCK.acquire();
+        for byte in text.bytes() {
+            write_byte(byte);
+        }
+        CONSOLE_LOCK.release();
     }
     crate::interrupts::restore(enabled);
 }
+
+/// The cross-CPU half of the console's exclusion.
+///
+/// A lock here rather than in `kernel`: the console is the machine's, the
+/// function that writes it is the machine's, and every caller of `write_str`
+/// would otherwise have to remember to take one first.  `sync::SpinLock` cannot
+/// be named from an architecture crate, which is why `cell` carries the bit.
+static CONSOLE_LOCK: cell::RawSpin = cell::RawSpin::new();
 
 /// Write a `u32` as decimal, without allocating.
 pub fn write_u32(value: u32) {

@@ -99,8 +99,20 @@ pub(crate) struct Tables {
     pub(crate) frames_taken: usize,
 }
 
+/// ## Why this is behind a lock
+///
+/// Every field here is mutable state one walk updates: the tables' entries, the
+/// frame allocator's bitmap, and the count of frames taken.  A program's space
+/// is built and released by whichever CPU is serving that program's calls, so
+/// two CPUs mapping or forking at once would be two writers to one bitmap, and
+/// the failure, two programs handed the same frame, is silent until one writes
+/// over the other.
+///
+/// The lock masks interrupts while held, so a tick cannot arrive on this CPU
+/// and re-enter a walk.  It is taken by every entry point and never while
+/// another lock of this module's is held, so there is no nesting to order.
 #[cfg(target_os = "none")]
-pub(crate) static TABLES: cell::SyncUnsafeCell<Tables> = cell::SyncUnsafeCell::new(Tables {
+pub(crate) static TABLES: sync::Mutex<Tables> = sync::Mutex::new(Tables {
     root: PageTable::new(),
     second: [const { PageTable::new() }; SECOND_LEVEL],
     third: [const { PageTable::new() }; THIRD_LEVEL],
@@ -220,10 +232,8 @@ pub unsafe fn map_device(start: usize, length: usize) -> bool {
 /// permissions throughout.
 #[cfg(target_os = "none")]
 pub fn map_region(start: usize, length: usize, permissions: Permissions) -> bool {
-    let tables = TABLES.get();
-    // SAFETY: the static is this module's; `install` is the only writer and
-    // this runs after it.
-    let tables = unsafe { &mut *tables };
+    let mut guard = TABLES.lock();
+    let tables = &mut *guard;
 
     if start >= IDENTITY_LIMIT {
         return map_device_blocks(tables, start, length, permissions);
