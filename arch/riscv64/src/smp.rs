@@ -44,7 +44,7 @@ use core::sync::atomic::Ordering;
 ///
 /// The gate's machine asks for two harts in total.  The stacks the entry
 /// assembly reserves are sized from this number through
-/// [`secondary_stack_reservation`], one fact, interpolated into the assembly
+/// [`kernel_stack_reservation`], one fact, interpolated into the assembly
 /// rather than written there a second time, and a machine whose tree names more
 /// harts than the cap has a boot that starts the first of them rather than one
 /// that guesses at a bigger reservation.

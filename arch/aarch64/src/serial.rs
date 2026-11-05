@@ -229,7 +229,10 @@ fn push(byte: u8) {
     // boot's own bound is what stops one: the last slot is the one a started
     // hart is given.  Clamping rather than panicking keeps the console usable
     // from a fault handler, which is where a wrong slot would be discovered.
-    let slot = crate::current_cpu_slot().min(LINE_SLOTS - 1);
+    // One buffer, because this machine reports one CPU: the slot is zero and
+    // the array holds it.  A machine that started a second CPU would index by
+    // its slot instead, which is what the riscv64 arm does.
+    let slot = 0;
     // SAFETY: the slot is this CPU's own, from `tp`, and no other CPU reads or
     // writes this buffer.  The buffer's own flush takes the console lock.
     let line = unsafe { &mut *LINE_BUFFERS[slot].get() };

@@ -201,22 +201,23 @@ impl Scheduler {
         // overwrite it with `Finished`.  That is why the flag only ever sets
         // `Finished` and never the other way.
         let leaving = self.running.get(cpu).copied().flatten();
-        if save && let Some(index) = leaving {
-            if let Some(task) = self.tasks.get_mut(index) {
-                task.context = *frame;
-                if exiting {
-                    task.state = State::Finished;
-                    // What the program answered `Exit` with.  The status
-                    // travels as `Exit`'s first argument (`edi` on x86_64,
-                    // `a0`/`x0` on the others), which is **not** always the
-                    // register a call's answer comes back in, x86_64's `rax`
-                    // holds `GetPid`'s answer, and `edi` holds the status.  So
-                    // the scheduler is told the status rather than reading a
-                    // register: a machine-specific guess here would be wrong on
-                    // exactly the machine whose convention differs.
-                    task.status = status;
-                    self.exited += 1;
-                }
+        if save
+            && let Some(index) = leaving
+            && let Some(task) = self.tasks.get_mut(index)
+        {
+            task.context = *frame;
+            if exiting {
+                task.state = State::Finished;
+                // What the program answered `Exit` with.  The status
+                // travels as `Exit`'s first argument (`edi` on x86_64,
+                // `a0`/`x0` on the others), which is **not** always the
+                // register a call's answer comes back in, x86_64's `rax`
+                // holds `GetPid`'s answer, and `edi` holds the status.  So
+                // the scheduler is told the status rather than reading a
+                // register: a machine-specific guess here would be wrong on
+                // exactly the machine whose convention differs.
+                task.status = status;
+                self.exited += 1;
             }
         }
 
