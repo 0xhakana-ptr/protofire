@@ -22,6 +22,16 @@
 # answered the questions in advance would be another instrument that cannot say
 # what it did not think of.
 #
+# ## Why there are two images
+#
+# QEMU's `-kernel` boots the raw binary in `target/`: the aarch64 build links
+# with `--oformat=binary`, and a raw binary has no symbols, so gdb against it
+# can name nothing.  The same link, rebuilt without that one flag into the
+# second target directory `target-elf/`, is the ELF the gdb commands below
+# load: the linker script and every other flag are the same, so each address
+# names the instruction the running machine is sitting on.  The script builds
+# the ELF itself when it is missing.
+#
 # ## Why `-smp 2` here and not in the gate
 #
 # The gate boots one core because two do not finish.  This script boots two
@@ -33,6 +43,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 IMAGE="target/aarch64-unknown-none/debug/bootloader"
+ELF="target-elf/aarch64-unknown-none/debug/bootloader"
 LOG="${LOG:-/tmp/aarch64-smp.log}"
 DISK="${DISK:-/tmp/aarch64-smp.disk}"
 
@@ -40,6 +51,17 @@ if [ ! -f "$IMAGE" ]; then
     printf 'debug-aarch64-smp: no image at %s; build it first:\n' "$IMAGE" >&2
     printf '  cargo build --offline -p bootloader --target aarch64-unknown-none\n' >&2
     exit 1
+fi
+
+# The ELF gdb loads, built without the raw binary's `--oformat=binary`: the
+# config's target rustflags replaced by the same list minus that one flag, in
+# a target directory of its own so the raw image and the ELF never displace
+# each other's caches.
+if [ ! -f "$ELF" ]; then
+    printf 'debug-aarch64-smp: no ELF at %s; building it\n' "$ELF" >&2
+    CARGO_TARGET_DIR=target-elf \
+    RUSTFLAGS="-C relocation-model=static -C link-arg=-Tarch/aarch64/linker-aarch64.ld" \
+        cargo build --offline -p bootloader --target aarch64-unknown-none >&2
 fi
 
 # The disk the machine boots with, because the boot formats and reads it.  It is
@@ -51,10 +73,11 @@ fi
 rm -f "$LOG"
 
 printf 'image : %s\n' "$IMAGE"
+printf 'elf   : %s\n' "$ELF"
 printf 'log   : %s\n' "$LOG"
 printf 'disk  : %s\n' "$DISK"
 printf '\nStarting QEMU frozen on :1234.  In another terminal:\n\n'
-printf '  gdb-multiarch %s\n' "$IMAGE"
+printf '  gdb-multiarch %s\n' "$ELF"
 printf '\n  (gdb) target remote :1234\n'
 printf '  (gdb) continue\n'
 printf '\nLet it run until the serial output stops.  Then:\n\n'
