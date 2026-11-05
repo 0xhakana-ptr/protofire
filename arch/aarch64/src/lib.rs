@@ -647,8 +647,12 @@ pub fn current_cpu_id() -> usize {
     0
 }
 
-/// Whether the trap being dispatched belongs to the CPU that owns the
-/// scheduler: this machine has one CPU, so it always does.
+/// Whether this is the CPU the boot started on: this machine starts one, so it
+/// always is.
+///
+/// The same question `arch_riscv64` answers by reading its slot.  What the trap
+/// path asks it for is whether this CPU may touch the external interrupt
+/// controller, and a machine with one CPU has one controller context.
 pub fn boot_cpu_owns_this_trap() -> bool {
     true
 }

@@ -145,12 +145,23 @@ pub fn current_cpu_id() -> usize {
     0
 }
 
-/// Whether the trap being dispatched belongs to the CPU that owns the
-/// scheduler.
+/// Whether this is the CPU the boot started on.
 ///
-/// The dispatch asks before it calls the kernel's sink: a CPU that is not the
-/// boot CPU answers its own interrupt and returns, because the sink and the
-/// scheduler behind it are the boot CPU's and nothing locks them.
+/// ## What the trap path asks it for, today
+///
+/// One thing: whether this CPU may touch the external interrupt controller.
+/// The `Plic` the boot installed carries the boot hart's context, so only the
+/// boot hart can claim and complete a source; a started hart leaves that line
+/// disabled and this answers `false` on the path a machine would take if one
+/// ever enabled it.
+///
+/// It used to gate the whole dispatch, because the scheduler was one structure
+/// with no lock and a second CPU calling into it was a second writer.  The
+/// scheduler has a lock now, so the gate would be wrong as a general answer:
+/// a started CPU takes its own timer, counts it, re-arms its own clock and runs
+/// tasks, all of which need this to be `true` for it.  What keeps the name is
+/// that the controller really is the boot hart's — the reason is narrower than
+/// it was, not gone.
 #[cfg(target_os = "none")]
 pub fn boot_cpu_owns_this_trap() -> bool {
     current_cpu_slot() == 0

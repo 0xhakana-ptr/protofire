@@ -5,25 +5,30 @@
 //!
 //! ## Why a trap has to ask which CPU it is on
 //!
-//! The scheduler is one structure with no lock, written by the boot CPU and
-//! read by every task switch.  A second CPU that took a timer interrupt and ran
-//! the same handler would be a second writer to it, and the failure would be a
-//! task resumed with a context from another CPU's stack, which is the kind of
+//! Every per-CPU decision starts here: which record counts this tick, which
+//! slot the scheduler's `running` array is indexed by, which kernel stack a
+//! trap frame belongs to, which line buffer a console write appends to.  A
+//! single shared answer would make two CPUs write one record, and the failure
+//! that produces, a task resumed with another CPU's context, is the kind of
 //! corruption a log shows as a fault far from its cause.
 //!
-//! So the interrupt handler asks which CPU it runs on and splits: the boot CPU
-//! does the scheduling half, and another CPU counts its own tick and re-arms
-//! its own timer.  That is the same division the previous tree arrived at, and
-//! it is the honest one while the scheduler is a single structure: one CPU owns
-//! it, and the others do not touch it.
+//! This module's records are atomics, so it is the one part of the kernel that
+//! is safe to touch from any CPU without a lock.  Everything built on it is
+//! not: the scheduler takes a lock, the page tables take one, and the console
+//! takes one.
 //!
 //! ## How a CPU knows its slot
 //!
-//! The machine answers.  On riscv64 the answer is `tp`, the thread pointer the
-//! ABI reserves for exactly this, written by the entry assembly before anything
-//! Rust runs; on the machines that start no second CPU the answer is always
-//! slot zero.  A kernel constant would be a second opinion about a register the
-//! machine already fills.
+//! The machine answers, in a register.  On riscv64 that is `tp`, which the trap
+//! entry computes from the kernel stack it just switched to — a program's `tp`
+//! is the program's own and is restored from the frame, so the kernel cannot
+//! read it for its own identity.  On the machines that start no second CPU the
+//! answer is always slot zero.
+//!
+//! A kernel constant would be a second opinion about a value the machine
+//! already has, and the first version's constant is why this file says so: it
+//! put the slot in `tp` at boot, a program zeroed the register, and the second
+//! CPU reported itself as the first.
 
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicUsize;

@@ -540,21 +540,21 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     let frame = unsafe { &mut *frame };
     let cause = frame.cause();
 
-    // What a CPU other than the boot CPU may do with a trap.
+    // What every CPU may do with a trap, and the one thing only the boot CPU
+    // may do.
     //
-    // It may take its own clock and its own inter-processor interrupt and hand
-    // them to the sink, because the kernel's handler counts those on whichever
-    // CPU took them and returns before the scheduling half for any CPU that
-    // does not own the scheduler.  It may **not** reach the scheduler, and it
-    // does not: every task switch is behind a frame that belongs to a program,
-    // and a CPU that never enters U-mode never holds one.
+    // **Anyone may take a clock or an inter-processor interrupt.**  Both go to
+    // the kernel's sink, which counts them on whichever CPU took them and then
+    // returns early for a CPU that is not the scheduler's owner; the scheduling
+    // half is a policy about the boot CPU, not a lock it holds.
     //
-    // It may not touch the external controller either. The `Plic` the boot
-    // installed carries the boot hart's context, so a claim or a completion
-    // through it from another hart is a source nobody finishes.  A started hart
-    // does not enable that line, so this is the path a machine would take if
-    // one ever did: say so rather than claim through the wrong context.
-    let owns_scheduler = crate::boot_cpu_owns_this_trap();
+    // **Only the boot CPU may touch the external controller.**  The `Plic` the
+    // boot installed carries the boot hart's context, so a claim or a
+    // completion through it from another hart is a source nobody finishes.  A
+    // started hart does not enable that line, so this is the path a machine
+    // would take if one ever did: say so rather than claim through the wrong
+    // context.
+    let has_controller_context = crate::boot_cpu_owns_this_trap();
 
     // A CPU that took a trap after the boot ended stops here.
     //
@@ -572,7 +572,7 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
         // identity, the PLIC answers one on request and a handler needs it, //
         // and without the finish the source is never delivered a second time.
         if cause.code == EXTERNAL_INTERRUPT {
-            if !owns_scheduler {
+            if !has_controller_context {
                 crate::serial::write_str(
                     "protofire: external interrupt on a CPU with no controller context\n",
                 );
