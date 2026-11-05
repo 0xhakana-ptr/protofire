@@ -1145,68 +1145,67 @@ which is correct and slower than it needs to be; a COW fork needs a write fault
 this kernel does not handle.  And `exec`: a child that wants a different program
 than its parent has no call for it.
 
-### The second CPU
+### Two CPUs running programs
 
 The started hart comes up, installs the kernel's page table in its own `satp`,
 arms its own timer, enables its own clock and inter-processor lines, records
-that it is online, and then takes interrupts and draws no task.  The four
-defects found on the way, and the trap entry's gate that had to move, are
-recorded in the section above; the census in `docs/status.md` says what it does
-now.
-
-## Two CPUs running programs, and the rule that is still missing
+that it is online, and then asks the kernel for a task.  The four defects found
+bringing it that far are recorded in the section above.
 
 The scheduler, the page tables, the pipes, the syscall registry and the console
-are all concurrent-safe, and `running` gives each CPU its own current task, so
-two CPUs are never handed the same one.  A second CPU really did enter U-mode
-and run programs: a boot printed `cpu 1 runs process 2`, then two
-`program ended on cpu 1`, out of four programs, with every exit status the same
-as the single-CPU boot's.  It is not landed, because the same build also
-produced two failures that no local check could repair, and both are one
-missing rule rather than a bug in the code beside them.
+are concurrent-safe, `running` gives each CPU its own current task, and a
+started hart claims a task and enters U-mode on it.  A boot prints
 
-**The identity defect, which is fixed and was invisible with one CPU.**  The
-trap entry asked `tp` which CPU it was on.  `starting_context` zeroes every
-register a program begins with, so a program's `tp` is zero, and a second CPU
-running a program reported itself as CPU 0: both CPUs wrote slot zero, and each
-was handed the task the other was running.  The two faults named each other's
-program.  The trap entry now derives the slot from the kernel stack it just
-switched to, which is the one register an interrupted program cannot have
-written, and restores the program's `tp` from the frame like every other
-register.  `tp` at boot is a starting value only.
+    protofire: cpu 1 runs process 2
+    protofire: program ended on cpu 1
+    protofire: every program exited, 4 exit(s), 62 tick(s), 15 switch(es)
+    protofire: exit statuses 1 -> 4, 2 -> 0, 3 -> 0, 4 -> 0
+    protofire: parallel, programs ended on 2 non-boot cpu(s)
 
-**What is missing: a task outlives its CPU's frame.**  A task's pages belong to
-its address space, and the address space is released when the task finishes.
-With one CPU the release happens after the last trap that names it.  With two,
-a program that finishes on one CPU while another CPU's trap frame still names
-its pages — because that CPU is inside the program, or asleep in a `wfi` with
-its saved frame pointing into it — is a release the other CPU finds out about
-by fetching an instruction from a frame the pool has taken back.  The boot
-showed exactly that: `illegal instruction` at an offset one word past the end
-of a program's image, sometimes after `every program exited` and sometimes
-before it.
+One to three of the four programs end on a CPU other than the boot's, and every
+exit status is the one the single-CPU boot produces.  Five consecutive runs
+after the last fix had no fault and exactly one report line; the same build
+before it faulted in three runs of five, which is the measurement this section
+is written from.
 
-Three things followed from it, and each was a rule, not a fix:
+**The identity defect is the one a single CPU could not show.**  The trap entry
+asked `tp` which CPU it was on.  `starting_context` zeroes every register a
+program begins with, so a program's `tp` is zero, and a second CPU running a
+program reported itself as CPU 0: both CPUs wrote slot zero and each was handed
+the task the other was running.  The two faults named each other's program.  The
+trap entry now derives the slot from the kernel stack it just switched to — the
+one register an interrupted program cannot have written — and restores the
+program's `tp` from the frame like every other register.  `tp` at boot is a
+starting value for the window before a program exists, and nothing more.
 
-- **`Exit` means two different things** and the scheduler answered one value
-  for both.  "The next task's context is in this frame" and "this CPU has
-  nothing to run" are different states; a CPU that resumes on the second
-  `sret`s to the instruction after its last one, which is past the end of its
-  image.
-- **The end of the boot stops one CPU.**  `halt` is a `wfi` loop on the CPU
-  that reaches it, and a second CPU that is inside a program at that instant
-  keeps running.
-- **A task parked by one CPU stays hidden from the others** until that CPU's
-  slot is cleared, and the slot is also what says which task that CPU's frame
-  belongs to.
+**Three rules had to be stated, and each was mistaken for a fourth bug.**
 
-The change that lands this has to decide, before it writes code, when a task's
-pages may be freed: the options are a quiescent period per address space, a
-reference count on the space that every CPU's frame contributes to, or
-deferring every release to a point the boot guarantees no CPU is at U-mode.
-The last is the smallest and is the one this kernel's shape suggests, because
-the boot already knows when it has stopped starting programs.  It is named in
-`docs/status.md` as the gap rather than implied here.
+- **`Exit` answered two states with one value.**  "The next task's context is
+  in this frame" and "this CPU has nothing to run" are different, and the trap
+  path cannot tell them apart from the word alone.  On the second it would
+  `sret` to the instruction after the finished program's last one, which is
+  past the end of its image.  On this machine that word is zero, and the fault
+  was `illegal instruction` at offset 21 words: exactly one word past the pipe
+  reader's probe image.  `advance_with_status` now installs a task or waits for
+  one, and never returns a frame no task owns.
+- **`halt` stops one CPU, and the boot's end was spelled with it.**  A CPU that
+  found nothing in its own queue set the boot-finished flag and stopped the
+  machine, so a boot ended with programs that had not run.  `finish_and_halt`
+  and `idle_this_cpu` are two statements now: a CPU with nothing waits for the
+  work another CPU may create, and only "nothing is runnable anywhere" finishes
+  the machine.
+- **The report ran wherever the last exit happened.**  Both CPUs can see that
+  the machine is finished, so `every program exited` was printed twice.  One
+  atomic exchange owns the report, and the CPU that loses it stops without
+  printing.
+
+What is not here, and is named in `docs/status.md` rather than implied: there
+is no load balancing and no task migration.  A task stays on the CPU that
+claimed it, so the two CPUs divide the boot's programs once and never move one;
+a migration would need a TLB shootdown, and `flush_translation` is local to the
+hart that calls it.  Nor is a release proven against every CPU's frame: the
+boot releases nothing until it ends, which is why the deferred-release rule
+this section first proposed was not needed to land it.
 
 ### The first device that raised the line
 
