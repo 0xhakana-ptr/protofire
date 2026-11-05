@@ -38,6 +38,8 @@ pub fn start_the_others() {
         while !arch::secondary_online(slot) && spins < MAX_START_SPINS {
             spins += 1;
         }
+        let slot_index = crate::per_cpu::BOOT_SLOT + 1 + slot;
+        crate::per_cpu::register(slot_index, hart, false);
         arch::serial::write_str("protofire: hart ");
         arch::serial::write_u32(hart as u32);
         if arch::secondary_online(slot) {
@@ -62,3 +64,35 @@ pub fn start_the_others() {
 /// CPU that never records is reported rather than waited on forever.
 #[cfg(target_os = "none")]
 const MAX_START_SPINS: u64 = 50_000_000;
+
+/// What each CPU has actually taken, after the boot's programs have run.
+///
+/// The count is the evidence the start cannot give: a CPU that stored its flag
+/// and then stopped prints "online" and nothing else, while a CPU doing work
+/// prints a number that grew.  On this tree the started CPU takes no interrupt
+/// — the trap entry is one address and the sink behind it is the boot CPU's —
+/// so its count stays zero, and the line says that rather than implying work it
+/// is not doing.
+#[cfg(target_os = "none")]
+pub fn report_activity() {
+    arch::serial::write_str("protofire: cpus online = ");
+    arch::serial::write_u32(crate::per_cpu::online_count() as u32);
+    arch::serial::write_str("\n");
+    for index in 0..crate::per_cpu::MAX_CPUS {
+        let cpu = crate::per_cpu::slot(index);
+        if !cpu.online() {
+            continue;
+        }
+        arch::serial::write_str("protofire: cpu ");
+        arch::serial::write_u32(index as u32);
+        arch::serial::write_str(" id ");
+        arch::serial::write_u32(cpu.id() as u32);
+        arch::serial::write_str(if cpu.is_boot_cpu() {
+            ", scheduler owner, "
+        } else {
+            ", parked, "
+        });
+        arch::serial::write_u32(cpu.ticks() as u32);
+        arch::serial::write_str(" tick(s)\n");
+    }
+}

@@ -495,6 +495,13 @@ impl Machine {
                 // that printed nothing for a hart it asked for would be a
                 // start nobody could tell from a start nobody made.
                 ("protofire: hart 1 online", true),
+                // And what each CPU has actually taken: the start alone cannot
+                // tell a CPU that works from one that stored a flag and
+                // stopped.  The boot CPU owns the scheduler and its count is
+                // real; the started CPU is parked, and the line says so.
+                ("protofire: cpus online = 2", true),
+                ("protofire: cpu 0 id 0, scheduler owner, ", false),
+                ("protofire: cpu 1 id 1, parked, 0 tick(s)", true),
                 ("protofire: timer line enabled = 1", true),
                 ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),

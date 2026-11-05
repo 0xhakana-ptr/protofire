@@ -58,6 +58,14 @@ _start:
     /* No program is running, so no trap is a program's yet. */
     csrw sscratch, x0
 
+    /* The CPU's own slot, which is what a trap reads to learn where it is.
+       This is the hart the firmware cold-booted, and it is slot zero by the
+       kernel's own numbering — the machine's hart id, which is a different
+       number, is recorded separately.  A `tp` left as firmware left it would
+       make the boot CPU read as whichever slot the garbage happened to name,
+       and the first trap would split the scheduling half the wrong way. */
+    mv tp, x0
+
     /* SUM: S-mode may reach a page whose `U` bit is set.  Bit 18. */
     li t0, (1 << 18)
     csrs sstatus, t0

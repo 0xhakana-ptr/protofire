@@ -938,15 +938,41 @@ assembly, so the count the boot bounds and the bytes it reserves cannot
 disagree.
 
 What a started hart does is deliberately small: its own stack, the global
-pointer, `sscratch`, `SUM`, the trap vector, one flag stored, and a park.  It
-does **not** run the scheduler, because the scheduler is a single structure and
-two harts in it would be two writers nothing locks; it does **not** take
-interrupts, because `SIE` stays clear and a parked hart feeding ticks into code
-that assumes one hart is a race wearing a boot's clothes.  What the boot can
-prove is that the hart came up: the flag it stores is what the boot hart's
-bounded wait reads, and a hart that never stores it is a line that says so —
-`did not come up` — rather than a start nobody could tell from a start nobody
-made.
+pointer, `sscratch`, `SUM`, the trap vector, one flag stored, and a park.
+
+## What the second CPU is allowed to do, and why the answer is "not much"
+
+Giving the started hart its own timer was tried first, and it produced two
+faults that are worth recording because both were far from their cause: a store
+page fault inside the device tree, and a store to address three.  The reason is
+architectural rather than arithmetic.  `stvec` names **one** address per hart,
+and the kernel's entry at it is the boot CPU's: it swaps `sscratch`, calls the
+sink, and hands a frame to a scheduler that is one structure with no lock.  A
+second hart entering the same path is a second writer to all of it.
+
+There was a smaller defect on the way, and it is the one that made the first
+version confusing: the started hart wrote its own slot index into `tp`, and slot
+zero is the boot CPU's — so the first started hart read as the CPU that owns the
+scheduler, and it ran `wake_expired` while the boot hart was still building the
+scheduler.  Slots are now one past the index among started harts, and the boot
+hart writes its own zero at entry rather than trusting what firmware left in
+the register.
+
+So the boundary this tree can defend is: a started hart comes up, is counted, and
+parks with `SIE` clear.  The trap entry stays gated on the boot CPU, which is
+what makes that boundary explicit in code rather than implied by a flag.  The
+line the boot prints says which is which:
+
+    protofire: cpus online = 2
+    protofire: cpu 0 id 0, scheduler owner, 3 tick(s)
+    protofire: cpu 1 id 1, parked, 0 tick(s)
+
+The tick counts are the evidence the start alone cannot give: a CPU that stored
+its flag and then stopped prints "online" and nothing else, while a CPU doing
+work prints a number that grew.  Giving the second CPU work needs two things
+this kernel has not designed yet — a trap entry per CPU, and a scheduler that is
+per CPU or locked — and both are named in `docs/status.md` rather than implied
+here.
 
 ## Kernel
 

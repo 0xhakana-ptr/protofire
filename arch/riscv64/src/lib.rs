@@ -83,6 +83,80 @@ pub use trap::set_return_value;
 pub use trap::stack_pointer;
 pub use trap::starting_context;
 
+/// Which CPU this code runs on, as the machine reports it.
+///
+/// `tp` is the thread pointer the RISC-V ABI reserves for exactly this, and the
+/// entry assembly writes the CPU's slot into it before anything Rust runs — one
+/// register, no memory, and the answer a trap needs without a lock.
+#[cfg(target_os = "none")]
+pub fn current_cpu_slot() -> usize {
+    let slot: usize;
+    // SAFETY: a register read with no side effect.  The entry assembly wrote
+    // the slot before this could be called.
+    unsafe { core::arch::asm!("mv {}, tp", out(reg) slot, options(nomem, nostack)) };
+    slot
+}
+
+/// A host has one CPU and it is slot zero.
+#[cfg(not(target_os = "none"))]
+pub fn current_cpu_slot() -> usize {
+    0
+}
+
+/// Whether the trap being dispatched belongs to the CPU that owns the
+/// scheduler.
+///
+/// The dispatch asks before it calls the kernel's sink: a CPU that is not the
+/// boot CPU answers its own interrupt and returns, because the sink and the
+/// scheduler behind it are the boot CPU's and nothing locks them.
+#[cfg(target_os = "none")]
+pub fn boot_cpu_owns_this_trap() -> bool {
+    current_cpu_slot() == 0
+}
+
+/// A host has one CPU, so every trap belongs to its scheduler's owner.
+#[cfg(not(target_os = "none"))]
+pub fn boot_cpu_owns_this_trap() -> bool {
+    true
+}
+
+/// Send an inter-processor interrupt to every other CPU.
+///
+/// The supervisor software interrupt is per-hart, so "every other hart" is the
+/// firmware's IPI: the SBI extension takes a hart mask, and the mode says which
+/// harts it means.  This asks for every hart but the caller's own.
+///
+/// # Safety
+///
+/// Called after every hart's trap vector is installed.  The interrupt the
+/// others take is the software line, which their own dispatch answers.
+#[cfg(target_os = "none")]
+pub unsafe fn send_ipi_to_others() -> bool {
+    // SBI extension "IPI", function 0: send_ipi.
+    const SBI_EXT_IPI: u64 = 0x0073_5049;
+    // `hart_mask_base` of -1 means "the mask's bits are hart ids"; the all-ones
+    // mask is every hart.  The caller's own hart is included and its software
+    // line is harmless.
+    let error: i64;
+    // SAFETY: the SBI IPI call, with every register the firmware may eat
+    // declared late-out.
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            inlateout("a0") !0u64 => error,
+            inlateout("a1") !0u64 => _,
+            lateout("a2") _,
+            lateout("a3") _,
+            lateout("a4") _,
+            lateout("a5") _,
+            inlateout("a6") 0u64 => _,
+            inlateout("a7") SBI_EXT_IPI => _,
+            options(nostack)
+        )
+    };
+    error == 0
+}
+
 /// The entry the assembly calls with the boot hart's id, by the name the
 /// linker resolves.
 ///

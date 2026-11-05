@@ -113,11 +113,36 @@ pub fn handle(frame: irq::Frame) -> bool {
     // counted would get one tick and then silence for the rest of the boot.
     #[cfg(target_os = "none")]
     if vector == arch::timer_interrupt() {
+        let slot = crate::per_cpu::current_slot();
+        crate::per_cpu::count_tick(slot);
         crate::tick::TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Release);
         // The boot's self-check reads this, and so does nothing else: it is the
         // record that *this* vector reached a handler, which is the one claim
         // the boot makes before any program runs.
         TEST_INTERRUPT_RAISED.store(vector, core::sync::atomic::Ordering::Release);
+
+        // Re-arm this CPU's own timer, whoever this CPU is.  A countdown fires
+        // once, so a hart that did not re-arm its own would get one tick and
+        // then silence for the rest of the boot.
+        //
+        // SAFETY: the line is enabled on this CPU, so this is a timer that can
+        // fire again.
+        if let Some(frequency) = unsafe { arch::timer_frequency() } {
+            // SAFETY: as above.
+            unsafe { arch::arm_timer(frequency, crate::tick::TIME_SLICE_US) };
+        }
+
+        // The scheduling half belongs to the boot CPU alone.
+        //
+        // The scheduler is one structure with no lock: wake_expired and the
+        // preemption hook both write it.  A second CPU that ran them would be a
+        // second writer, and the failure — a task resumed with another CPU's
+        // context — is the sort this tree refuses to leave in.  So another CPU
+        // counts its tick and re-arms its clock, and the boot CPU does the
+        // deciding until the scheduler grows a per-CPU half.
+        if !crate::per_cpu::on_boot_cpu() {
+            return true;
+        }
 
         // Wake whatever slept past its deadline, *before* the preemption hook
         // asks who can run: a task that has finished sleeping is runnable now,
@@ -129,12 +154,6 @@ pub fn handle(frame: irq::Frame) -> bool {
             arch::serial::write_u32(woken as u32);
             arch::serial::write_str(" of them\n");
         }
-
-        // SAFETY: the line is enabled, so this is a timer that can fire again.
-        if let Some(frequency) = unsafe { arch::timer_frequency() } {
-            // SAFETY: as above.
-            unsafe { arch::arm_timer(frequency, crate::tick::TIME_SLICE_US) };
-        }
         return true;
     }
 
@@ -143,6 +162,8 @@ pub fn handle(frame: irq::Frame) -> bool {
     // software interrupt, which is not a timer and not a fault.
     #[cfg(target_os = "none")]
     if vector == test_interrupt() && vector != arch::timer_interrupt() {
+        let slot = crate::per_cpu::current_slot();
+        crate::per_cpu::count_ipi(slot);
         TEST_INTERRUPT_RAISED.store(vector, core::sync::atomic::Ordering::Release);
         return true;
     }

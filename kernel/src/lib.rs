@@ -24,6 +24,7 @@
 //! | [`heap`] | the heap, brought up and located |
 //! | [`volume`] | the storage, the namespace, and the read that proves them |
 //! | [`policy`] | the MAC policy, asked both ways through the real handler |
+//! | [`per_cpu`] | which CPUs exist, which one is running, and what each has seen |
 //! | [`tick`] | the timer's line, its slice and its count |
 //! | [`programs`] | the programs the boot builds, maps and enters |
 //! | [`interrupts`] | what an interrupt frame means to the kernel |
@@ -59,6 +60,7 @@ pub mod devices;
 pub mod heap;
 pub mod interrupts;
 pub mod iso_disc;
+pub mod per_cpu;
 pub mod pipe;
 pub mod policy;
 pub mod process;

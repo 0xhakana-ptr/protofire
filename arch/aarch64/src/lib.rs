@@ -631,3 +631,25 @@ pub fn secondary_online(_slot: usize) -> bool {
 pub fn refused_harts() -> usize {
     0
 }
+
+/// Which CPU this code runs on: this machine runs one, so slot zero.
+pub fn current_cpu_slot() -> usize {
+    0
+}
+
+/// Whether the trap being dispatched belongs to the CPU that owns the
+/// scheduler: this machine has one CPU, so it always does.
+pub fn boot_cpu_owns_this_trap() -> bool {
+    true
+}
+
+/// Send an inter-processor interrupt: this machine starts no second core, so
+/// there is none to send to.
+///
+/// # Safety
+///
+/// As the riscv64 arm.  This one touches nothing.
+#[cfg(target_os = "none")]
+pub unsafe fn send_ipi_to_others() -> bool {
+    false
+}

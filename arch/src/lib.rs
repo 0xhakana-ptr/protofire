@@ -434,12 +434,26 @@ pub use arch_x86_64::raise_interrupt;
 // the same question — the ones that start none answer zero, which is an answer
 // and not a gap — so a boot asks one question and does not learn which machine
 // it is running on.
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::boot_cpu_owns_this_trap;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::boot_cpu_owns_this_trap;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::boot_cpu_owns_this_trap;
+
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::start_secondary_harts;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::start_secondary_harts;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::start_secondary_harts;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::current_cpu_slot;
+#[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::current_cpu_slot;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::current_cpu_slot;
 
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::secondary_hart_id;

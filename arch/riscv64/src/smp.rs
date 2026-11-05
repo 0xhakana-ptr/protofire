@@ -213,6 +213,37 @@ fn secondary_entry_address() -> usize {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
     let _ = hart;
+
+    // The slot goes into `tp`, which is where `arch::current_cpu_slot` reads
+    // it: the trap this hart takes asks which CPU it is on, and one register is
+    // cheaper than a lock on that path.
+    //
+    // **One past `slot`**, because slot zero is the boot CPU's: this `slot` is
+    // an index among the harts the boot started, and using it raw made the
+    // first started hart the boot CPU in `per_cpu`'s eyes — so it ran the
+    // scheduling half while the boot hart was still building the scheduler, and
+    // the ring-3 entry that followed faulted at an address no program was ever
+    // given.
+    // SAFETY: `tp` is the thread pointer, reserved by the ABI for exactly this.
+    let cpu_slot = slot + 1;
+    unsafe { core::arch::asm!("mv tp, {}", in(reg) cpu_slot, options(nomem, nostack)) };
+
+    // Online, and parked.
+    //
+    // ## Why this hart takes no interrupt
+    //
+    // `stvec` names **one** address for the whole hart, and the kernel's entry
+    // at it assumes the trap is the boot CPU's: it swaps `sscratch`, calls the
+    // kernel's sink, and hands a frame to a scheduler that is one structure and
+    // locks nothing.  A second hart entering the same path is a second writer,
+    // and the two boots it produced were a fault inside the device tree and a
+    // store to address three — neither of them anywhere near the CPU that
+    // caused it.
+    //
+    // So a started hart keeps `SIE` clear and parks.  What the boot can prove
+    // is that it came up and stayed up; giving it work is the change that also
+    // gives it a trap entry of its own, and that is a design this kernel has
+    // not made yet.  Saying so is more useful than a hart that looks busy.
     ONLINE[slot].store(true, Ordering::Release);
     park()
 }

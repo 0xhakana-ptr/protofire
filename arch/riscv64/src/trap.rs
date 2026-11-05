@@ -428,6 +428,25 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     let frame = unsafe { &mut *frame };
     let cause = frame.cause();
 
+    // A CPU that is not the boot CPU answers its own interrupt and nothing
+    // else.
+    //
+    // The kernel's sink is the boot CPU's: it wakes sleepers and hands frames
+    // to a scheduler that is one structure with no lock.  A second CPU that
+    // called it would write state the boot CPU owns — and the first thing the
+    // log showed was a fault inside the device tree, because the other CPU had
+    // walked into the console sink's path.  What a second CPU does with a trap
+    // is count it, silence any source it raised, and return; its clock is
+    // re-armed by the kernel's handler only through the path it is allowed to
+    // take, which is the count.
+    if !crate::boot_cpu_owns_this_trap() {
+        if cause.interrupt && cause.code == SOFTWARE_INTERRUPT {
+            // SAFETY: the software line's own acknowledge.
+            unsafe { clear_software_pending() };
+        }
+        return;
+    }
+
     if cause.interrupt {
         // The software line silences its own source before the handler sees
         // it: the bit that raised it stays set until something clears it, and
