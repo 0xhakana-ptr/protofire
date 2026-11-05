@@ -14,12 +14,12 @@
 //!
 //! ## Why every operation takes a CPU
 //!
-//! `running` is one slot per CPU, and a switch is a CPU's own: it saves into the
-//! task that CPU held and marks the next one as that CPU's.  That is what keeps
-//! two CPUs from being handed one task, and it is why the entry points here take
-//! `cpu` rather than reading a single field.  A caller that did not say which
-//! CPU it was would be moving the whole machine's idea of the current task,
-//! which is the state this scheduler had before it could run on two.
+//! `running` is one slot per CPU, and a switch is a CPU's own: it saves into
+//! the task that CPU held and marks the next one as that CPU's.  That is what
+//! keeps two CPUs from being handed one task, and it is why the entry points
+//! here take `cpu` rather than reading a single field.  A caller that did not
+//! say which CPU it was would be moving the whole machine's idea of the current
+//! task, which is the state this scheduler had before it could run on two.
 
 use alloc::vec::Vec;
 
@@ -134,6 +134,24 @@ impl Scheduler {
     /// `None` when nothing is runnable, which is the state a started CPU finds
     /// before the boot has built any task.  The task is marked as running on
     /// `cpu` here, so two CPUs claiming at once cannot take the same one.
+    ///
+    /// ## It replaces whatever the CPU was holding, silently
+    ///
+    /// There is no check for "this CPU already has a task".  The assignment is
+    /// unconditional, so a CPU that held task A and calls this gets task B and
+    /// A becomes claimable by anyone — including by this CPU on its next call,
+    /// which would then take A back.  A loop that claimed until it got `None`
+    /// never ends, and a test written that way exhausted memory three times
+    /// before anyone looked inside the loop.
+    ///
+    /// Every caller is written for the other shape: the boot claims once, and a
+    /// CPU claims only after giving its task up, through a switch or an exit.
+    /// A caller that has to check first asks
+    /// [`holds_a_task`](Self::holds_a_task).
+    ///
+    /// The hazard is worth this paragraph because the failure is silent:
+    /// nothing about a repeated claim looks wrong until two CPUs are running
+    /// one task.
     pub fn claim(&mut self, cpu: usize) -> Option<usize> {
         let next = self.next_runnable(cpu)?;
         self.assign(cpu, next);

@@ -62,6 +62,7 @@ pub use program::PIPE_WRITER;
 pub use program::PROGRAM_LEN;
 pub use program::SLEEP_MICROSECONDS;
 pub use program::program_bytes;
+pub use smp::MAX_SECONDARY_HARTS;
 pub use smp::refused_harts;
 pub use smp::secondary_hart_id;
 pub use smp::secondary_online;

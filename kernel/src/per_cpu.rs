@@ -34,21 +34,38 @@ use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
-/// How many CPUs a machine may start past the boot one.
+/// How many CPUs a machine may start past the boot one, as `arch` answers it.
 ///
-/// Four is `arch`'s `smp::MAX_SECONDARY_HARTS`, the constant the entry
-/// assembly's stack reservation is sized from.  It is written here as well
-/// because the two crates cannot see each other's constants, and the pair is
-/// kept in step by each naming the other rather than by a number that looks the
-/// same in two files for no stated reason.
-pub const MAX_SECONDARY_CPUS: usize = 4;
+/// Asked rather than written.  This constant used to be a four in this file and
+/// a four in `arch/riscv64/src/smp.rs`, kept in step by a comment telling the
+/// next reader to keep them in step — which is the arrangement that produced
+/// the bug this file's own history records: `MAX_CPUS` was four while the slots
+/// a boot uses were 1..=4, so the fourth started CPU shared the boot CPU's
+/// arrays.
+///
+/// The machine knows how many CPUs it starts; this module knows what it does
+/// with them.  The count is the machine's answer, so it comes from `arch`.
+pub const MAX_SECONDARY_CPUS: usize = arch::MAX_SECONDARY_HARTS;
 
 /// The most CPUs this kernel describes: the boot CPU and the ones it may start.
 ///
-/// Five, not four, and the difference is a slot the fourth secondary would
-/// otherwise share with the boot CPU: the boot is slot zero and a started CPU
-/// is one past its index among the started ones, so four secondaries need
-/// slots 1..=4.
+/// One plus the cap, because the boot CPU owns slot zero and a started CPU's
+/// slot is one past its index among the started ones.
+///
+/// ## Why deriving is the guard, and an assertion would not be
+///
+/// The defect this replaces was two fours in two crates kept in step by a
+/// comment, and a compile-time `assert!` tying them is the obvious fix.  It is
+/// the wrong one here: this constant is *derived* from `arch`'s, so an
+/// assertion comparing the two would reduce to `x == x` and could never fail —
+/// decoration that reads like a proof.
+///
+/// What actually removes the defect is that there is now one number.  A machine
+/// that raises `arch::MAX_SECONDARY_HARTS` moves this constant with it, every
+/// array sized from `MAX_CPUS` moves too, and the state the old code could
+/// reach — a slot the machine starts and this module has no room for — cannot
+/// be written down.  The `panic` in `cpu` is the belt for the case derivation
+/// cannot see: a slot that comes from outside, such as a register.
 pub const MAX_CPUS: usize = 1 + MAX_SECONDARY_CPUS;
 
 /// One CPU, as the boot and a trap both see it.
@@ -108,9 +125,25 @@ impl Cpu {
 /// Every slot, live for the whole boot.
 static CPUS: [Cpu; MAX_CPUS] = [const { Cpu::new() }; MAX_CPUS];
 
-/// The CPU this code is running on.
+/// One CPU's record, by slot.
+///
+/// ## Why a slot past the end is a panic and not a clamp
+///
+/// This was `slot.min(MAX_CPUS - 1)`, which turned a slot the kernel never
+/// numbered into the last one — and the last one is a CPU that really exists.
+/// Two CPUs then wrote one record while both believed they were distinct, and
+/// the symptom is a task resumed with another CPU's context, which is the shape
+/// of the defect `MAX_CPUS` was raised to fix.  A clamp is the wrong answer to
+/// "this slot does not exist": the honest one is a stop at the place the slot
+/// was asked for, with the number in the message.
 fn cpu(slot: usize) -> &'static Cpu {
-    &CPUS[slot.min(MAX_CPUS - 1)]
+    match CPUS.get(slot) {
+        Some(cpu) => cpu,
+        None => panic!(
+            "per_cpu: slot {} is past the {} this kernel describes",
+            slot, MAX_CPUS
+        ),
+    }
 }
 
 /// The boot CPU's slot.
@@ -188,5 +221,19 @@ mod tests {
     #[test]
     fn a_host_is_slot_zero() {
         assert_eq!(super::current_slot(), 0);
+    }
+
+    /// A slot past the end stops with its number in the message, rather than
+    /// being clamped to the last CPU.
+    ///
+    /// This is the property the clamp lacked.  A clamp made a slot the kernel
+    /// never numbered read as the highest one it did, so two CPUs wrote one
+    /// record and each believed it was distinct — the arithmetic that made a
+    /// task resume with another CPU's context.  A stop names the slot and the
+    /// count, which is the one thing a reader of a broken boot needs.
+    #[test]
+    #[should_panic(expected = "past the")]
+    fn a_slot_past_the_end_stops_with_its_number() {
+        let _ = super::slot(super::MAX_CPUS);
     }
 }

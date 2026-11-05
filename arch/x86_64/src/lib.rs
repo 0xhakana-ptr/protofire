@@ -540,6 +540,9 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
     unsafe { apic.raise_to_self(number as u8) }
 }
 
+/// The most CPUs past the boot one this machine starts: none.
+pub const MAX_SECONDARY_HARTS: usize = 0;
+
 /// Start this machine's other CPUs: this machine starts none.
 ///
 /// The local APIC's ICR can reach another CPU, an INIT-SIPI-SIPI sequence is

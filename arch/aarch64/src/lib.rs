@@ -596,6 +596,9 @@ pub fn interrupt_stack_top() -> usize {
     0
 }
 
+/// The most cores past the boot one this machine starts: none.
+pub const MAX_SECONDARY_HARTS: usize = 0;
+
 /// Start this machine's other cores: this machine starts none.
 ///
 /// A device-tree machine wakes a secondary core through PSCI, the firmware

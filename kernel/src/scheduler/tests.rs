@@ -236,15 +236,47 @@ fn a_claim_does_not_hand_the_same_task_to_two_cpus() {
         scheduler.add(task);
     }
 
-    let first = scheduler.claim(0).expect("cpu 0 has work");
-    let second = scheduler.claim(1).expect("cpu 1 has work");
-    assert_ne!(first, second, "two CPUs took one task: {first} twice");
+    // As many CPUs as this build describes, which is one on a host and more on
+    // a machine that starts a second CPU.  A test that named four slots would
+    // be a test that only compiles where the machine had them.
+    let cpus = crate::per_cpu::MAX_CPUS.min(3);
 
-    // The third CPU gets the one left, and a fourth finds nothing: the machine
-    // is out of tasks, not the CPU out of work.
-    let third = scheduler.claim(2).expect("cpu 2 has work");
-    assert!(third != first && third != second);
-    assert_eq!(scheduler.claim(3), None, "every task is already running");
+    // Each CPU takes one task, and no two are the same.
+    //
+    // ## Why this is a bounded loop
+    //
+    // It was a `while let Some(x) = scheduler.claim(0)` loop, and it never
+    // ended: `claim` on a CPU that already holds a task releases that task and
+    // takes another, so the released one is claimable again on the next call
+    // and the call after that takes it back.  The `Vec` grew until the kernel's
+    // OOM killer ended the run, which read as "the build is too large for this
+    // machine" through three separate attempts before the loop was found.
+    //
+    // So: one claim per CPU, in a loop bounded by the number of CPUs, and every
+    // claim is checked rather than fed to another claim.
+    let mut taken = Vec::new();
+    for cpu in 0..cpus {
+        let claimed = scheduler.claim(cpu).expect("this cpu has a task");
+        assert!(
+            !taken.contains(&claimed),
+            "two CPUs took one task: {claimed} twice"
+        );
+        taken.push(claimed);
+    }
+
+    // A CPU that holds nothing never receives a task another CPU holds.
+    //
+    // On a host `MAX_CPUS` is one, so there is no idle CPU to ask and this
+    // block does not run; on a machine that starts a second CPU it does, and it
+    // is the assertion the whole two-CPU design rests on.
+    if cpus < crate::per_cpu::MAX_CPUS
+        && let Some(claimed) = scheduler.claim(cpus)
+    {
+        assert!(
+            !taken.contains(&claimed),
+            "an idle CPU was handed {claimed}, which another CPU holds"
+        );
+    }
 }
 
 /// A task a CPU finishes does not come back to another CPU.
