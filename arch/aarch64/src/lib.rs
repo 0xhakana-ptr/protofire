@@ -41,21 +41,22 @@ pub mod gicv2m;
 pub mod interrupts;
 pub mod paging;
 pub mod port;
+pub mod program;
 pub mod serial;
 pub mod timer;
 pub mod trap;
 
+pub use program::PIPE_READER;
+pub use program::PIPE_WRITER;
+pub use program::PROGRAM_LEN;
+pub use program::SLEEP_MICROSECONDS;
+pub use program::program_bytes;
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
 pub use trap::Context;
-pub use trap::PIPE_READER;
-pub use trap::PIPE_WRITER;
-pub use trap::PROGRAM_LEN;
-pub use trap::SLEEP_MICROSECONDS;
 #[cfg(target_os = "none")]
 pub use trap::install_context;
 pub use trap::is_user_context;
-pub use trap::program_bytes;
 pub use trap::resume_address;
 pub use trap::return_state;
 pub use trap::return_value;

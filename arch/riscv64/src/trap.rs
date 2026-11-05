@@ -150,12 +150,12 @@ const _: () = assert!(core::mem::align_of::<ExceptionFrame>() == 8);
 // The register indices the call ABI names, so the frame's array is read
 // through names rather than through numbers a reader decodes every time.
 /// `a0`: the first argument, and the register a call's answer goes back in.
-const REGISTER_A0: usize = 10;
+pub(crate) const REGISTER_A0: usize = 10;
 /// `a1`: the second argument, which `Write` prints as the program's number.
-const REGISTER_A1: usize = 11;
+pub(crate) const REGISTER_A1: usize = 11;
 /// `a7`: the register the call's number travels in — this machine's choice,
 /// where aarch64 uses `x8` and x86_64 the gate's own vector.
-const REGISTER_A7: usize = 17;
+pub(crate) const REGISTER_A7: usize = 17;
 
 impl ExceptionFrame {
     /// The syscall number a program put in `a7`.
@@ -576,374 +576,34 @@ pub fn install_context(frame: &mut ExceptionFrame, context: &Context) {
     *frame = *context;
 }
 
-// The program a boot runs, as this machine's machine code.
-//
-// A program is machine code, so the array lives with the machine that
-// executes it: `ecall` is the call, `a7` carries the number and `a1` holds
-// this program's own number because `Write` prints its second argument.  The
-// kernel names `arch::program_bytes` and gets whichever machine answered.
-
-/// How long a program's image is, in bytes.
-///
-/// The longest of the three images: the announcing program, the pipe writer
-/// and the pipe reader.  A program is copied into a whole page, so this
-/// matters only to the copy.
-pub const PROGRAM_LEN: usize = 24 * 4;
-
-/// The number of the program that reads the pipe.
-pub const PIPE_READER: u16 = 3;
-
-/// The number of the program that writes to it.
-pub const PIPE_WRITER: u16 = 2;
-
-/// How long the program sleeps, in microseconds.
-///
-/// Two thousand, and that is the encoding's answer rather than a preference:
-/// the sleep travels in an `addi` immediate, whose twelve signed bits reach
-/// two thousand and forty-seven — the aarch64 program's twenty thousand needs
-/// the sixteen bits a `movz` has, which this machine's instruction does not.
-/// Two milliseconds is twenty time slices at this boot's hundred, which is
-/// what the duration is for: a wake observably later than the request, where
-/// a sleep the timer could not distinguish from "did not sleep" would be a
-/// call that ran and proved nothing.
-pub const SLEEP_MICROSECONDS: u64 = 2_000;
-
-/// `addi rd, rs, imm`, as the word the machine reads.
-///
-/// The workhorse of a hand-written program: every immediate the ABI needs — a
-/// call number in `a7`, a duration in `a0`, this program's own number in `a1`
-/// — is one of these.  A helper rather than thirty literals, because an
-/// immediate encoded wrong by hand is an instruction the machine reads as
-/// something else and the failure is a plausible-looking wrong answer.
-const fn addi(rd: u32, rs: u32, immediate: i32) -> u32 {
-    // `imm[11:0] | rs1 | funct3 | rd | opcode`, the I-type layout.
-    ((immediate as u32) & 0xFFF) << 20 | rs << 15 | rd << 7 | 0x13
-}
-
-/// `bne rs, x0, offset`, as the word the machine reads.
-///
-/// The busy loop's only branch: one register counted down against zero, back
-/// to the instruction `offset` bytes before.  Encoded here for the same reason
-/// `addi` is — a branch offset in the wrong field loops to an address the
-/// program did not mean, and the failure is a fault far from the word that
-/// caused it.
-const fn bne_against_zero(rs: u32, offset: i32) -> u32 {
-    let immediate = (offset as u32) & 0x1FFF;
-    // `imm[12|10:5] | rs2=0 | rs1 | funct3 | imm[4:1|11] | opcode`, the
-    // B-type layout: the immediate is split around the registers it does not
-    // touch.
-    (immediate & 0x1000) << 19
-        | ((immediate >> 5) & 0x3F) << 25
-        | rs << 20
-        | 1 << 12
-        | (immediate & 0x1E) << 7
-        | (immediate & 0x800) >> 4
-        | 0x63
-}
-
-/// The busy loop: outer 64, inner 256, one decrement each.
-///
-/// Without it a program finishes in microseconds, no tick arrives, and a boot
-/// that never preempted is indistinguishable from one that could not.  The
-/// loop is nested because one register's twelve-bit immediate is a small
-/// count, and the counts are the aarch64 program's — the same work per
-/// iteration, so the same number of them spans a slice under the same
-/// emulator.
-const BUSY_LOOP: [u32; 6] = [
-    addi(13, 0, 64),           // li a3, #64      (outer)
-    addi(12, 0, 256),          // li a2, #256     (inner)
-    addi(12, 12, -1),          // addi a2, a2, -1
-    bne_against_zero(12, -4),  // bne a2, x0, back to the decrement
-    addi(13, 13, -1),          // addi a3, a3, -1
-    bne_against_zero(13, -16), // bne a3, x0, back to the inner reload
-];
-
-/// One program's words: its number, a busy loop, and four calls.
-///
-/// Built rather than stored so the number is a parameter: a table of two
-/// constants would be two things to keep in step with the encoding.
-///
-/// ## Why the order is loop, Write, Sleep, Write, Exit
-///
-/// The first `Write` says which program ran.  `Sleep` then takes it out of the
-/// rotation for [`SLEEP_MICROSECONDS`], during which the *other* program runs —
-/// so a log that shows two "says hello" lines before the second program's is a
-/// log where sleeping worked.  The second `Write` after the sleep is what makes
-/// the wake visible: a program that never woke prints one line, not two.
-const fn program_words(number: u16) -> [u32; 18] {
-    [
-        BUSY_LOOP[0],
-        BUSY_LOOP[1],
-        BUSY_LOOP[2],
-        BUSY_LOOP[3],
-        BUSY_LOOP[4],
-        BUSY_LOOP[5],
-        addi(REGISTER_A1 as u32, 0, number as i32), // li a1, #number
-        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-        0x0000_0073,                                            // ecall
-        addi(REGISTER_A0 as u32, 0, SLEEP_MICROSECONDS as i32), // li a0, #the sleep
-        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Sleep as i32),
-        0x0000_0073, // ecall
-        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-        0x0000_0073, // ecall
-        addi(REGISTER_A0 as u32, 0, 0),
-        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
-        0x0000_0073, // ecall
-        0x0000_006F, // j .
-    ]
-}
-
-/// The writer: announce, sleep, announce again, then put bytes in the pipe.
-///
-/// The reader must reach its `Read` first and block, or a write into a pipe
-/// nobody has read yet is an ordinary copy.  The reader's loop is shorter and
-/// it makes no earlier call; this sleep then makes the order a fact rather
-/// than a hope.
-///
-/// `x2` — the stack pointer — points at the write end's descriptor, and the
-/// four bytes it sends are the word above it.
-const PIPE_WRITER_PROGRAM: [u32; 24] = [
-    BUSY_LOOP[0],
-    BUSY_LOOP[1],
-    BUSY_LOOP[2],
-    BUSY_LOOP[3],
-    BUSY_LOOP[4],
-    BUSY_LOOP[5],
-    addi(REGISTER_A1 as u32, 0, 2), // li a1, #2   (this program's number)
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-    0x0000_0073, // ecall
-    addi(REGISTER_A0 as u32, 0, SLEEP_MICROSECONDS as i32),
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Sleep as i32),
-    0x0000_0073,                    // ecall
-    addi(REGISTER_A1 as u32, 0, 2), // li a1, #2   (Write, after the wake)
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-    0x0000_0073,                        // ecall
-    0x0001_3503,                        // ld a0, 0(sp)  (the write end)
-    addi(REGISTER_A1 as u32, 2, 8),     // addi a1, sp, #8 (the bytes)
-    addi(REGISTER_A0 as u32 + 2, 0, 4), // li a2, #4
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-    0x0000_0073, // ecall
-    addi(REGISTER_A0 as u32, 0, 0),
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
-    0x0000_0073, // ecall
-    0x0000_006F, // j .
-];
-
-/// The reader: wait on a descriptor the boot left on its stack.
-///
-/// `x2` points at the read end's descriptor and the four-byte buffer is the
-/// word above it.  The read blocks — the pipe is empty and its writer is
-/// alive — and the writer's syscall is the only thing that ends the wait.
-const PIPE_READER_PROGRAM: [u32; 21] = [
-    BUSY_LOOP[0],
-    BUSY_LOOP[1],
-    BUSY_LOOP[2],
-    BUSY_LOOP[3],
-    BUSY_LOOP[4],
-    BUSY_LOOP[5],
-    addi(REGISTER_A1 as u32, 0, 3), // li a1, #3     (announce)
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-    0x0000_0073,                        // ecall
-    0x0001_3503,                        // ld a0, 0(sp)  (the read end)
-    addi(REGISTER_A1 as u32, 2, 8),     // addi a1, sp, #8 (the buffer)
-    addi(REGISTER_A0 as u32 + 2, 0, 4), // li a2, #4
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Read as i32),
-    0x0000_0073, // ecall
-    // The length is cleared before the second announcement: `a2` still holds
-    // the read's four, and a write with a length to a pipe descriptor is a
-    // pipe write, so the announcement would go into the pipe and print
-    // nothing.
-    addi(REGISTER_A0 as u32 + 2, 0, 0), // li a2, #0     (announce has no length)
-    addi(REGISTER_A1 as u32, 0, 3),     // li a1, #3     (Write, after the wait)
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-    0x0000_0073, // ecall
-    addi(REGISTER_A0 as u32, 0, 0),
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
-    0x0000_0073, // ecall
-];
-
-/// A program's bytes, for a caller that writes them into a frame.
-pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
-    let mut bytes = [0u8; PROGRAM_LEN];
-    let mut words = [0u32; PROGRAM_LEN / 4];
-    if number == PIPE_WRITER {
-        words[..PIPE_WRITER_PROGRAM.len()].copy_from_slice(&PIPE_WRITER_PROGRAM);
-    } else if number == PIPE_READER {
-        words[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);
-    } else {
-        let announcing = program_words(number);
-        words[..announcing.len()].copy_from_slice(&announcing);
-    }
-    for (index, word) in words.iter().enumerate() {
-        bytes[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
-    }
-    bytes
-}
-
 #[cfg(test)]
 mod tests {
-    use super::addi;
-    use super::bne_against_zero;
-    use super::program_bytes;
-    use super::program_words;
-
-    /// The immediate an `addi` encodes, decoded back the way the machine
-    /// sign-extends it: twelve bits, so a word whose top immediate bit is set
-    /// decodes negative, and a decode that stopped at sixteen would call
-    /// forty thousand nine hundred and fifty-one the same as minus one.
-    fn addi_immediate(word: u32) -> i32 {
-        (word as i32) >> 20
-    }
-
-    /// The offset a branch word encodes, decoded back the way the machine
-    /// reads it: the immediate is split around the register fields, and the
-    /// test is what keeps the encoder and the decoder from agreeing on a
-    /// reading neither of them got from the layout.
-    fn branch_offset(word: u32) -> i32 {
-        let immediate = ((word >> 31) & 1) << 12
-            | ((word >> 25) & 0x3F) << 5
-            | ((word >> 8) & 0xF) << 1
-            | ((word >> 7) & 1) << 11;
-        // Sign-extend from thirteen bits.
-        ((immediate << 19) as i32) >> 19
-    }
+    use super::*;
 
     /// The program's bytes are the words in little-endian order.
     #[test]
     fn the_program_is_little_endian() {
-        let bytes = program_bytes(1);
-        assert_eq!(bytes.len(), super::PROGRAM_LEN);
+        let bytes = crate::program::program_bytes(1);
+        assert_eq!(bytes.len(), crate::program::PROGRAM_LEN);
         assert_eq!(&bytes[0..4], &0x0400_0693u32.to_le_bytes());
     }
 
-    /// The immediate an `addi` encodes is the one it decodes to, across the
-    /// sign the twelve-bit field carries: a negative decrement must come back
-    /// negative, or the busy loop counts up and never ends.
+    /// The frame's offsets are the assembly's, checked at compile time by the
+    /// `const` assertions above; what a test can add is that the size is a
+    /// multiple of the alignment the hardware restores under.
     #[test]
-    fn an_addi_immediate_survives_the_round_trip() {
-        assert_eq!(addi_immediate(addi(12, 12, -1)), -1);
-        assert_eq!(addi_immediate(addi(13, 0, 64)), 64);
-        assert_eq!(addi_immediate(addi(17, 0, 6)), 6);
-        // The sign is where the decode bites: the field is twelve bits, and
-        // an immediate whose eleventh bit is set is negative, not a large
-        // positive number the program never asked for.
-        assert_eq!(addi_immediate(addi(10, 0, -480)), -480);
-        // The register fields, too: an immediate in the wrong field would
-        // still decode as *an* addi, just not this one.
-        assert_eq!((addi(12, 12, -1) >> 15) & 0x1F, 12, "rs1");
-        assert_eq!((addi(12, 12, -1) >> 7) & 0x1F, 12, "rd");
+    fn the_frame_is_aligned() {
+        assert_eq!(core::mem::size_of::<ExceptionFrame>() % 8, 0);
+        assert_eq!(core::mem::align_of::<ExceptionFrame>(), 8);
     }
 
-    /// The busy loop branches back to itself, decoded from the encoding: the
-    /// inner branch reaches the decrement four bytes up, and the outer one
-    /// reaches the inner reload sixteen bytes up.
+    /// The registers a call reads are the ABI's, not this module's choice.
     #[test]
-    fn the_busy_loop_branches_back_to_itself() {
-        let words = program_words(1);
-        assert_eq!(words[0], addi(13, 0, 64), "li a3, #64");
-        assert_eq!(words[1], addi(12, 0, 256), "li a2, #256");
-
-        let inner = branch_offset(words[3]);
-        assert_eq!(inner, -4, "the inner branch loops on the decrement");
-        assert_eq!(branch_offset(words[5]), -16, "the outer reloads");
-    }
-
-    /// Every syscall number the program uses is the ABI's own.
-    ///
-    /// Four calls: `Write`, `Sleep`, `Write`, `Exit`.  A program compiled
-    /// against a number this build does not serve would print its first line
-    /// and then fail silently, which is the one failure a sleep program could
-    /// have and still look healthy.
-    #[test]
-    fn the_program_calls_write_sleep_write_and_exit() {
-        let words = program_words(1);
-        assert_eq!(
-            addi_immediate(words[7]) as usize,
-            abi::SyscallNumber::Write as usize,
-            "the first call is Write"
-        );
-        assert_eq!(
-            addi_immediate(words[10]) as usize,
-            abi::SyscallNumber::Sleep as usize,
-            "then Sleep"
-        );
-        assert_eq!(
-            addi_immediate(words[12]) as usize,
-            abi::SyscallNumber::Write as usize,
-            "then Write again, after the wake"
-        );
-        assert_eq!(
-            addi_immediate(words[15]) as usize,
-            abi::SyscallNumber::Exit as usize,
-            "and Exit"
-        );
-
-        // The sleep's duration is the immediate in `li a0`.
-        assert_eq!(addi_immediate(words[9]) as u64, super::SLEEP_MICROSECONDS);
-        // And the program's own number is the immediate in `li a1`.
-        assert_eq!(addi_immediate(words[6]) as usize, 1);
-    }
-
-    /// The number is the only word that differs.
-    #[test]
-    fn the_number_is_the_only_word_that_differs() {
-        let one = program_words(1);
-        let two = program_words(2);
-        let differing: alloc::vec::Vec<usize> = (0..one.len())
-            .filter(|index| one[*index] != two[*index])
-            .collect();
-        assert_eq!(differing, alloc::vec![6], "only `li a1` differs");
-        assert_eq!(addi_immediate(one[6]) as usize, 1);
-        assert_eq!(addi_immediate(two[6]) as usize, 2);
-    }
-
-    /// The writer's fourth call names the pipe: the descriptor is loaded from
-    /// the stack the boot handed it, the buffer is the word above it, and the
-    /// length is the four the payload needs.
-    #[test]
-    fn the_writer_reads_its_descriptor_from_the_stack() {
-        let words = super::PIPE_WRITER_PROGRAM;
-        // `ld a0, 0(sp)` — the load's width field is 3 and the register is the
-        // stack pointer's.
-        assert_eq!(words[15], 0x0001_3503);
-        assert_eq!(addi_immediate(words[16]), 8, "the buffer is at sp + 8");
-        assert_eq!(addi_immediate(words[17]), 4, "the payload is four bytes");
-        assert_eq!(
-            addi_immediate(words[18]) as usize,
-            abi::SyscallNumber::Write as usize,
-            "and the call is a Write"
-        );
-    }
-
-    /// The reader clears the length before its second announcement: a write
-    /// that still carried the read's four would be a pipe write, and the
-    /// announcement would vanish into the pipe.
-    #[test]
-    fn the_reader_clears_the_length_before_it_announces_again() {
-        let words = super::PIPE_READER_PROGRAM;
-        assert_eq!(addi_immediate(words[11]), 4, "the read asked for four");
-        assert_eq!(
-            addi_immediate(words[12]) as usize,
-            abi::SyscallNumber::Read as usize,
-        );
-        assert_eq!(
-            addi_immediate(words[14]),
-            0,
-            "and the announce's length is zero"
-        );
-        assert_eq!(
-            addi_immediate(words[16]) as usize,
-            abi::SyscallNumber::Write as usize,
-        );
-    }
-
-    /// The branch helper agrees with the encoder it tests, on a positive
-    /// offset too — a helper and its subject written from one reading of the
-    /// layout would agree on the one value they were both written for.
-    #[test]
-    fn the_branch_decoder_decodes_what_the_encoder_encoded() {
-        assert_eq!(branch_offset(bne_against_zero(12, -4)), -4);
-        assert_eq!(branch_offset(bne_against_zero(13, -16)), -16);
-        assert_eq!(branch_offset(bne_against_zero(12, 8)), 8);
+    fn the_call_registers_are_the_abis() {
+        let mut frame = crate::trap::starting_context(0, 0);
+        frame.registers[17] = abi::SyscallNumber::Write as u64;
+        frame.registers[10] = 7;
+        assert_eq!(frame.syscall_number(), abi::SyscallNumber::Write as usize);
+        assert_eq!(frame.syscall_arguments()[0], 7, "a0 is the first argument");
     }
 }
