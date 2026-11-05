@@ -2,8 +2,8 @@
 //!
 //! The x86_64 machine: what the kernel asks it, and nothing else.
 //!
-//! Everything here is a fact about this architecture — a port, an instruction,
-//! a register — and none of it may be spelled outside this crate.  The test is
+//! Everything here is a fact about this architecture, a port, an instruction,
+//! a register, and none of it may be spelled outside this crate.  The test is
 //! mechanical: a `#[cfg(target_arch = ...)]` anywhere else in the tree is a
 //! question this crate should answer instead.
 
@@ -33,14 +33,14 @@ pub use apic::calibrate as calibrate_timer;
 
 /// The descriptor table, by name.
 ///
-/// Bare metal only on the `install` half — a host has no `lgdt` — so the arm is
+/// Bare metal only on the `install` half, a host has no `lgdt`, so the arm is
 /// gated here rather than making the module's name differ per build.  A caller
 /// that named this on a host would be a caller entering ring 3, which a host
 /// has no way to do.
 /// The stack an interrupt from ring 3 lands on: the boot's.
 ///
 /// Published by `boot-x86-64.S` as `kstack_top`, and not a second stack
-/// declared for the purpose — see `gdt::kernel_stack_top`.
+/// declared for the purpose, see `gdt::kernel_stack_top`.
 #[cfg(target_os = "none")]
 pub fn interrupt_stack_top() -> usize {
     gdt::kernel_stack_top()
@@ -57,7 +57,7 @@ pub fn interrupt_stack_top() -> usize {
 /// second call reloads the selectors under code that has already cached them.
 #[cfg(target_os = "none")]
 pub unsafe fn install_descriptor_tables(interrupt_stack_top: usize) -> bool {
-    // SAFETY: the caller's contract is this function's — once, before ring 3.
+    // SAFETY: the caller's contract is this function's, once, before ring 3.
     unsafe { gdt::install(interrupt_stack_top) }
 }
 
@@ -119,7 +119,7 @@ pub fn halt() -> ! {
 /// x86_64's is an MSI capability's address and data pair, which
 /// `drivers/bus/pci` writes directly; the frame itself is the local APIC's, not
 /// a separate window the way GICv2m is.  So there is nothing for this crate to
-/// probe and `None` is the honest answer — a caller treats it as "no frame",
+/// probe and `None` is the honest answer, a caller treats it as "no frame",
 /// not as a failure.
 ///
 /// # Safety
@@ -144,9 +144,9 @@ pub use trap::CallOutcome;
 ///
 /// The earlier version of this function was `unreachable!`, and its comment
 /// named the three things it needed: a TSS with an `RSP0`, a user-accessible
-/// GDT segment, and a gate at `DPL` 3.  All three exist now — `gdt` builds the
+/// GDT segment, and a gate at `DPL` 3.  All three exist now, `gdt` builds the
 /// descriptors and loads the TSS, `idt` installs the call gate at `DPL` 3, and
-/// `enter_user_with` builds the five words `iretq` pops — so this is a thin
+/// `enter_user_with` builds the five words `iretq` pops, so this is a thin
 /// wrapper that gives the caller the aarch64 signature.
 ///
 /// The context it builds has no registers set, which is correct for an entry:
@@ -179,7 +179,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 
 /// Translate through a different root table from now on.
 ///
-/// `cr3` is the register, and writing it is the whole of the switch — the
+/// `cr3` is the register, and writing it is the whole of the switch, the
 /// processor discards the TLB for the new address space on the next walk.
 /// Reading it back is what makes the answer a fact rather than a claim: a `cr3`
 /// whose low bits held flags would read back as a different number, and the
@@ -196,7 +196,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 /// # Safety
 ///
 /// `root` must be a page-aligned root table whose entry 0 maps every address
-/// the kernel is running on — its text, its stack and the interrupt table —
+/// the kernel is running on, its text, its stack and the interrupt table, ///
 /// because the next fetch happens through it.
 #[cfg(target_os = "none")]
 pub unsafe fn switch_address_space(root: usize) -> bool {
@@ -231,7 +231,7 @@ pub unsafe fn timer_frequency() -> Option<u64> {
     // The kernel's interrupt handler re-arms the timer on every tick, and it
     // asks for the frequency when it does.  A `timer_frequency` that measured
     // each time would program the PIT for fifty-five milliseconds and disarm
-    // the timer it was asked about — so the boot took exactly one tick, and
+    // the timer it was asked about, so the boot took exactly one tick, and
     // every tick spent its whole slice re-measuring the clock.  The log showed
     // it as `1 tick(s)` after programs that had run long enough for hundreds.
     //
@@ -244,7 +244,7 @@ pub unsafe fn timer_frequency() -> Option<u64> {
 
     // SAFETY: the caller's contract is this function's.
     let apic = unsafe { Apic::probe() }?;
-    // SAFETY: as above — the APIC is mapped and interrupts are off.
+    // SAFETY: as above, the APIC is mapped and interrupts are off.
     unsafe { apic.enable() };
     // SAFETY: as above.
     let frequency = unsafe { calibrate_timer(&apic) }?;
@@ -282,7 +282,7 @@ fn measured_frequency() -> Option<u64> {
 /// Record the measured frequency.
 #[cfg(target_os = "none")]
 fn set_measured_frequency(frequency: u64) {
-    // SAFETY: as above — the only write, and it happens before any tick.
+    // SAFETY: as above, the only write, and it happens before any tick.
     unsafe { *CALIBRATED.get() = Some(frequency) };
 }
 
@@ -292,8 +292,8 @@ fn set_measured_frequency(frequency: u64) {
 ///
 /// They are two clocks: `timer_counter` reads the TSC and `arm_timer` loads an
 /// APIC count, and nothing in the architecture says the two run at one rate.
-/// On this emulator they happen to agree — a boot was measured with the sleep
-/// conversion using either number and behaved identically — so this is not a
+/// On this emulator they happen to agree, a boot was measured with the sleep
+/// conversion using either number and behaved identically, so this is not a
 /// fix for anything observed.  It is the honest signature: a caller that
 /// compares against `timer_counter` asks how fast *that* counts, and a caller
 /// that loads a countdown asks how fast *that* counts, and one function
@@ -311,7 +311,7 @@ pub unsafe fn clock_frequency() -> Option<u64> {
     }
     // SAFETY: the caller's contract is this function's.
     let rate = unsafe { apic::calibrate_clock() }?;
-    // SAFETY: as above — the only write, and it happens before any program.
+    // SAFETY: as above, the only write, and it happens before any program.
     unsafe { *CLOCK_RATE.get() = Some(rate) };
     Some(rate)
 }
@@ -408,7 +408,7 @@ pub unsafe fn timer_counter() -> u64 {
     // is what makes `now >= deadline` a deadline.  The APIC's current count is
     // the opposite in both respects: it counts **down**, and it reloads every
     // time the timer fires.  A deadline computed from it is a number that will
-    // never be reached, and a scheduler that waited on one waited forever —
+    // never be reached, and a scheduler that waited on one waited forever, //
     // which is exactly what a boot whose programs slept showed: 76,000 ticks
     // with one task asleep and none of them waking it.
     //
@@ -417,7 +417,7 @@ pub unsafe fn timer_counter() -> u64 {
     //
     // SAFETY: `rdtsc` reads the counter; it is unprivileged and has no side
     // effect.  `lfence` orders it after any earlier instruction so two reads
-    // cannot appear out of order — the same reason `CPUID` was needed before it
+    // cannot appear out of order, the same reason `CPUID` was needed before it
     // on older machines.
     unsafe { apic::read_tsc() }
 }
@@ -444,7 +444,7 @@ pub unsafe fn timer_fired() -> bool {
 /// ## Why not a spare vector
 ///
 /// Vector zero is the divide error, so a self-directed interrupt at zero is a
-/// fault the processor takes and the dispatch never sees — a boot reported
+/// fault the processor takes and the dispatch never sees, a boot reported
 /// "raised but not delivered" on every run with nothing actually wrong.
 ///
 /// A spare vector above the timer's is worse rather than better: the local APIC
@@ -484,14 +484,14 @@ pub unsafe fn interrupt_line_enabled(_number: usize) -> bool {
 ///
 /// `sti; hlt` is the pair a kernel idles with: `sti` takes effect after the
 /// next instruction, so the `hlt` cannot miss the interrupt it is about to
-/// wait for — the order matters, and `hlt; sti` would sleep through it.
+/// wait for, the order matters, and `hlt; sti` would sleep through it.
 ///
 /// A host has no `hlt`, so its arm returns immediately.
 #[cfg(target_os = "none")]
 pub fn wait_for_a_wakeup() {
     // SAFETY: `sti` sets `RFLAGS.IF` and `hlt` stops the core until an
-    // interrupt is pending.  Interrupts are on by the time this is called —
-    // every program runs with `IF` set — so the `hlt` returns.
+    // interrupt is pending.  Interrupts are on by the time this is called, //
+    // every program runs with `IF` set, so the `hlt` returns.
     unsafe { core::arch::asm!("sti; hlt", options(nomem, nostack)) };
 }
 
@@ -521,8 +521,8 @@ pub unsafe fn enable_interrupt_line(_number: usize) -> bool {
 /// ## Why this is a software interrupt
 ///
 /// A device raises its line when it has something to say and cannot be asked
-/// to say it on demand.  The local APIC's ICR can send an interrupt to a CPU —
-/// including this one — with a vector of the caller's choosing, which is the
+/// to say it on demand.  The local APIC's ICR can send an interrupt to a CPU,
+/// /// including this one, with a vector of the caller's choosing, which is the
 /// same instrument aarch64's `GICD_SGIR` is, and it drives the identical
 /// delivery path a timer tick does.
 ///
@@ -542,8 +542,8 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
 
 /// Start this machine's other CPUs: this machine starts none.
 ///
-/// The local APIC's ICR can reach another CPU — an INIT-SIPI-SIPI sequence is
-/// how an application processor is woken — but there is no discovery behind it
+/// The local APIC's ICR can reach another CPU, an INIT-SIPI-SIPI sequence is
+/// how an application processor is woken, but there is no discovery behind it
 /// on this machine: no MADT is read, so there is no list of processors to
 /// start and no place to start them into.  Zero is the honest answer today: a
 /// machine with more than one CPU runs one, and a count without a path behind

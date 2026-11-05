@@ -73,7 +73,7 @@ pub struct Record {
     /// Data length, in bytes.
     pub data_length: u32,
     /// Extended attribute record length, in blocks.  Always zero for every
-    /// image this reader accepts — see [`Record::has_extended_attributes`].
+    /// image this reader accepts, see [`Record::has_extended_attributes`].
     pub extended_attribute_blocks: u8,
     pub flags: u8,
     /// The identifier, exactly as the record carries it.
@@ -153,7 +153,7 @@ impl Record {
     /// Whether this record is a directory's own `.` or `..`.
     ///
     /// The identifier is one byte `0x00` or `0x01` in a primary tree, and two
-    /// bytes — the UCS-2 code unit — in a Joliet one.  A name whose first byte
+    /// bytes, the UCS-2 code unit, in a Joliet one.  A name whose first byte
     /// is zero in Joliet is any name below U+0100, which is most of them, so
     /// both bytes are what says so.
     pub fn is_dot_entry(&self) -> bool {
@@ -203,8 +203,8 @@ impl Record {
 
     /// The name a reader should show for this record.
     ///
-    /// Rock Ridge's `NM` entry when there is one — that is the name the disc's
-    /// author meant — otherwise the identifier with its version suffix removed
+    /// Rock Ridge's `NM` entry when there is one, that is the name the disc's
+    /// author meant, otherwise the identifier with its version suffix removed
     /// and its case folded down.  A Joliet identifier is UCS-2 and is decoded
     /// as such.
     pub fn name(&self) -> String {

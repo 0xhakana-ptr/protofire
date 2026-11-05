@@ -136,9 +136,9 @@ impl SecurityToken {
     /// The raw [`SecurityToken::system`] token is, and a token built for a
     /// service is not, however it was declared: a config file can ask for the
     /// kernel's *trust level* but not for the kernel's *identity*.  Callers
-    /// that treat "is this the kernel" as a shortcut — the discretionary
+    /// that treat "is this the kernel" as a shortcut, the discretionary
     /// bypass, unconditional security-descriptor changes, the per-process
-    /// `is_kernel` report — ask this, not [`SecurityToken::is_system`].
+    /// `is_kernel` report, ask this, not [`SecurityToken::is_system`].
     pub const fn is_kernel_token(self) -> bool {
         self.is_system() && !self.provisioned
     }
@@ -176,8 +176,8 @@ impl SecurityToken {
     /// authentication (login/su).
     ///
     /// This is the only flag that opens the discretionary bypass for a token
-    /// that is not the kernel's own, so a privilege arriving any other way — a
-    /// service definition, say — cannot set it by accident.
+    /// that is not the kernel's own, so a privilege arriving any other way, a
+    /// service definition, say, cannot set it by accident.
     pub const fn with_authentication(mut self) -> Self {
         self.authenticated = true;
         self
@@ -252,8 +252,8 @@ impl SecurityToken {
     pub const fn may_bypass_discretionary_permissions(self) -> bool {
         // The kernel's own threads always bypass, no auth required.  A token
         // built for a service is not one of them: it carries an identity the
-        // kernel resolved, so it faces the same standard as any other caller —
-        // a password, or nothing.
+        // kernel resolved, so it faces the same standard as any other caller,
+        // // a password, or nothing.
         if self.is_kernel_token() {
             return true;
         }

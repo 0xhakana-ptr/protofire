@@ -4,8 +4,8 @@
 //! about it.
 //!
 //! A device-tree machine's boot protocol passes a pointer to a flattened device
-//! tree in a register its own convention names — `x0` on aarch64, `a1` on
-//! riscv64 — and there is no handshake to check: the firmware either loaded us
+//! tree in a register its own convention names, `x0` on aarch64, `a1` on
+//! riscv64, and there is no handshake to check: the firmware either loaded us
 //! or it did not, and a boot that got this far did.
 //!
 //! ## Where the pointer goes
@@ -61,7 +61,7 @@ pub unsafe fn set_device_tree(pointer: usize) {
 /// firmware supplied.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aarch64_set_device_tree(pointer: usize) {
-    // SAFETY: the caller's contract is this function's — once, from the entry,
+    // SAFETY: the caller's contract is this function's, once, from the entry,
     // with the machine's own register.
     unsafe { set_device_tree(pointer) };
 }
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn aarch64_set_device_tree(pointer: usize) {
 /// rather than dying in.
 ///
 /// The blob's length is the header's own `totalsize`.  There is no way to ask
-/// the firmware how long it is, and the header is the only claim available — so
+/// the firmware how long it is, and the header is the only claim available, so
 /// this reads the first bytes, trusts the size in them, and hands the slice to
 /// `fdt`, which bounds-checks every access against it.
 pub fn device_tree() -> Option<fdt::Fdt<'static>> {
@@ -130,14 +130,14 @@ pub fn pcie_ecam_window() -> Option<(usize, usize)> {
 /// On a machine with firmware, a PCI bus comes up already assigned and this
 /// function is never needed.  A device-tree machine booted directly has no
 /// firmware to run that pass, so every BAR reads zero and nothing behind one is
-/// reachable — the registers, the queues, and the MSI-X table, which lives in a
+/// reachable, the registers, the queues, and the MSI-X table, which lives in a
 /// BAR.
 ///
 /// The window is a property of the *machine*, so it comes from the machine's
 /// tree.  A `ranges` entry is
 /// `(child address, parent address, length)` where the child address's first
 /// cell is the space code and the num ber of cells is the node's own
-/// `#address-cells` and the parent's — which for this tree's `virt` machine is
+/// `#address-cells` and the parent's, which for this tree's `virt` machine is
 /// three and two.
 pub fn pcie_memory_window() -> Option<(u64, u64)> {
     let tree = device_tree()?;
@@ -202,14 +202,14 @@ const MAX_RANGES_CELLS: usize = 64;
 
 /// The interrupt controller's two windows, as the tree describes them.
 ///
-/// `(distributor, cpu_interface)`.  A GIC's `reg` has two entries — the
-/// distributor and the CPU interface — and both are needed: the first decides
+/// `(distributor, cpu_interface)`.  A GIC's `reg` has two entries, the
+/// distributor and the CPU interface, and both are needed: the first decides
 /// which lines exist and which CPU they go to, the second is what this core
 /// acknowledges and finishes through.
 ///
 /// The compatible string names a GIC version this kernel's [`crate::gic`]
 /// implements.  `arm,cortex-a15-gic` is GICv2, and a machine with a GICv3 has a
-/// `reg` whose second entry does not exist — its CPU interface is system
+/// `reg` whose second entry does not exist, its CPU interface is system
 /// registers rather than memory.  So this refuses anything it does not
 /// recognise rather than reading two windows that are not two.
 ///
@@ -235,7 +235,7 @@ pub fn interrupt_controller() -> Option<(usize, usize)> {
 /// An MSI-X device raises an interrupt by writing to an address, and the frame
 /// is what turns that write into one of the controller's lines.  Without it a
 /// machine has no way to deliver a message-signalled interrupt, and a driver
-/// falls back to its INTx pin — which is the table this tree could not read.
+/// falls back to its INTx pin, which is the table this tree could not read.
 ///
 /// The node is a child of the interrupt controller and is identified by
 /// `compatible = "arm,gic-v2m-frame"`.  Its `reg` is one window; the two

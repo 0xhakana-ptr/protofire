@@ -6,7 +6,7 @@
 //!
 //! `idt_stub.S`'s `common_stub` builds a [`Context`] on the kernel stack and
 //! hands it to `x86_64_interrupt_dispatch`.  The two files agree on every
-//! offset because `context.rs` asserts them against `offset_of!` — a fact no
+//! offset because `context.rs` asserts them against `offset_of!`, a fact no
 //! compiler checks, since a `repr(C)` structure and a run of `push`es are two
 //! descriptions of one layout.
 //!
@@ -15,7 +15,7 @@
 //! A device's interrupt and a program's system call arrive through the same
 //! stubs; what differs is the vector number and what the handler does with the
 //! frame.  The system call vector is a gate at `DPL` 3 so that `int $0x80`
-//! from ring 3 reaches it, and its handler is the call sink — a program asking
+//! from ring 3 reaches it, and its handler is the call sink, a program asking
 //! the kernel to do something.  Everything else is a fault or a device's line.
 //!
 //! ## Why the sinks are statics
@@ -133,7 +133,7 @@ pub fn syscall_number(frame: &Context) -> usize {
 
 /// The six arguments, in the order the architecture passes them.
 ///
-/// `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` — the System V argument order, with
+/// `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, the System V argument order, with
 /// `rcx` in the fourth slot because `syscall`/`sysret` already spend `rcx` and
 /// programming against one ordering for both entry paths is worth more than
 /// matching the `syscall` instruction's own quirk.
@@ -226,7 +226,7 @@ pub unsafe fn timer_controller() -> Option<crate::apic::Apic> {
 ///
 /// The local APIC holds a line in service until this is written.  A handler
 /// that returned without it takes exactly one interrupt and then appears to
-/// hang — the same failure aarch64's `EOIR` exists to prevent.
+/// hang, the same failure aarch64's `EOIR` exists to prevent.
 #[cfg(target_os = "none")]
 fn end_of_interrupt() {
     // SAFETY: the controller was recorded before the timer was armed, and this
@@ -243,7 +243,7 @@ fn end_of_interrupt() {
 /// vector it delivers, so the rule is "the controller delivered it" rather than
 /// "it is the timer's".  A vector the processor raised as a fault has no line
 /// in service, and writing EOI for one would clear whichever line *is* being
-/// serviced — which is why the boundary is the processor's 32 exceptions and
+/// serviced, which is why the boundary is the processor's 32 exceptions and
 /// not "everything".
 pub fn needs_end_of_interrupt(vector: usize) -> bool {
     vector >= 32
@@ -256,7 +256,7 @@ pub fn needs_end_of_interrupt(vector: usize) -> bool {
 /// An interrupt is three things in order: the kernel claims it or not, the
 /// scheduler may switch away from the program it interrupted, and an
 /// unclaimed one is reported.  Keeping them in one place is what makes the
-/// order visible — the switch happens only after the line was claimed, because
+/// order visible, the switch happens only after the line was claimed, because
 /// an interrupt nobody handled is not a reason to move the CPU to another
 /// program.
 #[cfg(target_os = "none")]
@@ -311,7 +311,7 @@ use crate::idt::DISPATCH;
 ///
 /// `extern "C"` because `idt_stub.S` calls it, with a pointer to the frame that
 /// file built on the kernel stack.  The pointer must name a live [`Context`],
-/// which is the stub's contract — and it does not unwind: an exception has no
+/// which is the stub's contract, and it does not unwind: an exception has no
 /// context to unwind into.
 #[cfg(target_os = "none")]
 #[unsafe(no_mangle)]
@@ -322,8 +322,8 @@ pub unsafe extern "C" fn x86_64_interrupt_dispatch(frame: *mut Context) {
 
     // A system call from a program is a *request*, not a fault: it is served
     // and the program resumed.  The check is the vector and the ring the frame
-    // came from, because the kernel's own `int $0x80` — which the boot uses as
-    // a self-test — must not be mistaken for a program's call.
+    // came from, because the kernel's own `int $0x80`, which the boot uses as
+    // a self-test, must not be mistaken for a program's call.
     if frame.vector as usize == SYSCALL_VECTOR && frame.is_user() {
         return serve_user_call(frame);
     }
@@ -342,14 +342,14 @@ pub unsafe extern "C" fn x86_64_interrupt_dispatch(frame: *mut Context) {
 /// What the kernel's own `int $0x80` is answered with.
 ///
 /// A value no syscall returns, so the self-test can tell "the gate delivered my
-/// call" from "the answer was whatever `rax` already held" — the same reason
+/// call" from "the answer was whatever `rax` already held", the same reason
 /// the boot's interrupt probe uses a sentinel instead of zero.
 pub const SYSCALL_SELF_TEST_ANSWER: usize = 0x5EF7_EFE7;
 
 /// Install a context over the frame the trap path will restore.
 ///
 /// A copy, on every build and through one function: the frames are the same
-/// type, so there is nothing a bare-metal arm would do differently — and a host
+/// type, so there is nothing a bare-metal arm would do differently, and a host
 /// arm that did nothing would be a function whose only caller could not test
 /// it.
 pub fn install_trap_context(frame: &mut Context, context: &Context) {
@@ -381,7 +381,7 @@ mod tests {
 
     /// The number and the arguments come from the registers the ABI names.
     ///
-    /// The first argument is `rdi` and not `rsi` — the ordering is the
+    /// The first argument is `rdi` and not `rsi`, the ordering is the
     /// architecture's, and a program is compiled against it.
     #[test]
     fn the_arguments_come_from_the_architectures_registers() {

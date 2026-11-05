@@ -6,12 +6,12 @@
 //!
 //! x86_64 gives a device a separate 16-bit I/O space reached by `in` and `out`.
 //! Neither aarch64 nor riscv64 has one: a device's registers are mapped into
-//! the address space, and PCI on these machines is memory-mapped throughout —
-//! ECAM for configuration space, a BAR for everything else.
+//! the address space, and PCI on these machines is memory-mapped throughout,
+//! //! ECAM for configuration space, a BAR for everything else.
 //!
 //! The functions exist because the crate above asks for them through `arch` and
 //! must not have to know which machine it is on.  Reading one reports "no such
-//! port", which is what a PCI scan above treats as "no device here" — the true
+//! port", which is what a PCI scan above treats as "no device here", the true
 //! statement on a machine whose devices are not behind ports.
 //!
 //! ## Why not `compile_error!`

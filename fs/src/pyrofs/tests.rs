@@ -5,11 +5,11 @@
 //! V4 test images are produced directly with
 //! [`PyroFs::build_v4_image_with_headroom`], which lays out the real V4
 //! geometry (active/shadow xattr table pair immediately after the dirent
-//! tables) and writes a checksummed superblock — no post-hoc patching.
+//! tables) and writes a checksummed superblock, no post-hoc patching.
 //!
 //! The crash-recovery tests wrap the block device in
 //! [`MetadataFailingBlockDevice`], which injects a single failure on a
-//! chosen metadata-write call — either rejecting the write before it hits
+//! chosen metadata-write call, either rejecting the write before it hits
 //! the device, or tearing it so only a prefix lands.  This exercises the
 //! two-phase metadata commit: the V4 flush order is
 //!
@@ -71,8 +71,8 @@ fn open_writable_v4_for_test(device: Arc<dyn QueuedBlockDevice>) -> Arc<PyroFs> 
     PyroFs::open(device, true).expect("open writable v4 pyrofs")
 }
 
-/// Build a writable V2 image — the format the tree's own image builders
-/// produce — with a single `/README.txt` seed file.
+/// Build a writable V2 image, the format the tree's own image builders
+/// produce, with a single `/README.txt` seed file.
 fn build_v2_test_device(name: &str, seed: &[u8]) -> Arc<MemoryBlockDevice> {
     let image = PyroFs::build_image_with_headroom(
         name,
@@ -104,8 +104,8 @@ fn read_full_test(node: &dyn VNode) -> Vec<u8> {
 /// Block-device wrapper that counts the blocks each write puts on the device.
 ///
 /// `write_shadow_table` writes a metadata table block by block, so this is how
-/// a test can see that a commit after the first one — the one that describes
-/// the slot — carries only the blocks that differ.
+/// a test can see that a commit after the first one, the one that describes
+/// the slot, carries only the blocks that differ.
 struct WriteCountingBlockDevice {
     name: String,
     parent: Arc<dyn BlockDevice>,
@@ -333,7 +333,7 @@ fn v4_set_xattr_round_trip_within_capacity() {
 /// `write_runtime_inode_table` encoded only the deletion bit, so the
 /// compression and dedup bits were parsed at mount and never written back:
 /// a flag set on a running volume survived until it was unmounted and then
-/// vanished.  This is the assertion that catches it — setting a flag and
+/// vanished.  This is the assertion that catches it, setting a flag and
 /// reading it straight back would pass either way, because the in-memory
 /// inode is where the setter put it.
 #[test]
@@ -468,7 +468,7 @@ fn metadata_commit_after_the_first_writes_only_the_blocks_that_changed() {
     );
 
     // Skipping blocks must still leave the slot the publish swaps in an exact
-    // copy of the image.  The *retired* slot is a generation behind — that is
+    // copy of the image.  The *retired* slot is a generation behind, that is
     // what the checker calls drift and clears with one synchronising commit.
     let report = VfsFileSystem::check_and_repair(&volume).expect("check the volume");
     assert_eq!(
@@ -570,7 +570,7 @@ fn repeated_crash_recovery_cycles_v4() {
         // xattr-geometry fields read back as zeroed, and the repair loop
         // compares them against the first-mount state, so repairing a
         // freshly-written V4 volume is intentionally out of scope for the
-        // cycle — the torn publish is what we exercise.)
+        // cycle, the torn publish is what we exercise.)
         {
             let fs = open_writable_v4_for_test(device.clone());
             let volume = PyroFsVolume::new(fs);

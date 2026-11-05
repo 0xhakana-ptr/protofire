@@ -32,7 +32,7 @@ extern crate alloc;
 // The MAC tests use `std`'s `Mutex` to serialise themselves: the policy is one
 // process-wide value, so two tests that each install a rule set would decide
 // against each other's.  A test build is not the kernel, and a `no_std` crate
-// can still link `std` in its test configuration — which is what the previous
+// can still link `std` in its test configuration, which is what the previous
 // tree relies on for the same file.
 #[cfg(test)]
 extern crate std;

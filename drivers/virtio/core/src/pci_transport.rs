@@ -11,12 +11,12 @@
 //! |---|---|
 //! | common (1) | features, status, queue addresses |
 //! | notify (2) | one doorbell per queue |
-//! | device (4) | the device's own configuration — a block device's capacity |
+//! | device (4) | the device's own configuration, a block device's capacity |
 //! | shared memory (8) | regions, which this tree does not use |
 //!
 //! The device chooses where in its BAR each one sits, so a driver cannot assume
 //! a layout: it walks the capability list and asks.  That is why this is
-//! separate from the register offsets — the offsets are the specification's,
+//! separate from the register offsets, the offsets are the specification's,
 //! and the addresses are the device's.
 //!
 //! ## Why the register file is a trait too
@@ -24,7 +24,7 @@
 //! A BAR is memory, and reaching it means dereferencing an address the machine
 //! assigned.  On a host there is no such memory, so [`RegisterFile`] is the
 //! thing a test supplies: a map from offset to value, which lets the whole of
-//! this module — capability walk, field packing, the notify multiplier — be
+//! this module, capability walk, field packing, the notify multiplier, be
 //! tested without a device.
 
 use alloc::sync::Arc;
@@ -102,8 +102,8 @@ pub fn decode_capability(
 
 /// The virtio PCI transport.
 ///
-/// Holds the two register files it needs — the common configuration and the
-/// device-specific one — plus the BAR the notification area is in.  The notify
+/// Holds the two register files it needs, the common configuration and the
+/// device-specific one, plus the BAR the notification area is in.  The notify
 /// area has no registers of its own: a doorbell is written at
 /// `bar_base + queue_notify_off * multiplier`, so what it needs is the base.
 pub struct PciTransport {
@@ -151,7 +151,7 @@ impl PciTransport {
             //   le32 length
             //
             // `word` is the dword at the structure's start, so it holds the
-            // four bytes of the PCI capability header — `cfg_type` is its high
+            // four bytes of the PCI capability header, `cfg_type` is its high
             // byte.  `bar` is the *next* dword's low byte, not this one's: a
             // driver that read it from `word` would take `cap_len` as the BAR
             // number and read the wrong window.
@@ -172,7 +172,7 @@ impl PciTransport {
             // | 12 | `length` |
             //
             // The first version read the BAR from `+ 4` as the *second* dword
-            // of the structure and then read `offset` from `+ 8` — one dword
+            // of the structure and then read `offset` from `+ 8`, one dword
             // too far for the first and right for the second by accident, so
             // the BAR came out as the padding and the region's length as the
             // offset.  QEMU's virtio-blk publishes `bar = 1, offset = 0x0800,
@@ -209,7 +209,7 @@ impl PciTransport {
 
         // Which of the three was missing, not just that one was.  A transport
         // that says only "bad capability" leaves a reader to re-derive the
-        // device's capability list to find out what it actually offered — and
+        // device's capability list to find out what it actually offered, and
         // on a machine where every BAR was just assigned, that is the question.
         // Which capabilities the device did publish, so a failure names what
         // was there and not only what was not.  A device that offers four

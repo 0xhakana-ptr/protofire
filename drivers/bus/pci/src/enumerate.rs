@@ -5,7 +5,7 @@
 //! ## Why this exists
 //!
 //! A PCI function's BAR is a register asking the machine for a window.  On a
-//! machine with firmware — a PC, a UEFI board — something has already answered:
+//! machine with firmware, a PC, a UEFI board, something has already answered:
 //! the registers hold plausible addresses and a driver only has to read them.
 //!
 //! A device-tree machine booted directly has no such pass.  Every BAR reads
@@ -60,7 +60,7 @@ pub struct Assignment {
 ///
 /// I/O BARs are skipped: a device-tree machine has no port space, so an I/O
 /// window is a range nothing can reach.  A function whose BAR does not read
-/// back what was written is left as it was — a device that does not take an
+/// back what was written is left as it was, a device that does not take an
 /// address would decode somebody else's window if the write were believed.
 ///
 /// Every address this assigns is 4 KiB aligned and sized to a power of two,
@@ -167,7 +167,7 @@ pub const fn is_window_start(address: u64) -> bool {
 ///
 /// Both halves for a 64-bit BAR, the low half alone otherwise.  A caller that
 /// read only the low register would see zero for every device placed above four
-/// gigabytes — which is where a device-tree machine's host bridge usually puts
+/// gigabytes, which is where a device-tree machine's host bridge usually puts
 /// its window.
 pub fn bar_address(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) -> u64 {
     let low = config.read_dword(address, register) as u64 & 0xFFFF_FFF0;

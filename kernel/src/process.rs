@@ -5,7 +5,7 @@
 //! ## What this is
 //!
 //! What the kernel does with a program's supervisor call: three calls are
-//! served — `Write`, `Exit` and `Sleep` — and everything else answers
+//! served, `Write`, `Exit` and `Sleep`, and everything else answers
 //! `NotImplemented`.
 //!
 //! ## Why the program is not here
@@ -20,7 +20,7 @@
 //! ## Sleeping
 //!
 //! `Sleep` is the first call that does not answer immediately.  It records a
-//! deadline in the scheduler and answers `Exit`-shaped — not because the
+//! deadline in the scheduler and answers `Exit`-shaped, not because the
 //! program has ended, but because the frame the handler holds must describe
 //! what runs next, and what runs next is another task.  The program resumes
 //! when the timer wakes it, with its context exactly as the trap saved it.
@@ -28,7 +28,7 @@
 /// A program's bytes, for a caller that writes them into a frame.
 ///
 /// Asked of the machine: a program is machine code, and the array is this
-/// architecture's — `svc` and `x8` on aarch64, `int $0x80` and `eax` on x86_64.
+/// architecture's, `svc` and `x8` on aarch64, `int $0x80` and `eax` on x86_64.
 /// The kernel names one function and gets whichever machine answered.
 pub fn program_bytes(number: u16) -> [u8; arch::PROGRAM_LEN] {
     arch::program_bytes(number)
@@ -60,7 +60,7 @@ pub const fn program_base(number: u16) -> usize {
 /// `program_base + 0x1000`, and a stack pointer at its first byte has no stack:
 /// the first `push` writes the byte before it, which is unmapped.  Every
 /// earlier program ran without touching the stack, so this was invisible until
-/// one did — the pipe reader's first instruction is a load from `[rsp]`, and it
+/// one did, the pipe reader's first instruction is a load from `[rsp]`, and it
 /// took a page fault.
 pub const fn program_stack_top(number: u16) -> usize {
     program_base(number) + 0x2000
@@ -75,7 +75,7 @@ pub const fn program_stack_page(number: u16) -> usize {
 ///
 /// ## What a call can be, today
 ///
-/// `Write` prints a fixed line — the program's arguments are not read, because
+/// `Write` prints a fixed line, the program's arguments are not read, because
 /// a pointer in a register is an address this kernel has no way to validate
 /// yet, and reading one would be trusting a value from ring 3.  `Exit` ends the
 /// program.  Everything else answers `NotImplemented`, which is what the
@@ -91,9 +91,9 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // The scheduler decides what runs next and puts that task's context in
         // the frame.  When nothing is left there is nothing to resume, and
         // `eret`-ing into a program that asked to exit would run it again from
-        // the instruction after the `svc` — forever.
+        // the instruction after the `svc`, forever.
         // The status is `Exit`'s first argument, which is where every
-        // machine's call convention puts it — `edi` on x86_64, `a0`/`x0` on the
+        // machine's call convention puts it, `edi` on x86_64, `a0`/`x0` on the
         // others.  Reading a return register instead would be wrong on the one
         // machine whose two registers differ.
         let status = call.arguments[0];
@@ -113,12 +113,12 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             //
             // A program asks `GetPid` and exits with the answer, so a status
             // that is the program's own number is evidence the identity call
-            // ran and the exit carried its answer — not that the kernel can
+            // ran and the exit carried its answer, not that the kernel can
             // count.
             // The announcing program's status is its own pid because it asks
             // `GetPid` and exits with the answer.  The pipe's two programs have
             // no identity call, so their status is whatever their last call
-            // left in the argument register — reported as it is rather than
+            // left in the argument register, reported as it is rather than
             // filtered, because a status the kernel made up to look tidy would
             // be the defect this tree keeps recording.
             arch::serial::write_str("protofire: exit statuses ");
@@ -144,7 +144,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             // timer moved the CPU.
             //
             // A boot whose preemption sink was not installed prints
-            // `1 switch(es)` — one, from the first exit — and says so.
+            // `1 switch(es)`, one, from the first exit, and says so.
             if switches > 1 && ticks > 0 {
                 arch::serial::write_str("protofire: the timer preempted, ");
                 arch::serial::write_u32((switches - 1) as u32);
@@ -161,7 +161,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // The test is the table, not the argument: a program's `Write` is also how
     // it announces which program it is, and that call passes a small number
     // where a pipe's descriptor would be.  A range check could not tell the two
-    // apart — aarch64's `x0` holds the stack top for every program — and the
+    // apart, aarch64's `x0` holds the stack top for every program, and the
     // first version's did exactly that, so the announcement was served as a
     // pipe write and the program printed once.
     // A pipe write is a write *with a length*, which the announcing `Write`
@@ -169,7 +169,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     //
     // The descriptor test alone is not enough, and this is the defect that
     // showed it: a program's first instructions have no reason to set `edi`, so
-    // it holds whatever the boot left — zero — and zero is a valid descriptor
+    // it holds whatever the boot left, zero, and zero is a valid descriptor
     // once a pipe exists.  The announcement was then served as a pipe write and
     // the program printed nothing.  A length is what the announcing call
     // genuinely lacks and a real write genuinely has.
@@ -236,7 +236,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // A `Write` does **not** switch.  The first version did, and the bug
         // was invisible in the log and fatal underneath: `advance` replaced the
         // frame with the other task's context, and then this function wrote its
-        // own answer into `x0` of *that* context and returned `Return` — so the
+        // own answer into `x0` of *that* context and returned `Return`, so the
         // program resumed was the other one, with its `x0` overwritten by a
         // value meant for this one.  Both printed, and the exit never happened.
         //
@@ -266,12 +266,12 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 // ## Why this is not `advance(frame, false)` unconditionally
                 //
                 // `advance` saves the frame it was given into the *current*
-                // task before choosing the next one — and the current task is
+                // task before choosing the next one, and the current task is
                 // the one that just went to sleep, whose context was saved by
                 // `sleep_for_microseconds`.  Saving again is harmless; what is
                 // not is that `advance` answers `Exit` when nothing else is
                 // runnable, and `Exit` tells the trap path to resume the frame
-                // it has — a sleeping program.
+                // it has, a sleeping program.
                 //
                 // So the two cases are separate.  With another task runnable,
                 // `advance` installs its context and the trap path resumes it.
@@ -283,7 +283,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 }
                 // Nothing is selectable, so the frame is not replaced.  The
                 // wait happens here, and the task that woke is installed
-                // afterwards — through the call that does *not* save, because
+                // afterwards, through the call that does *not* save, because
                 // the frame arriving here is the boot's kernel frame and the
                 // task it would be saved into is asleep with a program context
                 // that must not be clobbered.
@@ -311,7 +311,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         //
         // ## What blocking means here
         //
-        // `try_read` answers `Block` only when the pipe could still fill — no
+        // `try_read` answers `Block` only when the pipe could still fill, no
         // bytes now, and a writer alive.  That is the one case where waiting is
         // right: a drained pipe whose writers are gone answers `Done(0)` and a
         // program's loop ends, which is what end-of-file is.
@@ -330,7 +330,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
 
         // The pipe is behind an `Arc` the descriptor table holds, and its
-        // buffer is a cell — so this reads it through the shared reference
+        // buffer is a cell, so this reads it through the shared reference
         // rather than needing to own it.
         let progress = match end.try_read(&pipe, destination) {
             Ok(progress) => progress,
@@ -341,7 +341,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             crate::pipe::Progress::Block => {
                 // Park, then resume something else.  The frame is saved by
                 // `block`, so a wake returns here and the call is retried by
-                // the program — which is what makes this a short read rather
+                // the program, which is what makes this a short read rather
                 // than a lost one.
                 crate::scheduler::block(frame);
                 arch::serial::write_str("protofire: a program blocks on a pipe\n");
@@ -403,8 +403,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 
     // Waiting for a process to end.
     //
-    // This boot has one process tree — the programs the kernel started, all
-    // children of the boot — so the only wait that can be answered is "has any
+    // This boot has one process tree, the programs the kernel started, all
+    // children of the boot, so the only wait that can be answered is "has any
     // process finished, and with what".  That is a real answer, and it is the
     // one a parent in this tree can ask for: a finer wait would need a parent
     // that exists.
@@ -472,13 +472,13 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 ///
 /// Fixed, and the program passes no pointer: a program's buffer is an address
 /// in ring 3, and this kernel has no way to check one yet.  A handler that
-/// dereferenced `x1` would be reading whatever the program put there — which is
+/// dereferenced `x1` would be reading whatever the program put there, which is
 /// the promise `kernel/src/syscall/mod.rs` refuses to make, and this is the
 /// same refusal one layer down.
 /// The length `Write` answers with.
 ///
-/// A program compares nothing today — the return path is proven by the exit
-/// status of a program that does — but the number is what the call answers and
+/// A program compares nothing today, the return path is proven by the exit
+/// status of a program that does, but the number is what the call answers and
 /// a program that read `x0` would find it here.
 #[cfg(target_os = "none")]
 const PROGRAM_OUTPUT: usize = 21;

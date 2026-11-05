@@ -179,7 +179,7 @@ fn fe25519_mul(a: &Fe25519, b: &Fe25519) -> Fe25519 {
         acc[i + 1] = acc[i + 1].wrapping_add(acc[i] >> 51);
         acc[i] &= MASK_51 as u128;
     }
-    // acc[4] may still have a tiny wrap — fold it once more.
+    // acc[4] may still have a tiny wrap, fold it once more.
     let wrap = acc[4] >> 51;
     acc[4] &= MASK_51 as u128;
     acc[0] = acc[0].wrapping_add(wrap.wrapping_mul(19));
@@ -407,7 +407,7 @@ fn fe25519_to_bytes(fe: &Fe25519) -> [u8; 32] {
 pub fn x25519_keygen() -> ([u8; 32], [u8; 32]) {
     // No RNG dependency in this bare-metal kernel.  Derive a deterministic
     // private key from a constant salt via SHA-256 and clamp it per RFC 7748.
-    // NOTE: this is NOT cryptographically random — acceptable only for the
+    // NOTE: this is NOT cryptographically random, acceptable only for the
     // recovery prototype; production must use a true entropy source.
     let mut private = sha256(b"protofire-x25519-keygen");
     // Clamp per RFC 7748 §5.

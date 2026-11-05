@@ -7,7 +7,7 @@
 //! Every algorithm here was filed under `src/fs/unicode/` because the
 //! filesystems were the only callers.  That is a statement about today's
 //! callers, not about the code: nothing in this crate names a filesystem, a
-//! device, a lock, or the kernel — the dependencies are `core` and `alloc` and
+//! device, a lock, or the kernel, the dependencies are `core` and `alloc` and
 //! there are no others.  A pure algorithm's home follows what it is.
 //!
 //! Filing it by caller has a cost that shows up on a move: the previous tree's
@@ -19,7 +19,7 @@
 //!
 //! A conversion or a comparison between character encodings, and the tables
 //! that drive it.  What does not: any policy about which filesystem uses which
-//! code page — that is the caller's, and a crate that decided it would be
+//! code page, that is the caller's, and a crate that decided it would be
 //! reachable only from the filesystems that agreed.
 //!
 //! ## The tables
@@ -28,7 +28,7 @@
 //! Character Database and are tracked rather than built: the generators live in
 //! the previous tree under `tools/unicode/`, and regenerating them is a
 //! deliberate act.  They are ordinary modules here so that this crate has no
-//! build script — a crate whose contents change when a generator runs is harder
+//! build script, a crate whose contents change when a generator runs is harder
 //! to reason about than one whose source is checked in.
 
 #![no_std]

@@ -7,7 +7,7 @@
 //! The allocator counts allocations; the frame pool counts frames; whatever is
 //! measured next will want the same shape.  The counters are a *feature*
 //! (`alloc_profiler`), and the feature has to reach the crate that owns the
-//! code being counted — which is why this cannot live inside the allocator: the
+//! code being counted, which is why this cannot live inside the allocator: the
 //! allocator would then be the thing deciding whether it is measured, and a
 //! caller that wanted the counters would have to enable the allocator's
 //! feature rather than this one.

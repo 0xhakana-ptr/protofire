@@ -52,7 +52,7 @@ fn fake() -> Fake {
 /// the offset's low bit.
 ///
 /// The fields overlap: the BAR is bits 0..3 and the offset starts at bit 3.
-/// An offset of `0x1000` has bit 3 clear, so both readings agree — but an
+/// An offset of `0x1000` has bit 3 clear, so both readings agree, but an
 /// offset with bit 3 set is one where shifting by four loses it.
 #[test]
 fn a_capability_names_its_table_and_pba() {
@@ -112,7 +112,7 @@ fn enabling_turns_off_the_pin_as_well() {
 /// An entry round-trips through the sixteen bytes the device reads.
 ///
 /// The byte order is little-endian, and a caller verifying a write compares
-/// the entry it wrote against the entry it reads back — so an encoding that
+/// the entry it wrote against the entry it reads back, so an encoding that
 /// did not round-trip would report a correct write as a wrong one.
 #[test]
 fn an_entry_round_trips() {

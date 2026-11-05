@@ -3,8 +3,8 @@
 //! The mandatory access control policy: subject and object labels, a policy
 //! table, and the decision that compares them.
 //!
-//! A *subject* is what asks — the label a process carries.  An *object* is what
-//! is asked about — a path, a network endpoint, a process.  The policy says
+//! A *subject* is what asks, the label a process carries.  An *object* is what
+//! is asked about, a path, a network endpoint, a process.  The policy says
 //! which pairs may do what, and a denial is reported through a sink rather than
 //! written into an audit record directly, so this crate does not have to know
 //! how the audit layer finds the running process.

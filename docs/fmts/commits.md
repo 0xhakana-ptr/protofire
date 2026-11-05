@@ -42,17 +42,17 @@ summary of the change written as a command.
 fix: Drop the extra ELR advance in aarch64 svc dispatch
 ```
 
-The two halves of that summary — **imperative mood** and **capitalised first
-word** — are both required, and together they produce a specific form that is
+The two halves of that summary, **imperative mood** and **capitalised first
+word**, are both required, and together they produce a specific form that is
 not the same as either habit people arrive with:
 
 | Subject | Verdict |
 |---------|---------|
-| `fix: Drop the extra ELR advance …` | Correct — imperative and capitalised. |
-| `fix: Dropped the extra ELR advance …` | Wrong — past tense. |
-| `fix: drop the extra ELR advance …` | Wrong — not capitalised. |
-| `fix: Drops the extra ELR advance …` | Wrong — third person. |
-| `fix: Fixing the ELR advance …` | Wrong — gerund. |
+| `fix: Drop the extra ELR advance …` | Correct: imperative and capitalised. |
+| `fix: Dropped the extra ELR advance …` | Wrong: past tense. |
+| `fix: drop the extra ELR advance …` | Wrong: not capitalised. |
+| `fix: Drops the extra ELR advance …` | Wrong: third person. |
+| `fix: Fixing the ELR advance …` | Wrong: gerund. |
 
 Read the subject as the completion of the sentence *"This commit will…"*. It
 will *drop* the ELR advance; it did not *drop* it, and it is not *dropping* it.
@@ -68,7 +68,7 @@ Only the last two columns of the table are machine-checked; see §5.
 
 | Rule | Enforced by |
 |------|-------------|
-| A `<type>:` prefix | Review — see §2 |
+| A `<type>:` prefix | Review, see §2 |
 | Imperative mood | Review |
 | Capitalised first word | Review |
 | At most 72 characters | The hook, for ASCII subjects only |
@@ -89,7 +89,7 @@ the wrong way round.
 | Type | Use for |
 |------|---------|
 | `feat:` | New user-visible behaviour or capability |
-| `fix:` | A defect fix — a change that makes something broken work |
+| `fix:` | A defect fix, a change that makes something broken work |
 | `refactor:` | Restructuring with no intended change in behaviour |
 | `chore:` | Build, tooling, dependencies, housekeeping; no behaviour change |
 | `docs:` | Documentation only |
@@ -109,7 +109,7 @@ fix(ata): Drop the PIO timeout to the controller's minimum
 docs(fmts): Describe the trailer exemption in the body-wrap check
 ```
 
-Use the module or subsystem name — the same vocabulary as
+Use the module or subsystem name, the same vocabulary as
 the crate the change is in. Scope is permitted but not required, and
 no commit in the current history uses it; introduce it deliberately rather than
 by habit.
@@ -125,7 +125,7 @@ Protofire 0.1.1: Reuse the majority of the former unused constants
 ```
 
 A release marker still obeys the length and trailing-period rules. The second
-example above does not — it is 104 characters and ends in a period — and it is
+example above does not, it is 104 characters and ends in a period, and it is
 one of the four commits in this history the hook rejects. Do not copy it.
 
 ---
@@ -166,10 +166,10 @@ the editor template).
 |---|-------|-----------------|
 | 1 | A subject line exists | `empty subject line` |
 | 2 | No leading/trailing whitespace on the subject | `subject must not have leading/trailing whitespace` |
-| 3 | `Merge …` and `Revert …` subjects exit **0 here**, skipping every check below | — |
+| 3 | `Merge …` and `Revert …` subjects exit **0 here**, skipping every check below |, |
 | 4 | The subject does not end in `.` | `subject must not end with a period` |
 | 5 | The subject is not a bare generic word | `subject '<word>' carries no information` |
-| 6 | The subject is at most 72 **bytes** — only if it is pure ASCII | `subject too long (N > 72 chars)` |
+| 6 | The subject is at most 72 **bytes**, only if it is pure ASCII | `subject too long (N > 72 chars)` |
 | 7 | Every body line is at most 72 characters | `body has lines over 72 chars` |
 | 8 | `Signed-off-by:` appears somewhere in the message | `missing Signed-off-by trailer` |
 
@@ -190,7 +190,7 @@ the editor template).
 - **The generic-word check is a fixed literal list**, matched against the whole
   subject:
   `update|Update|fix|Fix|fixup|cleanup|Cleanup|typo|wip|WIP|Wip`. With a type
-  prefix required, it will rarely fire — `fix: …` is not the bare word `fix`.
+  prefix required, it will rarely fire, `fix: …` is not the bare word `fix`.
   Note the list is inconsistent about case (`wip`, `WIP`, and `Wip` are all
   present; `UPDATE` and `Fixup` are not), so do not treat it as an exhaustive
   guard.
@@ -200,7 +200,7 @@ the editor template).
 - **The subject is not re-checked for wrapping.** Step 7 starts at line 2; the
   subject is governed by step 6 alone.
 - **Body length is counted in characters, not bytes**, so a CJK body line is
-  measured fairly — unlike the subject check, which is byte-based and therefore
+  measured fairly, unlike the subject check, which is byte-based and therefore
   waived for non-ASCII.
 
 ---
@@ -212,18 +212,18 @@ enforced. Following §3 of
 [`docs/contributing.md`](../contributing.md#what-a-change-has-to-carry), treat these as *more*
 important to get right, because nothing will remind you:
 
-- **The type prefix.** Not checked at all — `Add a thing` passes the hook.
+- **The type prefix.** Not checked at all, `Add a thing` passes the hook.
 - **Imperative mood and capitalisation.** The hook has no parser for English.
 - **A body.** A bare subject with no body passes.
 - **Anything about the trailers except that `Signed-off-by:` exists.** The hook
   cannot tell `Signed-off-by: Claude <noreply@anthropic.com>` from a person, so
   a commit that violates the DCO policy by having a tool sign passes cleanly.
   See [`docs/contributing.md`](../contributing.md) for the
-  trailer policy and the fixed roles — people sign and co-author, tools assist.
+  trailer policy and the fixed roles, people sign and co-author, tools assist.
 - **Whether `Assisted-by:` is present** when a tool was involved, or whether its
   `AGENT:MODEL [TOOLS]` shape is right.
 - **Trailer order.** `Signed-off-by:` comes first, then `Co-authored-by:` and
-  `Assisted-by:` — the order the example in §6 uses, the order the trailer
+  `Assisted-by:`, the order the example in §6 uses, the order the trailer
   table in [`docs/contributing.md`](../contributing.md)
   lists, and the order every AI-assisted commit in this history carries.  The
   Linux kernel puts its sign-off chain last; this repository does not, and the
@@ -236,8 +236,8 @@ single line.
 
 ## 6. Attribution trailers
 
-The trailer policy — which trailer names what, and the rule that the roles never
-cross — is specified in
+The trailer policy, which trailer names what, and the rule that the roles never
+cross, is specified in
 [`docs/contributing.md`](../contributing.md) and is not
 duplicated here. The complete form for an AI-assisted commit:
 
@@ -265,7 +265,7 @@ Chinese, so this section is guidance rather than a description of practice.
 
 **What does not change.** The message is still checked by the hook: it needs a
 `Signed-off-by:` trailer, it must not have leading or trailing whitespace, and
-it must not be a bare generic word. The type prefix still applies — it is ASCII
+it must not be a bare generic word. The type prefix still applies, it is ASCII
 either way:
 
 ```
@@ -285,7 +285,7 @@ and a CJK glyph occupies two columns, so the practical budget is roughly half
 the number of characters you would use in English.
 
 **The trailing-period rule is ASCII-only.** It matches a literal `.`, so a
-subject ending in `。` passes the hook. Do not — the intent of the rule is that
+subject ending in `。` passes the hook. Do not, the intent of the rule is that
 the subject is a title, and the full stop of a Chinese sentence is a full stop.
 
 ---
@@ -310,20 +310,20 @@ request through the hook individually. Consequences:
   ```
 
 - **Squashing happens at merge**, so a fixup's `fixup!` prefix never reaches the
-  main branch — but it does reach CI, which is why it still has to pass.
+  main branch, but it does reach CI, which is why it still has to pass.
 
 ---
 
 ## 9. Review checklist
 
-- [ ] Subject is `<type>: <Imperative capitalised summary>` — `Add`, not `Adds`,
+- [ ] Subject is `<type>: <Imperative capitalised summary>`, `Add`, not `Adds`,
       `Added`, or `Adding`.
 - [ ] The type matches what the change actually does.
 - [ ] At most 72 characters, no trailing period, no leading/trailing space.
 - [ ] The body says why, and would still make sense to a reader who has not seen
       the diff.
 - [ ] No body line starts with `#`.
-- [ ] `Signed-off-by:` present, naming a person — not a tool.
+- [ ] `Signed-off-by:` present, naming a person, not a tool.
 - [ ] `Assisted-by:` present if a tool was involved; no role crossing.
 - [ ] `git log --oneline -1` reads as a sentence you would want to find later.
 
@@ -331,8 +331,8 @@ request through the hook individually. Consequences:
 
 ## Related documents
 
-- [`docs/contributing.md`](../contributing.md) — the short form of these rules,
+- [`docs/contributing.md`](../contributing.md), the short form of these rules,
   the trailer policy, and the review process
-- [`docs/contributing.md`](../contributing.md) — which rules are enforced and which are not
-- [`docs/fmts/comments.md`](comments.md) — the same question for the comments
+- [`docs/contributing.md`](../contributing.md), which rules are enforced and which are not
+- [`docs/fmts/comments.md`](comments.md), the same question for the comments
   inside the change

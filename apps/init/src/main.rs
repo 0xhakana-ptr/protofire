@@ -6,7 +6,7 @@
 //!
 //! The kernel does not start any other program before this one, and every
 //! later process descends from it.  That makes `init` the answer to "who
-//! reaps an orphan" — a program whose parent exited is reparented to PID 1, so
+//! reaps an orphan", a program whose parent exited is reparented to PID 1, so
 //! a system that loses its `init` has no one to answer for the processes it
 //! left behind.  It is also why `init` is the program that reads the service
 //! declarations and starts what they name, rather than the kernel doing it:
@@ -17,7 +17,7 @@
 //!
 //! `init` runs unprivileged, on a stack and page tables the kernel built, and
 //! reaches everything through syscalls.  That is not a restriction to work
-//! around — it is the point: a bug in `init` should fault `init`, not the
+//! around, it is the point: a bug in `init` should fault `init`, not the
 //! machine, and the kernel's authority is exactly the syscall surface it
 //! serves.
 //!

@@ -25,7 +25,7 @@ use block::BlockDevice;
 /// A transport over a byte array: the device a host test can drive.
 ///
 /// It answers the register reads the driver makes, records the writes, and
-/// performs a request when the driver rings the doorbell — reading the
+/// performs a request when the driver rings the doorbell, reading the
 /// descriptor chain the driver published and writing the data the request
 /// asked for.  That is the whole of what a virtio block device does, so the
 /// code under test is the code a machine runs.
@@ -43,7 +43,7 @@ struct FakeDevice {
     next_status: AtomicU64,
     /// How many requests this device has taken off the available ring.
     ///
-    /// A real device has this counter in hardware — it is how it knows
+    /// A real device has this counter in hardware, it is how it knows
     /// which entry it is working on.  Deriving it from `used.idx` would
     /// work only while every request completes, and a device that holds a
     /// request it cannot finish would lose its place.
@@ -103,7 +103,7 @@ impl FakeDevice {
 
             // The device consumes the available ring in order, from its own
             // count of what it has taken.  Deriving that count from
-            // `used.idx` works too — they advance together — but keeping it
+            // `used.idx` works too, they advance together, but keeping it
             // explicit is what makes a request the device is *in the middle
             // of* readable.
             let mut taken = self.consumed.load(Ordering::Relaxed) as u16;
@@ -229,7 +229,7 @@ impl Transport for FakeDevice {
 ///
 /// This is the test the trait boundary exists for: nothing here is
 /// mocked except the hardware, and the code under test is the whole of
-/// `VirtioBlock` — initialisation, request encoding, the descriptor chain,
+/// `VirtioBlock`, initialisation, request encoding, the descriptor chain,
 /// the doorbell, and the used ring.
 #[test]
 fn a_write_then_a_read_returns_the_same_bytes() {
@@ -304,8 +304,8 @@ fn a_partial_sector_is_refused() {
 /// A device that reports a failed request degrades the driver's health,
 /// and the caller is told the request failed.
 ///
-/// The status byte is the only error channel — the used ring reports a
-/// length, not a result — so a driver that checked only the length would
+/// The status byte is the only error channel, the used ring reports a
+/// length, not a result, so a driver that checked only the length would
 /// report this write as a success.
 #[test]
 fn a_failed_request_is_reported_as_such() {

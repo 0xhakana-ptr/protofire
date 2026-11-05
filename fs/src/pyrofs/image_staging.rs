@@ -328,7 +328,7 @@ impl StagingArea {
     /// Atomically publish a staged item to its final location.
     ///
     /// Renames the staging directory to `target`.  Returns
-    /// [`Error::AlreadyExists`] if `target` already exists — the caller
+    /// [`Error::AlreadyExists`] if `target` already exists, the caller
     /// should remove or move the existing target first.
     pub fn publish(&self, name: &str, target: &str) -> Result<()> {
         let staged_path = format!("{}/{}", self.staging_root, name);

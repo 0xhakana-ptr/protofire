@@ -8,14 +8,14 @@ use super::audit::report;
 use super::audit::set_sink;
 
 /// The sink is installed once per process, so the test that installs it has to
-/// run before the one that checks silence — and cargo's harness gives each
+/// run before the one that checks silence, and cargo's harness gives each
 /// test binary one process, which is why `set_sink` can be `Once`.
 ///
 /// The two assertions below are ordered by the test attribute names rather than
 /// by a lock: `a_denial_reaches_the_installed_sink` sorts before
 /// `with_no_sink_nothing_happens` only by luck, so the silent case is checked
 /// first when no sink has been installed *and* is written to be correct either
-/// way — it only asserts that calling `report` is safe.
+/// way, it only asserts that calling `report` is safe.
 #[test]
 fn with_no_sink_reporting_is_harmless() {
     // Whether or not another test installed a sink first, this call must not

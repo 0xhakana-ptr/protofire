@@ -6,7 +6,7 @@
 //! ## Why a program gets a root of its own
 //!
 //! A four-level walk on a 48-bit space has 512 entries in its root, and this
-//! kernel's identity map fills entry 0 — the whole first 512 GiB.  A program's
+//! kernel's identity map fills entry 0, the whole first 512 GiB.  A program's
 //! pages in a *separate* root then need only that root's entries 1 and above to
 //! differ, and everything below is the same shared second-level table.  That is
 //! the whole trick: a program gets a root of its own whose entry 0 is the
@@ -44,7 +44,7 @@ use super::table::leaf_for;
 /// ## Why that address
 ///
 /// A four-level walk on a 48-bit space has 512 entries in its root, and this
-/// kernel's identity map fills entry 0 — the whole first 512 GiB.  A program's
+/// kernel's identity map fills entry 0, the whole first 512 GiB.  A program's
 /// pages in a *separate* root then need only that root's entries 1 and above to
 /// differ, and everything below is the same shared second-level table.
 ///
@@ -61,7 +61,7 @@ pub const USER_BASE: usize = 0x80_0000_0000;
 /// The most frames one address space records as its own.
 ///
 /// An image and a stack, and the pair a `fork` copies.  A program that forks
-/// twice is one this bound refuses rather than silently forgetting — the
+/// twice is one this bound refuses rather than silently forgetting, the
 /// refusal is `own` answering `false`, which the caller reports.
 pub const MAX_OWNED_FRAMES: usize = 4;
 
@@ -71,8 +71,8 @@ pub const MAX_OWNED_FRAMES: usize = 4;
 pub struct AddressSpace {
     /// The root table's frame.
     root: usize,
-    /// The frames the program owns: its image, its stack, and — for a program
-    /// that forked — a copy of each of those per child it made.
+    /// The frames the program owns: its image, its stack, and, for a program
+    /// that forked, a copy of each of those per child it made.
     ///
     /// Four rather than two because `fork` copies both frames, and a limit that
     /// silently dropped the third would be a leak whose symptom is a pool that
@@ -94,7 +94,7 @@ impl AddressSpace {
     ///
     /// # Safety
     ///
-    /// The caller must own the root — no other address space may share it,
+    /// The caller must own the root, no other address space may share it,
     /// because the first `map` into it writes its entries.  The kernel's own
     /// root is never one of them: its entry 0 is *read* here.
     #[cfg(target_os = "none")]
@@ -216,7 +216,7 @@ impl AddressSpace {
     /// Give every frame back.
     ///
     /// The frames are the program's, and a program that exited is one whose
-    /// memory is available — which is the whole point of a process ending
+    /// memory is available, which is the whole point of a process ending
     /// rather than the machine stopping.
     ///
     /// # Safety
@@ -294,8 +294,8 @@ pub(crate) fn walk_or_create(
 ///
 /// `map_region` re-encodes an existing identity-mapped page with different
 /// permissions: the virtual address and the physical one are the same number.
-/// A program's text is not identity mapped — it lives in a frame the allocator
-/// handed out, at an address of the kernel's choosing — so the two differ and
+/// A program's text is not identity mapped, it lives in a frame the allocator
+/// handed out, at an address of the kernel's choosing, so the two differ and
 /// the entry has to say so.
 ///
 /// The permissions are `user: true` and executable: this is code a ring-3
@@ -359,7 +359,7 @@ pub fn allocate_image_frame() -> Option<usize> {
 /// The spare tables are enough for every window this machine has, so
 /// `frames_taken_for_tables` is zero on a real boot and the branch that asks
 /// the allocator for a table has never run.  A count of zero is honest and is
-/// not evidence — this tree's recurring defect is code that is written, wired
+/// not evidence, this tree's recurring defect is code that is written, wired
 /// and never executed, and "zero" cannot be told from "unreachable".
 ///
 /// So the boot takes one frame through the same call the branch makes and
@@ -403,7 +403,7 @@ pub unsafe fn self_check_frame_pool() -> bool {
 
 /// One page a program has mapped, as the walk found it.
 ///
-/// The virtual address, the frame behind it, and whether it is writable —
+/// The virtual address, the frame behind it, and whether it is writable, ///
 /// everything a copy needs and nothing about the page tables themselves, so a
 /// caller that only reads this list cannot corrupt a walk by holding a
 /// reference into it.
@@ -429,7 +429,7 @@ pub struct MappedPage {
 /// Only the user window is read: everything below it is the kernel's shared
 /// entry, identical in every root, and copying it would be copying the kernel.
 ///
-/// `None` when the walk finds a table it cannot descend — a root entry naming
+/// `None` when the walk finds a table it cannot descend, a root entry naming
 /// something that is not a table, which is a bug in whoever wrote it rather
 /// than a state to tolerate.
 #[cfg(target_os = "none")]
@@ -439,7 +439,7 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
 
     // The user window's root entry is `index(Root, USER_BASE)` and everything a
     // program maps lives under it, so the walk starts there rather than at
-    // entry zero — which is the kernel's.
+    // entry zero, which is the kernel's.
     let base_root_index = index(Level::Root, USER_BASE);
     for root_index in base_root_index..paging::ENTRIES_PER_TABLE {
         let word = root.entry(root_index);
@@ -484,7 +484,7 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
                         return None;
                     }
                     // The address is the four indices the walk just read, put
-                    // back together — not a counter, so a hole in the range is
+                    // back together, not a counter, so a hole in the range is
                     // a hole in the answer too.
                     let virtual_address = (root_index << Level::Root.shift())
                         | (second_index << Level::Second.shift())
@@ -510,13 +510,13 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
 /// Every page the parent maps in the user window gets a **new frame**, and the
 /// bytes are copied into it.  That is `fork`'s contract: a child that wrote to
 /// a page would otherwise change the parent's, and the first program to do that
-/// would corrupt the program it came from — a defect whose symptom is a
+/// would corrupt the program it came from, a defect whose symptom is a
 /// corrupted value much later, in a process that never wrote it.
 ///
 /// Copy-on-write would be the answer a kernel with a fault path for writes
 /// uses, and this kernel has no such path: a write to a read-only page is a
 /// fault nobody handles.  Whole-page copy is the honest version of what this
-/// tree can do, and it is correct — only slower than it needs to be once a
+/// tree can do, and it is correct, only slower than it needs to be once a
 /// program maps many pages.
 ///
 /// The kernel's own entry 0 is shared, not copied: it is the same table in
@@ -525,7 +525,7 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
 /// # Safety
 ///
 /// `parent` must be a live space whose pages are readable, and the caller must
-/// own the result — the new root is a frame nothing else holds.
+/// own the result, the new root is a frame nothing else holds.
 #[cfg(target_os = "none")]
 pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
     // The parent's page table lists the pages; a copy needs them all in a
@@ -569,7 +569,7 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
 
 /// The most pages one `fork` copies.
 ///
-/// The boot's programs map two each — an image and a stack — and this bound is
+/// The boot's programs map two each, an image and a stack, and this bound is
 /// generous relative to that.  A program with more pages than this is one whose
 /// fork is refused rather than one whose copy is silently partial, which is the
 /// only other way this could go wrong.

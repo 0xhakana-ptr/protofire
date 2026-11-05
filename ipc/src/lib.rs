@@ -9,7 +9,7 @@
 //! wait queue and no `Arc`, which is what lets its arithmetic be tested on a
 //! host.
 //!
-//! What is not here is the pipe itself — the two endpoints that park a reader
+//! What is not here is the pipe itself, the two endpoints that park a reader
 //! when the ring is empty and a writer when it is full.  That needs a
 //! condition variable, a condition variable needs the scheduler, and a crate
 //! that needed the scheduler could not be tested on a host.  The pipe arrives
@@ -20,7 +20,7 @@
 //! The previous tree files its pipe under `kernel::ipc` for a reason its own
 //! header states: blocking is the point, and parking a thread is the
 //! scheduler's business.  That is right about the *pipe* and wrong about the
-//! ring — the ring blocks nothing.  Splitting them is what gives the arithmetic
+//! ring, the ring blocks nothing.  Splitting them is what gives the arithmetic
 //! somewhere to be tested.
 
 #![no_std]

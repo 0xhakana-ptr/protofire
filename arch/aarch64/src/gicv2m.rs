@@ -21,7 +21,7 @@
 //! The address a device writes **is** the interrupt selector: the frame decodes
 //! the low bits of the address to choose which of its interrupts to raise, and
 //! the value written is irrelevant.  So an MSI-X entry's address is computed
-//! from the frame's base and a slot index, not chosen — and a driver that wrote
+//! from the frame's base and a slot index, not chosen, and a driver that wrote
 //! an arbitrary address would raise whichever interrupt that address selected,
 //! or none.
 //!
@@ -40,15 +40,15 @@ pub const MSI_TYPER: usize = 0x008;
 ///
 /// A GICv2m frame has **two aliases** of the same array: `0x0000` for secure
 /// accesses and `0x0040` for non-secure ones.  A kernel running at non-secure
-/// EL1 — which is every kernel that arrived through EL2, and the one this tree
-/// boots — must use the non-secure alias.
+/// EL1, which is every kernel that arrived through EL2, and the one this tree
+/// boots, must use the non-secure alias.
 ///
 /// A write to the secure alias from non-secure state is not an error and does
 /// not fault: the frame simply does not act on it.  `ISPENDR` stays zero, the
 /// interrupt never exists, and the symptom is indistinguishable from a
 /// misconfigured distributor.  Six separate things were checked before this one
-/// — the line's enable, its group, its trigger, its target, its priority, and
-/// the distributor's own enable, all of which read back correct — because a
+///, the line's enable, its group, its trigger, its target, its priority, and
+/// the distributor's own enable, all of which read back correct, because a
 /// silent write to the wrong alias looks exactly like a correct write that did
 /// nothing.
 pub const MSI_SET_SPI: usize = 0x040;
@@ -116,7 +116,7 @@ impl Frame {
     /// The interrupt number `slot` raises.
     ///
     /// `None` for a slot past the frame's count, which is an interrupt the
-    /// frame would not raise at all — and a driver that used the number anyway
+    /// frame would not raise at all, and a driver that used the number anyway
     /// would enable a line nothing can produce.
     pub const fn interrupt(&self, slot: u32) -> Option<u32> {
         if self.holds(slot) {
@@ -144,7 +144,7 @@ impl Frame {
 
     /// The value a device writes there.
     ///
-    /// The frame acts on the *address*, so the payload is not read — but the
+    /// The frame acts on the *address*, so the payload is not read, but the
     /// specification requires the write to be a dword, and a device that wrote
     /// zero is a write like any other.  This returns the slot index, which is
     /// what a log would want to show and what a device's driver would write.

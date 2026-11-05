@@ -75,7 +75,7 @@ mod tests_hmac {
 
     #[test]
     fn hmac_sha256_key_longer_than_block() {
-        // Key longer than 64 bytes — internally hashed first.
+        // Key longer than 64 bytes, internally hashed first.
         let key = [0xaa; 80];
         let data = b"Test message";
         let mac = super::hmac_sha256(&key, data);

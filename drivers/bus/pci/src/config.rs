@@ -18,8 +18,8 @@
 //!
 //! ## Why the trait exists
 //!
-//! Both mechanisms answer the same three questions — read a dword, write a
-//! dword, and say how many bytes there are — and the enumeration above them is
+//! Both mechanisms answer the same three questions, read a dword, write a
+//! dword, and say how many bytes there are, and the enumeration above them is
 //! identical.  A trait is what lets that enumeration be written once and tested
 //! on a host.
 
@@ -38,7 +38,7 @@ pub struct VendorId {
 /// `0xFFFF` in the vendor field: no device answered.
 ///
 /// A machine returns all ones from a configuration address nothing decodes,
-/// which is also what a host's port arm returns — so a scan on a host finds no
+/// which is also what a host's port arm returns, so a scan on a host finds no
 /// devices for the same reason a real bus with nothing there does.
 pub const NO_DEVICE: u16 = 0xFFFF;
 
@@ -51,8 +51,8 @@ impl VendorId {
 
 /// Reaching a device's configuration space.
 ///
-/// The three operations a mechanism must provide.  Everything the bus does —
-/// enumeration, capability walks, BAR decoding — is written against this and
+/// The three operations a mechanism must provide.  Everything the bus does, ///
+/// enumeration, capability walks, BAR decoding, is written against this and
 /// knows nothing about ports or ECAM.
 pub trait ConfigSpace: Send + Sync {
     /// Read the 32-bit register at `register` (a dword index, 0..64).
@@ -148,8 +148,8 @@ impl ConfigSpace for PortConfig {
 ///
 /// The port mechanism at `0xCF8`/`0xCFC` is x86_64's, and only x86_64's.  A
 /// device-tree machine gets its configuration space as a memory region the tree
-/// names, and this is what reads it.  Everything above — enumeration,
-/// capability walks, BAR decoding — is written against [`ConfigSpace`] and does
+/// names, and this is what reads it.  Everything above, enumeration,
+/// capability walks, BAR decoding, is written against [`ConfigSpace`] and does
 /// not know which mechanism answered.
 ///
 /// ## Why the base is a parameter

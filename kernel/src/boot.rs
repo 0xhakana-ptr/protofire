@@ -5,7 +5,7 @@
 //!
 //! ## Why this is a module and not the crate root
 //!
-//! The crate root keeps what has to be at the root — the allocator, the modules
+//! The crate root keeps what has to be at the root, the allocator, the modules
 //! themselves, and the re-exports that spell the public names.  The *order* of
 //! the boot is a subject with a beginning and an end, and it had grown to more
 //! than a thousand lines inside `lib.rs`: the console, the handshake, the page
@@ -45,7 +45,7 @@ pub fn kernel_main() -> ! {
     // allocation-failure message without failing anything.
     //
     // SAFETY: `write_to_console` is a `fn(&str)` that writes the UART and
-    // allocates nothing — required, because the allocator may call it from
+    // allocates nothing, required, because the allocator may call it from
     // inside a failed allocation.
     unsafe { allocator::diag::set_writer(Some(crate::console::write_to_console)) };
 
@@ -75,7 +75,7 @@ pub fn kernel_main() -> ! {
     #[cfg(target_os = "none")]
     {
         // SAFETY: called once, with the console up and before any program can
-        // run — the caller's contract for both steps.
+        // run, the caller's contract for both steps.
         unsafe { crate::interrupts::install() };
         crate::cpus::start_the_others();
     }
@@ -127,7 +127,7 @@ pub fn kernel_main() -> ! {
 /// ## Why the registry is a static and not a local
 ///
 /// Until this existed the table was a local: built here, used three times,
-/// dropped.  That proves the handlers work and is not a syscall interface — a
+/// dropped.  That proves the handlers work and is not a syscall interface, a
 /// table that exists only inside one call is a table nothing else can reach,
 /// and the first thing that would have discovered it is the first trap that
 /// tried to serve a call.

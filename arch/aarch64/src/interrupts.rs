@@ -12,7 +12,7 @@
 //!
 //! ## How this machine reports it
 //!
-//! `DAIF` holds the four mask bits — debug, SError, IRQ, FIQ — and bit 7 is
+//! `DAIF` holds the four mask bits, debug, SError, IRQ, FIQ, and bit 7 is
 //! `I`, the IRQ mask.  `I` set means IRQs are masked, so "enabled" is the bit
 //! being clear.  Setting and clearing the whole group is `msr DAIFSet, #0xf`
 //! and `msr DAIFClr, #0xf`; the previous tree's `arch/aarch64/mod.rs` does the
@@ -21,7 +21,7 @@
 //! ## On a host build
 //!
 //! A host has no `DAIF` and no EL1, so the three functions are no-ops and
-//! `save_and_disable` reports `false` — the state a host's userspace is in with
+//! `save_and_disable` reports `false`, the state a host's userspace is in with
 //! respect to this kernel's interrupts.  That is what lets a lock be tested on
 //! the host at all.
 
@@ -66,7 +66,7 @@ pub fn enable() {}
 /// The bare-metal form: clear every mask bit.
 #[cfg(target_os = "none")]
 pub fn enable() {
-    // SAFETY: as `disable` — clearing the masks, which the caller pairs with a
+    // SAFETY: as `disable`, clearing the masks, which the caller pairs with a
     // later disable.
     unsafe {
         core::arch::asm!(

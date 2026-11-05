@@ -33,6 +33,25 @@ const LCR: usize = 3;
 #[cfg(target_os = "none")]
 const LSR: usize = 5;
 
+/// The interrupt-enable register's bits, as the 16550 defines them.
+///
+/// Bit 0 is "a byte arrived", bit 1 is "the transmitter is empty", bit 2 is the
+/// line status (an error), and bit 3 is the modem.  This kernel uses the second
+/// and only the second: it talks, it does not listen, and a transmit interrupt
+/// is the one the device raises on its own once told to.
+#[cfg(target_os = "none")]
+pub const IER_RECEIVED: u8 = 0x01;
+#[cfg(target_os = "none")]
+pub const IER_TRANSMIT_EMPTY: u8 = 0x02;
+
+/// The interrupt-identification register's "nothing pending" value.
+///
+/// Reading it is what acknowledges the interrupt: the 16550 has no separate
+/// acknowledge register, and its lowest bit is set while an interrupt is still
+/// waiting to be serviced.
+#[cfg(target_os = "none")]
+const IIR: usize = 2;
+
 /// Write one byte to a memory-mapped register.
 ///
 /// # Safety
@@ -71,7 +90,54 @@ pub fn init() {
     }
 }
 
-/// Whether the transmitter is ready for a byte.
+/// Ask the UART to raise its line when the transmitter empties.
+///
+/// ## Why this interrupt and not "a byte arrived"
+///
+/// The console is the boot's output and the gate reads it as a log; a kernel
+/// that also listened would consume the bytes a reader typed, and the gate's
+/// own log would be a second thing on the same wire.  A transmit interrupt is
+/// the device's own work: it says "I sent the byte you gave me", which is a
+/// fact the kernel already depends on and can count without touching input.
+///
+/// # Safety
+///
+/// Called after [`init`], once, when the PLIC source for this UART is enabled.
+#[cfg(target_os = "none")]
+pub unsafe fn enable_transmit_interrupt() {
+    // SAFETY: `IER` is the 16550's interrupt-enable register, and the value is
+    // the one bit this function is named for.
+    unsafe { write_reg(UART_BASE + IER, IER_TRANSMIT_EMPTY) };
+}
+
+/// Stop the UART raising its line.
+///
+/// # Safety
+///
+/// As [`enable_transmit_interrupt`].
+#[cfg(target_os = "none")]
+pub unsafe fn disable_interrupts() {
+    // SAFETY: as above, with no bits set.
+    unsafe { write_reg(UART_BASE + IER, 0) };
+}
+
+/// Acknowledge one interrupt the UART raised, and say whether it was ours.
+///
+/// The 16550 answers a read of `IIR`, and the read *is* the acknowledge: its
+/// lowest bit is clear while an interrupt is pending, and the other bits name
+/// which one.  A value whose low bit is set means the device had nothing for
+/// us, an interrupt the controller delivered for a source that had already
+/// been serviced, which happens and is not an error.
+///
+/// # Safety
+///
+/// Called from the trap path, for this source's identity.
+#[cfg(target_os = "none")]
+pub unsafe fn acknowledge() -> bool {
+    // SAFETY: reading `IIR` at the UART's window both reads and acknowledges.
+    let identity = unsafe { read_reg(UART_BASE + IIR) };
+    identity & 0x01 == 0
+}
 #[cfg(target_os = "none")]
 fn transmit_ready() -> bool {
     // Bit 5 of the line status register is "transmit holding register empty".
@@ -209,7 +275,7 @@ mod tests {
     /// A newline is written as CRLF, because the reader is a terminal.
     ///
     /// The gate that reads a boot's serial log strips the CR, so this is not
-    /// what that check is about — but a sink that dropped it would make every
+    /// what that check is about, but a sink that dropped it would make every
     /// log unusable in a terminal, and nothing else in the tree would notice.
     #[cfg(not(target_os = "none"))]
     #[test]

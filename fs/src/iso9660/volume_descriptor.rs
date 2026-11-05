@@ -13,10 +13,10 @@
 //! ## Why the fields are read by offset
 //!
 //! The previous tree described a descriptor as a `#[repr(C, packed)]` struct
-//! and cast a sector to it.  The layout is the specification's, so that works —
-//! but it puts the field offsets in a struct definition that no test can point
-//! at, and it needs `unsafe` for a read that is really "these bytes, at these
-//! offsets".
+//! and cast a sector to it.  The layout is the specification's, so that works,
+//! //! but it puts the field offsets in a struct definition that no test can
+//! point at, and it needs `unsafe` for a read that is really "these bytes, at
+//! these offsets".
 //!
 //! Here each field is read from the slice at its offset.  The offsets are named
 //! constants, a test pins them against an image built to the specification, and
@@ -24,7 +24,7 @@
 //!
 //! ## Both halves
 //!
-//! ISO 9660 stores a number twice — little-endian then big-endian — because the
+//! ISO 9660 stores a number twice, little-endian then big-endian, because the
 //! format was written to be readable from either kind of machine.  A reader
 //! takes one half and a *writer* has to write both, which is why
 //! [`both32`] and [`both16`] return the pair rather than the value: a test can
@@ -60,8 +60,8 @@ pub const JOLIET_ESCAPES: [&[u8; 3]; 3] = [b"%/@", b"%/C", b"%/E"];
 
 /// How many descriptors the set may hold before this reader gives up.
 ///
-/// The format puts no explicit bound — the set ends at its terminator like
-/// everything else ISO 9660 does — so a disc with no terminator would make a
+/// The format puts no explicit bound, the set ends at its terminator like
+/// everything else ISO 9660 does, so a disc with no terminator would make a
 /// reader walk off the medium.  The bound turns that into a stop.
 pub const MAX_DESCRIPTORS: u64 = 64;
 

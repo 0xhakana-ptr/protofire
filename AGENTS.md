@@ -1,4 +1,4 @@
-# Protofire — working rules
+# Protofire, working rules
 
 A `no_std` bare-metal kernel for x86_64, aarch64 and riscv64, built as a
 workspace of crates.  There is no package ecosystem to consult and no upstream to
@@ -34,7 +34,7 @@ sh scripts/verify.sh p3
 |---|---|
 | `p0` | formatting, every crate's tests, the three kernels |
 | `p1` | the boot: `cargo xtask check --machine <each machine with an image>` |
-| `p2` | the three censuses — architecture fan-out, layering, per-crate test counts |
+| `p2` | the three censuses, architecture fan-out, layering, per-crate test counts |
 | `p3` | clippy in every configuration the tree builds |
 
 The gate requires the boot for a reason no other tier can cover: every runtime
@@ -52,7 +52,7 @@ actually runs.
 
 A census records a number, refuses growth, and refuses a baseline row that no
 longer describes the tree.  Meeting one by recording a new number is a change
-that argues for it in the baseline's own prose — which is why
+that argues for it in the baseline's own prose, which is why
 `scripts/layering.txt` is longer than the list of crates it describes.
 
 | Gate | Holds still |
@@ -80,7 +80,7 @@ machine.
 
 - **A probe that did not fire is zero information**, unless that run reproduced
   the bug.  Measure the reproduction rate (N of M) before and after a fix, and
-  keep probes off the hot path — they perturb exactly what they are looking for.
+  keep probes off the hot path, they perturb exactly what they are looking for.
   When the bug is timing-sensitive, instrument from outside (QEMU's monitor, a
   serial socket).
 
@@ -116,7 +116,7 @@ machine.
 `unsafe` block it belongs to; keep a change's code, its gates and its documents
 in one commit.
 
-⚠️ **Ask first**: changing or renumbering the syscall range below 120 — it is
+⚠️ **Ask first**: changing or renumbering the syscall range below 120, it is
 frozen; raising any ratchet baseline; touching the address-space activation path;
 moving a filesystem in, which happens only after a mount has been verified on a
 machine.
@@ -129,7 +129,7 @@ it; write `unsafe` without its argument.
 ## The development host
 
 Linux, x86_64.  `rust-toolchain.toml` says why: the previous tree also carried
-Windows and macOS on Intel, and the cost was not the code — it was that every
+Windows and macOS on Intel, and the cost was not the code, it was that every
 measurement had three answers, every script had a shell-difference branch, and a
 defect that only appeared on one host was found by whoever ran the gate there.
 
@@ -138,6 +138,5 @@ than unsupported.
 
 ## Licence
 
-Source code is Apache-2.0; prose — every Markdown document, this one included —
-is CC BY-SA 4.0.  [`LICENSES/README.md`](LICENSES/README.md) says which files
+Source code is Apache-2.0; prose, every Markdown document, this one included, is CC BY-SA 4.0.  [`LICENSES/README.md`](LICENSES/README.md) says which files
 fall on which side and why the split exists.

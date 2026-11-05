@@ -10,7 +10,7 @@
 //!
 //! The primitives that *park a thread* live elsewhere, and deliberately so.
 //! Parking is a scheduler act, and a queue that parks has no business in the
-//! layer a mutex is built on — the previous tree states the same boundary in
+//! layer a mutex is built on, the previous tree states the same boundary in
 //! its `kernel/sync/mod.rs` and files the wait queues one layer up.
 //!
 //! ## Why it names `arch`
@@ -19,7 +19,7 @@
 //! an interrupt taken while the lock is held, whose handler takes the same
 //! lock, spins forever on a CPU that cannot make progress.  Acquisition
 //! therefore closes that window, and closing it needs the machine's interrupt
-//! flag — which is `arch`'s to read.  On a host build those functions are
+//! flag, which is `arch`'s to read.  On a host build those functions are
 //! no-ops, so the same lock is exercised by the same tests without a kernel.
 
 #![no_std]

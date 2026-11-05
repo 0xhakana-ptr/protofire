@@ -70,9 +70,9 @@ fn read_into(
 /// The whole path: open, read, close, and the bytes that came back.
 ///
 /// This is the test the wiring exists for.  Every part of the interface is
-/// on it — the number reaches the table, the context carries the arguments,
+/// on it, the number reaches the table, the context carries the arguments,
 /// the validators run, the filesystem answers, and the value comes back as
-/// a dispatch — and a break in any of them makes the comparison fail.
+/// a dispatch, and a break in any of them makes the comparison fail.
 #[test]
 fn a_file_is_opened_read_and_closed_through_the_table() {
     let mut table = mounted();

@@ -12,7 +12,7 @@
 //! address".  A new loader changes the first; a new machine changes the second.
 //!
 //! So this file holds no instruction, no register, no address and no linker
-//! script.  It defines one symbol — `protofire_entry` — and the machine's entry
+//! script.  It defines one symbol, `protofire_entry`, and the machine's entry
 //! assembly calls it.  The call is a link-time reference in one
 //! direction: `arch` sits below this crate, so `arch` cannot name
 //! `bootloader`, and the assembly names a neutral symbol instead.  That is the
@@ -25,7 +25,7 @@
 //! that is linked; a library can be neither.  Keeping those here means the
 //! `kernel` crate stays a library a host test can build.
 //!
-//! Everything that is a *decision* — what to initialise, in what order —
+//! Everything that is a *decision*, what to initialise, in what order, //!
 //! belongs to `kernel::kernel_main`, where a test can call it.  This file
 //! translates an entry convention into that call and does nothing else.
 //!
@@ -81,7 +81,7 @@ pub extern "C" fn protofire_entry() -> ! {
 /// not.
 ///
 /// The message is a `&'static str` from `panic_fmt`, which for the
-/// `panic!("literal")` and `assert!` forms in this tree is always static — but
+/// `panic!("literal")` and `assert!` forms in this tree is always static, but
 /// `PanicInfo::message()` is not statically typed, so it goes through
 /// `Display` only for the location and the piece the caller passed.
 #[cfg(target_os = "none")]

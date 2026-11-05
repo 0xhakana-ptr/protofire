@@ -6,7 +6,7 @@
 //! ## What mounting does
 //!
 //! Reads the descriptor set from sector 16, picks the tree a reader should see
-//! — Joliet's when there is one, because its names are the author's — and keeps
+//!, Joliet's when there is one, because its names are the author's, and keeps
 //! the root record.  Nothing else is read: a directory's extent is read when
 //! someone asks what is in it, and a file's extent when someone reads it.
 //!
@@ -20,7 +20,7 @@
 //! rather than half-read:
 //!
 //! - **An extended attribute record.**  A record may name blocks in front of
-//!   its data, which this reader does not skip — so a file with one would be
+//!   its data, which this reader does not skip, so a file with one would be
 //!   read from the wrong place.
 //! - **A multi-extent file.**  One file in several pieces; reading the first
 //!   piece as the whole file returns a truncated file that looks complete.
@@ -30,7 +30,7 @@
 //! ## Read-only
 //!
 //! There is no write path.  A CD-ROM is not writable, and the previous tree's
-//! writer existed for a special requirement — a writable ISO image — rather
+//! writer existed for a special requirement, a writable ISO image, rather
 //! than for the format.  `VNode`'s default `write` refuses, which is exactly
 //! the answer a disc should give.
 
@@ -198,7 +198,7 @@ impl Iso9660Volume {
     /// Path components are matched against each directory's entries as they
     /// are read, so a deep path costs one directory read per step and nothing
     /// more.  A component that matches no entry is `NotFound`, which is the
-    /// answer the format gives — a disc has no "maybe" between two names.
+    /// answer the format gives, a disc has no "maybe" between two names.
     fn resolve(&self, path: &str) -> Result<Record> {
         let mut current = self.root_record()?;
         for component in path.split('/').filter(|part| !part.is_empty()) {
@@ -270,7 +270,7 @@ fn read_descriptor(device: &dyn BlockDevice, sector: u64) -> Result<Option<Volum
 /// ## Two block sizes
 ///
 /// ISO 9660 counts in 2048-byte *logical blocks*, and a `BlockDevice` counts in
-/// its own blocks — 512 for every device this tree has.  They are not the same
+/// its own blocks, 512 for every device this tree has.  They are not the same
 /// unit, and a reader that used one for the other reads from the wrong place:
 /// logical block 16 is a device block 64, and a `read_blocks(16, …)` returns
 /// the bytes of a different part of the medium.
@@ -393,7 +393,7 @@ impl VNode for Iso9660VNode {
         let available = (self.length as u64 - offset) as usize;
         let count = available.min(buffer.len());
         // The read is from the file's own extent, which is contiguous by the
-        // format — a file that is not, is refused at mount or at directory
+        // format, a file that is not, is refused at mount or at directory
         // read, not here.
         let start = self.extent as u64 * self.volume.block_size_bytes() + offset;
         read_exact(&*self.volume.device, start, &mut buffer[..count])?;

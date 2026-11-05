@@ -5,7 +5,7 @@
 //!
 //! ## What makes this the kernel's and not `ipc`'s
 //!
-//! `ipc::ByteRing` is the arithmetic — a fixed buffer, two cursors, a count —
+//! `ipc::ByteRing` is the arithmetic, a fixed buffer, two cursors, a count, //!
 //! and it is deliberately testable on a host.  What it cannot do is *park* a
 //! task: that needs the scheduler, and a crate that needed the scheduler could
 //! not be tested without one.  `scripts/layering.txt` says the same thing in
@@ -20,14 +20,14 @@
 //! `Sleep` made a task wait for a clock.  A pipe makes it wait for *another
 //! task*, which is a different thing in every way that matters: there is no
 //! deadline to compare against, the wake comes from a syscall rather than from
-//! the timer, and the wait can end in three ways rather than one — bytes
+//! the timer, and the wait can end in three ways rather than one, bytes
 //! arrived, the write end closed, or the wait was interrupted.  The third is
 //! not implemented and this file says so where it would be.
 //!
 //! ## What is not here
 //!
 //! A wait queue with one entry per object.  There is one pipe in the boot that
-//! proves this, and one blocked task, so a wake wakes every blocked task — see
+//! proves this, and one blocked task, so a wake wakes every blocked task, see
 //! `scheduler::Scheduler::wake_blocked`, which argues the same point from the
 //! other side.  A second blocking object is what will make a queue necessary,
 //! and a queue written before there is a second one would be a lookup with one
@@ -43,11 +43,11 @@ use ipc::ByteRing;
 /// One pipe's buffer and the two ends' liveness.
 ///
 /// Shared by both ends, because a reader has to know whether a writer still
-/// exists — that is what turns "no bytes yet" into "no bytes ever".
+/// exists, that is what turns "no bytes yet" into "no bytes ever".
 pub struct Pipe {
     /// The buffer, inside a cell because both ends reach it through one `Arc`
     /// and neither owns it.  This kernel serves one call at a time, so the
-    /// exclusive borrow a caller takes is the only one there is — the argument
+    /// exclusive borrow a caller takes is the only one there is, the argument
     /// `syscall`'s registry makes for its own static, and the note that stops
     /// being true with a second CPU belongs in the same place here.
     ring: cell::SyncUnsafeCell<ByteRing>,
@@ -159,7 +159,7 @@ impl Pipe {
 ///
 /// Both ends carry the same [`Pipe`]; what differs is which side of it the task
 /// is on.  A task's descriptor table holds these, and dropping one closes that
-/// end — which is what makes a reader see end-of-file when the last writer's
+/// end, which is what makes a reader see end-of-file when the last writer's
 /// descriptor is closed.
 pub struct End {
     pipe: Arc<Pipe>,
@@ -236,8 +236,8 @@ impl End {
 
     /// One attempt at reading, without ever blocking.
     ///
-    /// Answers `Done(0)` for end-of-file — every writer is gone and the buffer
-    /// is drained — and `Block` when bytes may still arrive.  The distinction
+    /// Answers `Done(0)` for end-of-file, every writer is gone and the buffer
+    /// is drained, and `Block` when bytes may still arrive.  The distinction
     /// is the whole reason this returns a value rather than an error: a program
     /// that treated both as "nothing" would loop for ever on a closed pipe.
     pub fn try_read(&self, pipe: &Pipe, destination: &mut [u8]) -> Result<Progress> {
@@ -260,7 +260,7 @@ impl End {
 
     /// One attempt at writing, without ever blocking.
     ///
-    /// Answers `Done(0)` when no reader is left — a write to a pipe nobody
+    /// Answers `Done(0)` when no reader is left, a write to a pipe nobody
     /// reads is not an error a shell needs to report, and returning the count
     /// it would have written would be a lie about where the bytes went.
     pub fn try_write(&self, pipe: &Pipe, source: &[u8]) -> Result<Progress> {
@@ -293,7 +293,7 @@ impl End {
 /// This kernel has one CPU and serves one call at a time; the table is reached
 /// only from a syscall handler, which is never re-entered while it runs. That
 /// is the same argument `syscall`'s registry makes for its own static, and it
-/// stops being true the moment a second CPU serves a call — at which point this
+/// stops being true the moment a second CPU serves a call, at which point this
 /// needs one and the note belongs here.
 static PIPES: cell::SyncUnsafeCell<Option<Vec<Option<End>>>> = cell::SyncUnsafeCell::new(None);
 
@@ -317,7 +317,7 @@ pub fn is_installed() -> bool {
 /// Register `pipe` and answer its descriptor.
 ///
 /// The descriptor is an index into this table, and a descriptor is only
-/// meaningful together with the table it indexes — which is why the answer is
+/// meaningful together with the table it indexes, which is why the answer is
 /// not a bare number a caller could invent.
 pub fn attach(end: End) -> Option<usize> {
     // SAFETY: as `is_installed`.

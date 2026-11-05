@@ -7,8 +7,8 @@
 //! `entry.S`'s `exception_entry` builds [`ExceptionFrame`] on the kernel stack
 //! before calling `aarch64_exception_dispatch`, and the two files agree on
 //! every offset because the offsets are written down in both.  That is a fact
-//! no compiler checks — a `repr(C)` struct and a run of `stp`s are two
-//! descriptions of one layout — so the offsets are asserted here against
+//! no compiler checks, a `repr(C)` struct and a run of `stp`s are two
+//! descriptions of one layout, so the offsets are asserted here against
 //! `offset_of!` instead of being trusted.
 //!
 //! The SIMD half of the frame is not caution.  `CPACR_EL1.FPEN` is open, so the
@@ -21,7 +21,7 @@
 //!
 //! The architecture's table is four groups of four, and `entry.S` moves the
 //! entry's index into `x16` before branching to the common path.  So the vector
-//! this module reports is `(group * 4) + kind` — which is exactly what
+//! this module reports is `(group * 4) + kind`, which is exactly what
 //! [`crate::vbar::entry_offset`] divides by 128, and a test checks the two
 //! agree rather than leaving the arithmetic in two places to drift.
 //!
@@ -33,7 +33,7 @@
 //! stops the machine with its number and syndrome on the console.
 
 // The self-test's two words.  Only the bare-metal build has a trap path to
-// write them from, so a host build would find these unused — and an import a
+// write them from, so a host build would find these unused, and an import a
 // host build never names is what the host check exists to notice.
 #[cfg(target_os = "none")]
 use core::sync::atomic::AtomicBool;
@@ -61,7 +61,7 @@ pub struct ExceptionFrame {
     pub link_register: u64,
     /// `ELR_EL1`: the instruction that was interrupted.
     pub elr: u64,
-    /// `SPSR_EL1`: the state to return to — the EL, the masks, the flags.
+    /// `SPSR_EL1`: the state to return to, the EL, the masks, the flags.
     pub spsr: u64,
     /// `ESR_EL1`: what the exception was.
     pub esr: u64,
@@ -73,7 +73,7 @@ pub struct ExceptionFrame {
     pub simd: [u128; 32],
     /// The interrupted `SP_EL0`, at the end so every `q` pair keeps its offset.
     ///
-    /// A system register, and the hardware does not push it — so without this
+    /// A system register, and the hardware does not push it, so without this
     /// field a task switch carries every register but the stack pointer, and a
     /// program that uses its stack resumes with the previous task's.  The pipe
     /// reader is what found it: it took a data abort at an address inside
@@ -85,7 +85,7 @@ pub struct ExceptionFrame {
 /// process to hand a fault to, but the syndrome is what makes a log line
 /// diagnosable, so `class_name` names it.
 impl ExceptionFrame {
-    /// The exception class — `ESR_EL1.EC`, bits 31..26.
+    /// The exception class, `ESR_EL1.EC`, bits 31..26.
     ///
     /// The class is what says *why*: an undefined instruction, a data abort, a
     /// system-register trap, or a supervisor call.  A log that printed only the
@@ -121,7 +121,7 @@ impl ExceptionFrame {
 
     /// Whether this exception is a supervisor call from a program.
     ///
-    /// The vector is entry 8 — `Lower64`'s synchronous kind — and the class is
+    /// The vector is entry 8, `Lower64`'s synchronous kind, and the class is
     /// `0x15`.  Both, because either alone is a different thing: entry 8 with
     /// another class is a program's fault, and an `svc` at EL1 is the kernel
     /// calling itself, which `install_table` does as its self-test.
@@ -155,7 +155,7 @@ impl ExceptionFrame {
     /// Whether this exception arrived on one of the four IRQ entries.
     ///
     /// The vector is `(group * 4) + kind`, and every group's `Irq` kind has the
-    /// index 1.  So the question is `vector % 4 == 1` — the same arithmetic for
+    /// index 1.  So the question is `vector % 4 == 1`, the same arithmetic for
     /// an IRQ taken from the kernel and one taken from a user program, which is
     /// what makes one check enough.
     pub fn is_irq(&self) -> bool {
@@ -272,7 +272,7 @@ fn recording_sink(frame: irq::Frame) -> bool {
 /// module.  Two things make that true, and the second is why the answer is a
 /// claim rather than a hope:
 ///
-/// 1. `VBAR_EL1` names `exception_vectors`, read back rather than assumed — a
+/// 1. `VBAR_EL1` names `exception_vectors`, read back rather than assumed, a
 ///    register written and never re-read is a value a later change can break
 ///    silently.
 /// 2. A supervisor call raised from EL1 arrives at entry 4, reaches this
@@ -340,7 +340,7 @@ const IRQ_KIND: u64 = 1;
 /// The vector a program's supervisor call arrives on.
 ///
 /// `Lower64` (offset 8) and `Synchronous` (offset 0) is entry 8, which is a
-/// different entry from the kernel's own `svc` at entry 4 — the one
+/// different entry from the kernel's own `svc` at entry 4, the one
 /// `install_table` uses as its self-test.  The two being one number apart in
 /// nobody's arithmetic is why this is named.
 pub const USER_SUPERVISOR_CALL_VECTOR: u64 = 8;
@@ -369,7 +369,7 @@ pub unsafe fn set_controller(gic: crate::gic::Gic) {
 /// An interrupt's frame carries a vector and an address; a syscall's carries
 /// six arguments and answers with a word.  Folding the two into one type would
 /// give every IRQ handler six fields it does not have and every syscall handler
-/// an address it did not ask for — which is the union-of-conventions this
+/// an address it did not ask for, which is the union-of-conventions this
 /// tree's `irq::Frame` header already refuses.
 ///
 /// The two are separate types and separate sinks.  A kernel installs both.
@@ -394,9 +394,9 @@ pub enum CallOutcome {
     /// ## Why this carries no value
     ///
     /// A scheduler that answers "resume *this* context" would be answering
-    /// about a dead one.  So the handler does the switch itself — writing the
+    /// about a dead one.  So the handler does the switch itself, writing the
     /// next context into the frame and, if the next program lives somewhere
-    /// else, changing `TTBR0_EL1` — and answers only that this program is done.
+    /// else, changing `TTBR0_EL1`, and answers only that this program is done.
     /// The trap path then returns through the same epilogue as a normal call,
     /// which is what keeps one restore path rather than two.
     Exit,
@@ -406,7 +406,7 @@ pub enum CallOutcome {
 ///
 /// Separate from the IRQ sink because the two answer different questions.  The
 /// sink says whether the line was claimed; this decides whether the CPU moves
-/// to another task, and it is called only for a claimed line — an interrupt
+/// to another task, and it is called only for a claimed line, an interrupt
 /// nobody handled is not a reason to switch programs.
 #[cfg(target_os = "none")]
 pub type PreemptSink = fn(&mut ExceptionFrame);
@@ -435,8 +435,8 @@ fn preempt_sink() -> Option<PreemptSink> {
 /// The function a supervisor call is handed to.
 ///
 /// It takes the frame itself, not a copy of the few fields a call names,
-/// because an `Exit` has to replace the whole context with another program's —
-/// every register, the `ELR` and the `SPSR`.  A sink that received only the
+/// because an `Exit` has to replace the whole context with another program's,
+/// /// every register, the `ELR` and the `SPSR`.  A sink that received only the
 /// number and the arguments could answer a call and could not switch tasks.
 #[cfg(target_os = "none")]
 pub type CallSink = fn(CallFrame, &mut ExceptionFrame) -> CallOutcome;
@@ -453,8 +453,8 @@ pub type Context = ExceptionFrame;
 /// names the entry and `SPSR_EL1` names EL0t.  A program that started with a
 /// kernel value in a register would be one whose first instruction ran on it.
 ///
-/// `SP_EL0` is not in the frame — the assembly does not save it, because a trap
-/// never changes it — so the stack pointer travels in `x0` and the install path
+/// `SP_EL0` is not in the frame, the assembly does not save it, because a trap
+/// never changes it, so the stack pointer travels in `x0` and the install path
 /// writes it to the register before the `eret`.
 pub fn starting_context(entry: usize, stack_top: usize) -> Context {
     ExceptionFrame {
@@ -508,7 +508,7 @@ pub fn set_return_value(context: &mut Context, value: usize) {
 /// Whether a context is a program's rather than the kernel's.
 ///
 /// `SPSR_EL1`'s `M` field names the exception level an `eret` returns to, and
-/// `0b0000` is EL0t — the only state a program runs in.
+/// `0b0000` is EL0t, the only state a program runs in.
 pub fn is_user_context(context: &Context) -> bool {
     context.spsr & 0b1111 == 0
 }
@@ -522,7 +522,7 @@ pub fn return_state(context: &Context) -> u64 {
 ///
 /// That is the whole of a task switch: the epilogue restores every register,
 /// `ELR_EL1` and `SPSR_EL1` from this frame, so replacing it replaces what the
-/// machine does next — including the exception level it returns to.
+/// machine does next, including the exception level it returns to.
 #[cfg(target_os = "none")]
 pub fn install_context(frame: &mut ExceptionFrame, context: &Context) {
     *frame = *context;
@@ -589,7 +589,7 @@ fn serve_user_call(frame: &mut ExceptionFrame) {
 /// The controller holds the line *active* between the acknowledge and the
 /// finish.  An interrupt at that priority is not delivered again until it is
 /// finished, and a handler that returned without one would leave the machine
-/// taking exactly one interrupt and then appearing to hang — which is the
+/// taking exactly one interrupt and then appearing to hang, which is the
 /// failure mode a span of code that looks correct produces.
 ///
 /// ## Why an unhandled interrupt finishes anyway
@@ -656,7 +656,7 @@ fn finish_irq(frame: &mut ExceptionFrame) {
 /// The entry a supervisor call from EL1 arrives at.
 ///
 /// Group `CurrentSpX` (offset 4) and kind `Synchronous` (offset 0), so entry
-/// 4 — *not* 0 and *not* 8.  Entry 0 is the same kind with `SP_EL0` selected,
+/// 4, *not* 0 and *not* 8.  Entry 0 is the same kind with `SP_EL0` selected,
 /// and entry 8 is a supervisor call from a lower EL, which is what a user
 /// program's system call will take.  Three numbers that differ by one bit of
 /// `PSTATE.SP` or one exception level is why this constant is named rather than
@@ -669,7 +669,7 @@ pub const SUPERVISOR_CALL_VECTOR: usize = 4;
 ///
 /// `extern "C"` because `entry.S` calls it, with a pointer to the frame that
 /// file built on the kernel stack.  The pointer must name a live
-/// [`ExceptionFrame`], which is the assembly's contract — and it does not
+/// [`ExceptionFrame`], which is the assembly's contract, and it does not
 /// unwind: an exception has no context to unwind into.
 #[cfg(target_os = "none")]
 #[unsafe(no_mangle)]

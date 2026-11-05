@@ -6,7 +6,7 @@
 //! ## What an unmapped 8259 does
 //!
 //! The 8259 is the PC's original interrupt controller: two chips, eight lines
-//! each.  Reset puts their vector *bases* at 8 and 0x70 — and vector 8 is the
+//! each.  Reset puts their vector *bases* at 8 and 0x70, and vector 8 is the
 //! double fault.  So a machine whose timer is still routed to the 8259 and
 //! whose interrupts are enabled takes a timer tick as a double fault, and the
 //! handler it finds is one the kernel wrote for a fault it will never raise.
@@ -65,7 +65,7 @@ mod tests {
 
     /// The remapped bases are the ones a PC needs, and the first is not 8.
     ///
-    /// Vector 8 is the double fault.  A master base of 8 — the reset value —
+    /// Vector 8 is the double fault.  A master base of 8, the reset value, ///
     /// is a timer tick that arrives as a fault, which is the defect this module
     /// exists for.
     #[test]

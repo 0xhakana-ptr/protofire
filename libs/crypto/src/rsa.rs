@@ -346,7 +346,7 @@ fn rsa_mod_pow(
     // Convert base to Montgomery form.
     let base_mont = rsa_to_mont(base, n, num_limbs, nprime0);
 
-    // R mod n in Montgomery form: MontMul(R mod n, R^2 mod n) — but actually
+    // R mod n in Montgomery form: MontMul(R mod n, R^2 mod n), but actually
     // 1 in Montgomery form is just R mod n.
     // Since Montgomery form of x is x*R mod n, the value 1 is represented as R
     // mod n. Let's compute R mod n.

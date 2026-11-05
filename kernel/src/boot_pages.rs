@@ -14,14 +14,14 @@
 /// Install the kernel's table, and say what happened.
 ///
 /// The assembly's table maps four gigabytes identity with 2 MiB pages, every
-/// one writable and cached — the smallest thing that lets Rust run, and wrong
+/// one writable and cached, the smallest thing that lets Rust run, and wrong
 /// for everything after.  This builds a second table with the same translations
 /// at a 4 KiB granule, so text is read-execute, read-only data is read, and the
 /// kernel's own state is read-write.  Every address the boot already touched
 /// translates the same, which is what makes the swap invisible.
 ///
 /// It runs before the heap because the table's backing is a static array rather
-/// than allocated frames — a table built from frames would have to be built
+/// than allocated frames, a table built from frames would have to be built
 /// before the thing that hands them out.
 ///
 /// # Safety
@@ -54,7 +54,7 @@ pub unsafe fn install() {
 /// into memory that is not there, and the line is how that shows.
 ///
 /// The allocator is **exercised** rather than described.  The count of tables
-/// taken from frames is zero on a real boot — the spare tables are enough — so
+/// taken from frames is zero on a real boot, the spare tables are enough, so
 /// the branch that asks the allocator for a table has never run.  A count of
 /// zero is honest and is not evidence, and this tree's recurring defect is code
 /// that is written, wired and never executed.

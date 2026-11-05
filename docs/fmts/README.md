@@ -4,7 +4,7 @@ This directory holds the normative specifications for contributing to the
 Protofire kernel: how code is written, how it is commented, what `unsafe` may be
 used for, how tests are laid out, and what the syscall ABI contract is.
 
-They are written for anyone about to send a patch — a first-time contributor
+They are written for anyone about to send a patch, a first-time contributor
 looking for the house style, and a returning one checking whether a rule they
 remember is real.  [`docs/contributing.md`](../contributing.md) carries the short
 form of all of this plus the process around it.  These documents are the detail
@@ -24,9 +24,9 @@ up, and what is actually enforced versus what is merely expected.
 
 Supporting context, if you have not read it yet:
 
-- [`docs/architecture.md`](../architecture.md) — why the tree is shaped this way
-- [`docs/migration.md`](../migration.md) — what has moved in, and what has not
-- [`AGENTS.md`](../../AGENTS.md) — the rules no gate can check
+- [`docs/architecture.md`](../architecture.md), why the tree is shaped this way
+- [`docs/migration.md`](../migration.md), what has moved in, and what has not
+- [`AGENTS.md`](../../AGENTS.md), the rules no gate can check
 
 ## What is enforced, and what is not
 
@@ -45,7 +45,7 @@ machine will check.
 | No architecture gate outside `arch/` | [`scripts/check-arch-fanout.sh`](../../scripts/check-arch-fanout.sh) | `p2` |
 | Every crate with code has tests, and none lost any | [`scripts/check-crate-tests.sh`](../../scripts/check-crate-tests.sh) | `p2` |
 | Lints, and every undocumented `unsafe` | `cargo clippy -- -D warnings` | `p3` |
-| **Everything else in this directory** | **Review** | — |
+| **Everything else in this directory** | **Review** |, |
 
 The rules a machine does not check are the naming conventions, doc-comment
 coverage, panic discipline, and the parts of the syscall contract that are not a
@@ -70,7 +70,7 @@ These documents are part of the codebase and change like everything else.
   change.**  A patch that starts naming things differently, or introduces a new
   comment marker, is incomplete until the rule document says so.
 - **Do not quietly diverge.**  If a rule here does not match what the code does,
-  that is a defect in one of the two — raise it.  The tree is the authority:
+  that is a defect in one of the two, raise it.  The tree is the authority:
   where a document and the code disagree, the code is right and the document is
   the bug.
 - **Prefer changing the code to weakening the rule.**  A rule that exists
@@ -79,6 +79,6 @@ These documents are part of the codebase and change like everything else.
 
 ## Related documents
 
-- [`docs/contributing.md`](../contributing.md) — the short form and the process
-- [`docs/architecture.md`](../architecture.md) — the layers, and why each crate is where it is
-- [`AGENTS.md`](../../AGENTS.md) — the working rules
+- [`docs/contributing.md`](../contributing.md), the short form and the process
+- [`docs/architecture.md`](../architecture.md), the layers, and why each crate is where it is
+- [`AGENTS.md`](../../AGENTS.md), the working rules

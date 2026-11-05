@@ -7,7 +7,7 @@
 //!
 //! A subsystem becomes a crate when something else needs to name it without
 //! naming the kernel.  `fs`, `memory`, `net`, `ipc` and `power` are crates for
-//! that reason — they are asked questions by `syscall`, by drivers, and by each
+//! that reason, they are asked questions by `syscall`, by drivers, and by each
 //! other, and a crate boundary is what makes "who may name whom" a compiler
 //! error rather than a convention.
 //!
@@ -86,7 +86,7 @@ static GLOBAL_ALLOCATOR: allocator::KernelGlobalAllocator = allocator::KernelGlo
 ///
 /// This exists so the first thing the kernel does is observable.  A machine
 /// that dies before its console is up otherwise leaves nothing behind, and
-/// "nothing was printed" is not a diagnosis — it covers a bad image, a bad
+/// "nothing was printed" is not a diagnosis, it covers a bad image, a bad
 /// stack, a bad page table, and a correct kernel that has not been written yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -118,8 +118,8 @@ pub use boot::kernel_main;
 ///
 /// Delegated to the architecture crate: the instructions belong there, and this
 /// file naming `hlt` would be the exact leak `arch` exists to prevent.  A `->
-/// !` function that only stops is `pub` because every later stage — the idle
-/// loop, a panic, an unhandled exception — ends here rather than each writing
+/// !` function that only stops is `pub` because every later stage, the idle
+/// loop, a panic, an unhandled exception, ends here rather than each writing
 /// its own stop.
 pub fn halt() -> ! {
     arch::halt()

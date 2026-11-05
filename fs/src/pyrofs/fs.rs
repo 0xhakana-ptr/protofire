@@ -117,7 +117,7 @@ impl PyroFs {
     /// slot that is not a candidate for the next boot.
     // Its caller is the installer, which is not in this crate: it writes every
     // file *except* the one that commits a volume, so it needs a file's extent
-    // and nothing else does — not even the tests, which is why this is not
+    // and nothing else does, not even the tests, which is why this is not
     // gated on `test`.  The attribute goes away in the change that brings the
     // installer here, at which point clippy sees the caller.
     #[allow(dead_code)]
@@ -245,7 +245,7 @@ impl PyroFs {
             }
         }
 
-        // Update only directory inodes — O(num_dirs) instead of O(all_inodes).
+        // Update only directory inodes, O(num_dirs) instead of O(all_inodes).
         for &dir_idx in &state.dir_inode_indices {
             let inode = &mut state.inodes[dir_idx];
             if dir_idx == parent_index {
@@ -304,7 +304,7 @@ impl PyroFs {
             }
         }
 
-        // Update only directory inodes — O(num_dirs) instead of O(all_inodes).
+        // Update only directory inodes, O(num_dirs) instead of O(all_inodes).
         for &dir_idx in &state.dir_inode_indices {
             let inode = &mut state.inodes[dir_idx];
             if dir_idx == parent_index {

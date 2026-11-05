@@ -5,8 +5,8 @@
 //!
 //! ## Why a trait
 //!
-//! Virtio 1.2 defines two transports — legacy MMIO (section 4.2) and modern PCI
-//! (section 4.1) — and they differ in *where the registers are*, not in what
+//! Virtio 1.2 defines two transports, legacy MMIO (section 4.2) and modern PCI
+//! (section 4.1), and they differ in *where the registers are*, not in what
 //! they mean.  A feature bit is read from a different place on each and means
 //! the same thing; a queue's descriptor address is written in two 32-bit halves
 //! on both.
@@ -21,7 +21,7 @@
 //! PCI modern only.  QEMU's `q35` puts `virtio-blk-pci` on the PCI bus, and
 //! that is the machine the boot gates run on.  The MMIO transport is what a
 //! device-tree machine (aarch64 `virt`, riscv64) uses, and it arrives with the
-//! device tree rather than before it — a transport with no configuration to
+//! device tree rather than before it, a transport with no configuration to
 //! find its registers from is a transport that cannot be used.
 //!
 //! ## The register offsets are the specification's
@@ -119,7 +119,7 @@ pub enum TransportError {
 /// The `cfg_type` of each structure, in walk order, plus how many it visited.
 /// A transport that reports only "no common capability" leaves a reader to
 /// re-derive the list from the device, and the list is exactly what the answer
-/// depends on — a device whose structures are all there under different type
+/// depends on, a device whose structures are all there under different type
 /// numbers is not missing anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Seen {
@@ -187,7 +187,7 @@ pub trait Transport: Send + Sync {
     /// The offset to write in the notify area to ring a queue's doorbell.
     ///
     /// Section 4.1.4.4: `queue_notify_off` is a *multiplier* into the notify
-    /// region, not an address — a driver computes `region + off * mult`.
+    /// region, not an address, a driver computes `region + off * mult`.
     fn notify_offset(&self, queue: u16) -> u16;
 
     /// Ring a queue's doorbell.

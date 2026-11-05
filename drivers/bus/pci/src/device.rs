@@ -11,7 +11,7 @@
 //! offset inside it, because a device places its registers where it likes.
 //!
 //! Walking it is `capabilities()` here, and the walk is a loop over a `u8`
-//! chain that a malformed device could make circular — so it is bounded.
+//! chain that a malformed device could make circular, so it is bounded.
 //!
 //! ## What enumeration finds
 //!
@@ -70,8 +70,8 @@ pub struct Device {
 impl Device {
     /// A function that is not there.
     ///
-    /// A caller that keeps a fixed list of functions — the enumeration pass
-    /// does, because it runs before anything has an allocator — fills it with
+    /// A caller that keeps a fixed list of functions, the enumeration pass
+    /// does, because it runs before anything has an allocator, fills it with
     /// this and then the devices it found.  The vendor is `0xFFFF`, which is
     /// what the bus answers for an address nothing decodes, so a pass that
     /// walked the unfilled tail finds nothing to size rather than probing
@@ -119,7 +119,7 @@ impl Device {
     ///
     /// A bridge's secondary bus is another bus, and enumerating it needs the
     /// bridge's bus-number registers.  Nothing on this tree's machines is
-    /// behind a bridge, so the scan reports a bridge and does not descend —
+    /// behind a bridge, so the scan reports a bridge and does not descend, ///
     /// which is the honest state rather than a half-walk.
     pub fn is_bridge(self) -> bool {
         self.header_type == 1
@@ -152,8 +152,8 @@ impl Device {
     ///
     /// `number` is the PCI capability's `bar` field, which counts BAR
     /// registers: 0 is the register at offset `0x10`, 4 at `0x20`.  That is not
-    /// the slot [`Self::bars`] uses — a 64-bit BAR occupies one register pair
-    /// and therefore one slot but two register numbers — so a caller that
+    /// the slot [`Self::bars`] uses, a 64-bit BAR occupies one register pair
+    /// and therefore one slot but two register numbers, so a caller that
     /// indexed the slot array with a register number reaches the wrong window.
     ///
     /// ## The defect this exists for
@@ -172,7 +172,7 @@ impl Device {
     /// Walk the capability list, calling `visit` for each entry.
     ///
     /// `visit` receives the capability's id, the offset of its structure, and
-    /// the 32-bit word at that offset — which is where a virtio capability
+    /// the 32-bit word at that offset, which is where a virtio capability
     /// keeps its type, BAR and offset.  Returning `Some` stops the walk.
     pub fn capabilities<T>(
         self,
@@ -200,7 +200,7 @@ impl Device {
             // at any of the four byte offsets inside the dword.  Reading them
             // as one `u64` is what makes the `next` byte at `shift = 24`
             // reachable: `word >> (24 + 8)` is a shift of 32 on a `u32`, which
-            // is undefined — and this boot panicked with "attempt to shift
+            // is undefined, and this boot panicked with "attempt to shift
             // right with overflow" on exactly that, because a virtio capability
             // structure happened to sit at offset 0x1C.
             //

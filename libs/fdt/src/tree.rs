@@ -89,7 +89,7 @@ fn word(blob: &[u8], offset: usize) -> Option<u32> {
 
 /// The most cells a `reg` field may be declared as.
 ///
-/// Two is what an address needs — thirty-two or sixty-four bits — but a PCI
+/// Two is what an address needs, thirty-two or sixty-four bits, but a PCI
 /// host bridge declares **three**: the address space (`0x2000_0000` for a
 /// 32-bit non-prefetchable window), then the address.  Clamping three to two
 /// would drop the space selector and decode the rest as a shifted address,
@@ -152,8 +152,8 @@ pub struct Reg {
 
 /// A device tree, borrowed from the blob firmware handed over.
 ///
-/// `PartialEq` compares what the header named — the blob and the two block
-/// extents — because two `Fdt`s over the same bytes are the same tree, and that
+/// `PartialEq` compares what the header named, the blob and the two block
+/// extents, because two `Fdt`s over the same bytes are the same tree, and that
 /// is what a test asserting `Err(BadMagic)` needs.
 #[derive(Debug, Clone, Copy)]
 pub struct Fdt<'a> {
@@ -311,8 +311,8 @@ impl<'a> Fdt<'a> {
         if token != TOKEN_BEGIN_NODE {
             return Err(Error::BadToken(token));
         }
-        // The root has no parent, so its own `reg` — which it does not
-        // have — is decoded with the format's defaults; its declaration is
+        // The root has no parent, so its own `reg`, which it does not
+        // have, is decoded with the format's defaults; its declaration is
         // what every other node's `reg` inherits.
         let node = Node::at(self, cursor, DEFAULT_ADDRESS_CELLS, DEFAULT_SIZE_CELLS)?;
         Ok(node)
@@ -322,8 +322,8 @@ impl<'a> Fdt<'a> {
     /// `wanted`.
     ///
     /// Depth-first, in the blob's own order, so the answer is the same one a
-    /// second reader would get.  A node may claim several names —
-    /// `"arm,pl011"` then `"arm,primecell"` — and any of them matching is a
+    /// second reader would get.  A node may claim several names, ///
+    /// `"arm,pl011"` then `"arm,primecell"`, and any of them matching is a
     /// match, which is what the property means.
     pub fn find_compatible(&self, wanted: &str) -> Option<Node<'a>> {
         self.root().ok()?.find_descendant(wanted)
@@ -452,7 +452,7 @@ impl<'a> Iterator for CompatibleIter<'a> {
 /// host bridge declares `#address-cells = <3>` because a PCI address is three
 /// cells, but the bridge's own `reg` is an ordinary two-cell MMIO address under
 /// its parent.  Reading the bridge's `reg` with three cells takes the first
-/// three words — `0x40, 0x1000_0000, 0x00` — as one address of
+/// three words, `0x40, 0x1000_0000, 0x00`, as one address of
 /// `0x0040_1000_0000_0000`, which is a number, so nothing fails.
 ///
 /// So a node carries both: [`Self::reg_cells`] for what it was given, and
@@ -477,7 +477,7 @@ impl<'a> Node<'a> {
     /// Build a node from the offset of its `FDT_BEGIN_NODE` token.
     ///
     /// `reg_*` are the parent's declared widths, which this node's own `reg` is
-    /// decoded with.  This node's declaration — if it has one — is kept for its
+    /// decoded with.  This node's declaration, if it has one, is kept for its
     /// children instead.
     fn at(
         fdt: &Fdt<'a>,
@@ -507,9 +507,9 @@ impl<'a> Node<'a> {
 
     /// The node's name, as the blob spells it.
     ///
-    /// The root's name is empty.  A node's *unit address* is part of the name —
-    /// `pl011@9000000` — and the part after `@` is the address in hexadecimal;
-    /// [`Self::unit_base`] reads it.
+    /// The root's name is empty.  A node's *unit address* is part of the name,
+    /// /// `pl011@9000000`, and the part after `@` is the address in
+    /// hexadecimal; [`Self::unit_base`] reads it.
     pub fn name(&self) -> &'a str {
         self.fdt.node_name(self.offset).unwrap_or("")
     }
@@ -610,7 +610,7 @@ impl<'a> Node<'a> {
     /// Descend a path like `/soc/pl011@9000000`.
     ///
     /// Leading and trailing slashes are ignored, so `/` and the empty string
-    /// both name the root — a caller reading `stdout-path` will meet both
+    /// both name the root, a caller reading `stdout-path` will meet both
     /// forms.
     pub fn by_path(&self, path: &str) -> Option<Node<'a>> {
         let mut node = *self;
@@ -735,7 +735,7 @@ impl<'a> Iterator for Children<'a> {
 ///
 /// One entry is `#address-cells` cells of address followed by `#size-cells`
 /// cells of size.  A property with two regions holds two such groups back to
-/// back, and this walks them one group at a time — with a cursor into the
+/// back, and this walks them one group at a time, with a cursor into the
 /// bytes, not a fixed-size array, because the number of groups is the
 /// firmware's and a buffer sized for the common case is a bound nothing
 /// checked.

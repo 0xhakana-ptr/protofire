@@ -100,7 +100,7 @@ fn dot_entries_are_recognised_in_both_trees() {
     let (parsed, _) = Record::parse(&joliet_dot, 0, true).expect("joliet dot");
     assert!(parsed.is_dot_entry());
 
-    // "A" in UCS-2 is 0x0041 — first byte zero, second not.
+    // "A" in UCS-2 is 0x0041, first byte zero, second not.
     let joliet_a = record(&[0x00, 0x41], 30, 10, 0);
     let (parsed, _) = Record::parse(&joliet_a, 0, true).expect("joliet A");
     assert!(
@@ -140,7 +140,7 @@ fn a_record_from_another_volume_is_refused() {
 /// A record that says its file is interleaved is refused by the caller,
 /// and the field it says so in is actually read.
 ///
-/// The first version of this read a helper that returned zero — a check
+/// The first version of this read a helper that returned zero, a check
 /// that could not fail.  The field is at offset 26 and this pins that it
 /// is read from there.
 #[test]

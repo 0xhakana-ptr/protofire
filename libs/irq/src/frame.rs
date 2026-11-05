@@ -7,7 +7,7 @@
 //!
 //! A handler that wanted to know "which vector" would have to name three
 //! machines' frame types.  The vector is the one thing every machine reports,
-//! and a page-fault handler also wants the faulting address — which every
+//! and a page-fault handler also wants the faulting address, which every
 //! machine also has, and which is the *one* extra field this type carries.
 //!
 //! What is deliberately not here: the register set.  x86_64 saves fifteen
@@ -32,7 +32,7 @@ pub struct Frame {
     /// fault.
     ///
     /// `CR2` on x86_64, `FAR_EL1` on aarch64, `stval` on riscv64.  A handler
-    /// for a page fault needs it, and every machine has it — which is why it is
+    /// for a page fault needs it, and every machine has it, which is why it is
     /// the one field besides the vector that a frame carries.
     pub fault_address: usize,
 }

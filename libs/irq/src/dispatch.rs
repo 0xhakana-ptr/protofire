@@ -69,7 +69,7 @@ impl Registry {
             return None;
         }
         // SAFETY: every non-zero value in this table was written by
-        // `register`, which takes a `Handler` — a bare `fn` pointer, so the
+        // `register`, which takes a `Handler`, a bare `fn` pointer, so the
         // transmute is the same type it stored.
         Some(unsafe { core::mem::transmute::<usize, Handler>(raw) })
     }
@@ -107,9 +107,9 @@ impl Registry {
     ///
     /// An identity with no handler is **not** an error: a machine may report a
     /// line nothing registered for, which is what a spurious or a shared line
-    /// looks like from here.  The answer is `false`, and the caller counts it —
-    /// a kernel that treated an unclaimed interrupt as a fault would die on the
-    /// first device it has no driver for.
+    /// looks like from here.  The answer is `false`, and the caller counts it,
+    /// /// a kernel that treated an unclaimed interrupt as a fault would die on
+    /// the first device it has no driver for.
     pub fn dispatch(&self, identity: usize) -> bool {
         match self.handler(identity) {
             Some(handler) => handler(identity),
@@ -143,7 +143,7 @@ pub fn unregister(identity: usize) -> Option<Handler> {
 /// Deliver `identity` to its handler, answering whether one took it.
 ///
 /// The entry a machine's dispatch calls.  It is a function rather than the
-/// `REGISTRY` being public because the table has one writer — `register` — and
+/// `REGISTRY` being public because the table has one writer, `register`, and
 /// a public static would let anything write it.
 pub fn dispatch_installed(identity: usize) -> bool {
     REGISTRY.dispatch(identity)

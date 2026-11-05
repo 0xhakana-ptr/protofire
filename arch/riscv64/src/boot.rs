@@ -3,7 +3,7 @@
 //! What firmware hands this machine over, and the boot's answer about it.
 //!
 //! OpenSBI enters the image in S-mode with `a0` holding the hart id and `a1`
-//! pointing at a flattened device tree — a device-tree machine's boot protocol
+//! pointing at a flattened device tree, a device-tree machine's boot protocol
 //! passes the tree in a register its own convention names, and there is no
 //! handshake to check: the firmware either loaded us or it did not, and a boot
 //! that got this far did.
@@ -60,7 +60,7 @@ pub unsafe fn set_device_tree(pointer: usize) {
 /// firmware supplied.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv64_set_device_tree(pointer: usize) {
-    // SAFETY: the caller's contract is this function's — once, from the entry,
+    // SAFETY: the caller's contract is this function's, once, from the entry,
     // with the machine's own register.
     unsafe { set_device_tree(pointer) };
 }
@@ -73,7 +73,7 @@ pub unsafe extern "C" fn riscv64_set_device_tree(pointer: usize) {
 /// rather than dying in.
 ///
 /// The blob's length is the header's own `totalsize`.  There is no way to ask
-/// the firmware how long it is, and the header is the only claim available — so
+/// the firmware how long it is, and the header is the only claim available, so
 /// this reads the first bytes, trusts the size in them, and hands the slice to
 /// `fdt`, which bounds-checks every access against it.
 pub fn device_tree() -> Option<fdt::Fdt<'static>> {
@@ -99,7 +99,7 @@ pub fn device_tree() -> Option<fdt::Fdt<'static>> {
 
 /// The rate the timer's counter runs at, as the tree states it.
 ///
-/// RISC-V has no register that reports the `time` counter's rate — the number
+/// RISC-V has no register that reports the `time` counter's rate, the number
 /// exists nowhere in the machine but the device tree's `/cpus` node, which is
 /// why a machine question is answered from a machine description and not from
 /// a constant.  The fallback that answers `None` is honest: a tree that does
@@ -145,14 +145,14 @@ pub fn pcie_ecam_window() -> Option<(usize, usize)> {
 /// On a machine with firmware, a PCI bus comes up already assigned and this
 /// function is never needed.  A device-tree machine booted by OpenSBI has no
 /// firmware pass that ran on the bridge, so every BAR reads zero and nothing
-/// behind one is reachable — the registers, the queues, and the MSI-X table,
+/// behind one is reachable, the registers, the queues, and the MSI-X table,
 /// which lives in a BAR.
 ///
 /// The window is a property of the *machine*, so it comes from the machine's
 /// tree.  A `ranges` entry is
 /// `(child address, parent address, length)` where the child address's first
 /// cell is the space code and the number of cells is the node's own
-/// `#address-cells` and the parent's — which for this tree's `virt` machine is
+/// `#address-cells` and the parent's, which for this tree's `virt` machine is
 /// three and two.
 pub fn pcie_memory_window() -> Option<(u64, u64)> {
     let tree = device_tree()?;
@@ -217,8 +217,8 @@ const MAX_RANGES_CELLS: usize = 64;
 
 /// The interrupt controller's window, as the tree describes it.
 ///
-/// `(base, size)`.  A PLIC's `reg` is **one** window: its register groups —
-/// priorities, pending, enables and the context blocks — are all offsets inside
+/// `(base, size)`.  A PLIC's `reg` is **one** window: its register groups, ///
+/// priorities, pending, enables and the context blocks, are all offsets inside
 /// it, which is what this module's `plic` sibling reads.  The first version of
 /// this reader asked for two regions, because that is a GIC's shape, and the
 /// answer on this machine was `None` for a controller that was right there.
@@ -407,7 +407,7 @@ const MAX_HART_NODES: usize = 8;
 /// A `cpu` node's `reg` names its hart id, and its `status` says whether
 /// firmware means to use it: a node with no status is usable, which is the
 /// specification's default, and one marked `disabled` is not this boot's to
-/// start.  The boot hart is *not* subtracted here — it is the caller's fact,
+/// start.  The boot hart is *not* subtracted here, it is the caller's fact,
 /// and subtracting it is the caller's decision.
 ///
 /// `None` when there is no tree: a machine that cannot say what it has starts

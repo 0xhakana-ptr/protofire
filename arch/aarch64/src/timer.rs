@@ -25,14 +25,14 @@
 //! countdown.  The countdown is the one this kernel uses because it cannot be
 //! wrong by arithmetic: a caller that computed a deadline from the counter
 //! would have to subtract the counter's *current* value, and a read that
-//! arrived one tick late would program a deadline in the past — which fires
+//! arrived one tick late would program a deadline in the past, which fires
 //! immediately and looks like a timer that ignores its interval.
 //!
 //! ## The trap a frequency invites
 //!
 //! `CNTFRQ_EL0` is not a constant of the format; the firmware sets it, and a
 //! machine may report anything.  So every conversion here takes the frequency
-//! as an argument, and a zero is treated as a machine that cannot say — not as
+//! as an argument, and a zero is treated as a machine that cannot say, not as
 //! a division by zero and not as a guess.
 
 /// `CNTP_CTL_EL0` bit 0: the timer is enabled.
@@ -181,7 +181,7 @@ pub const fn ticks_per_millisecond(frequency: u64) -> u64 {
 ///
 /// The counter's frequency is in Hz, which is ticks per *second*, so a
 /// microsecond is the frequency divided by a million.  At 1 GHz that is a
-/// thousand ticks, and at 62.5 MHz it is zero — a counter too slow to express a
+/// thousand ticks, and at 62.5 MHz it is zero, a counter too slow to express a
 /// microsecond, which a caller learns here rather than by arming a slice that
 /// is one tick long whatever it asked for.
 pub const fn ticks_per_microsecond(frequency: u64) -> u64 {

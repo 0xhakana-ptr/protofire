@@ -7,7 +7,7 @@
 //! A tick that arrives while the boot is still at ring 0 is a full trap for
 //! every one of them, and the boot spends its remaining work in trap entry
 //! instead of in starting.  So the line is enabled once, early, and the timer
-//! is armed by the code that is about to enter a program — which is the last
+//! is armed by the code that is about to enter a program, which is the last
 //! moment a tick is wanted rather than a tax.
 
 /// How long a time slice is, in microseconds.
@@ -39,7 +39,7 @@ fn timer_interrupt() -> usize {
 /// The two halves are separate and both needed: the controller's per-source
 /// bit decides whether a source reaches the PLIC's pending array, and the
 /// hart's `sie` bit decides whether the PLIC can reach the hart at all.  A
-/// machine whose tree names no controller prints that and boots on — every
+/// machine whose tree names no controller prints that and boots on, every
 /// machine here is useful without one.
 #[cfg(target_os = "none")]
 pub fn bring_up_external() {
@@ -82,8 +82,8 @@ pub fn bring_up() {
     };
 
     // The line is enabled here; the timer is armed by the code that enters a
-    // program.  Arming now would fire during the rest of the boot — which runs
-    // unmasked, takes a full trap per tick, and cannot be preempted — and the
+    // program.  Arming now would fire during the rest of the boot, which runs
+    // unmasked, takes a full trap per tick, and cannot be preempted, and the
     // log would stop in the middle of a line.  The first version armed here and
     // did exactly that.
     TIMER_TICKS.store(0, core::sync::atomic::Ordering::Release);
@@ -135,7 +135,7 @@ pub fn bring_up() {
 
     // There is no second self-check here.
     //
-    // One was written — the timer's own vector, sent to this CPU — and it was
+    // One was written, the timer's own vector, sent to this CPU, and it was
     // the wrong instrument twice over: on aarch64 the controller cannot raise a
     // timer's private interrupt on demand, so it printed "not raised" on every
     // boot; and on x86_64 it proved the same thing `raise_test_interrupt`

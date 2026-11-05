@@ -25,8 +25,8 @@ pub const ARG_COUNT: usize = 6;
 
 /// The lowest status word that means failure rather than success.
 ///
-/// A successful call returns a non-negative value — a count, a descriptor, a
-/// zero — and every error encodes near the top of the range.  The floor is
+/// A successful call returns a non-negative value, a count, a descriptor, a
+/// zero, and every error encodes near the top of the range.  The floor is
 /// therefore the *top* of the success range, not the bottom of the error one:
 /// `usize::MAX / 2` is far above any value a call returns and far below any
 /// encoded error, so the gap between the two is the margin that keeps a status
@@ -47,7 +47,7 @@ pub const ERROR_STATUS_FLOOR: usize = usize::MAX / 2;
 pub const ERROR_CODE_MAX: usize = 13;
 
 // A variant added to `Error` without moving `ERROR_CODE_MAX` would encode to a
-// word below the floor — a failure that reads as success, which is the worst
+// word below the floor, a failure that reads as success, which is the worst
 // direction for this to be wrong in.  This is where that is refused.
 const _: () = assert!(ERROR_CODE_MAX == Error::NoSpace as usize);
 
@@ -73,7 +73,7 @@ pub const fn is_error_status(status: usize) -> bool {
 ///
 /// A code outside the table is reported as `InternalError`: the caller's build
 /// knows a variant this one does not, and there is nothing more specific this
-/// side can honestly say.  Keeping it an error — rather than returning `Ok` —
+/// side can honestly say.  Keeping it an error, rather than returning `Ok`, ///
 /// is the part that matters; the particular variant is a guess either way.
 pub fn decode_result(status: usize) -> Result<usize> {
     if !is_error_status(status) {

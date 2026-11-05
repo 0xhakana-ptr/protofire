@@ -8,7 +8,7 @@
 //! The trap path builds a frame, hands it to the call handler, and then
 //! restores whatever frame it finds and returns.  So a task switch is: copy the
 //! current frame into the running task, copy the next task's frame over it, and
-//! — if the next task lives in a different address space — switch the root
+//!, if the next task lives in a different address space, switch the root
 //! register. There is no assembly here, because the assembly that matters is
 //! the epilogue every trap already runs through.
 
@@ -101,7 +101,7 @@ impl Scheduler {
     /// ## Why the frame is saved even when the task exits
     ///
     /// A finished task has nothing to resume, and saving its frame anyway costs
-    /// one copy and removes a branch — the code that decides *whether* to save
+    /// one copy and removes a branch, the code that decides *whether* to save
     /// is the code that could get it wrong.  What is not done is selecting it
     /// again, which the `finished` flag prevents.
     pub fn schedule(&mut self, frame: &mut Context, exiting: bool) -> CallOutcome {
@@ -112,7 +112,7 @@ impl Scheduler {
     ///
     /// ## Why `save` exists, and what it prevents
     ///
-    /// `schedule`'s frame always belongs to the task that is leaving — it is
+    /// `schedule`'s frame always belongs to the task that is leaving, it is
     /// the trap frame that task was suspended in.  A caller whose frame is a
     /// *kernel* frame has no such claim: the boot's idle loop runs on the
     /// kernel stack, and writing that frame into the sleeping task would put a
@@ -145,7 +145,7 @@ impl Scheduler {
         // Where the current task was, kept exactly.
         //
         // `exiting` is the *caller's* claim about what happened, and a sleeping
-        // task is neither running nor finished — it was put to sleep before
+        // task is neither running nor finished, it was put to sleep before
         // this call, so its state is already `Sleeping` and this must not
         // overwrite it with `Finished`.  That is why the flag only ever sets
         // `Finished` and never the other way.
@@ -156,7 +156,7 @@ impl Scheduler {
                 // What the program answered `Exit` with.  The status travels as
                 // `Exit`'s first argument (`edi` on x86_64, `a0`/`x0` on the
                 // others), which is **not** always the register a call's answer
-                // comes back in — x86_64's `rax` holds `GetPid`'s answer, and
+                // comes back in, x86_64's `rax` holds `GetPid`'s answer, and
                 // `edi` holds the status.  So the scheduler is told the status
                 // rather than reading a register: a machine-specific guess here
                 // would be wrong on exactly the machine whose convention
@@ -169,8 +169,8 @@ impl Scheduler {
         let Some(next) = self.next_runnable() else {
             // Nothing to install.  With every task finished the caller stops
             // the machine; with some asleep the caller waits for the tick that
-            // wakes one.  The scheduler does not distinguish the two — that
-            // decision belongs to whoever knows whether a timer is armed — so
+            // wakes one.  The scheduler does not distinguish the two, that
+            // decision belongs to whoever knows whether a timer is armed, so
             // it answers `Exit` and its context says which case it is.
             return CallOutcome::Exit;
         };
@@ -190,7 +190,7 @@ impl Scheduler {
             // in the kernel.
             //
             // SAFETY: the root is a live table this scheduler's own task owns,
-            // and every root shares the kernel's entry 0 — which covers the
+            // and every root shares the kernel's entry 0, which covers the
             // code performing the call.
             unsafe { arch::switch_address_space(root) };
         }
@@ -226,8 +226,8 @@ impl Scheduler {
     /// It records a deadline and takes the current task out of the rotation.
     /// It does **not** switch: the caller is a call handler, and the frame it
     /// holds belongs to the program that just asked.  The switch happens when
-    /// the handler answers `Exit`-shaped — which is what `process::serve` does
-    /// for `Sleep` — and the scheduler then picks the next runnable task.
+    /// the handler answers `Exit`-shaped, which is what `process::serve` does
+    /// for `Sleep`, and the scheduler then picks the next runnable task.
     ///
     /// ## Why the deadline is a counter reading
     ///
@@ -243,7 +243,7 @@ impl Scheduler {
             // Leaving the save to whichever scheduling call happens next worked
             // only while a call always happened: with every task asleep the
             // boot idles instead, and the task then woke at whatever position
-            // its context last held — the first version resumed program 2 at
+            // its context last held, the first version resumed program 2 at
             // its `Sleep` every time, printing the same line forever.
             task.context = *frame;
             task.state = State::Sleeping { until };
@@ -253,7 +253,7 @@ impl Scheduler {
     /// Wake every task whose deadline has passed, answering how many woke.
     ///
     /// Called from the timer's interrupt, before the scheduler is asked for the
-    /// next task — a task that slept past its deadline is runnable *now*, and a
+    /// next task, a task that slept past its deadline is runnable *now*, and a
     /// pass that ran first would find nothing to do and stop the machine with
     /// work left.
     pub fn wake_expired(&mut self, now: u64) -> usize {
@@ -288,8 +288,8 @@ impl Scheduler {
     /// A wait queue would record *which* task waits on *which* object, and this
     /// kernel has one blocking object and one blocked task in the boot that
     /// proves it.  Waking all of them is the correct behaviour for a pipe's
-    /// reader and a writer — several readers on one pipe may all make progress
-    /// — and it is wrong for anything that needs one exact waiter.  The queue
+    /// reader and a writer, several readers on one pipe may all make progress
+    ///, and it is wrong for anything that needs one exact waiter.  The queue
     /// arrives with the second such object; until then a wake that names its
     /// waiters would be a queue with one entry and a lookup.
     pub fn wake_blocked(&mut self) -> usize {
@@ -331,7 +331,7 @@ impl Scheduler {
     /// printed the two would show them in the wrong order.
     /// ## Why the frame is handed in rather than read from the task
     ///
-    /// The context a task holds is the one its last switch saved — from before
+    /// The context a task holds is the one its last switch saved, from before
     /// the call that is running now.  A child resuming there would re-execute
     /// its parent's whole path from the last switch, including the `fork` that
     /// created it, and the boot showed exactly that: one fork became seven,
@@ -362,7 +362,7 @@ impl Scheduler {
         *child.context_mut() = parent_context;
         // And the child's answer is zero, written into its own copy of the
         // frame.  The parent's register is untouched, so the same instruction
-        // returns the pid in one process and zero in the other — which is the
+        // returns the pid in one process and zero in the other, which is the
         // whole of what `fork` answers.
         arch::set_return_value(child.context_mut(), 0);
         self.tasks.push(child);
@@ -421,7 +421,7 @@ impl Scheduler {
     ///
     /// A sleeping task counts: it will run again, so the boot has work left and
     /// must not stop the machine.  Only `Finished` is the "nothing left"
-    /// answer, which is why this is not the question a dispatcher asks — see
+    /// answer, which is why this is not the question a dispatcher asks, see
     /// [`Scheduler::has_selectable`].
     pub fn has_runnable(&self) -> bool {
         self.tasks.iter().any(|task| task.state != State::Finished)
@@ -433,7 +433,7 @@ impl Scheduler {
     /// [`Scheduler::has_runnable`]: a task that is asleep is still work the boot
     /// owes, and a task that is runnable is one the loop can stop waiting for.
     /// A loop written with `has_runnable` never waits at all, because sleeping
-    /// tasks make it true — which is the defect the first version of the idle
+    /// tasks make it true, which is the defect the first version of the idle
     /// had.
     pub fn has_selectable(&self) -> bool {
         self.tasks.iter().any(|task| task.state == State::Runnable)
@@ -450,7 +450,7 @@ impl Scheduler {
     ///
     /// # Safety
     ///
-    /// Called when nothing is translating through any of them — after the last
+    /// Called when nothing is translating through any of them, after the last
     /// program exited, with the kernel's own root installed.
     #[cfg(target_os = "none")]
     pub unsafe fn reap(&mut self) -> usize {

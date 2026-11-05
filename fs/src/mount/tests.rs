@@ -24,7 +24,7 @@ fn volume(name: &'static str, file: &'static str) -> Arc<StaticFileSystem> {
 /// A mount owns paths below it, and the root owns everything.
 ///
 /// The component boundary is the point: `/data` owns `/data/file` and does
-/// not own `/database`, which a byte-prefix comparison would have claimed —
+/// not own `/database`, which a byte-prefix comparison would have claimed, ///
 /// and claiming it means a file in one volume is answered by another.
 #[test]
 fn a_mount_owns_paths_below_it_and_not_its_siblings() {
@@ -83,7 +83,7 @@ fn the_mount_point_resolves_to_its_own_root() {
 /// A lookup through the table reaches the file the volume holds.
 ///
 /// The end-to-end shape: a path names a mount, the mount names a
-/// filesystem, and the filesystem answers a path relative to its own root —
+/// filesystem, and the filesystem answers a path relative to its own root, ///
 /// which it never learns.
 #[test]
 fn a_lookup_reaches_the_file_the_volume_holds() {

@@ -8,7 +8,7 @@
 //! `encode_error` computes `usize::MAX - code`, so the discriminant of every
 //! variant below *is* the value user space decodes.  A type whose layout is
 //! read by another privilege level belongs where the rest of the wire format
-//! lives — otherwise the kernel's `Error` and the ABI's code table are two
+//! lives, otherwise the kernel's `Error` and the ABI's code table are two
 //! descriptions of one thing, and nothing makes them agree.
 //!
 //! The previous tree had exactly that split: the enum in the crate root, and
@@ -19,7 +19,7 @@
 //! ## Adding a variant
 //!
 //! Append.  The discriminants are the wire format, so renumbering one changes
-//! what an already-built program decodes — the frozen range's promise is that a
+//! what an already-built program decodes, the frozen range's promise is that a
 //! number keeps its meaning, and this enum is the same promise stated once.
 
 /// Result type used throughout the kernel and by the ABI's own helpers.
@@ -118,7 +118,7 @@ mod tests {
     /// The discriminants are the wire format, so they are pinned here rather
     /// than left to declaration order.  A variant inserted in the middle would
     /// renumber every one after it, and every already-built program would
-    /// decode a different error than the kernel returned — silently, because
+    /// decode a different error than the kernel returned, silently, because
     /// both numbers are valid.
     #[test]
     fn every_discriminant_is_pinned() {

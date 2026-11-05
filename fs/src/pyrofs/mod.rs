@@ -1,6 +1,6 @@
 //! fs/src/pyrofs/mod.rs
 //!
-//! PyroFs — on-disk format parser, validator, and runtime file/directory
+//! PyroFs, on-disk format parser, validator, and runtime file/directory
 //! operations.
 
 use alloc::collections::BTreeMap;
@@ -67,7 +67,7 @@ pub(crate) struct UndoLog {
     ///
     /// Phase 1 of the commit writes a `pending_commit` superblock that still
     /// references the pre-swap **active** tables, so its inode/dirent/xattr
-    /// counts must describe those tables — not the mutated state.  A torn
+    /// counts must describe those tables, not the mutated state.  A torn
     /// mirror write can leave that pending superblock as the only readable
     /// one, and a count mismatch there makes the volume unopenable.
     old_inode_count: Option<usize>,
@@ -84,8 +84,8 @@ pub(crate) struct PyroFsState {
     shadow_inode_table_block: usize,
     shadow_dirent_table_block: usize,
     generation: u32,
-    /// True when the shadow slots' content is not known — just after a mount,
-    /// or after a commit failed part way — so the next flush must write every
+    /// True when the shadow slots' content is not known, just after a mount,
+    /// or after a commit failed part way, so the next flush must write every
     /// block of every table instead of only the blocks that differ.
     needs_shadow_sync: bool,
     staging_roots: Vec<String>,
@@ -159,7 +159,7 @@ impl Drop for SimpleVNode {
                 // If the inode was unlinked while a handle was still open, it
                 // could not be recycled then (the unlink path skipped the push
                 // to `free_inode_slots`).  Free the slot once the last handle
-                // closes, but only if the inode is still deleted — a
+                // closes, but only if the inode is still deleted, a
                 // transaction rollback may have restored it to a live inode in
                 // the meantime.
                 let deleted = state

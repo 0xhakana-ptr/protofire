@@ -78,12 +78,12 @@ fn aes_xts_known_vector() {
 /// block never advances the tweak, so a multiplication that shifts the
 /// bytes the wrong way passes it.  This one is four blocks of the same key
 /// and the same sector, generated with OpenSSL through Python's
-/// `cryptography`, and its first block is the single-block answer — which
+/// `cryptography`, and its first block is the single-block answer, which
 /// is what makes it the same test extended rather than a second opinion.
 ///
 /// Measured, this is what the wrong direction costs: the first block
-/// decrypts correctly and everything after it is garbage — 16 bytes agree
-/// and the rest does not — which reads as "the cipher works" until
+/// decrypts correctly and everything after it is garbage, 16 bytes agree
+/// and the rest does not, which reads as "the cipher works" until
 /// something spans a block.  A LUKS2 keyslot area spans 500 of them.
 #[test]
 fn aes_xts_known_vector_across_blocks() {

@@ -14,16 +14,16 @@
 //! The descriptor table is a pool: the driver writes an entry's buffer address
 //! and length, links entries with `next` when one request needs several
 //! buffers, and the available ring carries the index of the head of each
-//! request.  The used ring is the device's answer — which descriptor heads it
+//! request.  The used ring is the device's answer, which descriptor heads it
 //! finished, and how many bytes it wrote.
 //!
 //! ## What this file is responsible for
 //!
 //! The *arithmetic* of those three rings: allocating a descriptor, publishing
 //! it, reading a completion, and wrapping around.  It is not responsible for
-//! allocating the memory they live in, for the doorbell, or for interrupts —
-//! those are the transport's, and splitting them here is what lets the rings
-//! be tested against a `Vec` on a host.
+//! allocating the memory they live in, for the doorbell, or for interrupts, //!
+//! those are the transport's, and splitting them here is what lets the rings be
+//! tested against a `Vec` on a host.
 //!
 //! ## The wrapping
 //!
@@ -124,7 +124,7 @@ pub enum VirtQueueError {
 /// The device is given the address of `flags` and computes `ring` from it.  A
 /// driver that held the header and the array in two allocations would hand the
 /// device an address whose neighbours are not the array it expects, and the
-/// device would read and write wherever those bytes happened to be — which on
+/// device would read and write wherever those bytes happened to be, which on
 /// a quiet machine can look like it works.
 ///
 /// So each ring is a byte buffer sized by the structure, and the accessors are
@@ -170,7 +170,7 @@ impl Rings {
         self.descriptors.as_ptr() as usize
     }
 
-    /// The available ring's address — the header's, because the device
+    /// The available ring's address, the header's, because the device
     /// computes the array from it.
     pub fn available_address(&self) -> usize {
         self.available.as_ptr() as usize
@@ -293,8 +293,8 @@ pub struct VirtQueue {
     last_used_index: u16,
     /// The physical address the device was told for each ring.
     ///
-    /// Kept because the driver's view — a `Vec`'s virtual address on a host —
-    /// and the device's — a physical address on a machine — are not always the
+    /// Kept because the driver's view, a `Vec`'s virtual address on a host, ///
+    /// and the device's, a physical address on a machine, are not always the
     /// same number, and only the transport knows both.
     device_addresses: Option<DeviceAddresses>,
 }
@@ -327,7 +327,7 @@ impl VirtQueue {
         // The free list is implicit in this driver: a free descriptor's `next`
         // names the next free one.  Initialising the table to zero and
         // starting `free_head` at zero leaves every descriptor's `next` at
-        // zero — so allocating pops 0, then 0 again, and `release` walks a
+        // zero, so allocating pops 0, then 0 again, and `release` walks a
         // one-element cycle forever.  The chain is built here, once, and the
         // last entry's `next` is irrelevant because `num_free` bounds
         // allocation.
@@ -436,7 +436,7 @@ impl VirtQueue {
         // the caller's `next` is the chain link it wants, and the free list's
         // `next` is where the pool continues.  They are the same field, so an
         // allocate that installed the caller's descriptor first and then read
-        // `next` would follow the caller's chain instead of the pool's — and
+        // `next` would follow the caller's chain instead of the pool's, and
         // hand out the same descriptor twice.
         let next_free = self.rings.descriptor(index as usize).next;
         self.rings.set_descriptor(index as usize, descriptor);
@@ -648,7 +648,7 @@ mod tests {
     /// The available ring is `flags, idx, ring[]` in one object, and the used
     /// ring is `flags, idx, {id, len}[]`.  A driver that held the header and
     /// the array in two allocations would hand the device an address whose
-    /// neighbours are not the array it computes — a bug that looks like it
+    /// neighbours are not the array it computes, a bug that looks like it
     /// works on a quiet machine.
     #[test]
     fn the_rings_are_contiguous() {
@@ -683,7 +683,7 @@ mod tests {
     /// The available ring wraps at the queue size, not at 65536.
     ///
     /// A driver that used the free-running counter as a ring index would write
-    /// past the array on the 9th request of an 8-entry queue — which a test
+    /// past the array on the 9th request of an 8-entry queue, which a test
     /// that submits five requests never reaches.
     #[test]
     fn the_available_ring_wraps_at_the_queue_size() {

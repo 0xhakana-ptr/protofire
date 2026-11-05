@@ -92,7 +92,7 @@ pub fn poly1305_mac(key: &[u8; 32], data: &[u8]) -> [u8; 16] {
         let t1 = a1 as u128 + n1 as u128 + (t0 >> 64);
         a0 = t0 as u64;
         a1 = t1 as u64;
-        // No +1 for 0x01 — already encoded in n0/n1 via LE interpretation.
+        // No +1 for 0x01, already encoded in n0/n1 via LE interpretation.
         a2 = a2.wrapping_add((t1 >> 64) as u64);
 
         poly1305_mul_mod(&mut a0, &mut a1, &mut a2, r);

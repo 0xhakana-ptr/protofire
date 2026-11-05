@@ -7,7 +7,7 @@
 //!
 //! The scheduler is one structure with no lock, written by the boot CPU and
 //! read by every task switch.  A second CPU that took a timer interrupt and ran
-//! the same handler would be a second writer to it — and the failure would be a
+//! the same handler would be a second writer to it, and the failure would be a
 //! task resumed with a context from another CPU's stack, which is the kind of
 //! corruption a log shows as a fault far from its cause.
 //!
@@ -38,7 +38,7 @@ pub const MAX_CPUS: usize = 4;
 
 /// One CPU, as the boot and a trap both see it.
 pub struct Cpu {
-    /// The machine's own id for this CPU — a hart, a core, a processor.
+    /// The machine's own id for this CPU, a hart, a core, a processor.
     ///
     /// `usize::MAX` before the boot fills it, so an unstarted slot cannot be
     /// mistaken for a machine whose CPU zero is the one that answered.
@@ -155,7 +155,7 @@ pub fn slot(index: usize) -> &'static Cpu {
 #[cfg(test)]
 mod tests {
     /// A slot that was never registered is not online, and its id is a value no
-    /// machine reports — so "nothing recorded" cannot read as "CPU zero".
+    /// machine reports, so "nothing recorded" cannot read as "CPU zero".
     #[test]
     fn an_unregistered_slot_is_not_online() {
         // The array is process-wide, and other tests in this crate do not touch

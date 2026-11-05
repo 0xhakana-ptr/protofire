@@ -15,7 +15,7 @@
 //!
 //! Where this image's sections begin and end is the linker script's answer, and
 //! the rules for them are this kernel's policy.  Which addresses are a device's
-//! registers is the **machine's** answer — `arch::paging::device_windows` —
+//! registers is the **machine's** answer, `arch::paging::device_windows`, //!
 //! because an x86_64 finds its devices on a bus and a device-tree machine knows
 //! their addresses from the platform, and a kernel that spelled either would be
 //! naming a machine.
@@ -50,7 +50,7 @@ pub const USER_LIMIT: usize = USER_BASE + USER_WINDOW * USER_WINDOWS;
 /// kernel must not dereference one because the program said so.  Three things
 /// have to hold together, and this checks all three:
 ///
-/// 1. The range is the user window — `USER_BASE` up to a program's end — so a
+/// 1. The range is the user window, `USER_BASE` up to a program's end, so a
 ///    program cannot hand the kernel a kernel address and have it written to.
 /// 2. The range does not wrap.  `start + length` overflows for an address near
 ///    the top, and a wrapped end would pass a naive `end > start` test.
@@ -60,7 +60,7 @@ pub const USER_LIMIT: usize = USER_BASE + USER_WINDOW * USER_WINDOWS;
 ///
 /// What it does **not** check is that the pages are mapped.  A valid-looking
 /// address into an unmapped page faults when the kernel touches it, and that
-/// fault is the program's — the kernel would have to copy the page tables into
+/// fault is the program's, the kernel would have to copy the page tables into
 /// a walk to know, and a fault is the machine's own answer.
 pub fn is_user_range(address: usize, length: usize) -> bool {
     let Some(end) = address.checked_add(length) else {
@@ -94,7 +94,7 @@ pub(crate) fn symbol(name: Symbol) -> usize {
 /// all writable, which is what an address in no rule gets, so naming them here
 /// would be a rule that changed nothing.  The `extern` block below declares all
 /// ten because the linker resolves them by name and a symbol a rule does not
-/// name still marks where its section ends — but a variant is a *reader* of
+/// name still marks where its section ends, but a variant is a *reader* of
 /// one, and this enum has only the readers there are.
 #[cfg(target_os = "none")]
 #[derive(Clone, Copy)]
@@ -147,7 +147,7 @@ pub(crate) fn permissions_at(rules: &[Rule], address: usize) -> Permissions {
 /// The two halves come from different places on purpose.  Where this image's
 /// sections begin and end is the linker script's answer, and the rules for them
 /// are this kernel's policy.  Which addresses are a device's registers is the
-/// **machine's** answer — `arch::paging::device_windows` — because an x86_64
+/// **machine's** answer, `arch::paging::device_windows`, because an x86_64
 /// finds its devices on a bus and a device-tree machine knows their addresses
 /// from the platform, and a kernel that spelled either would be naming a
 /// machine.
@@ -225,7 +225,7 @@ pub unsafe fn install() -> bool {
     // machine whose RAM ends inside the span must manage only the frames that
     // are really there, and one that managed the whole span would hand out
     // pages past the end of memory.  `managed_pool_bytes` is that answer, and
-    // `None` means the machine cannot say — then the span is all there is.
+    // `None` means the machine cannot say, then the span is all there is.
     let machine = arch::managed_pool_bytes().unwrap_or(memory::frame::physical_pool_size());
     tables.frames.init(machine);
 
@@ -258,7 +258,7 @@ pub fn managed_frames() -> usize {
 /// The spare tables are enough for every window this machine has, so
 /// `frames_taken_for_tables` is zero on a real boot and the branch that asks
 /// the allocator for a table has never run.  A count of zero is honest and is
-/// not evidence — this tree's recurring defect is code that is written, wired
+/// not evidence, this tree's recurring defect is code that is written, wired
 /// and never executed, and "zero" cannot be told from "unreachable".
 ///
 /// So the boot takes one frame through the same call the branch makes and
@@ -302,7 +302,7 @@ pub unsafe fn self_check_frame_pool() -> bool {
 
 /// How many page tables came from the frame pool.
 ///
-/// Zero on a boot whose spares were enough — which is the honest state of this
+/// Zero on a boot whose spares were enough, which is the honest state of this
 /// kernel rather than a failure, and the number that says whether the frame
 /// allocator is exercised by a boot or only by its tests.
 #[cfg(target_os = "none")]
@@ -317,7 +317,7 @@ pub fn frames_taken_for_tables() -> usize {
 ///
 /// The recycled holes plus the bump tail.  `free_frames` alone counts only the
 /// holes, which is zero on a pool nothing has been freed from and reads as "no
-/// memory left" — the opposite of the truth on a fresh boot.
+/// memory left", the opposite of the truth on a fresh boot.
 #[cfg(target_os = "none")]
 pub fn free_frames() -> usize {
     let tables = TABLES.get();

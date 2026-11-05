@@ -7,7 +7,7 @@
 //! [`eq_unicode_insensitive`] comparison helper used by both filesystems.
 //!
 //! The mapping is the full Unicode **simple** case folding (the `S` column of
-//! Unicode `CaseFolding.txt`, plus single-code-point `C`/`F` mappings) —
+//! Unicode `CaseFolding.txt`, plus single-code-point `C`/`F` mappings), //!
 //! every script with case is covered.  See `crate::casefold_tables` for the
 //! generated table.  Multi-code-point full folds (e.g. `ß` → `ss`) cannot be
 //! represented by a char-at-a-time mapping; characters with only a multi-char
@@ -22,7 +22,7 @@ use super::casefold_tables::SIMPLE_FOLDS;
 /// (or with only a multi-code-point full fold) are returned unchanged.
 pub fn fold_char(ch: char) -> char {
     let code = ch as u32;
-    // Fast ASCII path — the common case for filenames.
+    // Fast ASCII path, the common case for filenames.
     if code < 0x80 {
         return if ch.is_ascii_uppercase() {
             ch.to_ascii_lowercase()
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn conservative_unknown_scripts() {
-        // CJK has no case — byte-exact comparison still matches equal strings.
+        // CJK has no case, byte-exact comparison still matches equal strings.
         assert!(eq_unicode_insensitive("中文", "中文"));
         assert!(!eq_unicode_insensitive("中文", "中文本"));
         // Multi-char full folds (ß -> ss) are *not* expanded by the

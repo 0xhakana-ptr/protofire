@@ -6,15 +6,15 @@
 //!
 //! A counter, `time`, that only goes up; a rate for it that exists nowhere in
 //! the machine but the device tree's `/cpus` node; and a deadline, which S-mode
-//! does not hold.  The compare register `stimecmp` — and with it the `Sstc`
-//! extension — would let this mode arm the timer with one CSR write, but what
+//! does not hold.  The compare register `stimecmp`, and with it the `Sstc`
+//! extension, would let this mode arm the timer with one CSR write, but what
 //! OpenSBI hands every machine is the **legacy** timer call: an `ecall` from
 //! S-mode that traps to M-mode and writes the deadline there.  That is the arm
 //! this machine uses, and it is why arming is a trap and not a register write.
 //!
 //! ## The clobbers are the trap
 //!
-//! An `ecall` into firmware clobbers the argument registers — the firmware is
+//! An `ecall` into firmware clobbers the argument registers, the firmware is
 //! another machine's code running on this hart, and it keeps its state
 //! wherever it likes.  The previous tree's timer call did not declare them, so
 //! every arm destroyed whatever the interrupted code had in `a0`..`a7`, and
@@ -97,7 +97,7 @@ pub const PENDING_TIMER: u64 = 1 << 5;
 
 /// Tell the firmware the deadline is `ticks` counter ticks from now.
 ///
-/// The legacy call takes the **absolute** deadline, not a countdown — which is
+/// The legacy call takes the **absolute** deadline, not a countdown, which is
 /// the opposite of the aarch64 timer's `TVAL` register, and the reason the
 /// deadline is computed here against a counter read made inside the same
 /// function: a caller that computed one from an earlier read would arm a
@@ -120,7 +120,7 @@ pub unsafe fn arm(ticks: u64) {
     let error: i64;
     // SAFETY: the legacy timer call, `ecall` with `a7` = 0 and the deadline in
     // `a0`.  Every argument register is declared late-out because the firmware
-    // clobbers them — an undeclared clobber is a register the interrupted code
+    // clobbers them, an undeclared clobber is a register the interrupted code
     // loses silently, which is the defect this module's header describes.
     unsafe {
         core::arch::asm!(
@@ -140,7 +140,7 @@ pub unsafe fn arm(ticks: u64) {
         )
     };
     // The legacy call answers `0` for success and negative for failure, and a
-    // failure leaves the timer as it was — which a boot sees as a counter that
+    // failure leaves the timer as it was, which a boot sees as a counter that
     // reads the same twice, not as an error here.  The value is read so the
     // call is honest about producing one; nothing in this crate can act on a
     // firmware refusal to arm.
@@ -154,7 +154,7 @@ pub unsafe fn arm(ticks: u64) {
 /// **half** and not the whole range for an arithmetic reason the first boot
 /// demonstrated at four thousand ticks a second: the deadline is computed by
 /// adding to the counter, and adding the counter's full range *wraps* to one
-/// tick in the past — a disarm that fires immediately, whose handler re-arms
+/// tick in the past, a disarm that fires immediately, whose handler re-arms
 /// the real slice, and whose boot then spends its quiet phases taking a trap
 /// every hundred microseconds.
 ///
@@ -169,7 +169,7 @@ pub unsafe fn disarm() {
 
 /// The register that holds the timer's enable, as it reads.
 ///
-/// This machine's timer has no control register of its own — the aarch64
+/// This machine's timer has no control register of its own, the aarch64
 /// timer's `CNTP_CTL_EL0` and x86_64's LVT entry are registers this platform
 /// does not have.  What it has is the `sie` register, whose bit 5 is the
 /// timer's enable, so that register is what "the timer's control" reads here.
@@ -200,7 +200,7 @@ pub const fn ticks_per_millisecond(frequency: u64) -> u64 {
 
 /// How many ticks one microsecond is.
 ///
-/// At the ten megahertz this machine's tree reports, that is ten ticks — a
+/// At the ten megahertz this machine's tree reports, that is ten ticks, a
 /// counter fast enough to express a microsecond, which a slower one could not,
 /// and a caller learns the difference here rather than by arming a slice that
 /// is one tick long whatever it asked for.

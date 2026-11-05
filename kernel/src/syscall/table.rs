@@ -139,7 +139,7 @@ impl SyscallTable {
     ///
     /// A number past the table's end is refused rather than indexed: the table
     /// is sized from the ABI count, so this cannot happen for a variant that
-    /// exists — but a caller's number is a word off a wire, and indexing with
+    /// exists, but a caller's number is a word off a wire, and indexing with
     /// it would be the one place this module trusted it.
     pub fn dispatch(&mut self, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
         let Some(slot) = self.slots.get(arguments.context.number).copied() else {
@@ -172,7 +172,7 @@ impl SyscallTable {
     /// How many numbers this table serves.
     ///
     /// The rest answer [`Handler::Unimplemented`], which is a fact a caller can
-    /// act on — so the count is what a boot line reports and what a test
+    /// act on, so the count is what a boot line reports and what a test
     /// compares against.
     pub fn served(&self) -> usize {
         self.slots
@@ -246,7 +246,7 @@ impl Default for SyscallTable {
 ///
 /// The table was a local in `kernel_main`: the boot built it, served three
 /// calls through it, and dropped it.  That is enough to prove the handlers work
-/// and not enough to be a kernel — a table that exists only inside one function
+/// and not enough to be a kernel, a table that exists only inside one function
 /// is a table nothing else can ever reach, and "the syscall interface" would be
 /// a claim about a variable.
 ///
@@ -279,7 +279,7 @@ pub unsafe fn install(table: SyscallTable) {
 ///
 /// This is the path a trap will use when there is a process to take one from.
 /// It exists now so the registry is reachable from outside the function that
-/// built it — the thing that was missing — and so the boot can serve a call
+/// built it, the thing that was missing, and so the boot can serve a call
 /// through the same entry point a later trap will.
 pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
     // SAFETY: the table is written once, before any call can arrive, and this

@@ -12,7 +12,7 @@
 //!
 //! ## How this machine reports it
 //!
-//! `sstatus.SIE` is bit 1 — note that bit 0 is `UIE` and is not the one that
+//! `sstatus.SIE` is bit 1, note that bit 0 is `UIE` and is not the one that
 //! gates supervisor interrupts, which is the mistake the previous tree's
 //! `arch/riscv64/mod.rs` calls out beside the instruction.  `csrsi sstatus, 2`
 //! and `csrci sstatus, 2` set and clear it.
@@ -20,7 +20,7 @@
 //! ## On a host build
 //!
 //! A host has no `sstatus` and no S-mode, so the three functions are no-ops and
-//! `save_and_disable` reports `false` — the state a host's userspace is in with
+//! `save_and_disable` reports `false`, the state a host's userspace is in with
 //! respect to this kernel's interrupts.
 
 /// Whether supervisor interrupts are enabled right now.
@@ -60,7 +60,7 @@ pub fn enable() {}
 /// The bare-metal form: set `SIE`.
 #[cfg(target_os = "none")]
 pub fn enable() {
-    // SAFETY: as `disable` — setting SIE, which the caller pairs with a later
+    // SAFETY: as `disable`, setting SIE, which the caller pairs with a later
     // disable.
     unsafe {
         core::arch::asm!("csrsi sstatus, 2", options(nomem, nostack, preserves_flags));

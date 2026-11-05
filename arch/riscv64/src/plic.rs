@@ -15,7 +15,7 @@
 //! plus, per context, a threshold and a claim/complete pair.  A context is one
 //! hart's one privilege mode: the tree's `interrupts-extended` lists them as
 //! `(phandle, number)` pairs, and S-mode on hart N is context `2N+1` on the
-//! `virt` machine — the M-mode consumer of each hart comes first.
+//! `virt` machine, the M-mode consumer of each hart comes first.
 //!
 //! ## How an interrupt is taken
 //!
@@ -25,13 +25,13 @@
 //! highest-priority pending source and **clears its pending bit**; work it,
 //! then read `complete` with the same number, which lets the PLIC deliver the
 //! source again.  A claimed source that is never completed is one the machine
-//! will not deliver a second time — the same in-service idea as a GIC's `EOIR`.
+//! will not deliver a second time, the same in-service idea as a GIC's `EOIR`.
 //!
 //! ## Why the register half is gated
 //!
 //! The offsets and the volatile accesses mean nothing on a host: there is no
 //! window, and no test can read one.  What a host *can* check is the arithmetic
-//! — which bank a context uses — so that stays outside the gate and the tests
+//!, which bank a context uses, so that stays outside the gate and the tests
 //! exercise it.
 
 /// The PLIC's register groups, as byte offsets into the window.
@@ -62,7 +62,7 @@ pub const fn enable_offset(context: usize) -> usize {
     ENABLE_BASE + context * ENABLE_STRIDE
 }
 
-/// The context block's offset — its threshold and claim registers.
+/// The context block's offset, its threshold and claim registers.
 pub const fn context_offset(context: usize) -> usize {
     CONTEXT_BASE + context * CONTEXT_STRIDE
 }
@@ -219,7 +219,7 @@ mod registers {
         /// Claim the highest-priority pending source, or `None` when nothing is
         /// pending.
         ///
-        /// A claim of zero means there was nothing to take — an interrupt can
+        /// A claim of zero means there was nothing to take, an interrupt can
         /// be withdrawn between the line being raised and the claim being read.
         ///
         /// # Safety

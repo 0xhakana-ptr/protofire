@@ -4,8 +4,8 @@
 //!
 //! ## The problem this solves
 //!
-//! `check.rs` used to build an `AuditRecord` — a fixed-size byte layout, an
-//! event type, an actor's pid and a timestamp — and hand it to the audit layer.
+//! `check.rs` used to build an `AuditRecord`, a fixed-size byte layout, an
+//! event type, an actor's pid and a timestamp, and hand it to the audit layer.
 //! Both of those are the audit layer's to define, and reaching for them from
 //! here made the security crate depend on the scheduler (to find the current
 //! process) and on the audit module's record ABI (to fill one in).
@@ -16,8 +16,8 @@
 //!
 //! ## How
 //!
-//! A denial is described by its own fields — the two labels, the class, the
-//! permissions and the uid — and a sink turns that into whatever record the
+//! A denial is described by its own fields, the two labels, the class, the
+//! permissions and the uid, and a sink turns that into whatever record the
 //! audit layer wants.  The kernel installs its sink at boot; a test installs a
 //! collector, or nothing, and both are correct.
 

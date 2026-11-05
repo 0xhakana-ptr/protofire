@@ -6,15 +6,15 @@
 //!
 //! The heap: a two-level segregated fit allocator over a fixed arena, with the
 //! block splitting, merging and free-list bookkeeping that arrangement implies.
-//! It knows about memory and nothing else — no console, no filesystem, no
-//! thread — which is what lets its arithmetic be tested on the host.
+//! It knows about memory and nothing else, no console, no filesystem, no
+//! thread, which is what lets its arithmetic be tested on the host.
 //!
 //! ## What it is not
 //!
 //! It does not find memory.  The arena is a `static` array in `tlsf.rs`, sized
 //! at compile time; a kernel that wants frames from a machine's memory map
 //! arranges that elsewhere.  It does not install itself as
-//! `#[global_allocator]` either — that is the kernel's decision, because a
+//! `#[global_allocator]` either, that is the kernel's decision, because a
 //! library that installed one could not be a dependency of a test binary.
 //!
 //! ## The one thing it needs from its caller
@@ -28,7 +28,7 @@
 //! ## Why the tests live here
 //!
 //! They exercise block splitting and merging, alignment, the free lists and the
-//! failure paths — the parts where an arithmetic mistake is silent until a boot
+//! failure paths, the parts where an arithmetic mistake is silent until a boot
 //! corrupts something.  None of it needs a machine, and all of it is cheaper to
 //! run here than under QEMU.
 

@@ -5,7 +5,7 @@
 //! ## The three methods and why each exists
 //!
 //! [`submit`](Service::submit) accepts a request.  It may finish it in the call
-//! — a disk with a cached block does — and the honest way to say so is to
+//!, a disk with a cached block does, and the honest way to say so is to
 //! return the completion rather than to queue one and make the caller poll for
 //! something already known.
 //!
@@ -21,7 +21,7 @@
 //! ## The obligation
 //!
 //! A service that accepted a request must eventually complete it.  Nothing
-//! enforces that — a trait cannot, and a timeout would be a policy this crate
+//! enforces that, a trait cannot, and a timeout would be a policy this crate
 //! has no business having.  What makes it checkable is that everything a
 //! service does goes through
 //! [`CompletionQueue`](crate::queue::CompletionQueue): a request that was
@@ -49,7 +49,7 @@ pub trait Service {
 
     /// Make progress, reporting whether any completions are ready.
     ///
-    /// Returns `true` when calling again immediately might produce more — the
+    /// Returns `true` when calling again immediately might produce more, the
     /// distinction matters for an interrupt-driven service that drained three
     /// completions and left two, and for a polled one that found nothing and
     /// must not be spun on.

@@ -1,6 +1,6 @@
 //! fs/src/pyrofs/types.rs
 //!
-//! Pure type definitions — format version, on-disk structures, builder types,
+//! Pure type definitions, format version, on-disk structures, builder types,
 //! and runtime health metadata.
 
 use alloc::string::String;

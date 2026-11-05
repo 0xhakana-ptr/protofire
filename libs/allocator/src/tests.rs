@@ -73,7 +73,7 @@ mod tests {
 
     /// Assert the core TLSF placement invariant: every free block lives in
     /// the free list of the size class its actual size maps to.  A block of
-    /// size S must sit in `free_lists[list_index(mapping(S))]` — never in a
+    /// size S must sit in `free_lists[list_index(mapping(S))]`, never in a
     /// smaller or larger class.
     unsafe fn verify_size_class_placement(state: &AllocatorState) {
         // SAFETY: the caller reaches `AllocatorState` through `with_state`,
@@ -114,7 +114,7 @@ mod tests {
     /// A block must be large enough to hold the payload it was handed out for.
     /// Alignment larger than the block alignment pushes the payload forward
     /// inside the block, so a size computed from the block header instead of
-    /// from the payload's real position can come up short — and the shortfall
+    /// from the payload's real position can come up short, and the shortfall
     /// lands in the next block's header.
     #[test]
     fn a_payload_is_contained_by_the_block_that_holds_it() {
@@ -144,7 +144,7 @@ mod tests {
             assert!(!follower.is_null());
             assert_eq!(check_invariants(state), Ok(()));
 
-            // Write exactly the bytes the layout promises — nothing beyond it.
+            // Write exactly the bytes the layout promises, nothing beyond it.
             aligned.write_bytes(0xAA, aligned_layout.size());
 
             assert_eq!(
@@ -188,7 +188,7 @@ mod tests {
                 "a freshly allocated block must carry an intact canary"
             );
 
-            // Damage the last word of the block — the address the next block's
+            // Damage the last word of the block, the address the next block's
             // header occupies, which is where every overrun here has landed.
             let block_end = block + block_size(block);
             (block_end as *mut usize)
@@ -379,7 +379,7 @@ mod tests {
         unsafe {
             ptr.write_bytes(0xAB, layout.size());
         }
-        // SAFETY: as the write above — the same allocation, read back.
+        // SAFETY: as the write above, the same allocation, read back.
         assert_eq!(unsafe { ptr.read() }, 0xAB);
 
         let mut freed = false;
@@ -531,7 +531,7 @@ mod tests {
         for step in 0..4000 {
             // Every operation must leave the physical block list well formed.
             //
-            // The checks below — alignment, bounds, no overlap — passed while
+            // The checks below, alignment, bounds, no overlap, passed while
             // the allocator was in fact corrupting its own heap on every boot:
             // they look at allocations, not at the block chain that ties them
             // together.  Walking the chain is what catches a leaked hole or a
@@ -568,7 +568,7 @@ mod tests {
                     ptr = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
                 });
                 if ptr.is_null() {
-                    // Fragmentation / exhaustion — legal; the model just
+                    // Fragmentation / exhaustion, legal; the model just
                     // records nothing.
                     continue;
                 }
@@ -633,7 +633,7 @@ mod tests {
         // invariants above were never really exercised.
         assert!(
             successful_alloc >= attempted_alloc / 4 && successful_alloc >= 128,
-            "only {successful_alloc}/{attempted_alloc} allocations succeeded — \
+            "only {successful_alloc}/{attempted_alloc} allocations succeeded, \
              the allocator appears to be failing outright"
         );
 

@@ -6,7 +6,7 @@
 //!
 //! Bit 0 says which: set means the register names a range of the machine's
 //! **I/O space** (the ports x86_64 has), clear means it names memory.  The two
-//! are not interchangeable — a memory BAR written into a port is a device
+//! are not interchangeable, a memory BAR written into a port is a device
 //! nothing can reach.
 //!
 //! ## Finding the size
@@ -25,7 +25,7 @@
 //!
 //! Three bits of the low dword say what kind it is: 0b000 for a 32-bit memory
 //! BAR, 0b010 for a 64-bit one.  A 64-bit BAR takes *two* consecutive
-//! registers, and the second one is not a BAR of its own — a driver that read
+//! registers, and the second one is not a BAR of its own, a driver that read
 //! it as one would find a window at an address made of the upper half's bits.
 
 use crate::config::ConfigSpace;
@@ -121,8 +121,8 @@ pub fn decode(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) ->
 ///
 /// The version of this function that returned early when the register read zero
 /// was wrong, and it was wrong in exactly the state a bare-metal boot is in.
-/// **An unaddressed BAR reads zero.**  On a machine with firmware — a PC, or a
-/// UEFI board — that is unusual; on this tree's device-tree machines it is the
+/// **An unaddressed BAR reads zero.**  On a machine with firmware, a PC, or a
+/// UEFI board, that is unusual; on this tree's device-tree machines it is the
 /// normal state before anything assigns an address, so the early return turned
 /// "there is a device here asking for a window" into "there is nothing here".
 /// The boot then fell back to its in-memory image and said the disk was absent.
@@ -178,7 +178,7 @@ pub fn probe(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) -> 
     // returns zero.  The zero case is the one that is easy to forget, and
     // forgetting it is not a silent omission: with `low == 0` the 64-bit mask
     // below becomes `0xFFFF_FFFF_0000_0000`, whose complement plus one is four
-    // gigabytes — a power of two, so the size check passes and the allocator
+    // gigabytes, a power of two, so the size check passes and the allocator
     // reports "no room" for a BAR that does not exist.
     //
     // The check is on the *low* dword before any widening, because the widening
@@ -191,7 +191,7 @@ pub fn probe(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) -> 
     // The type bits come from the *mask*, not from the register's current
     // value, and this is the whole reason the probe exists.  An unaddressed BAR
     // reads zero, which is indistinguishable from a memory BAR of unknown type
-    // — so a caller that decoded `is_64_bit` from the current value would treat
+    //, so a caller that decoded `is_64_bit` from the current value would treat
     // every unassigned 64-bit BAR as 32-bit and place it below four gigabytes,
     // where its window does not fit.
     let kind = if low & 1 != 0 {
@@ -208,12 +208,12 @@ pub fn probe(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) -> 
         mask |= (high as u64) << 32;
     } else if kind == BarKind::Memory {
         // A 32-bit BAR has no upper half to hold ones, so its window cannot
-        // exceed four gigabytes — and the mask the mechanism produces is
+        // exceed four gigabytes, and the mask the mechanism produces is
         // **64-bit**, so the top half is all ones.
         //
         // Getting this wrong is invisible above and fatal below: the mask came
         // out as `0x0000_0000_FFFF_F000`, whose complement plus one is
-        // `0xFFFF_FFFF_0000_1000` — not a power of two, so every 32-bit BAR
+        // `0xFFFF_FFFF_0000_1000`, not a power of two, so every 32-bit BAR
         // sized as absent.
         mask |= 0xFFFF_FFFF_0000_0000;
     }
@@ -259,8 +259,8 @@ pub fn size(config: &dyn ConfigSpace, address: DeviceAddress, register: u8) -> O
 /// Give a memory BAR an address, and verify the device took it.
 ///
 /// Writes both halves of a 64-bit BAR.  A 32-bit BAR's address must fit in
-/// thirty-two bits, because the register has no upper half to put the rest in —
-/// a caller that ignored that would program the low thirty-two bits of an
+/// thirty-two bits, because the register has no upper half to put the rest in,
+/// /// a caller that ignored that would program the low thirty-two bits of an
 /// address above four gigabytes and get a device at the wrong address.
 ///
 /// Returns whether the device reads back what was written.  A BAR that does not
@@ -295,7 +295,7 @@ pub fn assign(config: &dyn ConfigSpace, address: DeviceAddress, register: u8, wi
 /// Turn on a function's memory decoding and bus-mastering bits.
 ///
 /// Without the first a device's BAR decodes nothing, and without the second it
-/// cannot read or write memory on its own — which is what a virtqueue is.  Both
+/// cannot read or write memory on its own, which is what a virtqueue is.  Both
 /// are in the command register, which is the low half of
 /// [`REG_COMMAND_STATUS`].
 pub fn enable_memory_and_bus_master(config: &dyn ConfigSpace, address: DeviceAddress) {

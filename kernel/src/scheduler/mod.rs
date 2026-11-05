@@ -4,7 +4,7 @@
 //!
 //! ## What a task is here
 //!
-//! A saved `Context` — the whole trap frame — and the address space it runs
+//! A saved `Context`, the whole trap frame, and the address space it runs
 //! in.  There is no kernel stack per task, because a task never has one of its
 //! own to be suspended on: a program runs at ring 3, so the only time it is
 //! inside the kernel is inside a trap, and the trap path's frame *is* its saved
@@ -20,7 +20,7 @@
 //!
 //! The split is by subject: a reader asking "what is a task" reads `task`, one
 //! asking "how does a switch work" reads `scheduler`, and one asking "who is
-//! runnable" reads the free functions here — which are what the trap path, the
+//! runnable" reads the free functions here, which are what the trap path, the
 //! timer's handler and the idle loop call.
 //!
 //! ## Why round-robin and nothing else
@@ -139,7 +139,7 @@ pub fn has_runnable() -> bool {
 /// `advance` answers a call: the frame it is given belongs to a task that asked
 /// for something, and the caller does something with the answer.  This is
 /// called from an interrupt, where the frame belongs to whatever the program
-/// was doing — so there is no call, no answer, and nothing to report to anyone.
+/// was doing, so there is no call, no answer, and nothing to report to anyone.
 /// The only thing that matters is that the frame the epilogue restores is the
 /// next task's.
 ///
@@ -151,7 +151,7 @@ pub fn has_runnable() -> bool {
 pub fn preempt(frame: &mut arch::Context) {
     // Only from a program.
     //
-    // A timer fires at EL1 as well as at EL0 — the kernel's own boot code takes
+    // A timer fires at EL1 as well as at EL0, the kernel's own boot code takes
     // ticks, and its saved context is a kernel one.  Installing a program's
     // context over it would resume a ring-3 program from inside a kernel stack
     // that nothing will ever unwind, and the boot stops mid-line: the first run
@@ -179,7 +179,7 @@ pub fn preempt(frame: &mut arch::Context) {
 /// Put the running program to sleep for `microseconds`.
 ///
 /// Answers the counter reading it will wake at, so a boot line can report the
-/// deadline rather than the duration — the two differ by however long the
+/// deadline rather than the duration, the two differ by however long the
 /// program has been running.
 ///
 /// `None` when no scheduler is installed, which is the state a host build is
@@ -269,7 +269,7 @@ pub fn block(frame: &arch::Context) -> bool {
 
 /// Wake every blocked task, answering how many.
 ///
-/// Called when something a blocked task was waiting for changed — a pipe's
+/// Called when something a blocked task was waiting for changed, a pipe's
 /// writer putting bytes in, or its write end closing.
 pub fn wake_blocked() -> usize {
     // SAFETY: as `block`.
@@ -316,7 +316,7 @@ pub fn sleeping() -> usize {
 /// ## Why the context is copied rather than built
 ///
 /// A forked child resumes exactly where its parent asked, with the parent's
-/// registers — including the stack pointer, which points into the copy.  A
+/// registers, including the stack pointer, which points into the copy.  A
 /// context built from scratch would start the child at the beginning of its
 /// program, which is `exec`, not `fork`.
 ///
@@ -330,7 +330,7 @@ pub fn fork_current(frame: &arch::Context) -> Option<u32> {
 }
 
 /// A host has no address space to copy, so a fork is a call the machine
-/// cannot serve — reported as such rather than as a pid nobody can use.
+/// cannot serve, reported as such rather than as a pid nobody can use.
 #[cfg(not(target_os = "none"))]
 pub fn fork_current(_frame: &arch::Context) -> Option<u32> {
     None
@@ -406,7 +406,7 @@ pub fn is_exit(call: &CallFrame) -> bool {
 ///
 /// ## How the wake happens
 ///
-/// The timer keeps firing, and its handler calls [`wake_expired`] — which is
+/// The timer keeps firing, and its handler calls [`wake_expired`], which is
 /// what turns a deadline into a runnable task.  The loop below takes the
 /// interrupt, the handler wakes a task, and `arch::wait_for_a_wakeup` returns
 /// once one is runnable.  The scheduler is then asked for a context and the
@@ -415,7 +415,7 @@ pub fn is_exit(call: &CallFrame) -> bool {
 /// ## Why the machine does the waiting
 ///
 /// A supervisor call arrives through an **interrupt gate**, which clears the
-/// interrupt flag on entry — so the kernel runs with interrupts masked for the
+/// interrupt flag on entry, so the kernel runs with interrupts masked for the
 /// whole of a served call, and a wait that did not unmask them waits for a tick
 /// that can never be delivered.  x86_64's `sti` is that unmask and aarch64 has
 /// no such flag to clear.  `arch::wait_for_a_wakeup` is the whole of the
@@ -431,7 +431,7 @@ pub fn is_exit(call: &CallFrame) -> bool {
 /// boot: a `wfi` returns on every tick whether or not that tick ended the wait,
 /// so the counter measured the boot's speed and not a fault.  What ends the
 /// loop is `wake_expired` turning a deadline into a runnable task, and a
-/// machine that never does that is a machine that hangs — with a log that
+/// machine that never does that is a machine that hangs, with a log that
 /// already said "every program is asleep, waiting".
 pub fn idle_until_woken() {
     while has_sleeping() && !has_selectable() {

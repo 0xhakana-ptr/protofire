@@ -22,7 +22,7 @@ carries the short version; where the two disagree, this document wins.
 2. **One source of truth.** A syscall number is written down exactly once. The
    kernel enum and the userspace wrapper are both derived from the same
    manifest; they cannot drift because they do not hold independent copies.
-3. **Append-only.** Numbers are assigned once and never change meaning — not
+3. **Append-only.** Numbers are assigned once and never change meaning, not
    even to reclaim a slot nobody uses.
 4. **Validate before you touch.** A user pointer is never dereferenced on the
    strength of being non-null. Every pointer is checked against the user
@@ -47,7 +47,7 @@ It defines:
 | `PUBLIC_SYSCALL_COUNT` | How many numbers this build serves; the dispatch table is sized from it |
 
 The dispatch table is `kernel/src/syscall/mod.rs`, and it is sized from
-`PUBLIC_SYSCALL_COUNT` rather than from a number of its own — a variant appended
+`PUBLIC_SYSCALL_COUNT` rather than from a number of its own, a variant appended
 without moving the count is caught by a test in `abi/src/number.rs`.
 
 There is no separate ring-3 copy of the numbering.  The previous tree carried
@@ -66,7 +66,7 @@ are already shipped on the demo disk.
 
 - **Never renumber** an existing syscall.
 - **Never reuse** a number whose syscall was removed. If a syscall must go, its
-  number is retired permanently — rename the constant to `SYS_RESERVED_<n>` and
+  number is retired permanently, rename the constant to `SYS_RESERVED_<n>` and
   leave the slot empty. Slots 141 and 142 (`SYS_RESERVED_141`,
   `SYS_RESERVED_142`) are live examples: they are numbered, never reused, and
   still classified as Experimental "until assigned".
@@ -85,14 +85,14 @@ are already shipped on the demo disk.
 The **Experimental** line is the one that lets an argument change without a
 major bump: a slot no program outside this tree is built against can be
 redefined, and `SYSCALL_ABI_VERSION_MINOR` is what says it was.  A version in
-the frozen range never moves that way — there the table above applies as
+the frozen range never moves that way, there the table above applies as
 written, and a redefinition is a major bump.
 
 New syscalls are always assigned in the Experimental range until they have
 matured and a maintainer graduates them. The classification is computed, not
 hand-maintained: `syscall_stability(n)` returns `Stable` for `n <= 120` and
 `Experimental` otherwise, and its unit test pins both boundaries. Graduating a
-syscall means changing that boundary deliberately — never editing one entry in
+syscall means changing that boundary deliberately, never editing one entry in
 isolation.
 
 Beyond `SYSCALL_COUNT` and up to `MAX_SYSCALLS`, slots exist but are unassigned.
@@ -111,9 +111,8 @@ of the same change that alters the ABI:
 | New syscall appended, new flag bit, new optional field at the end of a record | `SYSCALL_ABI_VERSION_MINOR` |
 | Changed semantics of an existing syscall, changed argument order, changed or reordered fields in a record, removed syscall | `SYSCALL_ABI_VERSION_MAJOR` |
 
-A major bump is a **last resort**. If the change can be expressed additively —
-a new syscall alongside the old one, a new flag, a field appended to a
-fixed-size record — do that instead. The existing unit test pins the current
+A major bump is a **last resort**. If the change can be expressed additively, a new syscall alongside the old one, a new flag, a field appended to a
+fixed-size record, do that instead. The existing unit test pins the current
 version constants; update it in the same commit, and make sure the commit
 message says why the bump is warranted.
 
@@ -147,7 +146,7 @@ follow-up.
 
 5. **Bump the ABI version** if the change is not purely additive (§4).
 
-6. **Test it** — see §9.
+6. **Test it**, see §9.
 
 **Modifying an existing syscall** follows the same list, minus step 1, plus a
 compatibility argument in the commit message: say which range the syscall is in
@@ -166,8 +165,7 @@ The two parameters are the point:
   context alone.
 
 - **`&mut Arguments`** is how a handler reaches a caller's bytes.  It carries
-  the context plus the address-shaped arguments already turned into borrows —
-  `path: Option<&str>`, `buffer: Option<&mut [u8]>`.  A handler that did
+  the context plus the address-shaped arguments already turned into borrows, `path: Option<&str>`, `buffer: Option<&mut [u8]>`.  A handler that did
   `from_raw_parts` on `context.arg(1)` would carry a promise it cannot show;
   taking a borrow puts that promise where the borrow was built.
 
@@ -176,8 +174,8 @@ Rules the shape encodes:
 - **Return `Result<Dispatch>`,** never a bare `usize`.  `Dispatch` carries the
   return value *and* any control-flow action the trap path must take.
 
-- **Use the constructors** — `Dispatch::complete(value)`, `yield_now()`,
-  `exit(status)` — rather than building the struct by hand.
+- **Use the constructors**, `Dispatch::complete(value)`, `yield_now()`,
+  `exit(status)`, rather than building the struct by hand.
 
 - **Reject unused arguments explicitly** with `validate_zeroed_args(context, n)`,
   where `n` is the first unused index.  Silent acceptance of garbage makes a
@@ -189,7 +187,7 @@ Rules the shape encodes:
 
 - **No `unsafe`, and that is a testable claim.**  `kernel/src/syscall/mod.rs`
   contains no `unsafe` block.  A handler that needs one is a handler whose
-  argument should have arrived as a borrow — add the borrow to `Arguments`
+  argument should have arrived as a borrow, add the borrow to `Arguments`
   rather than the `unsafe` to the handler.
 
 ---
@@ -221,14 +219,14 @@ is already decided, and is worth writing down before there is code to break:
   permission to touch a program's memory belongs in one module with one
   argument beside it, and every access goes through it.  The previous tree had
   that rule and a gate for it (`check-user-access-windows`); this tree will
-  need both, and the gate is the part that matters — a rule enforced only by
+  need both, and the gate is the part that matters, a rule enforced only by
   review is a rule the first exception erodes.
 
 ## 8. Userspace wrappers
 
 The previous tree carried a `shared` crate holding its user-side wrappers: number re-exports, the raw
 trap instruction, and typed `sys_<name>` wrappers.  This tree has no such crate
-yet — `apps/` holds three program skeletons — so the wrapper conventions are
+yet, `apps/` holds three program skeletons, so the wrapper conventions are
 recorded here for the change that adds one:
 
 - Name them `sys_` + the syscall's name (`sys_open`, `sys_read`, `sys_stat`).
@@ -236,7 +234,7 @@ recorded here for the change that adds one:
   [`abi::syscall::decode_result`](../../abi/src/syscall.rs).  Do not leak raw
   register values to callers.
 - Take Rust types in the signature (`&str`, `&mut [u8]`) and do the
-  pointer/length packing here — that is the whole point of the layer.
+  pointer/length packing here, that is the whole point of the layer.
 - The wrapper must not derive a syscall number arithmetically.  Name the
   variant of `abi::SyscallNumber`.
 
@@ -249,8 +247,8 @@ A syscall change is not complete without both, to the extent they apply:
 | Numbering | `mod tests` in `abi/src/number.rs` | The number, the count, and the frozen boundary |
 | Handler | `mod tests` in `kernel/src/syscall/mod.rs` | Argument validation, error cases, the descriptor's state |
 
-The handler tests drive the table the way a program does — a number, six argument
-words, a value or an error back — rather than calling the handler directly.  A
+The handler tests drive the table the way a program does, a number, six argument
+words, a value or an error back, rather than calling the handler directly.  A
 handler that works only when called directly is one whose registration was never
 tested.
 
@@ -277,8 +275,8 @@ Before requesting review of a syscall change, confirm each line:
 
 ## Related documents
 
-- [`docs/contributing.md`](../contributing.md) — the short-form rules
-- [`docs/architecture.md`](../architecture.md) — the trap, the dispatch
+- [`docs/contributing.md`](../contributing.md), the short-form rules
+- [`docs/architecture.md`](../architecture.md), the trap, the dispatch
   table, pointer validation
-- [docs/fmts/code-style.md](code-style.md) — error handling and module layout
-- [docs/fmts/testing.md](testing.md) — where tests go and how to register them
+- [docs/fmts/code-style.md](code-style.md), error handling and module layout
+- [docs/fmts/testing.md](testing.md), where tests go and how to register them

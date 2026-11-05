@@ -6,7 +6,7 @@
 //!
 //! A completion is a value a service produces and a caller takes.  If the
 //! producer can outrun the consumer forever, the queue is a memory leak with a
-//! polite name — and a service that completed four thousand requests during one
+//! polite name, and a service that completed four thousand requests during one
 //! syscall is exactly the shape that fills one.  So the queue has a capacity,
 //! and filling it is an error the producer is told about rather than a silent
 //! allocation.
@@ -33,7 +33,7 @@ pub enum SubmitError {
 /// A bounded FIFO of completions.
 ///
 /// FIFO rather than ordered by request id: a service may finish requests out of
-/// order — a short read and a long one both land when they land — and
+/// order, a short read and a long one both land when they land, and
 /// reordering them would be a policy about fairness this crate has no basis
 /// for.  The order is the order they finished, which is the one fact the queue
 /// actually has.
@@ -108,7 +108,7 @@ impl CompletionQueue {
 
     /// Take the completion for one request, leaving the others in order.
     ///
-    /// Not the normal path — a caller takes whatever finished first — but a
+    /// Not the normal path, a caller takes whatever finished first, but a
     /// caller waiting on one particular request needs it, and removing it by
     /// scanning is the only way to keep the remaining order intact.
     pub fn take(&mut self, id: RequestId) -> Option<Completion> {

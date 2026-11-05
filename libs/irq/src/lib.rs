@@ -6,7 +6,7 @@
 //!
 //! A function that takes the number it was called for and answers whether it
 //! did anything.  The number is a parameter rather than a closure's capture
-//! because a device may share one handler across several vectors — a virtio
+//! because a device may share one handler across several vectors, a virtio
 //! device with four queues registers four identities and wants to know which
 //! one woke it.
 //!
@@ -20,8 +20,8 @@
 //!
 //! The table is the same on every machine: an array of `Option<Handler>`
 //! indexed by identity, plus a lock.  What differs is how a machine *reaches*
-//! the table — x86_64 has an IDT and a vector number, aarch64 has an exception
-//! vector and reads a controller, riscv64 has `scause` — and that part is
+//! the table, x86_64 has an IDT and a vector number, aarch64 has an exception
+//! vector and reads a controller, riscv64 has `scause`, and that part is
 //! `arch`'s.
 //!
 //! Keeping the table here means a host test can register handlers, dispatch to

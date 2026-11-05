@@ -1,25 +1,25 @@
 //! fs/src/iso9660/susp.rs
 //!
-//! SUSP — the System Use Sharing Protocol — and Rock Ridge on top of it.
+//! SUSP, the System Use Sharing Protocol, and Rock Ridge on top of it.
 //!
 //! ## What a System Use area is
 //!
 //! A directory record has a field the format calls "System Use": bytes the
 //! standard does not define, for a system to put what it wants in.  SUSP gives
-//! those bytes a shape — a run of entries, each with a two-byte signature, a
-//! length that includes the header, and a version — so that two extensions can
+//! those bytes a shape, a run of entries, each with a two-byte signature, a
+//! length that includes the header, and a version, so that two extensions can
 //! share the area without understanding each other.
 //!
 //! Rock Ridge is the extension Linux, and this reader, uses: `NM` for the POSIX
 //! name the author meant, `PX` for the mode and ownership, `SL` for a symbolic
-//! link's target.  A disc without it is still readable — the identifiers are
-//! the names — which is why every field here is optional.
+//! link's target.  A disc without it is still readable, the identifiers are
+//! the names, which is why every field here is optional.
 //!
 //! ## The entry a reader must skip
 //!
 //! `CE` (continuation) says the System Use area continues in another block.  A
 //! reader that did not follow it would stop at the end of the record and lose
-//! every entry after the first 255 bytes — on a record with a long name, that
+//! every entry after the first 255 bytes, on a record with a long name, that
 //! is the name.  This module reports the continuation rather than following it,
 //! because following it needs the device and this module has none; the volume
 //! does the read and calls back.

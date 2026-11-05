@@ -42,7 +42,7 @@ use super::permissions_for;
 ///
 /// 4 KiB, where the boot used 2 MiB: a region's edge is where the linker put
 /// it, and a 2 MiB granule would round every permission to the nearest two
-/// megabytes — which for this kernel means text and rodata would share one.
+/// megabytes, which for this kernel means text and rodata would share one.
 #[cfg(target_os = "none")]
 pub(crate) const GRANULE: usize = PAGE_SIZE;
 
@@ -54,7 +54,7 @@ pub(crate) const IDENTITY_LIMIT: usize = 4 * 1024 * 1024 * 1024;
 /// How many page tables the fixed array holds.
 ///
 /// The identity map is four gigabytes: one root, one table of tables, four page
-/// directories, and — for the 4 KiB granule — one page table per 2 MiB, which
+/// directories, and, for the 4 KiB granule, one page table per 2 MiB, which
 /// is 2048 of them.  The array is exactly that, and the constants below assert
 /// the relation rather than restating it.
 #[cfg(target_os = "none")]
@@ -72,7 +72,7 @@ const LEAF_TABLES: usize = IDENTITY_LIMIT / (512 * GRANULE);
 /// 2 MiB block per the level that has one covers a device region with a single
 /// entry, and a device region is a whole number of them in practice.  Each
 /// spare table is one 1 GiB span of block entries, which is what a PCIe ECAM
-/// window needs — QEMU's is 256 MiB and sits at `0x40_1000_0000`, three hundred
+/// window needs, QEMU's is 256 MiB and sits at `0x40_1000_0000`, three hundred
 /// gigabytes past the identity map's end.
 #[cfg(target_os = "none")]
 const DEVICE_THIRD_LEVEL: usize = 2;
@@ -89,7 +89,7 @@ pub(crate) struct Tables {
     ///
     /// The first two windows come from here because they are always needed and
     /// a `static` is cheaper than a frame.  A third takes a frame from the
-    /// pool — which is the point of the allocator existing: this array is a
+    /// pool, which is the point of the allocator existing: this array is a
     /// bound nobody could justify, and a machine that needed a third window
     /// would have found it.
     pub(crate) device: [PageTable; DEVICE_THIRD_LEVEL],
@@ -141,7 +141,7 @@ pub(crate) fn build(tables: &mut Tables) {
     //
     // The second-level index *is* the slot: a 1 GiB span is one entry of a
     // table whose entries each cover 1 GiB.  Deriving it by dividing the span
-    // by the span of a third-level entry gives 0 for all four — the first
+    // by the span of a third-level entry gives 0 for all four, the first
     // version did that, so the four spans overwrote each other and only the
     // last was mapped.
     for (third_slot, third) in tables.third.iter().enumerate() {
@@ -178,13 +178,13 @@ pub(crate) fn build(tables: &mut Tables) {
 /// The boot's table maps everything cached.  A device's registers read through
 /// a cached mapping return whatever was true when the line was fetched, and a
 /// store to one may sit in a write-combining buffer instead of reaching the
-/// device — which works on an emulator whose MMIO happens to behave and is
+/// device, which works on an emulator whose MMIO happens to behave and is
 /// wrong on hardware.
 ///
 /// So a region a driver reaches through `RegisterFile` is re-mapped here with
 /// [`Permissions::DEVICE`]: read, write, never cached.  The boot's identity
-/// translation is unchanged — the same address still means the same physical
-/// page — and what changes is what the CPU may do with it.
+/// translation is unchanged, the same address still means the same physical
+/// page, and what changes is what the CPU may do with it.
 ///
 /// # Safety
 ///
@@ -201,8 +201,8 @@ pub unsafe fn map_device(start: usize, length: usize) -> bool {
 /// ## Two kinds of region
 ///
 /// Below [`IDENTITY_LIMIT`] the walk was built by [`build`], and this only
-/// re-encodes leaf entries that already exist.  Above it there is no table —
-/// the identity map stops at four gigabytes — so this **creates** one: a
+/// re-encodes leaf entries that already exist.  Above it there is no table, ///
+/// the identity map stops at four gigabytes, so this **creates** one: a
 /// third-level table of 2 MiB block entries, installed under the root.
 ///
 /// The two are different operations on purpose.  Below the limit the region is
@@ -262,7 +262,7 @@ pub fn map_region(start: usize, length: usize, permissions: Permissions) -> bool
 /// The 2 MiB rounding is the honest part: a device window's edges are the
 /// firmware's, and a region whose end is not 2 MiB aligned has its last block
 /// cover bytes past the window.  Those bytes belong to no device and nothing
-/// reaches them; the alternative — a page table per 2 MiB — is a thousand
+/// reaches them; the alternative, a page table per 2 MiB, is a thousand
 /// tables to describe one window.
 #[cfg(target_os = "none")]
 pub(crate) fn map_device_blocks(
@@ -281,7 +281,7 @@ pub(crate) fn map_device_blocks(
         let span_index = index(Level::Second, address);
         let Some(slot) = device_table_for(tables, span_index) else {
             // No table left for this span.  Stopping leaves the rest of the
-            // window unmapped, which faults at the first access — a fault a
+            // window unmapped, which faults at the first access, a fault a
             // reader can trace to this bound rather than to a driver.
             break;
         };
@@ -323,10 +323,10 @@ pub(crate) fn device_table_for(
     // defect this tree keeps recording.
     let address = match tables.device.iter().position(|table| table.is_empty()) {
         // The tables live in a `static`, so an address into the array outlives
-        // the borrow of the array itself — which is what `'static` says here.
+        // the borrow of the array itself, which is what `'static` says here.
         Some(free) => tables.device[free].address(),
         None => {
-            // Past the spares, a page table comes from the frame allocator —
+            // Past the spares, a page table comes from the frame allocator, //
             // the same frames the allocator exists to hand out, and the reason
             // it had to work before the heap.
             let frame = tables.frames.allocate(1)? as usize;
@@ -369,7 +369,7 @@ pub(crate) fn leaf_for(root: &PageTable, address: usize) -> Option<&'static Page
 /// The level is passed through rather than defaulted.  aarch64 writes a 4 KiB
 /// page descriptor and a 1 GiB block descriptor with different bits, and the
 /// version of this function that took only the entry had `arch` assume
-/// `Level::Third` — which turned every page in this four-level table into a
+/// `Level::Third`, which turned every page in this four-level table into a
 /// block, and the first fetch after the MMU came on faulted in a region the
 /// walk believed covered a gigabyte.
 #[cfg(target_os = "none")]

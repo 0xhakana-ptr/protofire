@@ -31,15 +31,15 @@ pub(crate) const SL_INDEX_LOG2: usize = 5; // log₂(SL_COUNT)
 // makes sense while they agree: `classify` shifts by `SL_INDEX_LOG2` and masks
 // with `SL_COUNT - 1`, so a pair that disagreed would file a block under a
 // class neither number names.  Nothing else checks this, and the tests do not:
-// changing either constant alone still produces a self-consistent mapping —
-// measured, `SL_COUNT` cut to 16 left all thirteen tests green — which is
+// changing either constant alone still produces a self-consistent mapping, //
+// measured, `SL_COUNT` cut to 16 left all thirteen tests green, which is
 // exactly why the relation belongs here as a build-time fact rather than in a
 // comment that can drift from it.
 const _: () = assert!(1usize << SL_INDEX_LOG2 == SL_COUNT);
 
 pub(crate) const FREE_LISTS_COUNT: usize = FL_COUNT * SL_COUNT; // 704
 
-// Block header — 16 bytes on 64‑bit
+// Block header, 16 bytes on 64‑bit
 
 /// `size` uses the least-significant bit as the free/used flag:
 ///   bit 0 = 0 → block is free
@@ -76,7 +76,7 @@ pub(crate) struct AllocatorState {
     /// first-level class `fl` is non‑empty.
     pub(crate) fl_bitmap: u32,
 
-    /// `sl_bitmaps[fl - FL_MIN]` — one bit per second-level subclass.
+    /// `sl_bitmaps[fl - FL_MIN]`, one bit per second-level subclass.
     pub(crate) sl_bitmaps: [u32; FL_COUNT],
 
     /// Heads of the 640 singly‑linked free lists.  `0` means empty.
@@ -108,7 +108,7 @@ pub(crate) fn align_up(value: usize, align: usize) -> Option<usize> {
 // Raw block accessors
 //
 // All functions in this section operate on raw block addresses and are
-// inherently unsafe — the caller must ensure the address points to a valid
+// inherently unsafe, the caller must ensure the address points to a valid
 // block within the heap bounds.
 
 /// Read the full `size` field (includes the used/free flag in bit 0).
@@ -167,7 +167,7 @@ pub(crate) unsafe fn block_clear_used(block: usize) {
 
 #[inline(always)]
 pub(crate) unsafe fn block_prev_phys(block: usize) -> usize {
-    // SAFETY: the header's second word is `prev_phys`, at offset 8 — the layout
+    // SAFETY: the header's second word is `prev_phys`, at offset 8, the layout
     // every block shares, free or used, which is what `coalesce` relies on to
     // find a predecessor.
     unsafe { (block as *const usize).add(1).read() }
@@ -185,7 +185,7 @@ pub(crate) unsafe fn block_set_prev_phys(block: usize, prev: usize) {
 /// `block` to point to `new_prev`.
 ///
 /// The `prev_phys` field lives in the block header (offset 8) and is valid
-/// for **every** block — free or used.  When the block is later freed,
+/// for **every** block, free or used.  When the block is later freed,
 /// `coalesce` reads `prev_phys` to locate the physical predecessor.
 pub(crate) unsafe fn block_set_prev_phys_of_next(block: usize, new_prev: usize) {
     // SAFETY: the successor is found by adding this block's size to its
@@ -201,7 +201,7 @@ pub(crate) unsafe fn block_set_prev_phys_of_next(block: usize, new_prev: usize) 
             #[cfg(debug_assertions)]
             {
                 // Report only on failure.  `debug_assert!` cannot run a
-                // statement, and this is a hot path — a diagnostic called on
+                // statement, and this is a hot path, a diagnostic called on
                 // every block coalesce would print, and printing allocates, and
                 // allocating feeds more heap operations.
                 if !next.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
@@ -225,12 +225,12 @@ pub(crate) unsafe fn block_set_prev_phys_of_next(block: usize, new_prev: usize) 
     }
 }
 
-// Free-block specific accessors — only valid when the block is free.
+// Free-block specific accessors, only valid when the block is free.
 
 #[inline(always)]
 pub(crate) unsafe fn block_next_free(block: usize) -> usize {
     // SAFETY: a free block carries its free-list link `FREE_NEXT_OFFSET` bytes
-    // in — the word after `prev_phys` — and only free blocks carry it; the
+    // in, the word after `prev_phys`, and only free blocks carry it; the
     // caller has one.
     unsafe { (block as *const usize).add(FREE_NEXT_OFFSET / 8).read() }
 }
@@ -371,7 +371,7 @@ pub(crate) unsafe fn report_heap_damage(state: &AllocatorState, caller: &str) {
 /// Set while a damage report is being printed.
 ///
 /// Printing allocates, and the heap it would allocate from is the one that is
-/// damaged — so an unguarded report re-enters the audit, which reports, which
+/// damaged, so an unguarded report re-enters the audit, which reports, which
 /// allocates, and the output runs away.  While this is set the audit stays
 /// quiet so the report can finish and the panic can happen.
 #[cfg(feature = "heap_audit")]
@@ -384,7 +384,7 @@ static HEAP_AUDIT_REPORTING: core::sync::atomic::AtomicBool =
 /// With the walk only running where a free-list traversal happens to pass,
 /// damage is reported long after the write that caused it and from an unrelated
 /// place.  Auditing after every operation pins it to the operation itself,
-/// which — together with [`report_heap_damage`]'s history — names the culprit.
+/// which, together with [`report_heap_damage`]'s history, names the culprit.
 ///
 /// This is `O(blocks)` per operation and exists only under the `heap_audit`
 /// feature: it is a diagnostic build, not something to ship.
@@ -409,8 +409,8 @@ pub(crate) unsafe fn audit_after_operation(state: &AllocatorState, operation: &s
         report_walk_route(state, defect.address);
 
         // Raw words around the defect.  With the operation named, the remaining
-        // question is what the damaged header actually holds — a stale pointer,
-        // a payload value, or zero — and that is only visible in the bytes.
+        // question is what the damaged header actually holds, a stale pointer,
+        // a payload value, or zero, and that is only visible in the bytes.
         // Wide enough to include the block *before* the one the walk choked on:
         // the question is whether that block's size word agrees with the
         // boundary its successor records.
@@ -441,7 +441,7 @@ pub(crate) unsafe fn audit_after_operation(state: &AllocatorState, operation: &s
 ///
 /// A block header sits immediately before the next block's payload, so an
 /// allocation that writes past its own bytes damages the *next* block's
-/// header — the shape of every corruption this heap has produced.  The canary
+/// header, the shape of every corruption this heap has produced.  The canary
 /// is the first thing such an overrun meets, and it is checked when the
 /// offending allocation is freed, which attributes the damage to a specific
 /// pointer instead of leaving a free-list walk to trip over it later.
@@ -476,7 +476,7 @@ pub(crate) unsafe fn canary_write(block_start: usize) {
 
 /// Verify the canary of the block starting at `block_start`.
 ///
-/// Returns a defect rather than panicking so callers — and tests — can decide
+/// Returns a defect rather than panicking so callers, and tests, can decide
 /// what to do.  The free path treats it as fatal, because continuing with a
 /// damaged heap turns a located fault into arbitrary misbehaviour.
 ///
@@ -485,7 +485,7 @@ pub(crate) unsafe fn canary_write(block_start: usize) {
 /// This catches an overrun that reaches the last word of the block, which is
 /// the shape every corruption here has had: the next block's header sits at
 /// exactly that address.  It does *not* catch an overrun that stays inside the
-/// alignment padding — up to fifteen bytes between the caller's last byte and
+/// alignment padding, up to fifteen bytes between the caller's last byte and
 /// the block end.  Closing that gap needs the canary placed at
 /// `payload + requested_size`, which needs the requested size on the free path;
 /// the placement above is what the suite verifies.
@@ -752,7 +752,7 @@ pub(crate) unsafe fn insert_free_block(state: &mut AllocatorState, block: usize)
         let size = block_size(block);
 
         if size < MIN_FREE_BLOCK {
-            // Block is too small to be on a free list — this can happen when a
+            // Block is too small to be on a free list, this can happen when a
             // remainder after splitting is tiny.  It will be absorbed by the
             // next coalesce.
             return;
@@ -831,7 +831,7 @@ pub(crate) unsafe fn remove_free_block(state: &mut AllocatorState, block: usize)
             validate_block(state, current, "remove_free_block(traverse)");
 
             if current == block {
-                // Found it — unlink.
+                // Found it, unlink.
                 let next = block_next_free(current);
                 if prev == 0 {
                     state.free_lists[idx] = next;
@@ -970,13 +970,13 @@ pub(crate) unsafe fn validate_coalesce_neighbour(
     // alignment before its header is read, which is what lets the rest of the
     // split treat it as a block.
     unsafe {
-        // Must be properly aligned — all real blocks start at 16‑byte
+        // Must be properly aligned, all real blocks start at 16‑byte
         // boundaries.
         if !candidate.is_multiple_of(HEAP_BLOCK_ALIGNMENT) {
             return None;
         }
 
-        // Check that the "free" bit is actually set — the caller already
+        // Check that the "free" bit is actually set, the caller already
         // verified this, but a stale word with bit 0 = 0 can fool
         // `block_is_used`.
         let size = block_size(candidate);
@@ -1005,8 +1005,8 @@ pub(crate) unsafe fn validate_coalesce_neighbour(
 ///
 /// The function removes any merged neighbours from their free lists.
 pub(crate) unsafe fn coalesce(state: &mut AllocatorState, block: usize) -> usize {
-    // SAFETY: the block's header is valid on entry — the caller has just freed
-    // or split it — and every neighbour is checked against the heap bounds
+    // SAFETY: the block's header is valid on entry, the caller has just freed
+    // or split it, and every neighbour is checked against the heap bounds
     // before its header is read.
     unsafe {
         let mut start = block;

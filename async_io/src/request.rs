@@ -5,7 +5,7 @@
 //! ## The token
 //!
 //! Every request carries a [`RequestId`] the caller chooses.  The queue never
-//! interprets it — it is the caller's own handle, which is why the same number
+//! interprets it, it is the caller's own handle, which is why the same number
 //! can mean "the read at offset 4096" to one service and "job 7" to another.
 //! This is the `user_data` field of an `io_uring` entry generalised: a value
 //! that survives the round trip and belongs to whoever submitted it.
@@ -53,7 +53,7 @@ pub enum RequestState {
 /// One submitted operation.
 ///
 /// The operation itself is the service's to define: this struct carries what
-/// the *queue* needs — the token and the state — and the service keeps the rest
+/// the *queue* needs, the token and the state, and the service keeps the rest
 /// in whatever form its own work takes.  A disk queue holds a block address and
 /// a buffer pointer; a program launcher holds a path and an argument vector;
 /// neither of those belongs in a type the queue names.
@@ -116,7 +116,7 @@ impl Request {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionStatus {
     /// The operation finished.  The value is what the service returns on
-    /// success — a byte count, a descriptor, zero.
+    /// success, a byte count, a descriptor, zero.
     Ok(usize),
     /// The operation did not finish, and this says why.
     Err(Error),

@@ -5,7 +5,7 @@ copy: each subsystem moves in as a crate of its own, with its tests, once it
 can be built and exercised on its own.  This document is what has moved.
 
 There is deliberately no size column.  A line count is wrong the moment the
-next change lands, and a document that is wrong is a bug in this tree — where a
+next change lands, and a document that is wrong is a bug in this tree, where a
 number would be, the table says what is here, and that is the claim worth
 keeping true.
 
@@ -15,7 +15,7 @@ keeping true.
 |---|---|
 | `abi` | the whole wire format, and the syscall numbering |
 | `arch` | boot, interrupts, serial, port I/O, page tables, the exception path, IDT, the GDT and TSS, the local APIC and its timer, the 8259, the PL011, the NS16550A, the device-tree handshake, the GIC, the OpenSBI handoff, ring 3 on all three bootable machines |
-| `crypto` | all of it, one module per algorithm — it is a `libs` crate, like `unicode` |
+| `crypto` | all of it, one module per algorithm, it is a `libs` crate, like `unicode` |
 | `fs` | PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract; most of the names in the next table are not |
 | `kernel` | the boot sequence, the syscall table, the scheduler, device discovery |
 | `memory` | the frame pool and the region pools |
@@ -39,32 +39,32 @@ because the plan is a list of what to do and not a score.
 |---|---|
 | NTFS | no |
 | PyroFS | **yes** |
-| ISO 9660 | **yes**, read-only — rewritten, not moved |
+| ISO 9660 | **yes**, read-only, rewritten, not moved |
 | ext4 | no |
 | F2FS | no |
 | FAT32 | no |
 | exFAT | no |
 | btrfs | no |
 | squashfs | no |
-| the VFS layer | contract only — see below |
+| the VFS layer | contract only, see below |
 | tmpfs | **yes** |
 | FUSE | no |
 
 **The VFS row has moved.**  `fs/src/vnode.rs` and `fs/src/filesystem.rs` carry
-the *contract* — what a node is, what a filesystem answers — and the namespace
+the *contract*, what a node is, what a filesystem answers, and the namespace
 is now `fs/src/mount.rs` and `fs/src/path.rs`: a mount table, longest-prefix
 resolution, and path normalization.  What is still not here is the *handle
 table*, which arrives with the process layer because a handle belongs to a
 process.
 
 Three filesystems are mounted on a boot: PyroFS at `/`, tmpfs at `/tmp` and an
-ISO 9660 disc at `/cdrom`.  The second is what proved the namespace — a table
-with one entry has never resolved anything — and the third is what proved it
+ISO 9660 disc at `/cdrom`.  The second is what proved the namespace, a table
+with one entry has never resolved anything, and the third is what proved it
 goes both ways, because a disc cannot be written and so what comes out of it
 came from the image.
 
 **ISO 9660 was rewritten rather than moved**, and that is the pattern for the
-rest.  The previous tree had a reader and a *writer* — a writer for a writable
+rest.  The previous tree had a reader and a *writer*, a writer for a writable
 ISO image, which was a requirement of that kernel rather than of the format.
 This tree has the reader, with the field offsets named and tested instead of
 being a packed struct cast from a sector.  See
@@ -81,8 +81,8 @@ declared before there is code to put behind it.
 
 What the previous tree's network subsystem held: TCP, TLS, SCTP, DCCP, IPsec,
 WireGuard, DNS, mDNS, DHCP, NTP, PPP/PPPoE, multicast routing, a packet filter
-and raw sockets.  The order it comes in is bottom-up — link, then internet,
-then the transports — because each layer's tests need the one below it.
+and raw sockets.  The order it comes in is bottom-up, link, then internet,
+then the transports, because each layer's tests need the one below it.
 
 ## Architecture
 
@@ -92,7 +92,7 @@ previous tree's `arch` had `pci`, `fdt`, `trap`, `mmu`, `percpu`, `smp`,
 
 What is here is what a boot needs before anything else: the entry, the console,
 the interrupt flag, the page-table encoding, the exception path, the port I/O
-the PCI bus is reached through, and — on all three bootable machines — ring 3,
+the PCI bus is reached through, and, on all three bootable machines, ring 3,
 a timer and a preempting scheduler.
 
 Both machines now reach a program at ring 3, and the two halves differ enough
@@ -100,11 +100,11 @@ to say where.  x86_64 needed a descriptor table with a DPL-3 code and data
 segment, a task state segment whose `RSP0` names the stack every ring-3
 interrupt lands on, a call gate at `DPL` 3, and a `cr3` write to switch
 address spaces.  Its timer is the local APIC's, calibrated against the PIT, and
-its monotonic clock is the TSC — the APIC's own count runs *down* and reloads,
+its monotonic clock is the TSC, the APIC's own count runs *down* and reloads,
 which is not a deadline and cost a boot its wakes.
 
 The blocking `read` is in on all three machines: a pipe parks a reader, which
-`sleep` could not — `sleep` has a deadline and a wake, and a pipe has a writer
+`sleep` could not, `sleep` has a deadline and a wake, and a pipe has a writer
 and no clock.  The third machine took every seam the first two had left and
 kept it, which is the argument that the seams are design rather than two
 machines' coincidence.
@@ -118,15 +118,15 @@ machines' coincidence.
 `arch/aarch64/src/timer.rs` is the generic timer: `CNTFRQ_EL0` for the
 frequency, `CNTPCT_EL0` for the counter, `CNTP_TVAL_EL0` for a countdown.  The
 countdown and not the compare value, because a deadline computed from a counter
-read that arrived one tick late is a deadline in the past — which fires
+read that arrived one tick late is a deadline in the past, which fires
 immediately and looks like a timer that ignores its interval.
 
 Four things were wrong before it worked, and each looked like the previous one's
 symptom:
 
 1. **The interrupt was in group 1 and QEMU did not deliver it.**  Every register
-   read back correct — enabled, group 1, priority `0x80`, edge-triggered, both
-   CPU-interface groups on, `PMR = 0xff` — and `GICD_ISPENDR0` showed bit 30
+   read back correct, enabled, group 1, priority `0x80`, edge-triggered, both
+   CPU-interface groups on, `PMR = 0xff`, and `GICD_ISPENDR0` showed bit 30
    **pending** while `GICC_IAR` answered `1022` (spurious) forever.  The same
    interrupt in group 0 delivers.  That is written down in `gic.rs` at the
    place it is decided, because a reader who finds a PPI in group 0 will want
@@ -135,7 +135,7 @@ symptom:
 2. **`SPSR_EL1` masked IRQ at EL0.**  The constant was `0x3C0`, which sets
    `D`, `A`, `I` and `F`; a program running with `I` set never takes a tick, so
    preemption would have been a scheduler the kernel believes in and the
-   machine never invokes.  It is `0x340` — the same three masks and `I` clear.
+   machine never invokes.  It is `0x340`, the same three masks and `I` clear.
 
 3. **The timer was armed before the boot finished.**  Every tick during the
    remaining EL1 setup took a full 800-byte trap, and the boot stopped in the
@@ -143,15 +143,15 @@ symptom:
    before `eret` into EL0.
 
 4. **A console write was not atomic.**  `write_str` is dozens of byte writes and
-   a tick between two of them ran another program that printed — so one line
+   a tick between two of them ran another program that printed, so one line
    came out interleaved with another's.  It now masks IRQs for its duration and
    restores what was there, which is what `sync` already does for every other
    piece of kernel state.
 
 **The first check could not fail, twice.**  The timer's line was reported as
 firing from a counter the boot incremented itself; it now counts what the
-handler sees.  And the boot's total said `1 switch(es)` — one, from the first
-exit — whatever the timer did, so a scheduler that never preempted printed
+handler sees.  And the boot's total said `1 switch(es)`, one, from the first
+exit, whatever the timer did, so a scheduler that never preempted printed
 exactly what one that did printed.  The boot now says which happened: with the
 preemption sink removed it prints `the timer did not preempt`, and the gate
 requires the other line.
@@ -171,14 +171,14 @@ slice.
     program 2 says hello
     protofire: every program exited, 1 switch(es), 2 exit(s)
 
-A program's pages live above `0x80_0000_0000`, which is root entry 1 — one entry
+A program's pages live above `0x80_0000_0000`, which is root entry 1, one entry
 past this kernel's identity map.  So a program's root table holds the kernel's
 entry 0 unchanged, and every kernel address translates identically in every
 space.  That is the whole economy of it: a root that copied the identity map
 instead would spend a hundred and thirty thousand frames per program to share
 what is already shared.
 
-A task switch is therefore two copies and one system register — save the frame
+A task switch is therefore two copies and one system register, save the frame
 into the running task, copy the next one's over it, write `TTBR0_EL1` if the
 space changed.  There is no assembly, because the assembly that matters is the
 epilogue every trap already runs through: it restores whatever frame it finds
@@ -193,7 +193,7 @@ CPU and a switch per program exit.  The flush is the cheap correct answer.
 way the log did not show.**  Both programs printed their lines, so it looked
 right.  Underneath, `advance` replaced the frame with the other task's context
 and then the handler wrote *its own* answer into that context's `x0` and
-answered `Return` — so the program resumed was the other one, with its `x0`
+answered `Return`, so the program resumed was the other one, with its `x0`
 overwritten by a value meant for this one, and the exit never happened.  Only
 `Exit` switches now, which is also the honest policy: a program that made a call
 and got its answer has no reason to lose the CPU.
@@ -202,7 +202,7 @@ Two mutations were run and both stop the boot, which is what makes the switch
 real rather than nominal.  Deleting the `TTBR0_EL1` write leaves program 2's
 entry unmapped in program 1's space, and the boot stops at
 `instruction abort at 0x8080000000`.  Deleting the context restore resumes
-program 1 — at `0x8040000018`, after its `mov` — inside program 2's space, and
+program 1, at `0x8040000018`, after its `mov`, inside program 2's space, and
 the boot stops at `instruction abort at 0x8040000018`.  Neither program can
 reach the other's memory, and both can reach the kernel's.
 
@@ -218,21 +218,21 @@ EL0, and its `svc` served and resumed.  It is the first thing in this tree that
 does not run at EL1.
 
 The program is written as words with a table of what each one encodes, and the
-bytes were disassembled by `llvm-objdump` before they were written down — a
+bytes were disassembled by `llvm-objdump` before they were written down, a
 program encoded by hand is one the machine fetches as different instructions,
 and the failure would be a trap at a plausible address rather than a message.
 
 **The first version of it could not fail.**  It called `Write`, ignored the
 answer, and exited zero.  Deleting the trap path's write-back of `x0` changed no
 output at all: the boot printed the same three lines.  The program now compares
-`x0` against what `Write` answered — seventeen, the length of the line — and
+`x0` against what `Write` answered, seventeen, the length of the line, and
 exits two when the comparison fails.  Deleting the write-back makes it exit two,
 and the gate requires the exit status exactly.
 
 Two mutations were run against the entry path and both failed as they should.
 Setting `SPSR_EL1` to EL1h instead of EL0t leaves the program's page mapped
 `user` with no EL1 execute permission, and the boot stops at
-`instruction abort at 0x1000000` — which is the `user` bit being real rather
+`instruction abort at 0x1000000`, which is the `user` bit being real rather
 than decorative.
 
 What is not here: a second program.  `enter_user` does not return and `Exit`
@@ -259,7 +259,7 @@ each failed differently before it was right.
 
 **The descriptor bits were in the wrong half of the word.**  The type byte,
 `S`, the DPL and `P` are the descriptor's second byte as the processor reads
-it — bits 40..47 — and the first version wrote them at bits 8..15, which is the
+it, bits 40..47, and the first version wrote them at bits 8..15, which is the
 limit's low half.  The processor refused the first `mov ds` with a general
 protection fault carrying selector index 2.  What found it was `-d int`: the
 fault was `v=0d e=0010` at the `mov %ax,%ds` one instruction after a `lgdt`
@@ -286,15 +286,15 @@ which counts up and never resets, like the register aarch64 reads.
 The rate and the countdown are separate questions, so they are separate
 functions: `clock_frequency` is how fast the counter counts and
 `timer_frequency` is how fast the timer counts down.  Measured on one boot they
-are not the same number — the counter runs at about 2.6 GHz and the APIC's
-countdown at about 1 GHz — so a duration converted with the wrong one is a
+are not the same number, the counter runs at about 2.6 GHz and the APIC's
+countdown at about 1 GHz, so a duration converted with the wrong one is a
 deadline that is short by that ratio.  A twenty-millisecond sleep absorbed it
 and a boot passed either way, which is why the split is a signature that says
 what it means rather than a defect this found.
 
 ### A race in `enter_user`, found at four thousand ticks a second
 
-A short time slice — twenty microseconds instead of a hundred — made aarch64
+A short time slice, twenty microseconds instead of a hundred, made aarch64
 fail about one boot in three, at a kernel address, from EL0, with `spsr 0x340`.
 The baseline at that commit failed six times in fifteen, so the defect predated
 the change that exposed it.
@@ -303,7 +303,7 @@ The address was inside `enter_user`'s own asm block, and that is the whole
 explanation.  The three `msr`s and the `eret` are one transaction, and
 `enter_user` ran with interrupts enabled.  A tick in that window is taken at
 EL1, so `entry.S` saves the interrupted `ELR_EL1`/`SPSR_EL1` **and restores them
-on the way out** — clobbering the entry that had just been written.  The `eret`
+on the way out**, clobbering the entry that had just been written.  The `eret`
 then returned to whatever the tick interrupted, which is inside `enter_user`,
 at EL0, because the `spsr` had been rewritten to EL0t again.
 
@@ -322,7 +322,7 @@ boots at the same slice after the fix, zero failures.
 
 A task now has three states rather than a `finished` flag: runnable, sleeping
 until a counter reading, finished.  The third is not "finished with a
-timestamp" — a sleeping task is runnable *later*, and a scheduler that could
+timestamp", a sleeping task is runnable *later*, and a scheduler that could
 not tell the two apart would either wake a dead program or never wake a live
 one.
 
@@ -335,7 +335,7 @@ the second means wait for a tick.  So the handler asks `has_other_runnable` and
 turns a deadline into a runnable task.
 
 The deadline is a counter reading, not a duration, and it is the same counter
-`wake_expired` compares — which is why the platform with a countdown timer
+`wake_expired` compares, which is why the platform with a countdown timer
 needed the TSC.  The wake check runs in the timer's handler **before** the
 preemption hook, because a task that has finished sleeping is runnable now and
 a pass that ran first would find nothing and stop the machine with work left.
@@ -344,7 +344,7 @@ a pass that ran first would find nothing and stop the machine with work left.
 needed.**  Leaving it to whichever scheduling call happened next was correct
 only while a call always happened; with every task asleep the boot idles
 instead, and the sleeper then resumed at whatever position its context last
-held — which was the `Sleep` call.  The log showed program 2 printing its line,
+held, which was the `Sleep` call.  The log showed program 2 printing its line,
 sleeping, waking, and printing the same line again, for ever.
 
 Everything else in this area was diagnosis, and a mutation says so: reverting
@@ -353,8 +353,8 @@ reverting `switch_without_saving` to `advance` passes it, and so does an idle
 loop that asks `has_runnable`.  Each of those was a change made while chasing
 the fault and each turned out to be unnecessary once the frame was saved where
 it belonged.  They are kept because they are the more honest statements of what
-the code means — an APIC ends every vector it delivered, not just the timer's,
-and a boot's idle does not own a frame to save — and not because a boot fails
+the code means, an APIC ends every vector it delivered, not just the timer's,
+and a boot's idle does not own a frame to save, and not because a boot fails
 without them.
 
 ### A pipe, and the first read that waits for a task
@@ -362,7 +362,7 @@ without them.
 A `sleep` waits for a clock.  A pipe waits for *another task*, and the two are
 different in every way that matters: there is no deadline to compare, the wake
 comes from a syscall rather than from the timer, and the wait ends in three
-ways rather than one — bytes arrived, the write end closed, or the wait was
+ways rather than one, bytes arrived, the write end closed, or the wait was
 interrupted.  The third is not implemented.
 
 The split is the one `scripts/layering.txt` already described: `ipc::ByteRing`
@@ -379,25 +379,25 @@ any number it invented would be a read that gives up early.
 the first call that takes one.  `address_space::is_user_range` asks three
 things: the range is in the user window, it does not wrap, and its *end* is in
 the window and not merely its start.  What it does not ask is whether the pages
-are mapped — a fault is the machine's answer to that, and a walk of the page
+are mapped, a fault is the machine's answer to that, and a walk of the page
 tables to know in advance would be the kernel doing what the MMU already does.
 
 **`SP_EL0` was never in aarch64's trap frame**, and that is what the pipe reader
 found.  The hardware does not push a stack pointer, so a switch carried every
-register but that one — and a program that used its stack resumed with the
+register but that one, and a program that used its stack resumed with the
 previous task's, taking a data abort inside another program's memory.  It was
 invisible for as long as no program touched its stack: the announcing programs
 call `svc` and never `push`.  The frame is 816 bytes now, with `sp_el0` at the
 end so every `q` pair keeps its offset.
 
 The same fault was in `starting_context`, which carried the stack pointer in
-`x0` — a register a program overwrites with its first argument.  It is a field
+`x0`, a register a program overwrites with its first argument.  It is a field
 of its own now, and `stack_pointer` reads it.
 
 **`Write` had two meanings under one number.**  The announcing call names a
 program in `esi` and has no length; a pipe write names a descriptor in `edi`
 and a length in `edx`.  Recognising a pipe by the descriptor alone was wrong
-twice: a program's `edi` holds whatever the boot left — zero — and zero is a
+twice: a program's `edi` holds whatever the boot left, zero, and zero is a
 valid descriptor once a pipe exists, so the announcement was served as a pipe
 write and printed nothing.  A length is what one call genuinely lacks and the
 other genuinely has, and that is the test now.
@@ -408,7 +408,7 @@ Both machines park a boot in an idle loop when every task is asleep, and both
 had to unmask interrupts to do it: `sti` before `hlt` on x86_64, and
 `msr daifclr, #2` before `wfi` on aarch64.  A supervisor call arrives through
 an interrupt gate, which clears the flag on entry, so the kernel serves the
-whole call with interrupts off — and a wait in that window waits for a tick
+whole call with interrupts off, and a wait in that window waits for a tick
 that cannot be delivered.
 
 aarch64's half was missing and this is how it showed: two programs slept, the
@@ -423,7 +423,7 @@ shape for an unbounded set and the wrong one here for a reason that is not about
 speed: **this allocator hands out the frames a page table is built from, and a
 page table has to exist before the heap does.**  A free list that needed `alloc`
 could not run when it was most needed, and the way that showed was the kernel
-working around it — building its tables in a `static` array with a bound nobody
+working around it, building its tables in a `static` array with a bound nobody
 had justified.
 
 The free list was replaced twice, and the second attempt is the instructive one.
@@ -445,8 +445,8 @@ regions, x86_64 answers `None` because its boot does not parse the multiboot2
 memory map, and riscv64 answers `None` because it has no entry.
 
 `address_space` takes a table from the pool once its two spare tables are used.
-That branch has not run on this machine, and the boot says so — `0 in page
-tables` — rather than letting a zero read as a success.  The allocator itself is
+That branch has not run on this machine, and the boot says so, `0 in page
+tables`, rather than letting a zero read as a success.  The allocator itself is
 exercised: the boot allocates a frame, checks it is zeroed, releases it, and
 compares the free count before and after.  Deleting the release makes it print
 `pool check FAILED`, which the gate refuses.
@@ -455,7 +455,7 @@ compares the free count before and after.  Deleting the release makes it print
 
 `drivers/bus/pci/src/msix.rs` is the MSI-X capability and table: the three
 structures, the entry layout, and the two bits in message control that are
-different — 15 enables the feature and 14 says the function must not fall back
+different, 15 enables the feature and 14 says the function must not fall back
 to its INTx pin.  An entry's mask bit is set-means-masked, the opposite of every
 other enable bit in PCI.  The table size register holds the count *minus one*.
 
@@ -469,8 +469,7 @@ Five defects were fixed while writing it, and four were in the test fake:
 - The fake's register file was too small for offset `0x98`.
 - The fake wrote `1` into the size field to mean "one entry", which is two.
 
-`arch/aarch64/src/gicv2m.rs` is the frame: `MSI_TYPER` holds two ten-bit fields
-— the first interrupt and the count — and `MSI_SET_SPI` is an array where the
+`arch/aarch64/src/gicv2m.rs` is the frame: `MSI_TYPER` holds two ten-bit fields, the first interrupt and the count, and `MSI_SET_SPI` is an array where the
 **address** selects which interrupt a write raises, not the payload.  The boot
 reads `MSI_TYPER` and reports what it found: `msi frame raises 80 interrupt(s)
 from 64`, which is `0x0050_0040` decoded and not assumed.
@@ -494,7 +493,7 @@ either already correct or irrelevant:
 | the number was wrong | enabled 64, and 48 and 80 from `base-spi` | none arrives |
 | the write is what does it | wrote the same address from QEMU's monitor | nothing |
 
-`ISPENDR` stays zero throughout, so **the frame produces nothing at all** — this
+`ISPENDR` stays zero throughout, so **the frame produces nothing at all**, this
 is not a delivery problem and no amount of distributor configuration reaches it.
 QEMU's frame also answers zero to every identification register (`PIDR2` at
 `0xfe8` reads `0`), which a real GICv2m would not.
@@ -521,15 +520,14 @@ protofire: interrupt delivered to its handler
 which lines exist and which CPU they go to, the CPU interface is what this core
 acknowledges and finishes through, and the two are different windows.  The
 arithmetic is the specification's, and the two arrays a driver must reach do not
-share a divisor — `ISENABLER` holds 32 interrupts per register and `IPRIORITYR`
-holds **four** — so a driver that used 32 for both enables the right line and
+share a divisor, `ISENABLER` holds 32 interrupts per register and `IPRIORITYR`
+holds **four**, so a driver that used 32 for both enables the right line and
 sets the priority of a different one.
 
 The dispatcher now tells an IRQ from a fault: the vector is `(group * 4) +
 kind`, so `vector % 4 == 1` is an IRQ whatever its group, and that path
 acknowledges, hands the number to the sink, and finishes.  Returning without the
-finish leaves the line active and the machine taking exactly one interrupt —
-which is why the finish is not on the handler's honour.
+finish leaves the line active and the machine taking exactly one interrupt, which is why the finish is not on the handler's honour.
 
 **The probe could not fail, and that is the defect worth recording.**  The boot
 raises an interrupt from the controller and a handler counts it.  The first
@@ -544,14 +542,14 @@ Two things were learned from the controller's own behaviour while doing this:
 - **`GICD_SGIR` raises only interrupts 0..16.**  It has no field for a device
   line, because a device raises its own.  The first version asked it for
   interrupt 40, wrote an SGI id the distributor did not route, and then had to
-  reconcile "the path works" — an unclaimed PPI arrived on its own and was
-  reported — with "my interrupt never came".  The path an SGI takes is the same
+  reconcile "the path works", an unclaimed PPI arrived on its own and was
+  reported, with "my interrupt never came".  The path an SGI takes is the same
   one a device's takes, so it is the right instrument and the only one.
 
 - **A PCIe `interrupt-map` did not resolve, and was left out rather than
   guessed at.**  The entries are `key + phandle + parent specifier`, and QEMU's
   `virt` writes a parent specifier wider than the GIC's declared
-  `#interrupt-cells` — five cells against three.  A parser that assumed three
+  `#interrupt-cells`, five cells against three.  A parser that assumed three
   read the next entry's key as part of the controller's number.  Rather than
   ship a table that resolved one pin out of four, the function was removed; the
   number a PCI function raises is still an open question, and the answer is the
@@ -562,7 +560,7 @@ Two things were learned from the controller's own behaviour while doing this:
 QEMU's `virt` has a PCIe host bridge and no firmware, so every BAR comes up
 unaddressed.  Reading a capability was possible after the device tree arrived;
 reaching the device behind it needed the assignment pass a firmware would have
-run — size each BAR, allocate from the bridge's `ranges` window, write it back,
+run, size each BAR, allocate from the bridge's `ranges` window, write it back,
 verify.
 
 The aarch64 boot now writes a sector and reads it back:
@@ -578,12 +576,12 @@ Six things were wrong, and only one of them was the feature:
 1. **`bar::size` treated a zero register as "no BAR".**  An unaddressed BAR
    reads zero.  On a machine with firmware that is unusual; on a device-tree
    machine it is the *normal* state, so the early return turned every device
-   into no device.  The current value cannot answer whether a BAR exists — only
+   into no device.  The current value cannot answer whether a BAR exists, only
    the device can, and the way to ask is a sizing write.
 
 2. **The 32-bit mask was not widened.**  A 32-bit BAR's mask came out as
    `0x0000_0000_FFFF_F000`, whose complement plus one is
-   `0xFFFF_FFFF_0000_1000` — not a power of two, so every 32-bit BAR sized as
+   `0xFFFF_FFFF_0000_1000`, not a power of two, so every 32-bit BAR sized as
    absent.  The mechanism's answer is a 64-bit mask whatever the BAR's width.
 
 3. **The type bits were read from the register, not the mask.**  Those bits are
@@ -606,21 +604,20 @@ Six things were wrong, and only one of them was the feature:
    about the mechanism, and now they are handed the same one.
 
 The sixth is the one worth keeping: it was introduced by *this* change, in the
-same function that added the mechanism choice.  A diagnostic line — `the walk
-saw 48 structure(s), types 255 255 …` — is what named it, and that line is now
+same function that added the mechanism choice.  A diagnostic line, `the walk
+saw 48 structure(s), types 255 255 …`, is what named it, and that line is now
 part of the error rather than a probe.
 
 Two smaller things fell out.  `Device::bars` returns **slots**, and a PCI
 capability's `bar` field counts **registers**; a 64-bit BAR occupies one slot
 and two register numbers, so indexing the slot array with a register number
 reaches the wrong window.  `Device::bar_register` is the lookup that matches.
-And a capability's `bar` field is at `+4`, `offset` at `+8`, `length` at `+12` —
-the previous version read them one dword too far.
+And a capability's `bar` field is at `+4`, `offset` at `+8`, `length` at `+12`, the previous version read them one dword too far.
 
 ### The device tree, and the four bugs it exposed
 
-`libs/fdt` is the format — header, structure block, strings block, and the walks
-over them — and `arch/aarch64` is what records the pointer firmware left in
+`libs/fdt` is the format, header, structure block, strings block, and the walks
+over them, and `arch/aarch64` is what records the pointer firmware left in
 `x0`.  The split is the tree's own rule: a format is not a machine, and the same
 bytes are read by a host test that has neither.
 
@@ -634,19 +631,18 @@ found a defect:
 
 2. **The device windows.**  `paging::device_windows` was a constant range.  It
    now asks the tree where **memory** is and treats everything else as a
-   device — the complement, not a list, because a list has to grow before the
+   device, the complement, not a list, because a list has to grow before the
    device it is missing can work and its failure is an intermittently stale
    register read.
 
 3. **The PCIe ECAM window.**  `pci::EcamConfig` is a second `ConfigSpace`: the
    port mechanism is x86_64's and a device-tree machine has a memory window
-   instead.  Everything above — enumeration, capability walks, BAR decoding —
-   is unchanged, which is what the trait was for.
+   instead.  Everything above, enumeration, capability walks, BAR decoding, is unchanged, which is what the trait was for.
 
 4. **`TCR_EL1.IPS`.**  `ips_for_parange` mapped `PARange` to `IPS` as if the two
    registers numbered sizes differently.  They do not: the encoding is the
    identity.  A machine reporting 40 bits was programmed with 36, and the first
-   access to a PCIe ECAM window at `0x40_1000_0000` — 275 GiB — faulted with
+   access to a PCIe ECAM window at `0x40_1000_0000`, 275 GiB, faulted with
    `DFSC = 0b000010`, *address size fault, level 2*.  The test that had been
    asserting the wrong mapping is now the table a reader can check.
 
@@ -673,7 +669,7 @@ was the device tree's:
   line with no message at all.  The handler now prints.
 
 `qemu-virt.dtb` in the parser's test assets is firmware's own bytes, not `dtc`'s
-rendering of a source file — a generator and a parser written from one reading
+rendering of a source file, a generator and a parser written from one reading
 of a specification agree with each other, and only firmware disagrees when that
 reading is wrong.  It is what caught the stack bound.
 
@@ -682,8 +678,8 @@ reading is wrong.  It is what caught the stack bound.
 Until this change `arch_aarch64::paging::install` wrote `MAIR_EL1` and
 `TTBR0_EL1` and returned `true`, and the boot printed "page table built and
 installed, 4 KiB granule" about a table no access went through: `SCTLR_EL1.M`
-was never set.  That is the defect this file keeps recording — written, wired,
-never executed — and it was found by reading the function rather than by a
+was never set.  That is the defect this file keeps recording, written, wired,
+never executed, and it was found by reading the function rather than by a
 gate, because the line it printed was true about the register and false about
 the machine.
 
@@ -696,7 +692,7 @@ log rather than by reasoning:
    a descriptor.  A table descriptor is now its address and its type.
 2. **`EntryEncoding::encode` had no level.**  aarch64 writes a 4 KiB page
    descriptor and a 1 GiB block descriptor with different low bits, so the
-   implementation hard-coded `Level::Third` — and the kernel builds four
+   implementation hard-coded `Level::Third`, and the kernel builds four
    levels, so every page became a block.  The trait takes a level in both
    directions now, and the other two machines accept and ignore it with the
    reason written down.
@@ -704,7 +700,7 @@ log rather than by reasoning:
    table; this kernel's root is a level 0 table and needs 16 (48 bits).  With
    25, the machine indexed `TTBR0_EL1` as a level 1 table, never read entry 0,
    and the first fetch faulted with `DFSC = 0b000101`,
-   *translation fault, level 1* — the log line that named the constant.
+   *translation fault, level 1*, the log line that named the constant.
 
 The aarch64 boot now prints the same nine lines with the MMU on.  Setting
 `TCR_T0SZ` back to 25 stops it after `protofire: page table`, so those lines are
@@ -716,12 +712,12 @@ evidence that translation is in use rather than a coincidence.  A test,
 
 Turning the MMU on changes what an unruled address *means*.  With translation
 off every access is device-like; with it on, an address with no rule is Normal
-memory — cached and prefetchable — and the PL011's status register read from a
+memory, cached and prefetchable, and the PL011's status register read from a
 stale cache line is a console that prints nothing for a reason that looks like a
 dead UART.
 
 `arch::paging::device_windows()` is the machine's answer: aarch64 returns
-`0x0000_0000..0x4000_0000` — everything below `virt`'s RAM — and x86_64 returns
+`0x0000_0000..0x4000_0000`, everything below `virt`'s RAM, and x86_64 returns
 an empty slice, because it learns its device addresses from a bus and re-maps
 them one BAR at a time.  `kernel::address_space` turns that answer into a
 permission, which is the division the tree already has: `arch` says what the
@@ -749,7 +745,7 @@ a red gate rather than a line someone happened to notice.
 The trap path is real: `entry.S` saves `x0`..`x30`, `ELR_EL1`, `SPSR_EL1`,
 `ESR_EL1`, `FAR_EL1` and `q0`..`q31` into an 800-byte frame, calls
 `aarch64_exception_dispatch`, and `eret`s.  `install_interrupt_table` does not
-report success from writing `VBAR_EL1` — it raises a supervisor call first and
+report success from writing `VBAR_EL1`, it raises a supervisor call first and
 answers `true` only if the call arrived at entry 4 and returned.  A probe that
 cannot fail is not evidence, so the probe was mutated (the expected vector
 changed to 8) and the boot line went back to "not installed".
@@ -762,9 +758,8 @@ changed to 8) and the boot line went back to "not installed".
     protofire: frame pool 16384 frame(s), 16384 free, 0 in page tables, pool check ok
     protofire: block device from virtio-blk on pci
 
-The third machine boots through the whole of the machine-neutral kernel —
-device tree, page table, frame pool, heap, the PCI scan, virtio-blk, the
-namespace and the MAC policy — on the strength of work that never named it.  What
+The third machine boots through the whole of the machine-neutral kernel, device tree, page table, frame pool, heap, the PCI scan, virtio-blk, the
+namespace and the MAC policy, on the strength of work that never named it.  What
 it needed was an entry, a linker script and the boot's own answers.
 
 OpenSBI hands the image over in S-mode with the tree in `a1` and the MMU off.
@@ -796,7 +791,7 @@ diagnosis: translation was on and the table it was handed was not the table that
 was built.
 
 **The mode is Sv48, and the reason is the walk's shape, not reach.**  The
-kernel's page-table arithmetic is four levels of nine bits — the shape the two
+kernel's page-table arithmetic is four levels of nine bits, the shape the two
 machines with a ring 3 already share.  Sv48's walk is exactly that shape;
 Sv39's three levels would put the user window at an index the four-level
 arithmetic cannot name, and the price of insisting on Sv39 is a machine
@@ -806,7 +801,7 @@ learns the name of.
 
 The boot's own answers came from the tree OpenSBI hands over: the console's
 address, the memory the frame pool clamps to, the PCIe ECAM window and the BAR
-window the enumeration pass assigns from, and the timer's rate — which RISC-V
+window the enumeration pass assigns from, and the timer's rate, which RISC-V
 reports nowhere but `/cpus`'s `timebase-frequency`, there being no register on
 this machine that says how fast `time` runs.
 
@@ -820,22 +815,22 @@ this machine that says how fast `time` runs.
 One entry serves every trap, because `stvec` names one address and the cause
 read there is the whole of what arrived.  The entry has one trick worth
 writing down: RISC-V pushes nothing on a trap and switches no stack, so the
-first instruction exchanges `sp` with `sscratch` — which holds the kernel
-stack while a program runs and zero while the kernel does — and the exchange
+first instruction exchanges `sp` with `sscratch`, which holds the kernel
+stack while a program runs and zero while the kernel does, and the exchange
 yielding zero is how the kernel's own traps find their way home.  Which stack
 the interrupted `sp` was is decided by `sstatus.SPP`, the bit the hardware set
 before the first instruction of the handler ran.
 
 The frame is 288 bytes: all thirty-two integer registers, `sepc`, `sstatus`,
 `scause` and `stval`.  No float registers, because `sstatus.FS` is left off
-from the entry onward — the same answer x86_64's frame gives for SSE, and a
+from the entry onward, the same answer x86_64's frame gives for SSE, and a
 kernel that used a float would fault loudly instead of corrupting a program's
 state silently.  aarch64's frame saves its vector registers because that
 machine's compiler provably emits them; this one's does not.
 
 There is no self-test `ecall` in the install, and the absence is not an
 omission the way it was on aarch64: an `ecall` from S-mode is the **firmware's**
-door — the same instruction that arms the timer — so raising one as a probe
+door, the same instruction that arms the timer, so raising one as a probe
 would be a request to OpenSBI.  The line this machine can be asked for is the
 supervisor software interrupt, whose pending bit S-mode may set on itself; the
 boot raises it the moment the register is written, and silences the source
@@ -843,18 +838,17 @@ before the handler sees it, because a pending bit that stays set takes the
 same interrupt again the moment interrupts are enabled.
 
 The timer is an SBI call, and the call is a trap: arming is an `ecall` into
-M-mode, which clobbers the argument registers — the previous tree's timer did
+M-mode, which clobbers the argument registers, the previous tree's timer did
 not declare them, and every tick it reported was tick 1.  Every register the
 call can reach is declared at the call site, which is the one place a reader
 can check it.
 
 **The first storm came from the disarm, and it was arithmetic.**  There is no
 disable bit this mode owns, so "off" is a deadline the counter will not reach.
-The first version computed that deadline by adding the counter's full range —
-which **wraps** to one tick in the past.  The boot disarmed its timer and
+The first version computed that deadline by adding the counter's full range, which **wraps** to one tick in the past.  The boot disarmed its timer and
 instantly armed it for an immediate fire, whose handler re-armed the real
 slice: four thousand traps a second through a phase of the boot that should
-have been quiet, and two panics a long way from the cause — a hex printer whose
+have been quiet, and two panics a long way from the cause, a hex printer whose
 loop counter overflowed a multiply, and a `copy_nonoverlapping` that saw
 pointers nothing in this tree had made.  "Off" is now half the counter's range,
 which no boot waits out and nothing wraps past.
@@ -874,15 +868,15 @@ which no boot waits out and nothing wraps past.
 The programs are this machine's machine code: `ecall` is the call, `a7`
 carries the number, and the helpers that encode them are checked by decoding
 what they encoded.  The sleep travels in an `addi` immediate, whose twelve
-signed bits reach two thousand and forty-seven — the aarch64 program's twenty
-thousand needs the sixteen bits a `movz` has — so this machine's programs sleep
+signed bits reach two thousand and forty-seven, the aarch64 program's twenty
+thousand needs the sixteen bits a `movz` has, so this machine's programs sleep
 two milliseconds, which is twenty slices, which is what the duration is for.
 
 **The first sleeper slept forever, and the cause is the instruction the
 machine does not advance.**  aarch64's `ELR` and x86_64's saved `rip` name the
 instruction *after* the call before any handler exists; RISC-V's `sepc` names
 the `ecall` itself, and nothing moves it.  The dispatcher's first advance was
-placed after the handler answered — which repairs a call that returned
+placed after the handler answered, which repairs a call that returned
 immediately, and does nothing for one that parked its frame: the sleep handler
 saves the frame with a deadline, the wake resumed the frame as it was parked,
 and the program executed the same `ecall` again.  The log counted it: a sleep,
@@ -892,8 +886,7 @@ park a resume past the call.
 
 **The first program could not read its own stack, and the cause is a
 permission the other two machines cannot express.**  The encoder had given
-every executable page `X` without `R` — the specification's execute-only form —
-but the permissions this kernel names carry no "read" flag: on x86_64 and
+every executable page `X` without `R`, the specification's execute-only form, but the permissions this kernel names carry no "read" flag: on x86_64 and
 aarch64 a present page is readable, and `executable` adds to that rather than
 replacing it.  The reader program's first load, from the descriptor the boot
 handed it, was the machine refusing what the mapping said.  A present leaf on
@@ -902,9 +895,8 @@ execute-only and an encoder that invents it breaks the callers it has.
 
 Two further differences from the machines that came first are in the entry,
 not the trap.  `SUM` is set once at boot, because a RISC-V page marked `U` is
-off-limits to the supervisor *unless* it says otherwise — the reverse of
-x86_64, where the kernel reaches user pages unless `SMAP` was switched on —
-and the pipe handlers read a program's buffer.  And the entry masks
+off-limits to the supervisor *unless* it says otherwise, the reverse of
+x86_64, where the kernel reaches user pages unless `SMAP` was switched on, and the pipe handlers read a program's buffer.  And the entry masks
 interrupts across its three CSR writes and its `sret`, which is the aarch64
 entry race in this machine's registers: a tick between the writes restores the
 `sepc` it saved, and the `sret` returns to a kernel address in U-mode.
@@ -912,7 +904,7 @@ entry race in this machine's registers: a tick between the writes restores the
 The return path decides what `sscratch` holds next from the `sstatus` it is
 about to restore: back to a program, it re-arms the kernel stack for the next
 trap; back to the kernel, it zeroes it.  The idle's wait zeroes it too, before
-unmasking — a tick inside that window is the kernel's own trap, and a parked
+unmasking, a tick inside that window is the kernel's own trap, and a parked
 user `sp` would misroute it onto a program's stack.
 
 ### A second hart, started and counted
@@ -921,19 +913,18 @@ user `sp` would misroute it onto a program's stack.
     protofire: hart 1 online
     protofire: timer line enabled = 1
 
-The machine's hart list comes from the tree — `/cpus`'s `cpu@` children, each
-`reg` naming its hart id and `status` saying whether firmware means to use it —
-and the boot hart is not assumed to be any of them: it is whichever hart the
+The machine's hart list comes from the tree, `/cpus`'s `cpu@` children, each
+`reg` naming its hart id and `status` saying whether firmware means to use it, and the boot hart is not assumed to be any of them: it is whichever hart the
 firmware cold-booted, recorded by the entry in the same kind of static the
 device-tree pointer reaches.  The list to start is the machine's minus that
 one.
 
 Starting is an ask, not a register write.  A hart that is not running is parked
-in M-mode, and S-mode cannot wake it — the HSM extension is the firmware's
+in M-mode, and S-mode cannot wake it, the HSM extension is the firmware's
 door, and the ask names an entry address and carries one opaque word.  The
 word is the slot: it chooses which stack the hart lands on and which flag it
 stores, and the boot hart only ever hands out slots the reservation holds.
-The reservation is one fact — the constant `smp` owns is interpolated into the
+The reservation is one fact, the constant `smp` owns is interpolated into the
 assembly, so the count the boot bounds and the bytes it reserves cannot
 disagree.
 
@@ -952,7 +943,7 @@ second hart entering the same path is a second writer to all of it.
 
 There was a smaller defect on the way, and it is the one that made the first
 version confusing: the started hart wrote its own slot index into `tp`, and slot
-zero is the boot CPU's — so the first started hart read as the CPU that owns the
+zero is the boot CPU's, so the first started hart read as the CPU that owns the
 scheduler, and it ran `wake_expired` while the boot hart was still building the
 scheduler.  Slots are now one past the index among started harts, and the boot
 hart writes its own zero at entry rather than trusting what firmware left in
@@ -970,8 +961,8 @@ line the boot prints says which is which:
 The tick counts are the evidence the start alone cannot give: a CPU that stored
 its flag and then stopped prints "online" and nothing else, while a CPU doing
 work prints a number that grew.  Giving the second CPU work needs two things
-this kernel has not designed yet — a trap entry per CPU, and a scheduler that is
-per CPU or locked — and both are named in `docs/status.md` rather than implied
+this kernel has not designed yet, a trap entry per CPU, and a scheduler that is
+per CPU or locked, and both are named in `docs/status.md` rather than implied
 here.
 
 ## Kernel
@@ -981,7 +972,7 @@ The boot sequence, the syscall table, the scheduler and device discovery.
 The scheduler and the process layer are here: a round-robin rotation over tasks
 whose saved context is the trap frame, with a timer that preempts and a sleep
 that parks a task on a deadline.  What they do not have is the part of a process
-layer that needs the other subsystems — a handle table belongs to a process and
+layer that needs the other subsystems, a handle table belongs to a process and
 needs the filesystem, and a signal belongs to a process and needs a signal to be
 sent by something.
 
@@ -997,7 +988,7 @@ Not here:
 The previous tree's `src/user/` held a user-space runtime, syscall wrappers, a
 demo renderer, the shell's commands and the programs themselves.
 
-`apps/` holds `init`, `shell` and `service_manager` as skeletons — each has the
+`apps/` holds `init`, `shell` and `service_manager` as skeletons, each has the
 shape a program must have and no body, because the syscall that starts a process
 is served as `NotImplemented` and a body that pretended to work would be a claim
 the tree cannot back.
@@ -1006,7 +997,7 @@ the tree cannot back.
 
 1. It moves in with its tests, and `cargo test -p <crate>` runs them on the host.
 2. Its layer is argued in `scripts/layering.txt` before it is added to the
-   workspace — a crate with no layer is the one crate nobody checks.
+   workspace, a crate with no layer is the one crate nobody checks.
 3. Its test count is recorded in `scripts/crate-tests-baseline.txt`, which is a
    ratchet: the count may rise freely and may not fall.
 4. `docs/architecture.md` gains a paragraph if the crate's placement was a
@@ -1025,8 +1016,8 @@ bank cleared, the threshold open), the hart's external line is enabled, and the
 trap path claims a source, hands its number to the sink, and completes it.
 
 **The first version of the line it printed was not evidence.**  It was built
-from the device tree — base, source count, and a context computed from the hart
-id — so a boot with the controller's `enable` deleted printed the identical
+from the device tree, base, source count, and a context computed from the hart
+id, so a boot with the controller's `enable` deleted printed the identical
 words.  The mutation is what found it: the install was made to return before
 setting the controller, and the gate stayed green.  The report now reads the
 controller the trap path actually holds, and the same mutation turns the gate
@@ -1034,7 +1025,7 @@ red.
 
 Two defects in the driver were found the same way.  The window reader asked for
 **two** regions, because that is a GIC's shape, and answered `None` for a PLIC
-that was right there — its `reg` is one window and everything is an offset
+that was right there, its `reg` is one window and everything is an offset
 inside it.  And the source count came from the tree while the driver was
 programming `min(declared, 128)`; those are one number now, and the line reports
 the one the driver used.
@@ -1075,14 +1066,13 @@ this file keeps warning about.
     protofire: forked a process, child pid 4
     protofire: exit statuses 1 -> 4, 2 -> 0, 3 -> 0, 4 -> 0
 
-`Fork` copies the running process — every page it maps, and the context it is
-in — into a task of its own.  Both resume at the instruction after the call;
+`Fork` copies the running process, every page it maps, and the context it is
+in, into a task of its own.  Both resume at the instruction after the call;
 what tells them apart is the answer, and it is the only difference: the parent
 learns the child's pid, the child learns zero.
 
 **The first version forked once and produced seven children, because it copied
-the wrong frame.**  A task's saved context is the one its last switch wrote —
-from *before* the call that is running.  A child resuming there re-executes its
+the wrong frame.**  A task's saved context is the one its last switch wrote, from *before* the call that is running.  A child resuming there re-executes its
 parent's whole path from that switch, including the `fork` that created it, and
 the boot showed exactly that in the log: one `forked a process` line, then
 seven.  What a child inherits is the frame the trap path is holding, whose
@@ -1092,7 +1082,7 @@ program counter already names the instruction after the call.
 because the answer and the status are different registers.**  `Fork`'s answer
 arrives in the return register; `Exit`'s status is read from the first argument.
 On aarch64 and riscv64 those are both `x0`/`a0`, and on x86_64 they are `rax`
-and `edi`.  The boot printed `1 -> 21` — 21 is what `Write` answers — because
+and `edi`.  The boot printed `1 -> 21`, 21 is what `Write` answers, because
 the `Write` between the fork and the exit had overwritten the answer.  Both
 programs now keep the answer in a register no call in this program writes, and
 the status the boot reports is the fork's own answer.

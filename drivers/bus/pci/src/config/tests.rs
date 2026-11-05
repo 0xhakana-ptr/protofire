@@ -18,7 +18,7 @@ use crate::config::VendorId;
 /// The address word has the fields where the specification puts them.
 ///
 /// A driver with a bit off by one reads a neighbouring function's
-/// registers, which answers — so the mistake looks like a device with odd
+/// registers, which answers, so the mistake looks like a device with odd
 /// values rather than a wrong address.
 #[test]
 fn the_configuration_address_is_the_specifications() {
@@ -73,7 +73,7 @@ fn the_configuration_ports_are_the_specifications() {
 /// ECAM's address arithmetic puts each function on its own 4 KiB page.
 ///
 /// Bus 0x12, device 0x03, function 1 is `(0x12 << 20) | (0x03 << 15) |
-/// (1 << 12)` — the layout PCIe specifies, and the one a driver that copied
+/// (1 << 12)`, the layout PCIe specifies, and the one a driver that copied
 /// the port mechanism's bit positions would get wrong: the port address
 /// packs the same fields into a 32-bit word, and ECAM adds them.
 #[test]
@@ -118,7 +118,7 @@ fn ecam_registers_are_dword_strides_inside_the_page() {
     assert_eq!(base, 1 << 15);
 
     // Register 0 is the identity, register 0x10 is 64 bytes in.  A PCIe
-    // function has 4096 bytes — 1024 dwords — so the register field's whole
+    // function has 4096 bytes, 1024 dwords, so the register field's whole
     // `u8` range is inside one function's page, and the window check is
     // about the *bus* number rather than the register.
     let first = EcamConfig::new(0x1000_0000, 0x1000_0000);
@@ -140,7 +140,7 @@ fn ecam_registers_are_dword_strides_inside_the_page() {
 /// A bus outside the window answers all ones rather than reading past it.
 ///
 /// With the MMU on, a read past the ECAM region is a fault at an address
-/// nothing chose — which is a boot that dies in a scan rather than one that
+/// nothing chose, which is a boot that dies in a scan rather than one that
 /// reports "no device on that bus".
 #[test]
 fn a_bus_outside_the_window_answers_nothing() {

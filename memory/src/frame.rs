@@ -9,7 +9,7 @@
 //! about speed: **this allocator hands out the frames a page table is built
 //! from, and a page table has to exist before the heap does.**  A free list
 //! that needed `alloc` could not run at the moment it is most needed, and the
-//! way that surfaced was the kernel working around it — building its tables in
+//! way that surfaced was the kernel working around it, building its tables in
 //! a `static` array instead, with a fixed bound nobody had justified.
 //!
 //! The second version was a sorted array of a fixed number of ranges.  It
@@ -20,8 +20,8 @@
 //! worse than one that cannot be built.
 //!
 //! One bit per frame is the shape that is both fixed-size and unbounded in
-//! fragmentation.  The bitmap is `MAX_FRAMES / 8` bytes — sixteen kilobytes for
-//! the 512 MiB pool — and it lives in a `static`, so it needs no heap and no
+//! fragmentation.  The bitmap is `MAX_FRAMES / 8` bytes, sixteen kilobytes for
+//! the 512 MiB pool, and it lives in a `static`, so it needs no heap and no
 //! caller-supplied storage.
 
 use profiler::AllocProfiler;
@@ -32,7 +32,7 @@ pub const FRAME_SIZE: usize = 4096;
 ///
 /// The pool is a linker-reserved span, and the machine's answer is clamped to
 /// it.  512 MiB is what every linker script reserves, so this is that span in
-/// frames — a ceiling, and one the bitmap is sized from.
+/// frames, a ceiling, and one the bitmap is sized from.
 pub const MAX_FRAMES: usize = 512 * 1024 * 1024 / FRAME_SIZE;
 
 /// The bitmap is one bit per frame: 16 KiB for [`MAX_FRAMES`].
@@ -42,7 +42,7 @@ const BITMAP_WORDS: usize = MAX_FRAMES / 64;
 ///
 /// On a machine the pool's span is the linker's (`POOL_SIZE` in each linker
 /// script, between `__pool_start` and `__pool_end`) and nothing is loaded
-/// there; this constant is what a host build — the unit tests — backs its
+/// there; this constant is what a host build, the unit tests, backs its
 /// span with, because the host has no linker script and its allocator needs
 /// real memory to hand out.
 #[cfg(not(target_os = "none"))]
@@ -53,7 +53,7 @@ const HOST_POOL_SIZE: usize = 512 * 1024 * 1024;
 /// On a machine this is **reserved address space** rather than storage: the
 /// linker script places the span after the kernel's BSS, nothing is loaded
 /// there, no boot clears it, and the allocator makes a frame zero when it
-/// hands one out — the guarantee that is actually needed.  It used to be a
+/// hands one out, the guarantee that is actually needed.  It used to be a
 /// 512 MiB array in `.bss` that the boot cleared, and that clear ran past the
 /// end of RAM on a small machine: measured, a 528 MiB machine printed
 /// **nothing at all**, where 640 MiB booted, because that is where the last
@@ -105,7 +105,7 @@ pub fn pool_range() -> (usize, usize) {
     pool_bounds()
 }
 
-/// The pool's span, in bytes — read from the span itself rather than written
+/// The pool's span, in bytes, read from the span itself rather than written
 /// down a second time, so the linker's reservation is the one source of the
 /// number on a machine.
 pub fn physical_pool_size() -> usize {
@@ -117,7 +117,7 @@ pub fn physical_pool_size() -> usize {
 ///
 /// A test's frames are memory the test owns, and a kernel installs its own hook
 /// before handing the allocator a real pool.  Doing nothing is the right
-/// default precisely because it is wrong for a machine — a boot that forgot to
+/// default precisely because it is wrong for a machine, a boot that forgot to
 /// install the real one fails on the first write to a frame it thought it had
 /// mapped, which is louder than a silently skipped repair.
 fn no_mapping_needed(_address: usize, _byte_len: usize) {}
@@ -133,7 +133,7 @@ pub struct FrameAllocator {
     /// Inline rather than behind a pointer: a `static` shared by every
     /// instance would make two allocators in one test decide against each
     /// other's bits, and the tests create one per case.  Sixteen kilobytes is
-    /// the cost, paid once by the kernel and once per test — and a test thread
+    /// the cost, paid once by the kernel and once per test, and a test thread
     /// has megabytes of stack.
     ///
     /// "Free" is the set state because the common operation is "is this frame
@@ -145,7 +145,7 @@ pub struct FrameAllocator {
     /// What makes a range of physical frames safe to write through.
     ///
     /// The previous tree called `super::arch::ensure_identity_mapped_range`
-    /// here, which is a machine function reached from a data structure — the
+    /// here, which is a machine function reached from a data structure, the
     /// one line that made this file impossible to build without a page table,
     /// and therefore impossible to test on a host.  The allocator cannot do
     /// this for itself (it has no page table and should not have one) and
@@ -181,7 +181,7 @@ impl FrameAllocator {
     /// Called once by the kernel after its page tables exist.  A host test does
     /// not call it: the default treats every frame as already writable, which
     /// is true of a `Vec`-backed pool and false of a machine whose pages are
-    /// unmapped after a shootdown — which is exactly why the machine has to
+    /// unmapped after a shootdown, which is exactly why the machine has to
     /// say so rather than this crate guessing.
     pub fn set_map_hook(&mut self, hook: fn(usize, usize)) {
         self.map_hook = hook;
@@ -339,7 +339,7 @@ impl FrameAllocator {
         self.largest_free_run().max(tail_free)
     }
 
-    /// Number of distinct free ranges — a fragmentation metric.  Fragmented
+    /// Number of distinct free ranges, a fragmentation metric.  Fragmented
     /// pools have many small ranges; a compacted pool has at most one.
     ///
     /// A run is a maximal sequence of free frames, which is what the ranges in
@@ -395,7 +395,7 @@ impl FrameAllocator {
     /// that is relocated, *before* its contents are copied; it must update
     /// any external references (page-table mappings) to the frame's new
     /// address and return `true`.  When it returns `false` the frame is left
-    /// in place and compaction stops — unmovable frames act as barriers.  Any
+    /// in place and compaction stops, unmovable frames act as barriers.  Any
     /// frames already moved before the barrier are preserved.
     ///
     /// Returns the number of frames successfully moved.
@@ -406,7 +406,7 @@ impl FrameAllocator {
     /// which is the thing this file spent a change removing.  The second took
     /// one from its caller, which moved the problem instead of solving it.  The
     /// allocator already holds one bit per frame, so compaction works against a
-    /// copy of the bits it has — sixteen kilobytes on the stack of the one
+    /// copy of the bits it has, sixteen kilobytes on the stack of the one
     /// caller that compacts, and no allocation anywhere.
     pub fn compact<F>(&mut self, mut fixup: F) -> usize
     where
@@ -427,7 +427,7 @@ impl FrameAllocator {
                 continue;
             }
             if fill < f {
-                // Invariant: position `fill` is free — every position below
+                // Invariant: position `fill` is free, every position below
                 // `fill` has been finalized live, and everything in
                 // [`fill`, `f`) is a hole or a vacated source.
                 let (Some(old_addr), Some(new_addr)) =
@@ -436,13 +436,13 @@ impl FrameAllocator {
                     break;
                 };
                 if !fixup(old_addr, new_addr) {
-                    // Unmovable frame — everything below it is now final.
+                    // Unmovable frame, everything below it is now final.
                     break;
                 }
                 // Move the frame contents into the hole.
                 // SAFETY: both frames come from this allocator's pool in the
-                // same pass — `f` is the live frame being moved and `fill` a
-                // hole the invariant above says is free and below it — so the
+                // same pass, `f` is the live frame being moved and `fill` a
+                // hole the invariant above says is free and below it, so the
                 // two ranges are distinct and inside the pool.
                 unsafe {
                     core::ptr::copy_nonoverlapping(

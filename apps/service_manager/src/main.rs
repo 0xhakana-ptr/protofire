@@ -14,7 +14,7 @@
 //! The alternative the name also admits is narrower: this is a manager of the
 //! services in `rc.d`-shaped declarations, and the rest of the system is not
 //! modelled as services at all.  Which one this becomes is a decision the
-//! process layer will inform — a manager of processes and a manager of
+//! process layer will inform, a manager of processes and a manager of
 //! services are the same code until something needs a restart policy.
 //!
 //! ## What is here, today

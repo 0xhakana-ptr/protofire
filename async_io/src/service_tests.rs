@@ -57,8 +57,8 @@ impl Service for DelayedService {
     /// The first version of this returned "did anything change", and the test
     /// below failed on it: a poll that decremented a delay had changed
     /// something and had produced nothing, and the two answers disagree for
-    /// exactly one poll per request.  The trait means the second — a driver's
-    /// poll is "drain what the device finished", not "advance time" — so the
+    /// exactly one poll per request.  The trait means the second, a driver's
+    /// poll is "drain what the device finished", not "advance time", so the
     /// service says what the trait says.
     fn poll(&mut self) -> bool {
         let mut completed = false;

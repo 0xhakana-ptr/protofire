@@ -12,7 +12,7 @@
 //! So both cases here are `open` calls through the installed registry, with the
 //! one field that differs being the caller's identity.  Deleting the check
 //! makes the untrusted open succeed, the boot prints `MISPOLICED`, and the gate
-//! goes red — which is the property the line is for.
+//! goes red, which is the property the line is for.
 
 use crate::volume::BOOT_VOLUME_LABEL;
 

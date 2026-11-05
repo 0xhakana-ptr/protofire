@@ -64,7 +64,7 @@ fn taking_one_leaves_the_rest_in_order() {
 }
 
 /// A token the queue does not hold is not found rather than removing
-/// something else — the failure a `position` mapped to `unwrap_or(0)` would
+/// something else, the failure a `position` mapped to `unwrap_or(0)` would
 /// produce.
 #[test]
 fn taking_an_unknown_request_finds_nothing() {

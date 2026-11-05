@@ -4,8 +4,8 @@
 //!
 //! ## The simplest of the three
 //!
-//! `stvec` names **one** address.  Every trap — an interrupt, a page fault, an
-//! illegal instruction, a system call — enters there, and the handler reads
+//! `stvec` names **one** address.  Every trap, an interrupt, a page fault, an
+//! illegal instruction, a system call, enters there, and the handler reads
 //! `scause` to find out what happened.  There is no table, no offset per
 //! vector, and no group by origin: x86_64's 256 gates and aarch64's sixteen
 //! entries both exist to save a handler the work of asking, and riscv64 asks.
@@ -20,7 +20,7 @@
 //! | 1 | vectored: an interrupt enters at `base + cause * 4`; an exception still enters at `base` |
 //!
 //! Vectored mode is what a machine with a controller per source uses, and its
-//! stride is **four bytes** — one instruction — which is why the entries it
+//! stride is **four bytes**, one instruction, which is why the entries it
 //! dispatches to can only be a jump.
 //!
 //! This tree uses direct mode: one entry, and the cause read there.  A vectored
@@ -42,7 +42,7 @@ pub const VECTOR_STRIDE: usize = 4;
 ///
 /// Bit 63 is the interrupt flag; the rest is the code.  The two are read
 /// together because the same code number means different things as an interrupt
-/// and as an exception — cause 1 is a supervisor software interrupt and also a
+/// and as an exception, cause 1 is a supervisor software interrupt and also a
 /// fault on an instruction fetch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cause {

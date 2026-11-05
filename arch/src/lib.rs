@@ -8,7 +8,7 @@
 //!
 //! There is no architecture feature, and that is deliberate.  A feature would
 //! be a second place the machine is named, and a build could select the one
-//! that disagrees with `--target` — `--target aarch64-unknown-none --features
+//! that disagrees with `--target`, `--target aarch64-unknown-none --features
 //! x86_64` would compile x86_64's `out`/`in` instructions into an aarch64
 //! image, and the only thing that would notice is the assembler, if it did.
 //! `arch/Cargo.toml` names each implementation in a `cfg(target_arch)` table
@@ -17,7 +17,7 @@
 //!
 //! Selecting none is not expressible: a build that matches no table gets no
 //! `arch_x86_64`, no `arch_aarch64` and no `arch_riscv64`, and the re-exports
-//! below then name crates that are not there — an error that says the
+//! below then name crates that are not there, an error that says the
 //! architecture has no implementation, which is the true statement.
 //!
 //! ## What this file must not do
@@ -45,12 +45,12 @@ pub use arch_riscv64::*;
 // `pub use crate::*` above brings in the implementation crate's root items, and
 // `boot_info` is a function in its `boot` module rather than an item at the
 // root.  Naming it here is what lets the kernel call `arch::boot_info()`
-// without knowing which crate answered — the point of the routing layer.
+// without knowing which crate answered, the point of the routing layer.
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::boot::boot_info;
 
-// The interrupt table.  Every machine has one and it is named the same way —
-// a boot installs a table and hands it a sink — so a machine that has not
+// The interrupt table.  Every machine has one and it is named the same way, //
+// a boot installs a table and hands it a sink, so a machine that has not
 // written its own fails to build here rather than at the call site.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::set_interrupt_dispatch;
@@ -95,7 +95,7 @@ pub use arch_x86_64::interrupt_stack_top;
 pub use arch_aarch64::boot::boot_info;
 
 // What the machine's handshake contained, when the machine has a device tree.
-// Every machine answers the same question — `None` is an answer — so the kernel
+// Every machine answers the same question, `None` is an answer, so the kernel
 // prints one line and does not ask which machine it is running on.
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::boot::device_tree_summary;
@@ -263,7 +263,7 @@ pub use arch_riscv64::wait_for_a_wakeup;
 pub use arch_x86_64::wait_for_a_wakeup;
 
 // How long the boot's programs sleep.  The duration is part of what the program
-// is — it is an immediate in its machine code — so it lives with the program
+// is, it is an immediate in its machine code, so it lives with the program
 // and not with the boot that reports it.
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::SLEEP_MICROSECONDS;
@@ -380,7 +380,7 @@ pub use arch_x86_64::timer_interrupt;
 
 // The line a boot raises to prove the interrupt path.  The number is the
 // machine's: aarch64's only askable line is a software interrupt in 0..15, and
-// x86_64's APIC will send any vector at all — including zero, which is a fault.
+// x86_64's APIC will send any vector at all, including zero, which is a fault.
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::test_interrupt;
 #[cfg(target_arch = "riscv64")]
@@ -431,8 +431,8 @@ pub use arch_riscv64::raise_interrupt;
 pub use arch_x86_64::raise_interrupt;
 
 // The machine's other CPUs: started, counted, reported.  Every machine answers
-// the same question — the ones that start none answer zero, which is an answer
-// and not a gap — so a boot asks one question and does not learn which machine
+// the same question, the ones that start none answer zero, which is an answer
+// and not a gap, so a boot asks one question and does not learn which machine
 // it is running on.
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::boot_cpu_owns_this_trap;
@@ -496,7 +496,7 @@ mod tests {
     /// This crate routes, and on a host there is nothing to route to.
     ///
     /// The selection is `cfg(target_arch)` in the manifest, so a host build of
-    /// `arch` — which is what `cargo test --workspace` makes — matches no
+    /// `arch`, which is what `cargo test --workspace` makes, matches no
     /// implementation and re-exports nothing.  That is correct: a host is not
     /// one of the three machines this kernel runs on, and pretending one of
     /// them was would compile the kernel's boot path for a machine it does not
@@ -509,7 +509,7 @@ mod tests {
     fn a_host_build_selects_no_machine() {
         // The three machine crates are `cfg(target_arch)` dependencies, so on a
         // host they are not linked.  A host that did link one would make the
-        // assertions below fail to compile — which is the form this check
+        // assertions below fail to compile, which is the form this check
         // takes.
         #[cfg(all(
             not(target_arch = "x86_64"),

@@ -16,8 +16,8 @@
 //! this kernel on hardware rather than by whoever wrote the driver.
 //!
 //! So [`Status`] is a machine and [`next`] refuses a step that
-//! skipped one.  The bits stay `pub` — a caller has to be able to read
-//! `FAILED` off a device — but the transition is this module's.
+//! skipped one.  The bits stay `pub`, a caller has to be able to read
+//! `FAILED` off a device, but the transition is this module's.
 
 /// One stage of the device's initialisation, in specification order.
 ///
@@ -44,7 +44,7 @@ impl Status {
 
     /// Read a status byte into the highest stage it has reached.
     ///
-    /// `None` when the byte does not have the stages in order — a device that
+    /// `None` when the byte does not have the stages in order, a device that
     /// reports `FEATURES_OK` without `DRIVER` is a device this driver cannot
     /// reason about, and guessing which stage it meant is worse than refusing.
     pub fn reached(byte: u8) -> Option<Status> {
@@ -85,7 +85,7 @@ pub const STAGES: [Status; 4] = [
 ///
 /// Not a stage: it can appear at any point after `Acknowledge`, and it means
 /// the device gave up.  A driver reads it after writing a later stage to learn
-/// whether the device accepted — `FEATURES_OK` in particular, where the device
+/// whether the device accepted, `FEATURES_OK` in particular, where the device
 /// is entitled to refuse the feature set.
 pub const FAILED: u8 = 128;
 

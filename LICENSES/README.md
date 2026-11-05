@@ -4,9 +4,9 @@ Two licences cover this tree, and which one applies depends on what the file is:
 
 | What | Licence | Text |
 |---|---|---|
-| Source code — every `.rs`, `.S`, `.ld`, `Cargo.toml`, `justfile`, script | Apache-2.0 | [`Apache-2.0`](Apache-2.0) |
-| Prose — every `.md`, this file included | CC BY-SA 4.0 | [`CC-BY-SA-4.0`](CC-BY-SA-4.0) |
-| The certificate fixtures under `certs/` | as their own files state | — |
+| Source code, every `.rs`, `.S`, `.ld`, `Cargo.toml`, `justfile`, script | Apache-2.0 | [`Apache-2.0`](Apache-2.0) |
+| Prose, every `.md`, this file included | CC BY-SA 4.0 | [`CC-BY-SA-4.0`](CC-BY-SA-4.0) |
+| The certificate fixtures under `certs/` | as their own files state |, |
 
 ## Why two
 
@@ -22,8 +22,8 @@ kernel's documentation subtree and most projects with substantial prose do.
 
 ## What CC BY-SA asks of a document's author
 
-- **Attribution** — name this project and say what you changed.
-- **Share-alike** — a document derived from one of ours carries the same
+- **Attribution**, name this project and say what you changed.
+- **Share-alike**, a document derived from one of ours carries the same
   licence, so the documentation stays documentation anyone can improve.
 
 Neither asks anything of someone who merely *reads* the documents or *builds*
@@ -34,6 +34,6 @@ the kernel, which is what the Apache-2.0 half covers.
 Apache-2.0, and every source file carries its provenance at the top.  There is
 no per-file licence header: a header repeated in four hundred files is four
 hundred places to update and one more thing to read before the code.  The
-crate-level rule — what this crate is, what it may name, and where its code came
-from — lives in each crate's `//!` header, which is the form
+crate-level rule, what this crate is, what it may name, and where its code came
+from, lives in each crate's `//!` header, which is the form
 [`NOTICE`](../NOTICE) describes.

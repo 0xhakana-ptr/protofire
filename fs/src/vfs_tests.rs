@@ -240,7 +240,7 @@ fn the_read_only_skeleton_refuses_every_mutation() {
     let view = EmptyViewFs;
 
     // The mutation half comes from the blanket `FileSystem` impl, so a
-    // read-only filesystem cannot declare one — or forget to refuse one.
+    // read-only filesystem cannot declare one, or forget to refuse one.
     assert_eq!(
         FileSystem::create_file(&view, "/new").err(),
         Some(Error::PermissionDenied)

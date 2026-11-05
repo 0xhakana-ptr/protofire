@@ -49,9 +49,9 @@ impl MacPolicy {
     }
 
     /// Decide an access request.  Returns:
-    /// - `None` — policy not enabled (permissive);
-    /// - `Some(true)` — allow;
-    /// - `Some(false)` — deny.
+    /// - `None`, policy not enabled (permissive);
+    /// - `Some(true)`, allow;
+    /// - `Some(false)`, deny.
     pub fn decision(
         &self,
         subject: MacType,

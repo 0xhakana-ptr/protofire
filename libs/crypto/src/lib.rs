@@ -12,7 +12,7 @@
 //! of them, the other three reach across a boundary that says they may not.
 //!
 //! The dependencies are the argument: this crate names `core`, `alloc` and
-//! `abi` — the error type it returns — and nothing else.  That is what makes it
+//! `abi`, the error type it returns, and nothing else.  That is what makes it
 //! testable on the host, where every one of these algorithms has published test
 //! vectors to check against and a boot is not needed to run one.
 //!
@@ -28,8 +28,8 @@
 //!
 //! Each algorithm is a file, and a file is one algorithm's worth of arithmetic
 //! plus its vectors.  The split is not decoration: primitives are added and
-//! removed one at a time — a machine that needs no signature verification
-//! should be able to say so by removing a module — and a single 4,600-line file
+//! removed one at a time, a machine that needs no signature verification
+//! should be able to say so by removing a module, and a single 4,600-line file
 //! makes "what does this crate contain" a search rather than a listing.
 //!
 //! The modules that build on another say so by importing it: `hmac` names

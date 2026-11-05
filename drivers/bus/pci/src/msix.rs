@@ -6,7 +6,7 @@
 //! ## Why this instead of the interrupt pin
 //!
 //! A PCI function with INTx raises one of four wires, and which of the
-//! controller's lines a wire becomes is a table the platform keeps —
+//! controller's lines a wire becomes is a table the platform keeps, //!
 //! `interrupt-map`.  That table is a description of somebody else's decision,
 //! and reading it correctly took two attempts here and produced one answe for
 //! four pins.
@@ -39,7 +39,7 @@
 //!
 //! It is the encoding: where a table is, what an entry holds, and how the
 //! message-control register says whether the device is using them.  It is not
-//! the mapping — a BAR's address is the machine's, and a caller supplies the
+//! the mapping, a BAR's address is the machine's, and a caller supplies the
 //! reader and writer it wants the entries written through.
 
 use crate::config::ConfigSpace;
@@ -66,7 +66,7 @@ pub const ENTRY_SIZE: usize = 16;
 ///
 /// Sixteen bytes, and the layout is the specification's: three meaningful
 /// 32-bit fields followed by one reserved.  The vector control field's bit 0 is
-/// the mask — **set means masked**, which is the direction that is easy to
+/// the mask, **set means masked**, which is the direction that is easy to
 /// forget, because every other "enable" bit in PCI is set-means-on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Entry {
@@ -194,7 +194,7 @@ pub fn capability(
     Some(Capability {
         offset,
         control,
-        // The BAR index is four bits and the offset begins at bit 3 — the two
+        // The BAR index is four bits and the offset begins at bit 3, the two
         // overlap, because the offset is eight-byte aligned and those low bits
         // would always be zero.  A decoder that shifted by four drops the top
         // bit of a table offset above 2 GiB.
@@ -225,8 +225,8 @@ pub fn enable(config: &dyn ConfigSpace, address: DeviceAddress, capability: &Cap
 
     // The message control register is the **high half** of the dword at the
     // capability's offset; its low half is `cap_id` and `cap_next`, which are
-    // read-only.  Writing the control into the low half — which is what the
-    // first version of this did — corrupts the capability id and leaves the
+    // read-only.  Writing the control into the low half, which is what the
+    // first version of this did, corrupts the capability id and leaves the
     // enable bit where the device is not looking.
     let word = (current & 0x0000_FFFF) | (u32::from(wanted) << 16);
     config.write_dword(address, capability.offset / 4, word);

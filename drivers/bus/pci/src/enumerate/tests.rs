@@ -29,7 +29,7 @@ struct Fake {
     /// A device's type bits are wires: they are present whatever the
     /// register holds, and they come back in a sizing mask.  A fake that
     /// derived them from the register would lose them the moment an address
-    /// was written — and would then report every BAR as 32-bit.
+    /// was written, and would then report every BAR as 32-bit.
     types: BTreeMap<(u8, u8, u8), [u32; 6]>,
     command: Mutex<BTreeMap<(u8, u8, u8), u32>>,
 }
@@ -51,7 +51,7 @@ impl ConfigSpace for Fake {
             let held = self.bars.lock().unwrap()[&key][index];
             // Mid-probe: the device answers with its mask.  A register
             // that is not the low half of a BAR has no window of its own,
-            // so it answers all ones — which for a 64-bit BAR's upper half
+            // so it answers all ones, which for a 64-bit BAR's upper half
             // is exactly right, and for an absent register means "nothing
             // here".
             if held == 0xFFFF_FFFF {
@@ -101,7 +101,7 @@ fn device(device_number: u8, vendor: u16) -> Device {
 fn fake_with(bars: [u32; 6], sizes: [u32; 6]) -> Fake {
     let key = (0, 1, 0);
     // The type bits are the value's low four bits, captured before any
-    // address is written — which is what a real device's wires do.
+    // address is written, which is what a real device's wires do.
     let types = bars.map(|value| value & 0b1111);
     let mut map = BTreeMap::new();
     map.insert(key, bars);
@@ -246,7 +246,7 @@ fn a_window_too_small_is_reported() {
 #[test]
 fn a_64_bit_bar_is_placed_above_four_gigabytes() {
     // Type bits 0b100 say a 64-bit memory BAR.  Register 5 is its upper
-    // half, not a BAR of its own — so it has no size and answers all ones
+    // half, not a BAR of its own, so it has no size and answers all ones
     // to a probe, which is what makes the address 64 bits wide.
     let config = fake_with([0b100, 0, 0, 0, 0, 0], [4096, 0, 0, 0, 0, 0]);
     let assignment = assign_memory_bars(&config, &[device(1, 0x1AF4)], 0x40_0000_0000, 0x1000_0000);

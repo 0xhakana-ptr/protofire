@@ -154,13 +154,13 @@ pub(crate) fn decode_dir_entries(
             // `from_utf8_lossy` replaces invalid UTF-8 sequences with U+FFFD
             // (replacement character).  This means a filename containing raw
             // bytes that survive a read→write→read round-trip will be
-            // *permanently corrupted* — the replacement characters cannot be
+            // *permanently corrupted*, the replacement characters cannot be
             // mapped back to the original bytes.  This is the price of the VFS
             // path contract being `&str`; a byte-string path type would keep
             // round-trips lossless and is a change to the whole VFS, not to
             // this call site.
             //
-            // Store the filename as-is — this kernel treats names as opaque
+            // Store the filename as-is, this kernel treats names as opaque
             // UTF-8 byte sequences.
             name: String::from_utf8_lossy(name).into_owned(),
         });
@@ -390,7 +390,7 @@ pub(crate) fn readable_superblock_candidates(
 ) -> Vec<(String, ParsedSuperblock)> {
     let mut candidates = Vec::with_capacity(2);
 
-    // The two mirrors do not depend on each other — the newer valid one wins —
+    // The two mirrors do not depend on each other, the newer valid one wins, //
     // so on a device that queues they are handed over together: the same two
     // commands, one wait instead of two.  A device of depth one completes each
     // submit in place and takes exactly the path it took before, in the same
@@ -478,7 +478,7 @@ pub(crate) fn load_runtime_state_from_superblock(
             dirent_read?;
         }
         (inode_ticket, dirent_ticket) => {
-            // One of the two was refused — a run this device cannot hold — and
+            // One of the two was refused, a run this device cannot hold, and
             // the other may still be on its way, so drain it, then read both
             // tables the waiting way.  Four times the bytes at worst, on a
             // device whose request is narrower than this filesystem's table.
@@ -673,9 +673,9 @@ pub(crate) fn write_superblock(
         SUPERBLOCK_DIRENT_TABLE_BLOCKS_OFFSET,
         record.dirent_table_blocks as u32,
     );
-    // V4+: the xattr table slots and per-slot size.  Written unconditionally —
-    // V2/V3 records carry 0 for these fields, which is exactly what the
-    // read path (format_io::parse_superblock) recovers for those formats.
+    // V4+: the xattr table slots and per-slot size.  Written unconditionally,
+    // // V2/V3 records carry 0 for these fields, which is exactly what the read
+    // path (format_io::parse_superblock) recovers for those formats.
     write_u32(
         block,
         SUPERBLOCK_ACTIVE_XATTR_TABLE_OFFSET,
@@ -809,7 +809,7 @@ pub(crate) fn write_runtime_inode_table(
         // Every flag the record carries, not just the deletion bit: the
         // compression and dedup bits were read at mount and never written
         // back, so a flag set at runtime survived only until the volume was
-        // unmounted.  `set_file_flags` is what makes that visible — it would
+        // unmounted.  `set_file_flags` is what makes that visible, it would
         // have answered `Ok` and then lost the bit.
         let mut flags = if inode.deleted { INODE_FLAG_DELETED } else { 0 };
         if inode.compressed {
@@ -891,7 +891,7 @@ pub(crate) fn write_runtime_dir_entry_table(
 ///
 /// Each fixed-size record is written at `xattr_table_entry_offset`, laid out
 /// as `{inode_index:u32, name_len:u32, value_len:u32, status:u32,
-/// name:[u8;XATTR_NAME_MAX], value:[u8;XATTR_VALUE_MAX]}` — the mirror image
+/// name:[u8;XATTR_NAME_MAX], value:[u8;XATTR_VALUE_MAX]}`, the mirror image
 /// of the parser in `xattr.rs`.
 pub(crate) fn write_runtime_xattr_table(
     image: &mut [u8],

@@ -8,7 +8,7 @@
 //! The *encoding* of an entry is the machine's: x86_64 puts present, writable
 //! and user in bits 0..3 and no-execute in bit 63, and aarch64 puts a
 //! different set of bits in a different order.  What is **not** the machine's
-//! is the arithmetic — which bits of an address select which level, how large
+//! is the arithmetic, which bits of an address select which level, how large
 //! a leaf covers, and how a table's entries are walked.
 //!
 //! That arithmetic is where the bugs are: a shift off by one maps the wrong
@@ -18,7 +18,7 @@
 //! need it and may not depend on each other: `arch` encodes an entry and
 //! installs a table, and `memory` hands out the frames a table is built in.
 //! Putting this in either would make the other reach across, and `arch` is at
-//! layer 3 while `memory` is at 4 — an upward edge, which the layering gate
+//! layer 3 while `memory` is at 4, an upward edge, which the layering gate
 //! refuses and is right to.
 //!
 //! So this crate names nothing at all.  A page table is a page of numbers and
@@ -28,8 +28,8 @@
 //! ## The shape of a table
 //!
 //! A table is 512 entries of eight bytes: 4 KiB, one page.  An entry is a
-//! physical address and a bitfield.  The bottom bits say what the entry is —
-//! present, writable, user-accessible — and whether it names another table or
+//! physical address and a bitfield.  The bottom bits say what the entry is, //!
+//! present, writable, user-accessible, and whether it names another table or
 //! a page of memory.
 //!
 //! ```text
@@ -42,8 +42,8 @@
 //! bits 12..    the physical address, page-aligned
 //! ```
 //!
-//! This is x86_64's arrangement.  aarch64's differs — its flags are in the low
-//! bits too but mean different things and it calls a leaf a "block" — and the
+//! This is x86_64's arrangement.  aarch64's differs, its flags are in the low
+//! bits too but mean different things and it calls a leaf a "block", and the
 //! two do not share an encoder.  What they *do* share is the index arithmetic
 //! and the walk, which is what that part of this module is.
 
@@ -79,7 +79,7 @@ pub const FLAG_NO_EXECUTE: u64 = 1 << 63;
 /// registers read through a cached mapping return stale values, and a store to
 /// one may never reach the device at all.  The boot's own identity map sets
 /// neither of the cache bits, so every BAR the kernel reaches today is mapped
-/// as ordinary cached memory — which works on an emulator whose MMIO happens to
+/// as ordinary cached memory, which works on an emulator whose MMIO happens to
 /// behave and is wrong on hardware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Cache {
@@ -103,7 +103,7 @@ pub struct Permissions {
 }
 
 impl Permissions {
-    /// Read, execute, supervisor only — what the kernel's own code has.
+    /// Read, execute, supervisor only, what the kernel's own code has.
     pub const KERNEL_READ_EXECUTE: Permissions = Permissions {
         writable: false,
         executable: true,
@@ -111,7 +111,7 @@ impl Permissions {
         cache: Cache::Normal,
     };
 
-    /// Read, write, no execute, supervisor only — what the kernel's data has.
+    /// Read, write, no execute, supervisor only, what the kernel's data has.
     pub const KERNEL_READ_WRITE: Permissions = Permissions {
         writable: true,
         executable: false,
@@ -119,14 +119,14 @@ impl Permissions {
         cache: Cache::Normal,
     };
 
-    /// Read, write, no execute, supervisor only, **uncached** — what a
+    /// Read, write, no execute, supervisor only, **uncached**, what a
     /// device's registers have.
     ///
     /// A barrier question and a caching question are different: this says the
     /// memory behind the mapping is a device's, so the CPU must not cache a
-    /// read of it and must not defer a write to it.  The machine encodes it —
-    /// x86_64 with `PCD`, `PWT` and `PAT`, aarch64 with its `MAIR` index — and
-    /// a machine that had no such encoding would have to say so.
+    /// read of it and must not defer a write to it.  The machine encodes it,
+    /// /// x86_64 with `PCD`, `PWT` and `PAT`, aarch64 with its `MAIR` index,
+    /// and a machine that had no such encoding would have to say so.
     pub const DEVICE: Permissions = Permissions {
         writable: true,
         executable: false,

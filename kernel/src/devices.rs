@@ -13,8 +13,8 @@
 //! ## The identity map
 //!
 //! A driver hands the device physical addresses: the virtqueue's rings, and the
-//! buffers a request names.  This boot runs on an identity map — the first
-//! gigabyte of physical memory is at the same virtual address — so a `Vec`'s
+//! buffers a request names.  This boot runs on an identity map, the first
+//! gigabyte of physical memory is at the same virtual address, so a `Vec`'s
 //! address *is* its physical address and the two need no conversion.
 //!
 //! That is a property of this boot and not of the driver, which is why
@@ -38,7 +38,7 @@ const CLASS_STORAGE: u8 = 0x01;
 
 /// Vendors whose storage devices this boot can drive.
 ///
-/// QEMU's `virtio-blk-pci` reports vendor `0x1AF4` — Red Hat's virtio ID — and
+/// QEMU's `virtio-blk-pci` reports vendor `0x1AF4`, Red Hat's virtio ID, and
 /// device `0x1001` for the legacy interface or `0x1042` for the modern one.
 /// Only the modern device is usable here, because the transport this tree
 /// implements is the modern one.
@@ -110,8 +110,8 @@ impl RegisterFile for MappedBar {
 /// Two mechanisms, one trait.  x86_64 has the `0xCF8`/`0xCFC` ports and no
 /// memory-mapped window, so [`arch::pcie_ecam_window`] answers `None` and a
 /// `PortConfig` is what runs.  A device-tree machine has the window and no port
-/// space, so it gets an [`EcamConfig`].  Everything above this function —
-/// enumeration, capability walks, BAR decoding — is written against
+/// space, so it gets an [`EcamConfig`].  Everything above this function, ///
+/// enumeration, capability walks, BAR decoding, is written against
 /// `ConfigSpace` and never learns which one it is.
 ///
 /// ## Why a device-tree machine needed this at all
@@ -119,7 +119,7 @@ impl RegisterFile for MappedBar {
 /// Before it, aarch64's scan asked a `PortConfig` about a machine with no I/O
 /// space: `arch::port`'s aarch64 arm returns all ones, so every bus, device and
 /// function answered "nothing here" and the boot printed `pci scan found 0
-/// device(s)`.  That was correct and it was not the machine's fault — there was
+/// device(s)`.  That was correct and it was not the machine's fault, there was
 /// no ECAM, so there was no way to ask.
 fn configuration_space() -> Arc<dyn ConfigSpace> {
     if let Some((base, length)) = arch::pcie_ecam_window() {
@@ -131,7 +131,7 @@ fn configuration_space() -> Arc<dyn ConfigSpace> {
 
         // The window must be mapped before the first read of it.  A device-tree
         // machine's ECAM sits wherever the firmware put it, which on `virt` is
-        // past the identity map's four gigabytes — so this is not a permission
+        // past the identity map's four gigabytes, so this is not a permission
         // change but the creation of a mapping, and reading before it faults at
         // an address nothing chose.  The first version of this function did
         // exactly that and the boot printed `data abort` at `0x4010000000`.
@@ -167,7 +167,7 @@ const MAX_FUNCTIONS: usize = 64;
 ///
 /// One bus, and that is the machine's statement rather than a limit of the
 /// code: QEMU's `q35` puts every device a boot cares about on bus 0, and a
-/// second bus is behind a bridge — which [`pci::device::scan`] reports and does
+/// second bus is behind a bridge, which [`pci::device::scan`] reports and does
 /// not descend into.
 const BUS_COUNT: u8 = 1;
 
@@ -214,7 +214,7 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     // On a machine with firmware this does nothing: every BAR already holds an
     // address and the pass reports them as `already`.  On a device-tree machine
     // booted directly there is no firmware to have run it, so every BAR reads
-    // zero and nothing behind one is reachable — the registers, the queues, and
+    // zero and nothing behind one is reachable, the registers, the queues, and
     // the MSI-X table, which lives in a BAR.
     //
     // The window is the host bridge's, from its `ranges` property. A machine
@@ -237,7 +237,7 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     }
     // A transitional device (0x1001) offers the legacy interface *and* the
     // modern one: the modern capabilities are still in its capability list,
-    // and `PciTransport` walks for them.  So it is not refused here — refusing
+    // and `PciTransport` walks for them.  So it is not refused here, refusing
     // it would mean QEMU's default `virtio-blk-pci` could never be driven.
     // A device with no modern capabilities fails inside `PciTransport::new`,
     // which is where the list is actually read.
@@ -262,8 +262,8 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     };
 
     // The same mechanism the scan used.  A transport built on a `PortConfig`
-    // while the scan ran over ECAM reads every capability as `0xFF` — which is
-    // what a port that does not exist answers — and reports the device as
+    // while the scan ran over ECAM reads every capability as `0xFF`, which is
+    // what a port that does not exist answers, and reports the device as
     // having none.
     let transport = match PciTransport::new(config, device, &map_bar) {
         Ok(transport) => transport,
@@ -308,7 +308,7 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
 /// memory: the boot assembly maps the first gigabyte at the same virtual
 /// address, so a pointer and its physical address are the same number.  When
 /// the kernel gets an address space of its own, this is where the translation
-/// goes — and it is a function so that becomes one change rather than a search.
+/// goes, and it is a function so that becomes one change rather than a search.
 pub fn physical_address(virtual_address: u64) -> usize {
     virtual_address as usize
 }

@@ -7,7 +7,7 @@
 //!
 //! x86_64 gives a device two ways to be reached: mapped into the address space
 //! (MMIO), or behind a separate 16-bit I/O space that only `in` and `out`
-//! touch. The second is x86_64's, not PCI's — aarch64 and riscv64 have no I/O
+//! touch. The second is x86_64's, not PCI's, aarch64 and riscv64 have no I/O
 //! space at all, and PCI on those machines is memory-mapped throughout.
 //!
 //! So the instructions live here and the PCI crate asks for them through
@@ -38,7 +38,7 @@ pub fn inb(port: u16) -> u8 {
 /// Write one byte to `port`.
 #[cfg(target_os = "none")]
 pub fn outb(port: u16, value: u8) {
-    // SAFETY: as `inb` — a ring-0 write to one byte of the I/O space.
+    // SAFETY: as `inb`, a ring-0 write to one byte of the I/O space.
     unsafe {
         core::arch::asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
     }

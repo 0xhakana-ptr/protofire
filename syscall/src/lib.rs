@@ -7,12 +7,12 @@
 //!
 //! The numbering, the [`SyscallContext`] a handler receives, the
 //! [`SyscallAction`] it returns, and the argument validators every handler
-//! shares.  None of it names a handler, a subsystem or a thread — which is what
+//! shares.  None of it names a handler, a subsystem or a thread, which is what
 //! makes it the interface rather than the implementation.
 //!
 //! What is not here is the registry: the table from a number to the function
-//! that serves it.  Every entry names a subsystem — the filesystem, the
-//! network, the scheduler — so the table belongs where those are, and it moves
+//! that serves it.  Every entry names a subsystem, the filesystem, the
+//! network, the scheduler, so the table belongs where those are, and it moves
 //! when they do.  It is at `kernel/src/syscall/mod.rs` today, serving `open`,
 //! `read` and `close` against the mounted volume.  The split is the same one
 //! `fs` makes between `VNode` and a volume.
@@ -21,7 +21,7 @@
 //!
 //! [`table::SyscallHandler`] takes the context alone, which is the right shape
 //! for a handler with no state.  The kernel's three handlers need the table
-//! they were reached through — the descriptor array is in it — so the kernel
+//! they were reached through, the descriptor array is in it, so the kernel
 //! names its own type that takes the table as well.  This crate's type stays
 //! the statement of what a stateless handler is; a later `yield` or `getpid`
 //! can be registered through it by wrapping.

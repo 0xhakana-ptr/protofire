@@ -8,7 +8,7 @@
 //! The first version had `finished: bool`, which is two states and describes
 //! exactly the two things the scheduler could do before: run a program, or skip
 //! it forever.  Sleeping is a third, and it is not "finished" with a timestamp
-//! — a sleeping task is *runnable later*, and a scheduler that could not tell
+//!, a sleeping task is *runnable later*, and a scheduler that could not tell
 //! the two apart would either wake a dead program or never wake a live one.  A
 //! blocked task is a fourth: it waits for another task rather than for a clock,
 //! and folding it into `Sleeping` would mean inventing a deadline for a wait
@@ -23,7 +23,7 @@ use crate::address_space::AddressSpace;
 ///
 /// A program's pages are a bare-metal structure: a root table is a frame and a
 /// frame is a physical address, neither of which a host has.  So on a host the
-/// type is empty and every operation on it is absent — which is why the
+/// type is empty and every operation on it is absent, which is why the
 /// scheduler's tests exercise the *rotation* and not the switching.  Pretending
 /// a host had address spaces would be testing a fiction.
 #[cfg(not(target_os = "none"))]
@@ -37,7 +37,7 @@ pub struct AddressSpace;
 /// The first version had `finished: bool`, which is two states and describes
 /// exactly the two things the scheduler could do before: run a program, or skip
 /// it forever.  Sleeping is a third, and it is not "finished" with a timestamp
-/// — a sleeping task is *runnable later*, and a scheduler that could not tell
+///, a sleeping task is *runnable later*, and a scheduler that could not tell
 /// the two apart would either wake a dead program or never wake a live one.
 ///
 /// The deadline is in the machine's own clock, which is why it is a bare
@@ -76,7 +76,7 @@ pub struct Task {
     ///
     /// Nothing in this kernel creates a process yet, so every task the boot
     /// builds is its own process: the number is the one the boot gave it, and
-    /// the parent is the boot's — which is the honest answer for a program the
+    /// the parent is the boot's, which is the honest answer for a program the
     /// kernel started rather than one another program forked.
     pub(crate) pid: u32,
     /// The process that started this one.
@@ -178,7 +178,7 @@ impl Task {
 /// Delegated to the machine, because what a frame holds is the machine's: on
 /// aarch64 every register but `x0` and `ELR_EL1`, on x86_64 the five words
 /// `iretq` pops.  A kernel that built one by naming fields would be a kernel
-/// written against one architecture — which is exactly what this file was
+/// written against one architecture, which is exactly what this file was
 /// before the second machine had a ring 3.
 pub fn starting_context(entry: usize, stack_top: usize) -> Context {
     arch::starting_context(entry, stack_top)

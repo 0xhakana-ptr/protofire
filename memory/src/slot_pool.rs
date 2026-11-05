@@ -6,8 +6,8 @@
 //! set of slots, hand one to each process, and let `fork` share it.  The
 //! bookkeeping that decides which slot is free and when a shared one returns
 //! is not a property of either machine: it is one bitmap of taken indices and
-//! one reference count per index, and it was written twice — byte for byte,
-//! comments included — in the two MMUs.  A fix to either copy would have had
+//! one reference count per index, and it was written twice, byte for byte,
+//! comments included, in the two MMUs.  A fix to either copy would have had
 //! to be made twice, and nothing in the tree would have said so.
 //!
 //! What stays with the architecture is where the regions *are*: the linker
@@ -69,7 +69,7 @@ impl<const COUNT: usize> SlotPool<COUNT> {
                 self.references[index].store(1, Ordering::Release);
                 return Some(index);
             }
-            // CAS failed — someone else took a region; retry with a fresh
+            // CAS failed, someone else took a region; retry with a fresh
             // snapshot.
         }
     }

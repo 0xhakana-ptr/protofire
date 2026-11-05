@@ -16,7 +16,7 @@
 //! It is the one piece of the namespace that every filesystem shares and none
 //! of them owns.  A filesystem answers for paths *relative to its own root*, so
 //! `PyroFs` sees `/greeting.txt` whether that file is at `/greeting.txt` or at
-//! `/data/greeting.txt` — the table strips the prefix and the filesystem never
+//! `/data/greeting.txt`, the table strips the prefix and the filesystem never
 //! learns where it was mounted.
 //!
 //! ## What is not here

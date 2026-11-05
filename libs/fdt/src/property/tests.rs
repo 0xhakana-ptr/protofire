@@ -23,7 +23,7 @@ fn property<'a>(name: &'a str, value: &'a [u8]) -> Property<'a> {
 ///
 /// The byte order is the test's point: `00 00 00 02` is two, and a reader
 /// that used the machine's order would answer `0x0200_0000` on a
-/// little-endian host — which is the mistake a `from_le_bytes` call makes
+/// little-endian host, which is the mistake a `from_le_bytes` call makes
 /// and a device tree punishes.
 #[test]
 fn a_cell_is_big_endian() {

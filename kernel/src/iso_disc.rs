@@ -4,7 +4,7 @@
 //!
 //! ## Why the kernel builds a disc
 //!
-//! The boot's third filesystem is a disc, and a disc is read-only — which is
+//! The boot's third filesystem is a disc, and a disc is read-only, which is
 //! what makes it the one that proves the namespace.  A tmpfs can be written, so
 //! evidence that it holds what was put there is evidence about the tmpfs; a
 //! disc cannot be, so the bytes a read returns are the bytes the image was
@@ -24,8 +24,8 @@
 //! ```
 //!
 //! Four sectors, and every field the specification requires is filled.  A
-//! disc missing the terminator still reads here — the reader stops when the
-//! magic is gone — but a disc that is legal is the one worth building, because
+//! disc missing the terminator still reads here, the reader stops when the
+//! magic is gone, but a disc that is legal is the one worth building, because
 //! it is what another reader would accept.
 
 use alloc::vec;
@@ -94,7 +94,7 @@ fn root_extent() -> Vec<u8> {
         DISC_CONTENT.len() as u32,
         false,
     ));
-    // The extent is one sector, and the rest of it is zero — which is what
+    // The extent is one sector, and the rest of it is zero, which is what
     // ends the record walk.
     extent.resize(SECTOR_SIZE, 0);
     extent
@@ -194,7 +194,7 @@ mod tests {
     /// The set is terminated, which is what makes the disc legal.
     ///
     /// The reader stops when the magic is gone, so a disc without this still
-    /// reads here — but a disc that is legal is the one another reader accepts.
+    /// reads here, but a disc that is legal is the one another reader accepts.
     #[test]
     fn the_descriptor_set_is_terminated() {
         let image = build();

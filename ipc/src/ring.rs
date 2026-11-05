@@ -6,7 +6,7 @@
 //!
 //! A pipe is two things: a ring buffer, and two endpoints that park threads
 //! against it.  The second half needs a condition variable, which needs the
-//! scheduler — and a crate that needed the scheduler could not be tested on a
+//! scheduler, and a crate that needed the scheduler could not be tested on a
 //! host, which is where the arithmetic below has to be tested.
 //!
 //! So the ring is its own type with no lock, no wait queue and no `Arc`.  The
@@ -18,7 +18,7 @@
 //!
 //! Synchronisation.  Every method here takes `&mut self`, so the borrow checker
 //! already refuses two writers; what it cannot express is that a reader and a
-//! writer must not interleave *partially*, and that is the lock's job — the
+//! writer must not interleave *partially*, and that is the lock's job, the
 //! pipe's, not the ring's.
 
 use alloc::boxed::Box;

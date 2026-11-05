@@ -7,7 +7,7 @@
 //!
 //! Every argument is a word from ring 3.  A descriptor is checked against the
 //! table, a flag word against the set the ABI defines, an unused argument
-//! against zero, and a path against the length a filesystem could accept — each
+//! against zero, and a path against the length a filesystem could accept, each
 //! because the caller chose it and none because the kernel did.
 
 use abi::Error;
@@ -78,7 +78,7 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
 /// [`crate::syscall::READ_OFFSET_CURRENT`].
 ///
 /// Returns the number of bytes read, which is short at end of file and zero
-/// past it — the reading that lets a caller tell "no more data" from "the call
+/// past it, the reading that lets a caller tell "no more data" from "the call
 /// failed", which a status word alone cannot say.
 pub fn read(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let descriptor_index = arguments.context.arg(0);
@@ -146,7 +146,7 @@ pub fn mac_get_status(
 /// Disabling is permitted and is not a security hole in this kernel: the policy
 /// is off at boot, so a program that can call this already runs as something
 /// the kernel trusts.  When there is a process layer, this becomes a call the
-/// policy itself gates — which is why the handler does not check `identity`
+/// policy itself gates, which is why the handler does not check `identity`
 /// today rather than because it forgot.
 pub fn mac_set_mode(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let enable = arguments.context.arg(0);

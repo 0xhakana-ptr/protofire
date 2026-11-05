@@ -70,7 +70,7 @@ const REQUEST_QUEUE: u16 = 0;
 /// A block request as the device holds it while it is outstanding.
 ///
 /// The buffers are the driver's: the header and the status are local to this
-/// request, and the data buffer is the caller's — which is why `submit_read` is
+/// request, and the data buffer is the caller's, which is why `submit_read` is
 /// `unsafe` and the caller is told the buffer must not move until the ticket
 /// completes.
 struct Pending {
@@ -86,7 +86,7 @@ struct Pending {
     status: Box<[u8; STATUS_LEN as usize]>,
     /// The header's backing storage.
     ///
-    /// Never read by the driver after it is written — and held anyway, because
+    /// Never read by the driver after it is written, and held anyway, because
     /// the device reads it.  Dropping it when `submit` returned would leave the
     /// device reading a frame the allocator has taken back, which on a quiet
     /// machine looks like it works.
@@ -102,7 +102,7 @@ struct Pending {
     /// A read has no such field: the device writes *into* the caller's buffer,
     /// which the `unsafe` on `submit_read` makes the caller keep alive.
     ///
-    /// Never read by the driver — and held anyway, because the descriptor
+    /// Never read by the driver, and held anyway, because the descriptor
     /// points at these bytes and the device reads them.  Dropping it when
     /// `submit` returned would leave the device reading a freed allocation.
     #[allow(dead_code)]
@@ -285,8 +285,8 @@ impl VirtioBlock {
         drop(queue);
 
         // Register the request *before* ringing the doorbell.  A device may
-        // complete synchronously — this driver's host transport does, and an
-        // emulator whose queue is empty may — and a completion that arrives
+        // complete synchronously, this driver's host transport does, and an
+        // emulator whose queue is empty may, and a completion that arrives
         // before the request is recorded is one `drain` cannot match to a
         // ticket.  It would be dropped as "a completion for a request this
         // driver is not holding", and the caller would wait for ever.
@@ -306,7 +306,7 @@ impl VirtioBlock {
     /// Collect whatever the device has finished.
     ///
     /// Returns how many completions were taken.  A request whose status byte is
-    /// not `OK` is reported as the error it is — the used ring's length says
+    /// not `OK` is reported as the error it is, the used ring's length says
     /// nothing about whether the device succeeded.
     fn drain(&self) -> usize {
         let mut taken = 0;
@@ -464,7 +464,7 @@ impl QueuedBlockDevice for VirtioBlock {
         }
         // The device reads these bytes until the request finishes, and the
         // caller's borrow is over when this returns.  Copy them into storage
-        // the request owns, and point the descriptor at the copy — the
+        // the request owns, and point the descriptor at the copy, the
         // alternative is a descriptor naming a stack frame that no longer
         // exists, which works on a quiet machine.
         let owned: Box<[u8]> = data.to_vec().into_boxed_slice();

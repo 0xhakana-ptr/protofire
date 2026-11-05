@@ -29,8 +29,8 @@ fn the_address_is_stable() {
 
 /// A value written through `get` is read back through `get`.
 ///
-/// This is what the kernel's statics do — the boot assembly writes through
-/// the symbol's address and Rust reads it later — so it is checked with the
+/// This is what the kernel's statics do, the boot assembly writes through
+/// the symbol's address and Rust reads it later, so it is checked with the
 /// same shape rather than with `get_mut`, which borrows and is a different
 /// guarantee.
 #[test]

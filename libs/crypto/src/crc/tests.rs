@@ -21,8 +21,8 @@ fn crc32_known_vector() {
 ///
 /// It was transcribed once, and one of its 256 entries was a word off
 /// (`0x5CB30A04` where the polynomial gives `0x5CB36A04`): every message
-/// that never indexed that entry checked out — the known vector above is
-/// one of them, which is why the error lived — while a real firmware's
+/// that never indexed that entry checked out, the known vector above is
+/// one of them, which is why the error lived, while a real firmware's
 /// GPT (whose 16 KiB entry array indexes entries the demo disks never do)
 /// failed its CRC and was refused as "no verified table".  A short message
 /// cannot catch a single wrong entry; this can, by construction.

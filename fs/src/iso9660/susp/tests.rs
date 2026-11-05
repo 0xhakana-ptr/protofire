@@ -39,7 +39,7 @@ fn a_name_entry_gives_the_name() {
 
 /// A name split across two `NM` entries is one name.
 ///
-/// Reading only the first returns a truncated name that looks real — the
+/// Reading only the first returns a truncated name that looks real, the
 /// failure mode this concatenation exists to prevent.
 #[test]
 fn a_continued_name_is_assembled() {

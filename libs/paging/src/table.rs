@@ -1,7 +1,7 @@
 //! libs/paging/src/table.rs
 //!
 //! A page table the kernel can fill: 512 entries of eight bytes, and the three
-//! operations that are the whole of what one needs — map an address, look one
+//! operations that are the whole of what one needs, map an address, look one
 //! up, and say what a mapping is missing.
 //!
 //! ## What is x86_64's and what is not
@@ -12,13 +12,13 @@
 //! and `arch` is what turns one into a u64 a machine reads.
 //!
 //! The *walk* is not the machine's: given a root table's address, finding the
-//! entry for an address is the same arithmetic everywhere — which is why
+//! entry for an address is the same arithmetic everywhere, which is why
 //! [`PageTable`] and [`map`] live here and are tested on a host.
 //!
 //! ## Why this is data and not a machine
 //!
 //! A page table is a page of memory with numbers in it.  It is not privileged
-//! to *write* one — the privilege is in installing it, which is `arch`'s
+//! to *write* one, the privilege is in installing it, which is `arch`'s
 //! `cr3`/`ttbr0`/`satp` write.  Keeping that split is what lets a host test
 //! build a table, map an address, and assert what a walk finds, without an
 //! emulator and without any address space being real.
@@ -68,7 +68,7 @@ impl Entry {
     /// The permissions are **not** a leaf's: an entry that names a table
     /// carries the widest set, because what it permits is decided by the leaf
     /// the walk reaches.  Giving it a leaf's permissions is not a harmless
-    /// default — on x86_64 the no-execute bit of a table entry is inherited by
+    /// default, on x86_64 the no-execute bit of a table entry is inherited by
     /// every page below it, so a table entry marked non-executable makes the
     /// whole subtree unexecutable and the next instruction fetch faults.
     ///
@@ -98,8 +98,8 @@ impl Entry {
     /// x86_64 checks the user bit at **every** level of the walk, not only at
     /// the leaf: an access from ring 3 to an address under a supervisor-only
     /// table entry is refused with a protection fault even when the leaf is
-    /// marked user.  So a program's pages need their whole path — root, second,
-    /// third and leaf — to carry the bit, and a table entry built by
+    /// marked user.  So a program's pages need their whole path, root, second,
+    /// third and leaf, to carry the bit, and a table entry built by
     /// [`Entry::table`] would break every mapping under it.
     ///
     /// aarch64 ignores the permission bits of a table descriptor entirely, so
@@ -207,8 +207,8 @@ pub enum Translation {
 ///
 /// ## Why both directions take a level
 ///
-/// Whether an entry is a leaf — a mapping rather than a pointer to the next
-/// table — is not a property of the word.  On x86_64 bit 7 means "this entry
+/// Whether an entry is a leaf, a mapping rather than a pointer to the next
+/// table, is not a property of the word.  On x86_64 bit 7 means "this entry
 /// covers 2 MiB" in a page directory and "the PAT bit" in a page table, and it
 /// is ignored in the two levels above.  The same word means different things
 /// at different levels, so a decoder that only saw the word would call a 4 KiB
@@ -238,7 +238,7 @@ pub trait EntryEncoding {
 ///
 /// `level` says which level the *entry* is at: a leaf entry maps one page, and
 /// an upper entry names the next table down.  The function fills the entry and
-/// answers whether it was already occupied — a remap is worth reporting,
+/// answers whether it was already occupied, a remap is worth reporting,
 /// because two callers who both believe they own an address is a bug that
 /// otherwise shows up as one of them silently losing.
 ///

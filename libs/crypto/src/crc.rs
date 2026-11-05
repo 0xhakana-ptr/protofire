@@ -6,7 +6,7 @@
 //! hot loop on a metadata scan.  The tables are computed by a test rather
 //! than transcribed, which is what caught a wrong entry once.
 
-/// CRC32C (Castagnoli) lookup table — polynomial 0x1EDC6F41 (reflected).
+/// CRC32C (Castagnoli) lookup table, polynomial 0x1EDC6F41 (reflected).
 const CRC32C_TABLE: [u32; 256] = [
     0x00000000, 0xF26B8303, 0xE13B70F7, 0x1350F3F4, 0xC79A971F, 0x35F1141C, 0x26A1E7E8, 0xD4CA64EB,
     0x8AD958CF, 0x78B2DBCC, 0x6BE22838, 0x9989AB3B, 0x4D43CFD0, 0xBF284CD3, 0xAC78BF27, 0x5E133C24,
@@ -74,7 +74,7 @@ pub fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-/// CRC32 (IEEE 802.3) lookup table — polynomial 0xEDB88320 (reflected).
+/// CRC32 (IEEE 802.3) lookup table, polynomial 0xEDB88320 (reflected).
 #[rustfmt::skip]
 const CRC32_TABLE: [u32; 256] = [
     0x00000000, 0x77073096, 0xEE0E612C, 0x990951BA, 0x076DC419, 0x706AF48F, 0xE963A535, 0x9E6495A3,

@@ -174,7 +174,7 @@ impl PyroFs {
                 // Write data blocks before metadata so the commit is atomic:
                 // data goes to the device first, then the inode update is
                 // committed.  If metadata fails, the data is orphaned on the
-                // device but unreferenced — check_and_repair cleans it up.
+                // device but unreferenced, check_and_repair cleans it up.
                 self.write_blocks_cached(start_block as u64, &temp)?;
                 state.save_inode_for_undo(inode_index);
                 let inode = state
@@ -412,7 +412,7 @@ impl PyroFs {
 
         // Mutations write data blocks (via write_blocks_cached) before
         // updating in-memory metadata.  If flush_metadata fails, the data
-        // is on the device but the metadata was rolled back — orphaned
+        // is on the device but the metadata was rolled back, orphaned
         // data blocks are cleaned up by check_and_repair on next mount.
         if let Err(error) = self.flush_metadata(&mut state) {
             state.rollback_undo();

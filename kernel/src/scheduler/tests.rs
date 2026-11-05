@@ -23,7 +23,7 @@ fn a_task_starts_at_its_entry_and_nothing_else() {
     let context = starting_context(0x80_0000_1000, 0x80_0000_2000);
     // Read through the machine's accessors, not by naming fields: on a host
     // no implementation is linked, so this test runs only where a machine
-    // answered — and the answer is what the kernel actually asks for.
+    // answered, and the answer is what the kernel actually asks for.
     assert_eq!(arch::resume_address(&context), 0x80_0000_1000);
     assert_eq!(arch::stack_pointer(&context), 0x80_0000_2000);
     assert!(
@@ -104,7 +104,7 @@ fn a_scheduler_with_nothing_runnable_answers_exit() {
 /// Two different questions, deliberately: `has_runnable` answers "does the
 /// boot still owe work", which a sleeper makes true, and `has_selectable`
 /// answers "can the CPU move now", which it does not.  The idle loop asked
-/// the first and never waited — the boot printed one program's line and
+/// the first and never waited, the boot printed one program's line and
 /// stopped with the other asleep.
 #[test]
 fn a_sleeping_task_is_owed_but_not_selectable() {
@@ -149,7 +149,7 @@ fn a_deadline_wakes_only_when_it_has_passed() {
 /// The frame is saved by `sleep_until` itself.  Leaving it to the next
 /// scheduling call worked only while a call always happened; with every
 /// task asleep the boot idles instead, and the task then resumed at
-/// whatever position its context last held — which was the `Sleep` call,
+/// whatever position its context last held, which was the `Sleep` call,
 /// so it printed its line and slept again forever.
 #[test]
 fn a_sleeper_keeps_the_position_it_slept_at() {
@@ -166,8 +166,8 @@ fn a_sleeper_keeps_the_position_it_slept_at() {
 
     // The frame the task holds is the one the sleep was called from, byte
     // for byte.  `Context` is `Copy` and `PartialEq`-free, so the check is
-    // the two addresses plus a comparison of the whole value as bytes —
-    // which is what "the position survived" means and nothing narrower.
+    // the two addresses plus a comparison of the whole value as bytes, // which
+    // is what "the position survived" means and nothing narrower.
     let saved = *scheduler.tasks[0].context();
     assert_eq!(
         core::mem::size_of_val(&saved),
@@ -182,7 +182,7 @@ fn a_sleeper_keeps_the_position_it_slept_at() {
 /// A task that made a call is resumed with that call's answer in `x0`.
 ///
 /// The value lives in the installed context, which is the frame the
-/// epilogue restores — so this is the same mechanism as the task switch,
+/// epilogue restores, so this is the same mechanism as the task switch,
 /// and a scheduler that copied contexts but lost `x0` would resume the
 /// program with the wrong answer.
 #[test]

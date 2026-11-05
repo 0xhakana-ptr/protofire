@@ -16,16 +16,16 @@
 //! ## What the frame does not hold
 //!
 //! `rsp` only, and it holds it as the `iretq` tail's own field.  A trap does
-//! not change `rsp` in the interrupted context — the processor pushes onto the
-//! kernel stack and the stub works there — so the interrupted stack is exactly
+//! not change `rsp` in the interrupted context, the processor pushes onto the
+//! kernel stack and the stub works there, so the interrupted stack is exactly
 //! the `rsp` word `iretq` will restore.
 //!
 //! ## Register numbering
 //!
 //! `registers[0]` is `rax` and `registers[15]` is... not there: there are
 //! fifteen registers, `rax` through `r15`, and `rsp` lives in the tail.  The
-//! order is the structural one — `rax`, `rbx`, `rcx`, `rdx`, `rsi`, `rdi`,
-//! `rbp`, `r8`..`r15` — so a reader indexing the array gets the register the
+//! order is the structural one, `rax`, `rbx`, `rcx`, `rdx`, `rsi`, `rdi`,
+//! `rbp`, `r8`..`r15`, so a reader indexing the array gets the register the
 //! name says, and the assembly pushes in exactly the reverse order so the
 //! lowest address is `rax`.
 
@@ -116,15 +116,15 @@ const _: () = assert!(core::mem::align_of::<Context>() == 8);
 ///
 /// Bit 9 is `IF`, so a program takes the timer's interrupt; bit 1 is the
 /// reserved bit that must always be set.  A program that ran with `IF` clear
-/// would never be preempted — the same defect aarch64's `SPSR_EL0T` had when it
+/// would never be preempted, the same defect aarch64's `SPSR_EL0T` had when it
 /// masked `IRQ`, where the boot printed `0 tick(s)`.
 pub const USER_RFLAGS: u64 = (1 << 9) | (1 << 1);
 
 /// The `cs` an `iretq` to ring 3 needs: the user code segment with `RPL` 3.
 ///
 /// The `RPL` bits are not decoration.  `iretq` compares the selector's `RPL`
-/// with the descriptor's `DPL`, and a selector of `0x20` — the same descriptor
-/// at ring 0 — is refused as a protection violation.
+/// with the descriptor's `DPL`, and a selector of `0x20`, the same descriptor
+/// at ring 0, is refused as a protection violation.
 pub const USER_CS: u64 = (USER_CODE_SELECTOR | 3) as u64;
 
 /// The `ss` an `iretq` to ring 3 needs.
@@ -136,7 +136,7 @@ impl Context {
     /// Every register zero, and the `iretq` tail naming ring 3 at `entry` with
     /// the stack at `stack_top`.  The tail is what makes this a context rather
     /// than a value: `enter_user` pushes exactly these five words and executes
-    /// `iretq`, so a field left at zero would be a selector of zero — a null
+    /// `iretq`, so a field left at zero would be a selector of zero, a null
     /// descriptor, and a general protection fault at the entry into ring 3.
     pub const fn user(entry: usize, stack_top: usize) -> Context {
         Context {
@@ -220,7 +220,7 @@ pub fn is_user_context(context: &Context) -> bool {
 /// The flags the trap path will restore, for a boot line that reports them.
 ///
 /// `rflags` on this machine, where aarch64 reports `SPSR_EL1`.  A boot that
-/// printed this and saw `IF` clear had a program no timer could preempt — the
+/// printed this and saw `IF` clear had a program no timer could preempt, the
 /// defect that cost aarch64 a session.
 pub fn return_state(context: &Context) -> u64 {
     context.flags
@@ -229,7 +229,7 @@ pub fn return_state(context: &Context) -> u64 {
 /// Write `context` over the frame the trap path will restore.
 ///
 /// That is the whole of a task switch: the epilogue pops every register and
-/// `iretq`s, so replacing the frame replaces what the machine does next —
+/// `iretq`s, so replacing the frame replaces what the machine does next, ///
 /// including the ring it returns to.
 pub fn install_context(frame: &mut Context, context: &Context) {
     *frame = *context;
@@ -279,7 +279,7 @@ impl UserFrame {
 /// ## Why it does not return
 ///
 /// Control does not come back here.  The program returns to the kernel through
-/// an interrupt — a syscall or an exit — and the trap path resumes whatever
+/// an interrupt, a syscall or an exit, and the trap path resumes whatever
 /// the scheduler installed.  A function that "returned" would be claiming a
 /// program can finish without trapping, which it cannot: ring 3 has no way out
 /// except an interrupt.
@@ -302,7 +302,7 @@ pub unsafe fn enter_user_with(context: &Context) -> ! {
     //
     // The five pushes and the `iretq` are one transaction.  An interrupt taken
     // between them is taken at ring 0, and the stub's epilogue pops from the
-    // stack this function has already half-filled — so it returns with a
+    // stack this function has already half-filled, so it returns with a
     // selector of zero or an address that was a `push` operand.  `cli` closes
     // the window and `iretq` reopens it: the flags it pops are the program's,
     // which the context builder set with `IF` on.
@@ -364,7 +364,7 @@ mod tests {
     ///
     /// This is not decoration: the processor compares the selector's `RPL`
     /// against the descriptor's `DPL`, so a selector without the low two bits
-    /// is a protection fault at the entry into ring 3 — a failure that looks
+    /// is a protection fault at the entry into ring 3, a failure that looks
     /// like a fault in the program.
     #[test]
     fn the_ring_three_selectors_carry_their_privilege() {
@@ -392,7 +392,7 @@ mod tests {
     /// The answer goes back in `rax` and survives a context install.
     ///
     /// A switch is a copy of the whole frame, so a value written before the
-    /// copy is a value the resumed program reads — which is why the scheduler
+    /// copy is a value the resumed program reads, which is why the scheduler
     /// writes the answer and then installs.
     #[test]
     fn the_answer_travels_in_rax_through_an_install() {
@@ -421,7 +421,7 @@ mod tests {
     /// The register indices name the registers the assembly saves.
     ///
     /// `rax` is zero because it is at the lowest address, and the first
-    /// argument is `rdi` — not `rsi` and not `rcx`, which is the ordering the
+    /// argument is `rdi`, not `rsi` and not `rcx`, which is the ordering the
     /// architecture's own convention fixes and the one a program is compiled
     /// against.
     #[test]
@@ -471,7 +471,7 @@ mod tests {
 // | `BF 20 4E 00 00` | `mov edi, 0x4E20` | 20000 microseconds |
 // | `B8 31 00 00 00` | `mov eax, 0x31` | syscall 49, `Sleep` |
 // | `CD 80` | `int 0x80` | |
-// | `B8 06 00 00 00` | `mov eax, 6` | syscall 6, `Write` — after the wake |
+// | `B8 06 00 00 00` | `mov eax, 6` | syscall 6, `Write`, after the wake |
 // | `CD 80` | `int 0x80` | |
 // | `B8 03 00 00 00` | `mov eax, 3` | syscall 3, `Exit` |
 // | `CD 80` | `int 0x80` | |
@@ -480,14 +480,14 @@ mod tests {
 // ## Why the order is loop, Write, Sleep, Write, Exit
 //
 // The first `Write` says which program ran.  `Sleep` then takes it out of the
-// rotation for `SLEEP_MICROSECONDS`, during which the other program runs — so a
+// rotation for `SLEEP_MICROSECONDS`, during which the other program runs, so a
 // log that shows two "says hello" lines before the second program's is a log
 // where sleeping worked.  The second `Write` after the sleep is what makes the
 // wake visible: a program that never woke prints one line, not two.
 //
 // The bytes were assembled by GNU `as` and disassembled by `objdump` before
 // they were written down here, which is the check that they are the
-// instructions this table says they are — the same discipline the aarch64
+// instructions this table says they are, the same discipline the aarch64
 // program's words had.
 
 /// How long a program's image is, in bytes.
@@ -546,7 +546,7 @@ pub const PIPE_WRITER: u16 = 2;
 /// ## Why the sleep comes before the write
 ///
 /// The reader has to reach its `Read` first and block, or there is nothing to
-/// prove — a write into a pipe nobody has read yet is an ordinary copy.  The
+/// prove, a write into a pipe nobody has read yet is an ordinary copy.  The
 /// reader's loop is shorter and it makes no earlier call, so it blocks; this
 /// program's sleep then guarantees the order rather than relying on it.
 ///
@@ -585,7 +585,7 @@ const PIPE_WRITER_PROGRAM: [u8; 89] = [
 /// `[rsp]` holds the read end's descriptor and `[rsp + 8]` is the four-byte
 /// buffer the read fills.  A program's only way to receive a value from the
 /// boot is a place it knows how to look at, and the stack is the one place both
-/// sides already agree on — the boot writes it before the program runs, and the
+/// sides already agree on, the boot writes it before the program runs, and the
 /// program's first instruction can reach it without a call.
 ///
 /// ## What it proves
@@ -593,7 +593,7 @@ const PIPE_WRITER_PROGRAM: [u8; 89] = [
 /// The read blocks: the pipe is empty when this program runs, its writer is
 /// alive, and `try_read` answers `Block`.  The line `a program blocks on a
 /// pipe` is that event.  The `Write` after it says the read returned, which can
-/// only happen because the writer's syscall woke it — nothing else wakes a
+/// only happen because the writer's syscall woke it, nothing else wakes a
 /// blocked task.
 const PIPE_READER_PROGRAM: [u8; 79] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
@@ -612,7 +612,7 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
     0xCD, 0x80, // int 0x80
     // The length is cleared before the second announcement.  `edx` still holds
     // the read's four, and a write with a length to a descriptor that names a
-    // pipe is a pipe write — so the announcement would go into the pipe and
+    // pipe is a pipe write, so the announcement would go into the pipe and
     // print nothing.  This is the same confusion the kernel's length test
     // exists to end, seen from the program's side.
     0x31, 0xD2, // xor edx, edx        (announce has no length)
@@ -629,12 +629,12 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
 /// ## Why the counts are what they are
 ///
 /// The loop has to outlive a time slice, or the boot reports a timer that never
-/// preempted whether or not preemption works — the defect aarch64's program had
+/// preempted whether or not preemption works, the defect aarch64's program had
 /// with a single 16-bit immediate.  A hundred microseconds is the slice, and
 /// the first version of this loop was 64 × 256 iterations, which finished in a
 /// few microseconds and produced exactly `0 tick(s)`.
 ///
-/// 0x40 × 0x1000 is about 2^18 iterations — long enough for many slices at this
+/// 0x40 × 0x1000 is about 2^18 iterations, long enough for many slices at this
 /// slice length, and short enough that the program still finishes.  The upper
 /// bound is real: 0x1000 × 0x10000 was too long, and under the emulator the
 /// trap cost of ten thousand ticks a second left the program unable to reach
@@ -675,7 +675,7 @@ const PROGRAM_BASE: [u8; 87] = [
 /// The syscall numbers a program's bytes ask for, in order.
 ///
 /// Every call is `mov eax, <number>` followed by `int 0x80`, so the pair names
-/// it — a scan for the register write rather than a table of byte offsets.
+/// it, a scan for the register write rather than a table of byte offsets.
 #[cfg(test)]
 fn call_numbers(bytes: &[u8]) -> alloc::vec::Vec<u32> {
     let mut calls = alloc::vec::Vec::new();
@@ -708,7 +708,7 @@ mod program_tests {
     ///
     /// The boot runs an announcing program, a pipe writer and a pipe reader,
     /// and a builder that returned one image for all three would look correct
-    /// until the reader slept instead of blocking — which is what the first
+    /// until the reader slept instead of blocking, which is what the first
     /// version did, because `program_bytes` never checked the number.
     #[test]
     fn the_three_programs_are_three_images() {
@@ -725,7 +725,7 @@ mod program_tests {
             "and the reader makes one the writer does not"
         );
 
-        // The reader's read is `mov eax, 5` — syscall 5 — and the announce
+        // The reader's read is `mov eax, 5`, syscall 5, and the announce
         // program has no such immediate anywhere in it.
         let read_encoding: [u8; 5] = [0xB8, 0x05, 0x00, 0x00, 0x00];
         assert!(
@@ -742,7 +742,7 @@ mod program_tests {
     /// encoding puts it.
     ///
     /// A builder that patched the wrong offset would produce a program whose
-    /// loop count is its number — which runs, and prints the right thing, and
+    /// loop count is its number, which runs, and prints the right thing, and
     /// is not the program the table describes.
     #[test]
     fn the_number_is_where_the_encoding_puts_it() {
@@ -796,7 +796,7 @@ mod program_tests {
     ///
     /// `jne` is `0x75` with a signed 8-bit displacement relative to the end of
     /// the instruction.  `-6` from offset 18 lands on 12 (the inner `sub`), and
-    /// `-18` from offset 24 lands on 6 (the inner reload) — the two numbers
+    /// `-18` from offset 24 lands on 6 (the inner reload), the two numbers
     /// this test computes rather than assumes.
     #[test]
     fn the_loop_branches_back_to_itself() {

@@ -6,13 +6,13 @@
 //!
 //! A boot has to be able to speak before it can parse a device tree, so the
 //! address cannot come from a discovered device and cannot wait for a driver
-//! registry — the same argument as x86_64's COM1.
+//! registry, the same argument as x86_64's COM1.
 //!
 //! ## The address: the tree first, the constant second
 //!
 //! [`init`] reads the tree firmware handed over and asks it where the PL011 is.
 //! `0x0900_0000` remains as the fallback for a boot whose tree did not parse,
-//! which is the state a machine with a broken blob is in — and a boot that
+//! which is the state a machine with a broken blob is in, and a boot that
 //! cannot say anything at all is a boot nobody can diagnose.
 //!
 //! The constant is therefore a *fallback* and not the answer, and the boot line
@@ -36,7 +36,7 @@ const PL011_FALLBACK: usize = 0x0900_0000;
 
 /// Where the console's registers are: the tree's answer, or the fallback.
 ///
-/// The tree is read once, by [`init`], and the answer kept in a static — this
+/// The tree is read once, by [`init`], and the answer kept in a static, this
 /// is a console, its address does not change, and looking it up per byte would
 /// be a walk of the device tree on the path that prints a panic message.
 #[cfg(target_os = "none")]
@@ -97,8 +97,8 @@ unsafe fn read_reg(address: usize) -> u32 {
 /// Initialise the PL011 for 115200 baud, 8 bits, no parity, one stop bit.
 ///
 /// This is the configuration every serial console expects.  QEMU's PL011 model
-/// ignores the divisor — the host side of the emulated line runs at whatever
-/// the terminal is set to — but a real board does not, so the divisors are
+/// ignores the divisor, the host side of the emulated line runs at whatever
+/// the terminal is set to, but a real board does not, so the divisors are
 /// programmed from the 24 MHz reference clock `virt` describes.
 #[cfg(target_os = "none")]
 pub fn init() {
@@ -115,8 +115,8 @@ pub fn init() {
     }
 
     let base = uart_base();
-    // SAFETY: `base` is the address the device tree named for a PL011 — or the
-    // emulated platform's constant — and each write below is the documented
+    // SAFETY: `base` is the address the device tree named for a PL011, or the
+    // emulated platform's constant, and each write below is the documented
     // sequence from the PL011 manual.
     unsafe {
         // Disable the UART while its baud rate is changed.
@@ -196,10 +196,10 @@ pub fn write_str(text: &str) {
     // Mask IRQs for the duration, and restore what was there.
     //
     // A line is not one write but dozens, and a timer tick between two of them
-    // runs a trap handler that may print — or, worse, switch to another program
+    // runs a trap handler that may print, or, worse, switch to another program
     // that prints.  The first boot with preemption on printed `program 1 mappe`
-    // and then a different program's line.  The console's own state — its
-    // FIFO, its place in a line — is kernel state like any other, and a handler
+    // and then a different program's line.  The console's own state, its
+    // FIFO, its place in a line, is kernel state like any other, and a handler
     // that reached it mid-line would be the same defect in a smaller form.
     //
     // `save_and_disable` rather than a bare disable: a caller that entered with
@@ -286,7 +286,7 @@ mod tests {
     /// A newline is written as CRLF, because the reader is a terminal.
     ///
     /// The gate that reads a boot's serial log strips the CR, so this is not
-    /// what that check is about — but a sink that dropped it would make every
+    /// what that check is about, but a sink that dropped it would make every
     /// log unusable in a terminal, and nothing else in the tree would notice.
     #[cfg(not(target_os = "none"))]
     #[test]

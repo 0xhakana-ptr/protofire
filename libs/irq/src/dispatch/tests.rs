@@ -54,7 +54,7 @@ fn a_registered_handler_is_delivered_to() {
 /// The handler is given the identity it was registered for.
 ///
 /// A device that shares one handler across its queues needs to know which
-/// queue woke it — a handler that could not tell would have to wake all of
+/// queue woke it, a handler that could not tell would have to wake all of
 /// them and let each decide.
 #[test]
 fn the_handler_is_given_the_identity() {

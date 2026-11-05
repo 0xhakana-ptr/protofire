@@ -26,7 +26,7 @@ fn the_order_survives_the_wrap() {
     assert_eq!(ring.read_from(&mut first), 2);
     assert_eq!(&first, b"ab");
     // The ring holds one byte (`c`) and has room for three, so all three
-    // of `def` fit — and the write cursor starts at 3, so the first byte
+    // of `def` fit, and the write cursor starts at 3, so the first byte
     // lands at index 3 and the other two wrap to 0 and 1.  That wrap is
     // the arithmetic this test exists for.
     assert_eq!(ring.write_to(b"def"), 3);

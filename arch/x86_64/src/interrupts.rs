@@ -14,7 +14,7 @@
 //!
 //! A host has no interrupt flag to clear and no `cli` privilege to clear it
 //! with, so the three functions below are no-ops there and `save_and_disable`
-//! reports `false` — "they were already off", which is the state a host's
+//! reports `false`, "they were already off", which is the state a host's
 //! userspace is in with respect to this kernel's interrupts.  That is what lets
 //! a lock be tested on the host at all: the type is the same, the algorithm is
 //! the same, and only the instruction that is meaningless outside a kernel is
@@ -45,7 +45,7 @@ pub fn are_enabled() -> bool {
 ///
 /// The 8259's reset vector bases are 8 and 0x70, and vector 8 is the double
 /// fault.  A machine whose timer still reaches the 8259 takes its first tick as
-/// a double fault through whatever gate the kernel wrote for vector 8 — which
+/// a double fault through whatever gate the kernel wrote for vector 8, which
 /// is a gate for an exception the kernel never meant to raise, so the answer it
 /// gives is the wrong one and the machine stops.
 ///
@@ -88,7 +88,7 @@ pub fn enable() {}
 pub fn enable() {
     // SAFETY: `sti` sets `RFLAGS.IF`.  It takes effect after the following
     // instruction, so a caller that needs an atomic window around it has to
-    // account for that — this function does not.
+    // account for that, this function does not.
     unsafe { core::arch::asm!("sti", options(nomem, nostack)) };
 }
 

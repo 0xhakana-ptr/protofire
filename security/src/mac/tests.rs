@@ -16,7 +16,7 @@ use abi::Error;
 /// Serialise the tests that mutate the global policy.
 ///
 /// The policy is one process-wide `Mutex`, so two tests that each install a
-/// rule set would otherwise decide against each other's rules — and a test that
+/// rule set would otherwise decide against each other's rules, and a test that
 /// expects `PermissionDenied` would fail only when it happened to run beside
 /// one that had allowed the request.  The same lock, for the same reason, is
 /// in `tests/process/condvar.rs`.

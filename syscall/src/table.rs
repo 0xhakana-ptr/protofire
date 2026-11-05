@@ -28,7 +28,7 @@ pub struct SyscallContext {
     pub caller_pid: Option<u32>,
     /// The label the caller runs as, for a policy that gates on identity.
     ///
-    /// A plain `u32` rather than the security crate's `MacType` — which is an
+    /// A plain `u32` rather than the security crate's `MacType`, which is an
     /// alias for `u32`, so this *is* that type without this crate naming the
     /// subsystem that defines it.  The rule this file already follows is that
     /// `syscall` holds the operations' shared vocabulary and names no
@@ -161,7 +161,7 @@ impl SyscallDispatch {
     }
 }
 
-// `Table` — the array of handler slots and the `init` that fills it — lives
+// `Table`, the array of handler slots and the `init` that fills it, lives
 // with the handlers, not here.  Its only methods are `new` and `init`, and
 // `init` names every subsystem in the tree; the array's element type,
 // [`SyscallHandler`], is the interface and stays.  A `Table` in this crate

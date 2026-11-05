@@ -6,7 +6,7 @@
 //! ## Why both
 //!
 //! A builder and a parser written by the same hand agree about a format neither
-//! may have read correctly — the structure block's padding is the classic case:
+//! may have read correctly, the structure block's padding is the classic case:
 //! an off-by-one there produces a blob that round-trips through a matching
 //! builder and fails on real firmware.  So the fixture is `dtc`'s output, with
 //! its `.dts` beside it so a reader can see what the blob claims.
@@ -58,7 +58,7 @@ fn the_root_has_the_properties_the_source_declares() {
 /// parent set.
 ///
 /// This is the query the boot makes: "where is the UART".  The address is
-/// `0x0900_0000` and the size `0x1000`, as the `.dts` says — and decoding it
+/// `0x0900_0000` and the size `0x1000`, as the `.dts` says, and decoding it
 /// needs the root's two address cells, which is why the node carries the widths
 /// rather than reading them on demand.
 #[test]
@@ -149,7 +149,7 @@ fn a_path_resolves_to_its_node() {
 ///
 /// This is the rule that is easy to invert and silent when inverted.  The PCIe
 /// bridge declares `#address-cells = <3>` because a PCI address is three cells
-/// — but the bridge's own `reg` is an ordinary two-cell MMIO address under its
+///, but the bridge's own `reg` is an ordinary two-cell MMIO address under its
 /// parent.  Decoding the bridge's `reg` with its own three cells would read
 /// `0x0040_1000_0000_0000`, a number plausible enough that nothing fails.
 ///
@@ -183,7 +183,7 @@ fn a_declaration_governs_children_and_not_the_node_itself() {
 /// A three-cell address keeps its space selector out of the number.
 ///
 /// A PCI `ranges` entry and a child device's `reg` both start with a space
-/// cell — `0x0200_0000` for 32-bit non-prefetchable memory.  Shifting it into
+/// cell, `0x0200_0000` for 32-bit non-prefetchable memory.  Shifting it into
 /// the address gives a 96-bit value that does not fit, so the cell is reported
 /// separately.
 #[test]
@@ -222,7 +222,7 @@ fn a_child_inherits_the_parents_cell_widths() {
 /// A node's properties stop at its first child.
 ///
 /// The format puts them in that order, and a `properties()` that kept reading
-/// would hand a caller the child's `reg` as if it were the parent's — a bug
+/// would hand a caller the child's `reg` as if it were the parent's, a bug
 /// whose symptom is a device address off by one node.
 #[test]
 fn properties_stop_at_the_first_child() {
@@ -340,8 +340,8 @@ fn minimal() -> Builder {
 
 /// A blob built here parses, and its cells come out as they were written.
 ///
-/// The point is not that this parser reads this builder — two halves of one
-/// misunderstanding would pass — but that the builder's own padding is what the
+/// The point is not that this parser reads this builder, two halves of one
+/// misunderstanding would pass, but that the builder's own padding is what the
 /// format specifies, so the assertion against `dtc`'s blob above and this one
 /// together pin both.
 #[test]

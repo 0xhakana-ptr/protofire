@@ -4,8 +4,8 @@
 //!
 //! ## The encoding
 //!
-//! A page-table entry is a *physical page number* — the address shifted down by
-//! twelve, not kept whole — with ten flag bits above it:
+//! A page-table entry is a *physical page number*, the address shifted down by
+//! twelve, not kept whole, with ten flag bits above it:
 //!
 //! ```text
 //! bits 0..9     flags: V, R, W, X, U, G, A, D, RSW
@@ -18,18 +18,18 @@
 //! not a bit: an entry with V set and R, W or X clear names another table, and
 //! one with any of them set is a leaf.  And **A and D are not optional**: a
 //! leaf without the accessed bit faults, and without the dirty bit faults on a
-//! write, so every leaf this crate encodes sets both — this tree does not
+//! write, so every leaf this crate encodes sets both, this tree does not
 //! implement the fault that sets them.
 //!
 //! ## The modes
 //!
 //! Sv48 has four levels and Sv39 three; both index nine bits per level.  The
-//! kernel's walk — `libs/paging`'s `Level` and `index` — is four levels of
+//! kernel's walk, `libs/paging`'s `Level` and `index`, is four levels of
 //! nine bits, and the walk arithmetic is where the bugs are: a shift off by
 //! one maps the wrong page and the failure looks like corruption far away.
-//! Sv48 is the mode whose walk has exactly that shape — the kernel's root is
+//! Sv48 is the mode whose walk has exactly that shape, the kernel's root is
 //! Sv48's root, its second level's slots cover one gibibyte, which is what
-//! the kernel's third level already assumes — so the arithmetic stays
+//! the kernel's third level already assumes, so the arithmetic stays
 //! `paging`'s and this machine does not carry a second opinion about how an
 //! address splits.  Sv39's three levels would put this kernel's user window at
 //! an index the four-level arithmetic cannot name: the walk would share one
@@ -65,7 +65,7 @@ pub const USER: u64 = 1 << 4;
 ///
 /// **RISC-V has no cache bit in the base page-table entry.**  Cacheability is a
 /// property of the *physical* address, configured in a platform's PMA, and a
-/// machine that adds a per-mapping override does it with an extension —
+/// machine that adds a per-mapping override does it with an extension, ///
 /// `Svpbmt`, whose field says "this page is I/O" (value 2) rather than normal
 /// memory.
 ///
@@ -86,7 +86,7 @@ pub const PAGE_NUMBER_SHIFT: u64 = 12;
 /// Where the page number starts in an entry: bit 10, above the flag bits.
 ///
 /// This is the shift an encoder applies and a decoder undoes, and it is not the
-/// same twelve as the page offset — a writer that put the page number at bit 0
+/// same twelve as the page offset, a writer that put the page number at bit 0
 /// would overlay it on the flags and produce an entry the machine reads as a
 /// table pointer with a very small page number.
 pub const PAGE_NUMBER_START: u64 = 10;
@@ -126,7 +126,7 @@ pub fn encode_at(entry: Entry, level: Level) -> u64 {
     // permissions this kernel names carry no "read" flag, because on the two
     // machines that came first a present page is readable and `executable` is
     // an addition to that, not a replacement for it.  RISC-V *could* express
-    // execute-only — `R` clear, `X` set — and the first encoder gave exactly
+    // execute-only, `R` clear, `X` set, and the first encoder gave exactly
     // that to every executable page, which made a program's stack a page its
     // own program could run but not read: the load from the descriptor the
     // boot handed it was the machine refusing what the mapping said.  Nothing
@@ -223,7 +223,7 @@ impl EntryEncoding for Encoding {
 ///
 /// `satp` names it in bits 60..63; nine is Sv48 and eight is Sv39.  Four
 /// levels is what this kernel's walk arithmetic assumes, which is the reason
-/// this machine answers this mode — see the header's "The modes".
+/// this machine answers this mode, see the header's "The modes".
 pub const SATP_MODE_SV48: u64 = 9 << 60;
 
 /// Make a change to the page tables visible to the walk.
@@ -252,7 +252,7 @@ pub fn flush_translation() {}
 /// Every address below the lowest RAM bank and above the highest one.  On the
 /// platform this tree boots, the UART this console writes, the PLIC, the PCIe
 /// ECAM window and the flash all sit below two gigabytes, and RAM begins at
-/// `0x8000_0000` — so the gap below the first bank is where this machine's
+/// `0x8000_0000`, so the gap below the first bank is where this machine's
 /// devices live, and the range above the last is where a second bank's
 /// neighbours would.
 ///
@@ -292,7 +292,7 @@ pub fn device_windows() -> Windows {
 
     // The lowest memory start and the highest memory end define the gap.  A
     // machine with two discontiguous RAM banks has a device range between
-    // them, and treating that as memory is the unsafe direction — but so is
+    // them, and treating that as memory is the unsafe direction, but so is
     // *not* treating it as a device, which is what a single gap cannot
     // express.  Sorting the banks and emitting a window between each pair is
     // the general answer; this machine has one bank and the loop below is
@@ -382,8 +382,8 @@ impl Default for Windows {
 pub fn current_root_table() -> usize {
     let value: u64;
     // SAFETY: reading `satp` has no side effect.  The register's page number
-    // is bits 0..43 — *not* bits 10..53, which is where a page-table **entry**
-    // keeps one above its flag bits — and the shift back to a byte address
+    // is bits 0..43, *not* bits 10..53, which is where a page-table **entry**
+    // keeps one above its flag bits, and the shift back to a byte address
     // undoes the twelve the register dropped.
     unsafe {
         core::arch::asm!("csrr {}, satp", out(reg) value, options(nomem, nostack, preserves_flags))
@@ -394,7 +394,7 @@ pub fn current_root_table() -> usize {
 /// Install `table` in `satp`, in Sv48 mode, and answer whether this was a
 /// change.
 ///
-/// The register's page number is bits 0..43 — **not** bits 10..53, which is
+/// The register's page number is bits 0..43, **not** bits 10..53, which is
 /// where a page-table *entry* keeps its page number above the flag bits.  The
 /// two shifts look alike and the wrong one cost this tree its first boot: the
 /// entry's layout moved the root's number into the register's ASID field, the
@@ -509,8 +509,8 @@ mod tests {
 
     /// An executable page is readable too, because readable is what a present
     /// leaf *is* on the permissions this kernel names: there is no "read"
-    /// flag to clear, and the specification's execute-only form — `R` clear,
-    /// `X` set — is one nothing above this crate asks for.
+    /// flag to clear, and the specification's execute-only form, `R` clear,
+    /// `X` set, is one nothing above this crate asks for.
     ///
     /// The first encoder gave execute-only to every executable page, and the
     /// fault it produced is the test's shape: a program could fetch from its
@@ -533,8 +533,8 @@ mod tests {
         assert!(decode(word, Level::Leaf).is_leaf);
         assert!(decode(word, Level::Leaf).permissions.executable);
 
-        // A leaf always carries at least one of R, W, X — the specification's
-        // definition of a leaf — and with `R` unconditional that holds for
+        // A leaf always carries at least one of R, W, X, the specification's
+        // definition of a leaf, and with `R` unconditional that holds for
         // every permission set the kernel can name.
         let plain = Entry::page(0x1000, paging::Permissions::default());
         assert_ne!(encode(plain, Level::Leaf) & super::LEAF_BITS, 0);

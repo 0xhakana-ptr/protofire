@@ -7,7 +7,7 @@
 //! A test that built its input with the code under test would agree with
 //! itself.  These images are written by hand from the field offsets the
 //! specification gives, so a reader that read the wrong offset would read a
-//! number that is not the one the builder wrote — which is the whole point.
+//! number that is not the one the builder wrote, which is the whole point.
 //!
 //! ## The image
 //!
@@ -42,7 +42,7 @@ impl BlockDevice for ImageDevice {
     }
     /// A device that says 2048 and reads 2048.
     ///
-    /// The first version of this said nothing — the default is 512 — and read
+    /// The first version of this said nothing, the default is 512, and read
     /// its `lba` as a 2048-byte index anyway.  That made every test pass and
     /// every real device fail: the reader's offsets and this device's
     /// arithmetic were both wrong in the same direction.  A test device that

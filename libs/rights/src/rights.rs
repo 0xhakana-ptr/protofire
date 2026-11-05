@@ -2,7 +2,7 @@
 //!
 //! What a handle may do: the rights carried by a handle-table entry.
 //!
-//! Two bit flags, and every layer names them — a device descriptor declares
+//! Two bit flags, and every layer names them, a device descriptor declares
 //! which rights its device supports, the filesystem checks them before it
 //! answers a read, the audit log opens its own file with one, and the handle
 //! table stores them.  A set of flags that everyone needs is not a reason for

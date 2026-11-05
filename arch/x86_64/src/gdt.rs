@@ -13,12 +13,12 @@
 //! and `SS` from selectors the caller pushes, and the processor checks the two
 //! descriptors' DPL against the ring being entered.  With no DPL-3 descriptors
 //! there is no selector that would pass, so ring 3 is not "not implemented" in
-//! the sense of missing code — it is not *representable* in this table.
+//! the sense of missing code, it is not *representable* in this table.
 //!
 //! **A ring transition needs a stack the CPU can find.**  Entering ring 0 from
 //! ring 3, the processor refuses to use the ring-3 stack: it must load `RSP`
 //! from somewhere privileged, and that somewhere is `TSS.RSP0`.  A machine with
-//! no TSS loaded therefore cannot take an interrupt from ring 3 at all — it
+//! no TSS loaded therefore cannot take an interrupt from ring 3 at all, it
 //! takes a triple fault instead, which is exactly what an empty `RSP0` would
 //! produce.
 //!
@@ -35,7 +35,7 @@
 //!
 //! It does not allocate an interrupt stack, and it does not use `IST`.  An
 //! `IST` entry is for a vector that must run even when the current stack is
-//! suspect — a double fault, a machine check, an NMI.  This kernel's ring-3
+//! suspect, a double fault, a machine check, an NMI.  This kernel's ring-3
 //! path uses `RSP0`, which is the ordinary mechanism, and a second stack per
 //! CPU would be a promise about the stack's size that nothing here needs yet.
 
@@ -58,8 +58,8 @@ pub const USER_CODE_INDEX: usize = 4;
 
 /// The entry the task state segment's descriptor occupies.
 ///
-/// A TSS descriptor is **sixteen** bytes in long mode — a normal descriptor
-/// plus the upper half of a 64-bit base address — so it occupies two entries.
+/// A TSS descriptor is **sixteen** bytes in long mode, a normal descriptor
+/// plus the upper half of a 64-bit base address, so it occupies two entries.
 /// That is why the table has seven slots for five descriptors.
 pub const TSS_INDEX: usize = 5;
 
@@ -91,11 +91,11 @@ pub const TSS_SELECTOR: u16 = (TSS_INDEX as u16) * 8;
 /// ## Why the shifts are 40 and not 8
 ///
 /// The type byte, `S`, the DPL and `P` are the descriptor's **second** byte as
-/// the processor reads it — bits 40..47 of the 64-bit word.  The first version
+/// the processor reads it, bits 40..47 of the 64-bit word.  The first version
 /// of this function wrote them at bits 8..15, which is the limit's low half, so
 /// every descriptor it built had a type of zero, `P` of zero and a limit of
 /// `0xE200`.  The processor refused the first `mov ds` with a general
-/// protection fault carrying selector index 2 — the segment this table had just
+/// protection fault carrying selector index 2, the segment this table had just
 /// failed to define.  QEMU's `-d int` showed `v=0d e=0010` at the `mov %ax,%ds`
 /// one instruction after a `lgdt` that had already succeeded, which is what
 /// pointed at the descriptor rather than at the register.
@@ -113,8 +113,8 @@ pub const fn code_descriptor(dpl: u8) -> u64 {
 ///
 /// Type `0b0010` is read/write data and the rest matches the boot's
 /// `0x00AF_9200_0000_FFFF`.  In long mode a data segment's base and limit are
-/// ignored, so the only bits that matter are the type, `S`, `P` and the DPL —
-/// and a descriptor that omitted `P` is one the processor refuses to load,
+/// ignored, so the only bits that matter are the type, `S`, `P` and the DPL,
+/// /// and a descriptor that omitted `P` is one the processor refuses to load,
 /// which is the failure this table's shape has already produced once.
 pub const fn data_descriptor(dpl: u8) -> u64 {
     const BASE: u64 = 0x00AF_9200_0000_FFFF;
@@ -126,13 +126,13 @@ pub const fn data_descriptor(dpl: u8) -> u64 {
 /// Only three fields of it mean anything in long mode, and only one is written
 /// by this kernel: `privilege_stack_table[0]`, the `RSP0` a ring transition to
 /// ring 0 loads.  The rest exist because the descriptor's limit describes this
-/// layout and the processor reads it at fixed offsets — a structure that
+/// layout and the processor reads it at fixed offsets, a structure that
 /// omitted a field would put `RSP0` at the wrong offset.
 ///
 /// The I/O map base is set past the end of the structure, which is how a TSS
 /// says "this process may not use `in`/`out`": a base beyond the limit makes
 /// every port access trap.  That matters even at ring 3, where `in`/`out` are
-/// already privileged — an unset base of zero would have the processor read the
+/// already privileged, an unset base of zero would have the processor read the
 /// beginning of this structure as a permission bitmap.
 #[repr(C, packed)]
 pub struct TaskStateSegment {
@@ -171,7 +171,7 @@ impl TaskStateSegment {
     ///
     /// This is the one field a boot must write: an `RSP0` of zero is a stack
     /// pointer of zero, and the first interrupt from ring 3 pushes its frame
-    /// there and takes a page fault — at ring 0, with no frame, which is a
+    /// there and takes a page fault, at ring 0, with no frame, which is a
     /// triple fault and a reset.
     pub fn set_rsp0(&mut self, stack_top: usize) {
         self.privilege_stack_table[0] = stack_top as u64;
@@ -272,7 +272,7 @@ const _: () = assert!(USER_CODE_SELECTOR == 0x20);
 const _: () = assert!(TSS_SELECTOR == 0x28);
 const _: () = assert!(TABLE_WORDS * 8 == 56);
 // A TSS descriptor is two entries, so the table holds five descriptors in
-// seven words — the relation that makes the size of the array a fact.
+// seven words, the relation that makes the size of the array a fact.
 const _: () = assert!(TSS_INDEX + 2 == TABLE_WORDS);
 
 #[cfg(target_os = "none")]
@@ -293,7 +293,7 @@ mod bare {
     ///
     /// A `static` rather than an allocation because `ltr` takes a selector and
     /// the descriptor names an address, and an address into the heap would
-    /// become invalid the moment the heap moved anything — which nothing does,
+    /// become invalid the moment the heap moved anything, which nothing does,
     /// but a TSS whose location is a promise about an allocator is a worse
     /// promise than one whose location is a symbol.
     static TSS: cell::SyncUnsafeCell<TaskStateSegment> =
@@ -309,7 +309,7 @@ mod bare {
     /// ## Why the segments are reloaded
     ///
     /// The boot's table already gave `DS`, `ES` and `SS` the value `0x10`, and
-    /// this table's entry 2 is the same descriptor — so the reload is not
+    /// this table's entry 2 is the same descriptor, so the reload is not
     /// strictly needed for them.  It is done anyway because a segment register
     /// caches the descriptor it was loaded with, and this table's descriptors
     /// are new words at a new address; a cached descriptor from the old table
@@ -328,7 +328,7 @@ mod bare {
         tss.set_rsp0(stack_top);
 
         let tss_address = tss as *mut TaskStateSegment as u64;
-        // SAFETY: as above — the table's only writer.
+        // SAFETY: as above, the table's only writer.
         let table = unsafe { &mut *TABLE.get() };
         *table = table_words(tss_address);
 
@@ -344,7 +344,7 @@ mod bare {
         // it comes after `lgdt` and not before.
         //
         // SAFETY: the selectors name entries of the table just loaded, and the
-        // ring-0 data descriptor is entry 2 — the same bits the boot loaded.
+        // ring-0 data descriptor is entry 2, the same bits the boot loaded.
         unsafe {
             core::arch::asm!(
                 "mov ax, 0x10",
@@ -421,7 +421,7 @@ pub use bare::task_register;
 ///
 /// `RSP0` has to name a stack this kernel is actually running on: an interrupt
 /// from ring 3 pushes its frame at that address, and a separate stack declared
-/// here would be one nothing else uses — the trap would land somewhere the
+/// here would be one nothing else uses, the trap would land somewhere the
 /// kernel has no state, and the return path would push onto a stack the boot's
 /// call frames had already described differently.
 #[cfg(target_os = "none")]
@@ -448,8 +448,8 @@ mod tests {
     /// The descriptors agree with the boot table's, bit for bit.
     ///
     /// This is the test the first version needed and did not have.  That
-    /// version asserted the DPL at bits 13..14 and `P` at bit 15 — the limit's
-    /// low half — so the assertions passed on descriptors the processor
+    /// version asserted the DPL at bits 13..14 and `P` at bit 15, the limit's
+    /// low half, so the assertions passed on descriptors the processor
     /// refused to load, and a boot died at `mov %ax,%ds` with
     /// `v=0d e=0010` one instruction after a successful `lgdt`.
     ///
@@ -463,7 +463,7 @@ mod tests {
         assert_eq!(data_descriptor(0), 0x00AF_9200_0000_FFFF);
     }
 
-    /// The type byte, `S`, the DPL and `P` are bits 40..47 — the descriptor's
+    /// The type byte, `S`, the DPL and `P` are bits 40..47, the descriptor's
     /// second byte as the processor reads it, and not the limit's low half.
     #[test]
     fn the_type_byte_is_the_descriptors_second_byte() {
@@ -496,7 +496,7 @@ mod tests {
         assert_eq!((kernel_code >> 45) & 0b11, 0, "and the kernel's stays 0");
 
         // Present, S = 1, and the type field.  A descriptor missing `P` is one
-        // the processor refuses to load — which is what happened.
+        // the processor refuses to load, which is what happened.
         for descriptor in [user_code, user_data, kernel_code] {
             assert_ne!(descriptor & (1 << 47), 0, "present");
             assert_ne!(descriptor & (1 << 44), 0, "S: a code or data descriptor");
@@ -570,7 +570,7 @@ mod tests {
 
         let low = words[super::TSS_INDEX];
         let high = words[super::TSS_INDEX + 1];
-        // A type of `0b1001` — available 64-bit TSS.  `0b1011` is *busy*, and
+        // A type of `0b1001`, available 64-bit TSS.  `0b1011` is *busy*, and
         // `ltr` faults on a busy TSS, which is the mistake this pins.
         assert_eq!((low >> 40) & 0xF, 0b1001, "available, not busy");
         assert_eq!((low >> 45) & 0b11, 0, "DPL 0: only the kernel loads a TSS");

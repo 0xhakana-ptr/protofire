@@ -4,7 +4,7 @@
 > **Applies to:** every `unsafe` block, `unsafe fn`, and `unsafe impl` in
 > `src/` and `tests/`.
 
-In a bare-metal kernel, `unsafe` is not a smell — it is the point. There is no
+In a bare-metal kernel, `unsafe` is not a smell, it is the point. There is no
 operating system underneath to validate a device register write, no MMU
 abstraction to catch a bad pointer, and no process boundary to contain the
 consequences. When a kernel dereferences a user-supplied address without
@@ -14,7 +14,7 @@ machine.
 The tree uses `unsafe` for the things only `unsafe` can do: MMIO, inline
 assembly, pointer-level context-switch mechanics, and the boundary where the
 kernel reads or writes memory a user program owns. Every one of those sites
-carries an argument — `clippy::undocumented_unsafe_blocks` reports zero in
+carries an argument, `clippy::undocumented_unsafe_blocks` reports zero in
 every configuration the tree builds for, and the manifests deny it, so
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo clippy --workspace --all-targets -- -D warnings-targets` and `cargo check --workspace-fuzz-targets` all refuse a
 new one that has none.
@@ -41,13 +41,13 @@ little else:
 | **Global singleton slots** | The `install_global_unchecked` pattern (see [code-style.md §8](code-style.md#8-globals-the-install-pattern)) | Throughout |
 
 Plus `unsafe impl` for `Send`/`Sync` on types that are shared across CPUs and
-are safe to share **by an argument you have to write down** — see §5.
+are safe to share **by an argument you have to write down**, see §5.
 
 ## 2. What `unsafe` is not for
 
 - **Silencing the borrow checker.** If the compiler will not let you hold two
   references, the answer is a different data layout, an index instead of a
-  reference, or a cell type — not a raw pointer. The borrow checker is usually
+  reference, or a cell type, not a raw pointer. The borrow checker is usually
   reporting a real aliasing question, and `unsafe` does not answer it.
 - **Avoiding a bounds check in a hot path.** Only after a profile says so, and
   then with the invariant documented and, if possible, asserted.
@@ -56,7 +56,7 @@ are safe to share **by an argument you have to write down** — see §5.
 - **Casting between representations as a shortcut.** Arithmetic on numbers, `as`
   casts between integer widths, and `from_le_bytes`-style conversions are all
   safe and are the expected tools. `transmute` appears only a handful of times in
-  the tree — punning a `#[repr(C)]` wire or on-disk struct into the byte array it
+  the tree, punning a `#[repr(C)]` wire or on-disk struct into the byte array it
   serialises to (`ScsiRw10Cdb` → `[u8; 10]` in the USB mass-storage driver). That
   is a legitimate use *because the sizes are pinned by the protocol*, and those
   call sites say so. Representation-level punning anywhere else needs the same
@@ -87,7 +87,7 @@ matters here is that the reason must be **checkable**:
 ```
 
 **On an `unsafe fn`**, responsibility belongs to the caller, so the obligation is
-documented with a `# Safety` section in the doc comment — and the *function body*
+documented with a `# Safety` section in the doc comment, and the *function body*
 is then free to assume it holds:
 
 ```rust
@@ -101,7 +101,7 @@ Both halves are required, and they are not interchangeable. An `unsafe fn` with
 no `# Safety` section hides the contract; a `// SAFETY:` comment that restates
 the signature instead of arguing the invariant provides no information.
 
-**Prefer a safe wrapper.** An `unsafe fn` is a last resort — the usual shape is
+**Prefer a safe wrapper.** An `unsafe fn` is a last resort, the usual shape is
 an `unsafe` block *inside* a safe function that has established the precondition
 itself. `with_user_access_guard` is the model: the caller gets a safe closure API
 and never sees the `stac`/`clac` window. Expose an `unsafe fn` only when the
@@ -112,7 +112,7 @@ controls).
 ### The ratchet, and the gate it became
 
 `clippy::undocumented_unsafe_blocks` is denied in every configuration the
-kernel is built in — the host, the three machine targets, and the aarch64 host.
+kernel is built in, the host, the three machine targets, and the aarch64 host.
 The denial is in the manifests (`[workspace.lints.clippy]` in the root, and in
 `tools/xtask/Cargo.toml`, which is a workspace of its own) rather than on the command
 line, so a clippy invocation the tree does not control still denies it; the
@@ -125,12 +125,11 @@ configuration, and that is the whole of the check.  A baseline was considered
 and not built, because a lint that already fails the build needs no second
 number to keep it honest. It counted only *blocks* until
 2026-09-27, which is how a set of undocumented `unsafe impl`s sat in the tree
-while the baseline row said zero — both messages are counted now.
+while the baseline row said zero, both messages are counted now.
 
 It held that line while the tree was being paid down, and it was the reason the
 work could be done one file at a time instead of in one change that pasted a
-comment onto every block. With every row at zero the two jobs the ratchet did —
-"fail a new block" and "record the debt honestly" — are done by the deny and by
+comment onto every block. With every row at zero the two jobs the ratchet did, "fail a new block" and "record the debt honestly", are done by the deny and by
 empty rows respectively; what is left is the census, which would still catch a
 configuration no clippy target covers.
 
@@ -151,7 +150,7 @@ Two consequences are worth knowing:
   the surrounding logic. A 60-line block hides which line actually depended on
   the invariant.
 - **Do not widen the window.** In particular, never hold a raw pointer across a
-  call that could yield, block, or re-enter the kernel — the invariant you
+  call that could yield, block, or re-enter the kernel, the invariant you
   checked may not survive it.
 - **Do not put an `unsafe` block inside a loop to save an annotation.** If the
   invariant holds for one iteration it holds for all of them; hoist the block.
@@ -166,7 +165,7 @@ Two consequences are worth knowing:
 ### `options(...)` in inline assembly
 
 An `asm!` block's `options` are a claim about its effects, and a claim has to
-hold for **every value the function can be called with** — not just today's
+hold for **every value the function can be called with**, not just today's
 callers. The one that bites is `nomem`, which is the promise "this block does
 not read or write memory"; it lets the compiler move loads and stores across
 the block. That promise is true of a `mov` *from* a control register and false
@@ -175,11 +174,11 @@ is what it is for.
 
 `stac`/`clac` state the argument for EFLAGS.AC, and the rule generalises:
 
-- **Instructions that change memory semantics omit `nomem`** — control-register
+- **Instructions that change memory semantics omit `nomem`**, control-register
   writes (`cr0`, `cr3`, `cr4`), `wrmsr` when the register number is an argument
   (PAT, MTRR and EFER are memory-behaviour MSRs even though today's callers
   write performance ones), `invlpg`, `invpcid`, `stac`/`clac`.
-- **Reads may claim it** — `mov` from a control register, `rdmsr`, `rdtsc`.
+- **Reads may claim it**, `mov` from a control register, `rdmsr`, `rdtsc`.
 - **When in doubt leave it out.** Omitting `nomem` costs scheduling freedom
   around one instruction; claiming it wrongly costs correctness, and the
   failure shows up as an access that lands in the wrong address space.
@@ -194,18 +193,18 @@ an oversight until it is written down.
 An `unsafe impl` asserts something about every future use of the type. Before
 writing one, be able to state:
 
-1. **What is shared** — the exact fields, and which of them are not `Send`/`Sync`.
-2. **How concurrent access is serialised** — the lock, the atomic, the
+1. **What is shared**, the exact fields, and which of them are not `Send`/`Sync`.
+2. **How concurrent access is serialised**, the lock, the atomic, the
    interrupt-disable, or the argument that the field is never mutated after
    init.
-3. **Why the accessors cannot violate it** — including via `&self` methods that
+3. **Why the accessors cannot violate it**, including via `&self` methods that
    hand out interior references.
 
 Put that argument in a `// SAFETY:` comment on the `impl`, and keep the type's
 mutable surface `pub(crate)` or narrower. The `SyncUnsafeCell` wrapper
 ([`libs/cell/src/lib.rs`](../../libs/cell/src/lib.rs)) and the
 per-CPU data in [`kernel/src/devices.rs`](../../kernel/src/devices.rs) are the
-existing, reviewed shapes for this — extend them rather than adding a new way to
+existing, reviewed shapes for this, extend them rather than adding a new way to
 share mutable statics.
 
 ---
@@ -219,7 +218,7 @@ else.
 ### Never dereference a user address on trust
 
 Every user pointer arrives as a `usize` in a syscall argument. It is validated
-against the user address window before it is touched — always through the
+against the user address window before it is touched, always through the
 helpers in [`kernel/src/syscall/mod.rs`](../../kernel/src/syscall/mod.rs),
 never by casting and reading. The mechanisms (`SYSCALL_POINTER_SPECS` and the
 `with_*_slice` helpers) are described in
@@ -230,7 +229,7 @@ the discipline:
   space and ends in kernel space must be rejected, not truncated.
 - **A zero length is not a licence to skip a pointer, but it does mean the
   pointer is never read.** The helpers short-circuit on `length == 0` and the
-  closure sees an empty slice — so a zero-length call cannot fault regardless of
+  closure sees an empty slice, so a zero-length call cannot fault regardless of
   the pointer value. Do not add validation that contradicts this, and do not
   assume a zero-length call tells you anything about the pointer's validity.
 - **Never retain a user pointer past the closure.** Read the data into kernel
@@ -256,7 +255,7 @@ it brackets the access instead:
   kernel-internal operation and must not run with AC set. If you add a new
   access helper, keep that ordering.
 
-Never open the window by hand around a region of code — a `stac` without a
+Never open the window by hand around a region of code, a `stac` without a
 matching `clac` on every exit path, including the error paths, leaves the kernel
 able to read user memory for the rest of the time slice.
 
@@ -272,7 +271,7 @@ able to read user memory for the rest of the time slice.
   specifies, and comment the register's name and meaning.
 - **Watch ordering and barriers.** Where a write must reach the device before the
   next one, or a read must complete before dependent work, that is a barrier
-  (`fence`, `dsb`, `mfence`) — and a comment saying which ordering is required
+  (`fence`, `dsb`, `mfence`), and a comment saying which ordering is required
   and why.
 - **Assume the address is identity-mapped device memory**, as established during
   probe. Do not assume the mapping is cached or that a read is free.
@@ -311,22 +310,22 @@ Consequently:
 - **A panic in an `unsafe` path is worse than elsewhere**, because it may leave a
   lock held, a device mid-transaction, or AC set. If a panic is genuinely
   reachable there, the surrounding state must already be safe to abandon.
-- **Assertions about code invariants are fine** — that is the pattern described
+- **Assertions about code invariants are fine**, that is the pattern described
   in [code-style.md §7](code-style.md#7-error-handling). Assertions about data
   from outside the kernel are not.
 
 ### Refusing to boot
 
 The one place the first bullet cannot apply literally is the boot path:
-there is no caller to return an `Error` to, and some answers — a machine
-whose memory map does not contain the kernel's own image — leave nothing to
+there is no caller to return an `Error` to, and some answers, a machine
+whose memory map does not contain the kernel's own image, leave nothing to
 continue with.  A **refusal** is the shape for that, at two levels:
 
 - **The machine cannot boot.**  The refusal prints the machine's answer,
   names the range it refused, and stops the machine on the panic path:
   `panic = "abort"` is the only terminal-with-message path there is, and a
   second, silent way to stop a boot is what this forbids.  It runs **only in
-  the boot path, before the scheduler starts** — once anything but the boot
+  the boot path, before the scheduler starts**, once anything but the boot
   can produce a value, `Result` is required.  The four refusals in
   `memory/src/frame.rs` (a pool no device can address, a pool past everything
   the machine describes, an image over defective memory, an image in no
@@ -339,7 +338,7 @@ continue with.  A **refusal** is the shape for that, at two levels:
 
 A refusal is not an assertion: it reports what the machine said rather than
 claiming an invariant was violated, and its diagnostic carries the value the
-machine gave.  The bullet above is not relaxed by it — a refusal is the
+machine gave.  The bullet above is not relaxed by it, a refusal is the
 boot's error path, not a licence to panic on external data later.
 
 ---
@@ -349,7 +348,7 @@ boot's error path, not a licence to panic on external data later.
 For every `unsafe` block in the diff:
 
 - [ ] It falls into one of the four categories in §1.
-- [ ] A `// SAFETY:` comment states a checkable invariant — not a restatement of
+- [ ] A `// SAFETY:` comment states a checkable invariant, not a restatement of
       what the code does.
 - [ ] The block is scoped to the operation, not to a region of logic.
 - [ ] No raw pointer or reference escapes the block's invariant window.
@@ -371,10 +370,10 @@ For every `unsafe` block in the diff:
 
 ## Related documents
 
-- [docs/fmts/comments.md](comments.md) — the `// SAFETY:` format in full
-- [`docs/fmts/syscall-abi.md`](syscall-abi.md) — the ring-3 boundary and pointer
+- [docs/fmts/comments.md](comments.md), the `// SAFETY:` format in full
+- [`docs/fmts/syscall-abi.md`](syscall-abi.md), the ring-3 boundary and pointer
   validation machinery
-- [docs/fmts/code-style.md](code-style.md) — error handling and the global
+- [docs/fmts/code-style.md](code-style.md), error handling and the global
   install pattern
-- [`memory/src/lib.rs`](../../memory/src/lib.rs) — paging and allocator
+- [`memory/src/lib.rs`](../../memory/src/lib.rs), paging and allocator
   internals

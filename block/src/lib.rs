@@ -6,7 +6,7 @@
 //! ## Why a crate, and why at the top of the tree
 //!
 //! A disk driver has to name the device interface to implement it, and it must
-//! not have to name the filesystem to do that — the filesystem is one consumer
+//! not have to name the filesystem to do that, the filesystem is one consumer
 //! of the interface, not its owner.  That is not a fact about another kernel's
 //! layout; it is what the implementors require.  The drivers that implement
 //! this are `virtio`'s block device and whatever a machine adds after it, and
@@ -15,8 +15,8 @@
 //! filesystem to be written.
 //!
 //! This is not `libs/`.  A crate under `libs/` is a tool with no client shape:
-//! a cell, a set of flags, an allocator.  `block` defines a *role* — what a
-//! disk driver is — and a role is what `drivers/` and `fs/` share, not what
+//! a cell, a set of flags, an allocator.  `block` defines a *role*, what a
+//! disk driver is, and a role is what `drivers/` and `fs/` share, not what
 //! either one owns.  That is the same position `abi` and `fs` are in, which is
 //! why they are siblings.
 //!
@@ -39,7 +39,7 @@
 //! reported in.
 //!
 //! The counters are here because they are the bottom of three heights a read
-//! is counted at — filesystem, cache, device — and the difference between them
+//! is counted at, filesystem, cache, device, and the difference between them
 //! is where a boot's reads go.  A counter at the bottom belongs where the
 //! bottom is.
 //!

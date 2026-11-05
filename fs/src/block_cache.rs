@@ -138,11 +138,11 @@ pub struct BlockCache {
     entries: Mutex<Vec<CacheEntry>>,
     generation: Mutex<u64>,
     stats: Mutex<CacheStats>,
-    /// Last LBA accessed via `read_cached` — used for sequential-access
+    /// Last LBA accessed via `read_cached`, used for sequential-access
     /// detection and lightweight read-ahead.
     last_read_lba: Mutex<u64>,
     /// Read-ahead depth: number of extra blocks to prefetch after a
-    /// sequential miss.  0 — the default — disables read-ahead; a volume that
+    /// sequential miss.  0, the default, disables read-ahead; a volume that
     /// wants it asks for it with [`BlockCache::with_read_ahead`].
     read_ahead_depth: usize,
 }
@@ -311,7 +311,7 @@ impl BlockCache {
             }
         }
 
-        // Not present — insert as dirty.
+        // Not present, insert as dirty.
         self.insert(lba, data, true);
         Ok(())
     }
@@ -372,14 +372,14 @@ impl BlockCache {
     /// [RFC 0009](../../docs/rfcs/0009-queue-the-writes-a-flush-makes.md)'s:
     ///
     /// * the dirty blocks are taken under the lock and submitted up to what the
-    ///   device can hold — the driver copies each block before its submit
+    ///   device can hold, the driver copies each block before its submit
     ///   returns, so the lock is held only while the queue is being filled;
     /// * the lock is **dropped** while the writes are in flight, so a reader no
     ///   longer waits behind the whole flush;
     /// * a block's dirty flag is cleared only when its own write completes
     ///   *and* the entry still carries the generation that was submitted.  A
     ///   block rewritten while its write was in flight keeps its flag, and the
-    ///   newer content goes out with the next flush — which is what "the cache
+    ///   newer content goes out with the next flush, which is what "the cache
     ///   copy is newer than the device" means.  Each block is written at most
     ///   once per flush, so a writer that keeps rewriting cannot make a flush
     ///   chase it without end.
@@ -603,12 +603,12 @@ impl BlockCache {
     ///
     /// The read path does not call this: a sequential miss reads its own block
     /// and the lookahead after it in one request, which is strictly better
-    /// than a second one.  This is the explicit form — a caller that wants the
-    /// cache warmed ahead of a read it has not made yet — and what the cache's
+    /// than a second one.  This is the explicit form, a caller that wants the
+    /// cache warmed ahead of a read it has not made yet, and what the cache's
     /// own tests drive.
     ///
     /// The blocks that are not already cached are read from the device **as
-    /// runs** — one request per contiguous stretch rather than one per block.
+    /// runs**, one request per contiguous stretch rather than one per block.
     /// That is the shape a device wants (a single command covering a
     /// kilobyte costs far less than two covering 512 bytes each), and it is
     /// the shape a queue would be handed if this ever became asynchronous.
@@ -734,7 +734,7 @@ impl BlockCache {
             return;
         }
 
-        // Cache is full — choose an eviction victim.
+        // Cache is full, choose an eviction victim.
         // Strategy: prefer the least-recently-used *clean* entry so dirty
         // blocks stay resident and are only written back when necessary.
         {
@@ -746,7 +746,7 @@ impl BlockCache {
                 .map(|(i, _)| i);
 
             if let Some(idx) = clean_lru {
-                // Evict a clean entry — cheap, no device I/O needed.
+                // Evict a clean entry, cheap, no device I/O needed.
                 let victim = &mut entries[idx];
                 victim.lba = lba;
                 victim.data.copy_from_slice(data);
@@ -1133,7 +1133,7 @@ mod tests {
 
         cache.write_back(0, &make_test_data(0xBB)).unwrap();
 
-        // write_back must not call device.write_blocks — verify by checking
+        // write_back must not call device.write_blocks, verify by checking
         // that the device storage is still zeroed.
         let mut buf = [0_u8; BLOCK_SIZE];
         device.read_blocks(0, &mut buf).unwrap();
@@ -1374,7 +1374,7 @@ mod tests {
 
         cache.flush().unwrap();
 
-        // The device holds what was submitted — the block as it was when the
+        // The device holds what was submitted, the block as it was when the
         // write went out ...
         assert_eq!(device.bytes_at(0), make_test_data(0x11));
         // ... and the cache holds the newer content, still marked for the next
@@ -1439,7 +1439,7 @@ mod tests {
         cache.read_cached(new_lba, &mut buf).unwrap();
 
         // All dirty entries should still be present.
-        // Re-read each dirty LBA — they must still be hits.
+        // Re-read each dirty LBA, they must still be hits.
         let reads_before = device.read_count();
         for lba in 0..half as u64 {
             cache.read_cached(lba, &mut buf).unwrap();
@@ -1522,7 +1522,7 @@ mod tests {
             cache.read_cached(lba, &mut buf).unwrap();
             assert_eq!(buf, make_test_data(lba as u8));
         }
-        // No new device reads — all prefetched blocks are cached.
+        // No new device reads, all prefetched blocks are cached.
         assert_eq!(device.read_count(), reads_before);
     }
 
@@ -1548,7 +1548,7 @@ mod tests {
         assert_eq!(cache.stats().misses, 2);
         // One request covered the demand *and* its lookahead: two blocks,
         // 1024 bytes, one device command.  This is the shape RFC 0008 keeps,
-        // and the assertion is what makes that a gate rather than a comment —
+        // and the assertion is what makes that a gate rather than a comment, //
         // a split into two overlapping requests fails here.
         assert_eq!(
             device.read_count(),
@@ -1583,7 +1583,7 @@ mod tests {
         let mut buf = [0_u8; BLOCK_SIZE];
         cache.read_cached(2, &mut buf).unwrap();
 
-        // Prefetch LBAs 1..4. LBA 2 is already cached — should skip.
+        // Prefetch LBAs 1..4. LBA 2 is already cached, should skip.
         cache.prefetch(1, 4);
         // Only 3 new prefetches: LBAs 1, 3, 4 (LBA 2 already cached).
         assert_eq!(cache.stats().prefetches_issued, 3);
@@ -1622,7 +1622,7 @@ mod tests {
         assert_eq!(cache.flush_aged(100).unwrap(), 2);
         assert_eq!(cache.dirty_slots(), 0);
 
-        // Data is on the device — the persistent-cache guarantee.
+        // Data is on the device, the persistent-cache guarantee.
         device.read_blocks(0, &mut buf).unwrap();
         assert_eq!(buf, make_test_data(0xAA));
         device.read_blocks(1, &mut buf).unwrap();

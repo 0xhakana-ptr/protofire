@@ -37,7 +37,7 @@ and name the command they run.
 
 **Its gates.**  A behaviour change that no gate exercises is not verified, it is
 implemented.  If the mechanism is new, a gate that runs it belongs in the same
-change — and if that gate cannot exist yet, the change says so rather than
+change, and if that gate cannot exist yet, the change says so rather than
 implying it ran.
 
 **Its documents.**  `docs/architecture.md` for a layering decision, the crate's
@@ -57,12 +57,12 @@ direction.
 2. **Add it to `scripts/layering.txt`** with the reason.  The gate refuses a crate
    the spec does not name, and refuses a spec row whose crate has gone.
 3. **Give it a test.**  The gate refuses a crate above a small size with none,
-   unless its row carries the reason it cannot have one — which is a sentence a
+   unless its row carries the reason it cannot have one, which is a sentence a
    reviewer can disagree with, not a silence.
 4. **Record it**: `sh scripts/check-crate-tests.sh --record`, in the same change.
 
-A crate's own `//!` header says what it is, what it names and — the part that
-matters — *why it is a crate rather than a module*.  "It is 400 lines" is not a
+A crate's own `//!` header says what it is, what it names and, the part that
+matters, *why it is a crate rather than a module*.  "It is 400 lines" is not a
 reason.  "Four layers need it and may not depend on each other" is.
 
 ## Writing a test that can fail
@@ -71,7 +71,7 @@ A test that cannot fail is worse than no test, because it is counted.
 
 - **Break the code and watch it fail.**  Every gate in this tree that matters has
   been mutation-tested: flip a constant, delete an assertion, make the expected
-  line impossible — and confirm the gate goes red.  A gate that stays green under
+  line impossible, and confirm the gate goes red.  A gate that stays green under
   a mutation is measuring nothing.
 - **Test the property, not the implementation.**  `check-crate-tests.sh` exists
   because a `#[cfg(test)]` module in a crate that does not compile reports zero;

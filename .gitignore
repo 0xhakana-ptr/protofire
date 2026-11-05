@@ -1,6 +1,6 @@
 # File: .gitignore
-# Purpose: What is built, not written — and the one generated file that is
-#          tracked anyway.
+# Purpose: What is built, not written, and the files that are tracked even
+#          when a pattern would otherwise catch them.
 #
 # ## Why a root file and no others
 #
@@ -11,6 +11,19 @@
 # ever gains an artifact of its own gets a `.gitignore` then, beside it; until
 # then this file is the whole of the answer.
 #
+# ## Why there are `!` rules
+#
+# A negative rule is how this file says "this one is the product, not the
+# output".  It costs a line now and it is the difference between a clone that
+# builds and one that does not: a pattern added later that swallowed
+# `Cargo.lock` or `.cargo/config.toml` would be a build failure discovered by
+# whoever cloned next, and the exception written beside the pattern is the
+# thing that stops it.
+#
+# None of the patterns below currently matches any of these files.  That is the
+# point of writing them anyway: they are a **guard**, not a workaround, and
+# each names why its file is the product.
+#
 # ## What is *not* ignored
 #
 # `arch/x86_64/src/kaslr_relocs.generated.rs` is generated and **tracked**: the
@@ -19,7 +32,7 @@
 # failure rather than an inconvenience, so it is named here rather than covered
 # by a pattern.
 
-# --- Cargo ------------------------------------------------------------------
+# Cargo
 #
 # The workspace's one output directory.  The leading slash anchors it to this
 # repository's root, so a path a document cites is not silently swallowed.
@@ -31,7 +44,7 @@
 # `cargo bench` writes criterion's reports here.
 **/criterion/
 
-# --- Build products a document names ----------------------------------------
+# Build products a document names
 #
 # `cargo xtask run` writes the serial log and the disk image it boots with.
 *.log
@@ -46,14 +59,14 @@
 *.d
 *.dSYM/
 
-# --- Rust -------------------------------------------------------------------
+# Rust
 #
 # `cargo fmt` backups and rust-analyzer's cache.
 *.rs.bk
 .rust-analyzer/
 rustc-ice-*.txt
 
-# --- Python -----------------------------------------------------------------
+# Python
 #
 # `tools/extract_tests.py` is the only Python in the tree, and it is a tool
 # rather than a package: no build directory, no egg.  What it leaves is a
@@ -66,7 +79,7 @@ __pycache__/
 .venv/
 venv/
 
-# --- Editors ----------------------------------------------------------------
+# Editors
 #
 # The rule is the editor's output, not the editor: a `.vscode/settings.json` a
 # reader wants to share is theirs to force in.
@@ -76,14 +89,38 @@ venv/
 *.swo
 *~
 
-# --- Operating systems ------------------------------------------------------
+# Operating systems
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# --- Local, not shared ------------------------------------------------------
-#
-# A scratch file a reader keeps beside the tree.  `.zcode/` is the agent's own
-# working directory, which is not part of the product.
-.zcode/
+# Local, not shared
 *.local
+
+# Files that are the product, not the output
+#
+# Each line says why it has to survive a pattern someone may add later.  A
+# `.gitignore` is read top to bottom and the last match wins, so these sit last
+# on purpose: a rule added above them cannot shadow them.
+
+# The dependency graph this workspace resolves to.  A binary crate's lock file
+# is the build input that makes a clone build the same versions; without it,
+# two clones of one commit can build different trees.
+!Cargo.lock
+
+# The toolchain the tree is written against.  `rust-toolchain.toml` selects the
+# compiler and its components; a clone without it picks whatever the host has.
+!rust-toolchain.toml
+
+# Per-target linker scripts and rustflags.  Every bare-metal image depends on
+# this file for the address it links at.
+!.cargo/config.toml
+
+# The formatting the gate checks.  Without it `cargo fmt --check` measures a
+# different style.
+!.rustfmt.toml
+
+# Line endings and binary markers, which are what keep a checkout identical
+# across hosts.
+!.gitattributes
+!.gitignore

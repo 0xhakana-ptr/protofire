@@ -255,7 +255,7 @@ pub const X86_64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 1 << 2;
 // RISC-V 64 user exception frame
 //
 // The vector this machine delivers is its `scause` exception code, and the
-// "error code" is `stval` — the faulting address for the faults that carry
+// "error code" is `stval`, the faulting address for the faults that carry
 // one.  The rest is the interrupted context, in the same register order the
 // signal frame uses, so a handler that can resume from one can read the
 // other.
@@ -299,7 +299,7 @@ pub const RISCV64_USER_EXCEPTION_HANDLER_FLAG_ALLOW_NESTED: usize = 1 << 2;
 /// which is the faulting address for the page and access faults and zero for
 /// the ones that have none.  The register block is `x1`..`x31` in
 /// [`super::process::RISCV64_SIGNAL_FRAME_REGS`] order, then the two CSRs
-/// a `sret` needs — the same pair the signal frame holds, because both are
+/// a `sret` needs, the same pair the signal frame holds, because both are
 /// "the context to resume in".
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,7 +338,7 @@ pub const RISCV64_USER_EXCEPTION_FRAME_SAVED_PROGRAM_STATUS_OFFSET: usize =
 // The flags a user exception handler is installed with
 //
 // One set of names for code that should not care which architecture it was
-// compiled for — the user-side syscall builders and the demo payloads.
+// compiled for, the user-side syscall builders and the demo payloads.
 //
 // The two architectures' sets above carry the same numbers, and that is a
 // choice this kernel made rather than a coincidence between two conventions,
@@ -439,7 +439,7 @@ impl X86_64PageFaultError {
 //
 // Bits 0-15: selector index of the faulting segment/interrupt gate
 // Bit  14:   table (LDT=0, IDT=1)
-// Bit  15:   TI (table indicator — GDT=0, LDT=1)
+// Bit  15:   TI (table indicator, GDT=0, LDT=1)
 
 const GP_ERROR_SELECTOR_MASK: u64 = 0xFFF8;
 const GP_ERROR_IDT_BIT: u64 = 1 << 1; // bit 1: IDT (0=GDT/LDT, 1=IDT)
@@ -1104,7 +1104,7 @@ mod tests {
     /// handler that can read one can read the other; the three header words
     /// come first and the two CSRs after the block.  This pins the offsets a
     /// handler would otherwise have to recompute, and it is the only thing
-    /// about the frame a host can check — the trap glue that fills it runs
+    /// about the frame a host can check, the trap glue that fills it runs
     /// only on the machine.
     #[test]
     fn riscv64_user_exception_frame_layout_is_stable() {
@@ -1141,7 +1141,7 @@ mod tests {
     /// The payload's hard-coded frame offset is the ABI's.
     ///
     /// `demo_program_riscv64_payload.S` is hand-written assembly, so it cannot
-    /// ask the ABI where `instruction_pointer` sits — it carries the number as
+    /// ask the ABI where `instruction_pointer` sits, it carries the number as
     /// `.equ EXC_FRAME_INSTRUCTION_POINTER`.  That is the one place in the tree
     /// a frame offset is written twice, and it is the place where being wrong
     /// is silent: the handler would add four to some other field and resume

@@ -12,7 +12,7 @@
 //! bit  2     attributes index (which MAIR entry applies)
 //! bit  6     AP[1]: EL0 may access
 //! bit  7     AP[2]: read-only
-//! bit  10    AF: access flag — a descriptor with it clear faults on first use
+//! bit  10    AF: access flag, a descriptor with it clear faults on first use
 //! bits 11..   the next level table or the output address
 //! ```
 //!
@@ -20,7 +20,7 @@
 //! set**, not a writable bit that is clear, so a permission set translates by
 //! inversion.  And **the access flag is not optional**: a descriptor with AF
 //! clear is one the MMU faults on, which is how the kernel learns a page is
-//! live — this tree does not implement that, so every descriptor this crate
+//! live, this tree does not implement that, so every descriptor this crate
 //! encodes sets AF.
 //!
 //! ## The translation regime
@@ -31,7 +31,7 @@
 //! ## On a host build
 //!
 //! A host has no `ttbr0_el1` and no `sctlr_el1`, so `install` and
-//! `current_root_table` are absent — the module still compiles, because the
+//! `current_root_table` are absent, the module still compiles, because the
 //! encoding is arithmetic and a host test can check it.  That is the same split
 //! the console uses: the arm that needs the machine is the machine's, and the
 //! arithmetic is everyone's.
@@ -54,8 +54,8 @@ pub const TYPE_BLOCK: u64 = 0b01;
 ///
 /// | index | attribute | for |
 /// |---|---|---|
-/// | 0 | `0xFF` — normal memory, write-back cached | the kernel's own memory |
-/// | 1 | `0x00` — device memory, gathering off | a device's registers |
+/// | 0 | `0xFF`, normal memory, write-back cached | the kernel's own memory |
+/// | 1 | `0x00`, device memory, gathering off | a device's registers |
 ///
 /// Both are installed by `maIR` in `install`; a descriptor that named an index
 /// those bytes do not define is one the MMU treats as device memory, which is
@@ -66,9 +66,9 @@ pub const ATTR_NORMAL: u64 = 0 << ATTR_INDEX_SHIFT;
 /// `MAIR_EL1` byte 1: device, non-gathering.
 pub const ATTR_DEVICE: u64 = 1 << ATTR_INDEX_SHIFT;
 
-/// Bit 6: `AP[1]` — EL0 may access the page.
+/// Bit 6: `AP[1]`, EL0 may access the page.
 pub const AP_USER: u64 = 1 << 6;
-/// Bit 7: `AP[2]` — the page is read-only.  Set means read-only, which is the
+/// Bit 7: `AP[2]`, the page is read-only.  Set means read-only, which is the
 /// opposite of x86_64's writable bit.
 pub const AP_READ_ONLY: u64 = 1 << 7;
 
@@ -93,8 +93,8 @@ pub const OUTPUT_ADDRESS_MASK: u64 = ((1u64 << 48) - 1) & !0xFFFu64;
 /// ## A table descriptor carries an address and a type, and nothing else
 ///
 /// This is not tidiness.  In a stage-1 translation-table descriptor the bits
-/// `[11:2]` and `[58:48]` are **Ignored** — the architecture says the hardware
-/// must not act on them — but the fields this crate sets for a *leaf* live in
+/// `[11:2]` and `[58:48]` are **Ignored**, the architecture says the hardware
+/// must not act on them, but the fields this crate sets for a *leaf* live in
 /// exactly those ranges: `AF` at 10, `AP` at 6 and 7, the attribute index at
 /// 2..4, `UXN` at 54, `PXN` at 53.
 ///
@@ -209,11 +209,11 @@ impl EntryEncoding for Encoding {
 /// | 25 | 39 | 3 | the table in `TTBR0_EL1` is a **level 1** table |
 /// | 16 | 48 | 4 | the table in `TTBR0_EL1` is a **level 0** table |
 ///
-/// The kernel builds four levels — root, second, third, leaf — so the root is a
+/// The kernel builds four levels, root, second, third, leaf, so the root is a
 /// level 0 table and `T0SZ` must be 16.  A 39-bit `T0SZ` over a four-level
 /// table has the machine treat the root as level 1, index it with address bits
 /// `[38:30]`, and never read the root's entry 0 at all: the first instruction
-/// fetch then faults with `DFSC = 0b000101`, *translation fault, level 1* —
+/// fetch then faults with `DFSC = 0b000101`, *translation fault, level 1*, ///
 /// which is what the boot log said, and what named this constant.
 ///
 /// `Level::Root`'s shift is 39, which is the 48-bit arrangement: the root's
@@ -256,7 +256,7 @@ pub const fn tcr_el1(ips: u64) -> u64 {
 /// The `TCR_EL1.IPS` value for a `ID_AA64MMFR0_EL1.PARange` encoding.
 ///
 /// The two registers number the same sizes the same way, so this is the
-/// identity — and the version of this function that was not the identity is the
+/// identity, and the version of this function that was not the identity is the
 /// bug that stopped the boot on its first ECAM access.
 ///
 /// | encoding | size | in |
@@ -275,8 +275,8 @@ pub const fn tcr_el1(ips: u64) -> u64 {
 ///
 /// ## What the non-identity version did
 ///
-/// It swapped the two low pairs on the belief that the registers disagreed —
-/// `0b001` to `0b010` and back — which is a belief no table supports.  On a
+/// It swapped the two low pairs on the belief that the registers disagreed, ///
+/// `0b001` to `0b010` and back, which is a belief no table supports.  On a
 /// machine reporting `PARange = 0b010` (40 bits, 1 TiB) it programmed
 /// `IPS = 0b001` (36 bits, **64 GiB**), and the first access above 64 GiB was a
 /// fault: a PCIe ECAM window at `0x40_1000_0000` is 275 GiB, so the walk
@@ -284,8 +284,8 @@ pub const fn tcr_el1(ips: u64) -> u64 {
 /// that is inside the machine's physical memory and outside the range the table
 /// claimed.
 ///
-/// An unrecognised `PARange` — `0b110` and above are sizes this tree does not
-/// name — falls back to 32 bits, because a table naming physical bits the CPU
+/// An unrecognised `PARange`, `0b110` and above are sizes this tree does not
+/// name, falls back to 32 bits, because a table naming physical bits the CPU
 /// does not have is a fault and naming fewer is only a smaller address space.
 pub const fn ips_for_parange(parange: u64) -> u64 {
     match parange {
@@ -318,7 +318,7 @@ fn physical_address_range() -> u64 {
 /// The tree could be enumerated: a GIC at `0x0800_0000`, a PL011 at
 /// `0x0900_0000`, thirty-two `virtio_mmio` windows, a PCIe ECAM at
 /// `0x40_1000_0000`.  That list would be precise and it would be a list that
-/// has to grow before the device it is missing can work — and the failure of a
+/// has to grow before the device it is missing can work, and the failure of a
 /// missing entry is not a visible one.  It is a cached read of a register,
 /// which returns whatever was true when the line was fetched.
 ///
@@ -339,7 +339,7 @@ fn physical_address_range() -> u64 {
 ///
 /// With translation off every access is device-like: no caching, no
 /// speculation, the access arrives.  With it on and no rule, the same address
-/// becomes Normal memory — cached, reordered, prefetchable — and the PL011's
+/// becomes Normal memory, cached, reordered, prefetchable, and the PL011's
 /// status register read out of a stale cache line is a console that prints
 /// nothing for a reason that looks like a dead UART.
 ///
@@ -374,7 +374,7 @@ pub fn device_windows() -> Windows {
 
     // The lowest memory start and the highest memory end define the gap.  A
     // machine with two discontiguous RAM banks has a device range between them,
-    // and treating that as memory is the unsafe direction — but so is *not*
+    // and treating that as memory is the unsafe direction, but so is *not*
     // treating it as a device, which is what a single gap cannot express.
     // Sorting the banks and emitting a window between each pair is the general
     // answer; this machine has one bank and the loop below is written so a
@@ -470,8 +470,8 @@ impl Default for Windows {
 /// fault, and a device window mapped for the first time reads as all ones.
 ///
 /// That is exactly how this was found: the PCIe ECAM window was mapped, the
-/// mapping was correct, and every read through it returned `0xFFFF_FFFF` — the
-/// value a faulted load returns — while QEMU's monitor read the same physical
+/// mapping was correct, and every read through it returned `0xFFFF_FFFF`, the
+/// value a faulted load returns, while QEMU's monitor read the same physical
 /// addresses perfectly.  `diff`ing the two answers is what named the TLB.
 ///
 /// `DSB` before the invalidate ensures the table writes are visible, and `ISB`
@@ -482,7 +482,7 @@ impl Default for Windows {
 ///
 /// Called after a page-table change on this CPU.  A second CPU translating
 /// through the same table would need a broadcast invalidate, which this kernel
-/// does not yet have — it runs on one core.
+/// does not yet have, it runs on one core.
 #[cfg(target_os = "none")]
 pub fn flush_translation() {
     // SAFETY: both are architectural maintenance operations with no memory
@@ -535,8 +535,8 @@ pub fn is_enabled() -> bool {
 ///
 /// 1. `MAIR_EL1` and `TCR_EL1` first.  A descriptor names an attribute index
 ///    and a granule; installing a table before saying what those mean leaves a
-///    window — however small — where the walk reads a descriptor under the
-///    wrong rules.
+///    window, however small, where the walk reads a descriptor under the wrong
+///    rules.
 /// 2. `TLBI VMALLE1`.  The MMU has not been on, so there should be no entry to
 ///    flush; a stale one is a translation to an address nothing chose, and the
 ///    cost of the instruction is nothing next to the cost of being wrong.

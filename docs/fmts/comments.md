@@ -5,8 +5,7 @@
 
 Comments in this kernel are not decoration. A driver that pokes a device
 register, a page-table walk that depends on an alignment invariant, or a lock
-that must be held across a call is not self-explanatory from the code alone —
-and the reader is usually someone debugging a triple fault at 3 a.m., with no
+that must be held across a call is not self-explanatory from the code alone, and the reader is usually someone debugging a triple fault at 3 a.m., with no
 other documentation open. Write for that reader.
 
 This document defines what comments look like and what they must say. The
@@ -22,7 +21,7 @@ enforcement status of each rule differs, and the difference matters:
 ## 1. Language
 
 **Code comments are written in English.** Module docs, item docs, block
-comments, `// SAFETY:` arguments, `TODO` markers — all of them. Documentation
+comments, `// SAFETY:` arguments, `TODO` markers, all of them. Documentation
 under `docs/` is English too.
 
 Non-ASCII text does appear in the tree, but only where it is *data* rather than
@@ -32,7 +31,7 @@ language.
 
 The one thing worse than a comment in the wrong language is a garbled one. If
 you are not comfortable writing an English comment that says what you mean,
-write the comment in your review thread and ask a maintainer to help — the rule
+write the comment in your review thread and ask a maintainer to help, the rule
 is about the comment being correct, so it is fine to iterate on it before the
 commit lands.
 
@@ -52,10 +51,10 @@ checked on every `sh scripts/verify.sh p0`:
 ### The rules
 
 1. **Line 1 is exactly `//! ` followed by the path relative to the repository
-   root** — `//! fs/src/mod.rs`, `//! tests/fat32.rs`, `//! build.rs`.
+   root**, `//! fs/src/mod.rs`, `//! tests/fat32.rs`, `//! build.rs`.
    Forward slashes, no leading `./`, and relative to the repository root, **not**
    to `src/`. The checker compares the whole line as a string.
-2. **Line 2 is exactly `//!`** — a bare marker with nothing after it.
+2. **Line 2 is exactly `//!`**, a bare marker with nothing after it.
 3. **Description lines follow**, also prefixed with `//!`.
 4. **One blank line separates the header block from the first body line.** The
    header must not run straight into `use` statements or `#![...]` attributes.
@@ -74,10 +73,10 @@ on you, not on the gate:
 - Actually writing a description. A header with no prose is a defect even though
   it passes.
 - Keeping the path accurate if a file moves. The check compares against the
-  file's current location, so a stale path fails the gate — but a file that was
+  file's current location, so a stale path fails the gate, but a file that was
   copied rather than moved can carry a wrong path that still happens to match.
-- The single-header rule. The check looks at a file's opening only — line 1,
-  line 2, and the blank line before the first code — so it does not notice a
+- The single-header rule. The check looks at a file's opening only, line 1,
+  line 2, and the blank line before the first code, so it does not notice a
   second `//!` block further down a file. Keep one header: a module's
   description belongs at the top, not after its first declarations.
 
@@ -88,7 +87,7 @@ Then add structure if the module has any:
 
 - **A blank `//!` line starts a new paragraph.** Use it to separate a one-line
   summary from the detail.
-- **A short title line is a common and accepted pattern** — a single sentence,
+- **A short title line is a common and accepted pattern**, a single sentence,
   then a blank `//!`, then the fuller description. Both of these are correct:
 
   ```
@@ -119,14 +118,14 @@ Then add structure if the module has any:
   //! remote-download paths.
   //!
   //! Sub-module organisation:
-  //! - `link/`     — Link-layer: `device` (NIC trait), `ethernet` (framing)
+  //! - `link/`, Link-layer: `device` (NIC trait), `ethernet` (framing)
   ```
 
 - **Do not invent a tag vocabulary.** There is no `//! Module:`, `//! Author:`,
   `//! File:`, `//! License:`, or `//! Status:` convention in `.rs` files, and
   no `.rs` file carries one. (The `# File:` / `# Purpose:` headers you will see
   in `Makefile`, `Cargo.toml`, and the shell scripts are a separate convention
-  for non-Rust files — see §8.)
+  for non-Rust files, see §8.)
 
 ---
 
@@ -152,7 +151,7 @@ These tags are in use and are the accepted set:
 
 | Tag | Use | Notes |
 |-----|-----|-------|
-| `# Safety` | `unsafe fn` and other caller-obligation APIs | The most common tag by far. State the invariant the caller must uphold — this is the contract that makes the `unsafe` callable at all. |
+| `# Safety` | `unsafe fn` and other caller-obligation APIs | The most common tag by far. State the invariant the caller must uphold, this is the contract that makes the `unsafe` callable at all. |
 | `# Errors` | Functions returning `Result` | Name the conditions that produce an `Err`. |
 | `# Panics` | Functions that can panic | Say exactly what triggers it. |
 | `# Examples` | Where a usage example earns its space | Should compile as a doc test where the host target allows. |
@@ -206,12 +205,12 @@ reviewer can check.
 
 ### Format
 
-- **`// SAFETY:` — all caps, colon, one space.**
+- **`// SAFETY:`, all caps, colon, one space.**
 - Placed **immediately before** the `unsafe` block it justifies. For a multi-line
   block the variants `// SAFETY: <reason>` followed by `unsafe {`, and
   `unsafe { // SAFETY: ...` on the opening line, are both in use; prefer the
   line above.
-- The body states the **invariant and why it holds here** — not "this is unsafe
+- The body states the **invariant and why it holds here**, not "this is unsafe
   because it's a pointer". Name what makes *this* call sound.
 
 ```rust
@@ -235,7 +234,7 @@ checked. "SAFETY: this is fine" is not a comment, it is a hope.
 The mixed-case `// Safety:` form used to appear in the tree, mostly in
 `drivers/virtio/block/src/device.rs` and the other drivers. Those have been migrated, and
 the tree now has no occurrences left: `// SAFETY:` is the only accepted spelling.
-A new `// Safety:` is a defect, not a style preference — it reads as a different
+A new `// Safety:` is a defect, not a style preference, it reads as a different
 marker to anyone grepping for the convention, which is exactly how the block
 that most needs a safety argument goes unnoticed in review.
 
@@ -246,7 +245,7 @@ There is no `#![deny(clippy::undocumented_unsafe_blocks)]`, no
 unsafe documentation anywhere in the tree. The convention holds because
 reviewers hold it. Expect a review comment asking for the argument if you skip
 it, and treat "the block is obviously fine" as a reason to write the comment
-rather than to omit it — obviousness is what makes an invariant worth recording.
+rather than to omit it, obviousness is what makes an invariant worth recording.
 
 ---
 
@@ -278,24 +277,23 @@ label was decoration over an empty section and was removed outright.
 
 ## 7. Markers: `TODO` and `NOTE`
 
-Only two markers are in use, and both are rare — a handful of each across the
+Only two markers are in use, and both are rare, a handful of each across the
 whole tree. Sparse is the point: a marker that appears everywhere is noise, and
 a `TODO` that never gets resolved is a lie about intent.
 
-- **`// TODO: <what should happen>`** — a known gap with a clear owner-agnostic
+- **`// TODO: <what should happen>`**, a known gap with a clear owner-agnostic
   description of the missing work. Say what is missing and, where relevant, what
   would need to change; not "fix this later".
-- **`// NOTE: <why this is the way it is>`** — a non-obvious decision that a
+- **`// NOTE: <why this is the way it is>`**, a non-obvious decision that a
   reader would otherwise be tempted to "clean up". Kinds of things worth a
   `NOTE`: an intentional deviation from the surrounding pattern, a workaround
   for a specific device's behaviour, an ordering that looks arbitrary but is not.
 
-A topical tag in parentheses — `// NOTE(utf-8): ...`, `// TODO(init): ...` —
-appears a couple of times and is acceptable when a module has several threads of
+A topical tag in parentheses, `// NOTE(utf-8): ...`, `// TODO(init): ...`, appears a couple of times and is acceptable when a module has several threads of
 notes. It is not required; do not invent a taxonomy of tags.
 
 **There is no `FIXME`, `XXX`, `HACK`, or `WARNING` in this codebase**, and new
-ones should not be introduced — `TODO:` and `NOTE:` cover the same ground with
+ones should not be introduced, `TODO:` and `NOTE:` cover the same ground with
 less ceremony. If you need to flag something as dangerous, that is what the
 review thread and an issue are for; a comment cannot block a merge and an issue
 can.
@@ -304,17 +302,17 @@ can.
 
 ## 8. Non-Rust files
 
-Build tooling — `Makefile`, `Cargo.toml`, the CI workflow, and most of the
-scripts under [`scripts/`](../../scripts/) — opens with a two-line header:
+Build tooling, `Makefile`, `Cargo.toml`, the CI workflow, and most of the
+scripts under [`scripts/`](../../scripts/), opens with a two-line header:
 
 ```sh
 # File: scripts/hooks/commit-msg
-# Purpose: git commit-msg hook — enforce the Protofire commit message rules.
+# Purpose: git commit-msg hook, enforce the Protofire commit message rules.
 ```
 
 Use that shape when editing those files: `# File: <repo-relative path>` followed
 by `# Purpose: <one line>`. Nothing checks it, so a short script that starts
-straight in on its logic is not a defect worth fixing — but new files under
+straight in on its logic is not a defect worth fixing, but new files under
 `scripts/` should carry it, and a file that already has one should keep it
 accurate.
 
@@ -324,7 +322,7 @@ accurate.
 
 - [ ] The file header matches the enforced shape, and the path is the file's
       real location.
-- [ ] The header description says what the module is for — not that it exists.
+- [ ] The header description says what the module is for, not that it exists.
 - [ ] Every `unsafe` block has a `// SAFETY:` above it that states a checkable
       invariant, in caps.
 - [ ] Public items have doc comments that describe the contract, not the
@@ -340,7 +338,7 @@ accurate.
 
 ## Related documents
 
-- [docs/fmts/code-style.md](code-style.md) — naming, layout, error handling
-- [docs/fmts/unsafe-and-safety.md](unsafe-and-safety.md) — what belongs in an
+- [docs/fmts/code-style.md](code-style.md), naming, layout, error handling
+- [docs/fmts/unsafe-and-safety.md](unsafe-and-safety.md), what belongs in an
   `unsafe` block in the first place
-- [`docs/contributing.md`](../contributing.md) — the short form of these rules
+- [`docs/contributing.md`](../contributing.md), the short form of these rules

@@ -14,7 +14,7 @@ use abi::Result;
 /// The returned path is:
 /// 1. Absolute (begins with `/`).
 /// 2. Free of `.`, `..`, empty components, and redundant slashes.
-/// 3. Pure UTF-8 — no Unicode normalisation is applied.  A filename is treated
+/// 3. Pure UTF-8, no Unicode normalisation is applied.  A filename is treated
 ///    as an opaque byte sequence and its encoding form is the caller's choice;
 ///    a caller that needs NFD/NFC equivalence asks the `unicode` crate for it,
 ///    which is why normalisation is not hidden here.

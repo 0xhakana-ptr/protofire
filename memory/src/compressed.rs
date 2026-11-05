@@ -4,15 +4,15 @@
 //!
 //! When the page reclaimer cannot write a page to a swap device it keeps the
 //! content in memory.  Compressing that content lets the kernel retain many
-//! more pages than the raw 4 KiB content store — a page of zeros or a page
+//! more pages than the raw 4 KiB content store, a page of zeros or a page
 //! of repeated bytes costs a couple of bytes, and typical data pages compress
 //! several-fold.  Decompression happens on demand when a compressed page is
 //! faulted back in.
 //!
 //! Encoding (one tag byte + payload):
-//! - `0x00` — zero page (no payload)
-//! - `0x01` — single repeated byte (one payload byte)
-//! - `0x02` — LZSS token stream (`lzss_compress`)
+//! - `0x00`, zero page (no payload)
+//! - `0x01`, single repeated byte (one payload byte)
+//! - `0x02`, LZSS token stream (`lzss_compress`)
 
 use alloc::vec::Vec;
 
@@ -86,7 +86,7 @@ pub fn compress_page(input: &[u8]) -> Option<CompressedPage> {
         return None;
     }
 
-    // Zero page — the single most common reclaim candidate.
+    // Zero page, the single most common reclaim candidate.
     if input.iter().all(|&b| b == 0) {
         return Some(CompressedPage {
             data: alloc::vec![0x00],
@@ -152,7 +152,7 @@ const HASH_SIZE: usize = 1 << HASH_BITS;
 const MIN_MATCH: usize = 3;
 /// Maximum match length: 3..=10.  The length-minus-3 code is stored in the
 /// 3 bits below the `0x80` marker (bit 7) of the match token, so the marker
-/// cannot be used as data — keeping the code at 3 bits leaves bit 7
+/// cannot be used as data, keeping the code at 3 bits leaves bit 7
 /// unambiguous as the literal-vs-match discriminator.
 const MAX_MATCH: usize = 10;
 /// Maximum back-reference distance: 1..=4096 (distance-minus-1 in 12 bits).
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn incompressible_page_returns_none() {
-        // Deterministic pseudo-random data (LFSR) — no long runs or repeats,
+        // Deterministic pseudo-random data (LFSR), no long runs or repeats,
         // so LZSS cannot beat the raw page size.
         let mut input = vec![0u8; PAGE_SIZE];
         let mut state: u32 = 0x1234_5678;

@@ -22,7 +22,7 @@ const K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-// FIPS 180-4 Section 4.1.2 — logical functions.
+// FIPS 180-4 Section 4.1.2, logical functions.
 #[inline(always)]
 fn ch(x: u32, y: u32, z: u32) -> u32 {
     (x & y) ^ (!x & z)

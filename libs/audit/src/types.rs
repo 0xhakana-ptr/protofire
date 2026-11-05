@@ -101,7 +101,7 @@ pub const fn audit_enable_bit(event_type: AuditEventType) -> u64 {
 pub struct AuditRecord {
     /// Monotonically increasing record identifier.
     pub id: u64,
-    /// Same as `id` — kept as a separate field for backward compat.
+    /// Same as `id`, kept as a separate field for backward compat.
     pub sequence: u64,
     /// Timestamp (scheduler tick) at which the event was captured.
     pub timestamp: u64,

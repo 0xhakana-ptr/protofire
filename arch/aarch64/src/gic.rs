@@ -16,7 +16,7 @@
 //! The distributor is shared by every core; the CPU interface is per core.  A
 //! driver that wrote "enable interrupt 32" to the CPU interface would be
 //! writing to whatever register happened to be there, and the interrupt would
-//! never arrive — which is why the two are named apart here.
+//! never arrive, which is why the two are named apart here.
 //!
 //! ## Why the addresses are parameters
 //!
@@ -28,7 +28,7 @@
 //!
 //! ## What is here today
 //!
-//! Enable, prioritise, and finish — the three operations a driver that is given
+//! Enable, prioritise, and finish, the three operations a driver that is given
 //! a line needs.  Not here: the interrupt *translation* tables
 //! (`GICD_ITARGETSR` handles the single-core case this kernel runs in), the
 //! virtual interface (which a hypervisor's guest uses), and the `GICv3`
@@ -55,16 +55,16 @@ pub const DIST_IPRIORITYR: usize = 0x400;
 pub const DIST_ITARGETSR: usize = 0x800;
 /// `GICD_SGIR`: raise an interrupt from software.
 pub const DIST_SGIR: usize = 0xF00;
-/// `GICD_IGROUPR`: one bit per interrupt — set means group 1.
+/// `GICD_IGROUPR`: one bit per interrupt, set means group 1.
 pub const DIST_IGROUPR: usize = 0x080;
-/// `GICD_ICFGR`: two bits per interrupt — the odd one says edge-triggered.
+/// `GICD_ICFGR`: two bits per interrupt, the odd one says edge-triggered.
 pub const DIST_ICFGR: usize = 0xC00;
 
 /// The priority a device's interrupt is given.
 ///
 /// A lower number is a higher priority, and `0x00` is the highest.  This tree
 /// gives every device line the same value, which means arrival order decides
-/// between them — the same order a single-core machine sees anyway — and leaves
+/// between them, the same order a single-core machine sees anyway, and leaves
 /// the range below it free for a later change that wants an urgent line.  A
 /// priority of `0xFF` is the lowest and is what the GIC's own "no interrupt"
 /// reports, so a line at `0xFF` is one that never preempts anything.
@@ -123,8 +123,8 @@ impl Distributor {
 
     /// Whether an interrupt number is one the distributor controls.
     ///
-    /// Interrupts `0..32` are the per-CPU ones — a timer, a maintenance
-    /// interrupt, the interface's own — and the distributor does not route
+    /// Interrupts `0..32` are the per-CPU ones, a timer, a maintenance
+    /// interrupt, the interface's own, and the distributor does not route
     /// them; `GICD_ISENABLER0`'s low bits are read-only for them.  A device's
     /// line is `32` and above, which is why this exists rather than a range
     /// check at every call site.
@@ -192,7 +192,7 @@ impl CpuInterface {
     ///
     /// `0xFF` accepts all of them.  A smaller value masks the lower priorities,
     /// and a kernel that left this at its reset value of zero would receive
-    /// nothing at all — which looks exactly like a controller that was never
+    /// nothing at all, which looks exactly like a controller that was never
     /// enabled.
     pub const PMR_ACCEPT_ALL: u32 = 0xFF;
 
@@ -272,7 +272,7 @@ impl Gic {
     ///
     /// Called once, from the boot, on the CPU that will take the interrupts.
     /// The two addresses must be the machine's GIC windows, and the memory at
-    /// them must be mapped uncached — a cached read of `IAR` would return an
+    /// them must be mapped uncached, a cached read of `IAR` would return an
     /// interrupt number that was already acknowledged.
     #[cfg(target_os = "none")]
     pub unsafe fn enable(&self) {
@@ -295,18 +295,18 @@ impl Gic {
     ///
     /// Four writes, and all four are needed:
     ///
-    /// 1. `IGROUPR` — **group 1**, which is the non-secure group.  This is the
+    /// 1. `IGROUPR`, **group 1**, which is the non-secure group.  This is the
     ///    one that is easy to leave out and impossible to notice: a line in
     ///    group 0 is a *secure* interrupt, and a kernel running at non-secure
     ///    EL1 never receives one.  The distributor accepts the enable, the line
     ///    is armed, and nothing ever arrives.
-    /// 2. `IPRIORITYR` — its priority.  A line at the reset priority of zero is
+    /// 2. `IPRIORITYR`, its priority.  A line at the reset priority of zero is
     ///    the highest, which works and makes every device preempt every other;
     ///    [`DEVICE_PRIORITY`] is what this tree gives a device.
-    /// 3. `ITARGETSR` — which CPU.  On a GICv2 the byte is a bitmask of cores,
+    /// 3. `ITARGETSR`, which CPU.  On a GICv2 the byte is a bitmask of cores,
     ///    and on a machine with one core it is `0x01`.  Not written, the line
     ///    goes nowhere.
-    /// 4. `ICFGR` — **edge-triggered**, and this is the one a message-signalled
+    /// 4. `ICFGR`, **edge-triggered**, and this is the one a message-signalled
     ///    interrupt cannot do without.
     ///
     ///    GIC's shared peripheral interrupts default to *level-sensitive*,
@@ -315,13 +315,13 @@ impl Gic {
     ///    deasserts in one operation with nothing between them, so a
     ///    level-sensitive line is pending for no time at all and `ISPENDR`
     ///    reads zero.  The interrupt never existed rather than never arrived.
-    /// 5. `ISENABLER` — the enable bit.
+    /// 5. `ISENABLER`, the enable bit.
     ///
     /// ## Per-CPU interrupts
     ///
     /// A number below 32 is a **private** interrupt: the generic timer's is 30.
-    /// Its registers are the low bits of the *first* array entries —
-    /// `ISENABLER0`, `IGROUPR0`, `ICFGR0` — and it has **no** `ITARGETSR` byte,
+    /// Its registers are the low bits of the *first* array entries, ///
+    /// `ISENABLER0`, `IGROUPR0`, `ICFGR0`, and it has **no** `ITARGETSR` byte,
     /// because a private interrupt always goes to the CPU that raised it.  A
     /// driver that wrote a target byte for one would be writing another
     /// interrupt's target.
@@ -342,7 +342,7 @@ impl Gic {
         unsafe {
             // Group 0, and the reason is measured rather than chosen: on QEMU's
             // GICv2 a private interrupt left in group 1 is reported as pending
-            // and never handed out — `GICC_IAR` answers 1022 forever — with the
+            // and never handed out, `GICC_IAR` answers 1022 forever, with the
             // distributor enable, the priority, the trigger and both CPU groups
             // all reading back correct.  Group 0 delivers.
             let group = self.distributor.array_address(DIST_IGROUPR, number, 32);
@@ -428,14 +428,14 @@ impl Gic {
     ///
     /// A device raises its line when it has something to say, and a driver that
     /// wants to test the *path* cannot ask it to.  `GICD_SGIR` is the
-    /// specification's own answer — with one restriction that is easy to miss
+    /// specification's own answer, with one restriction that is easy to miss
     /// and was missed here first.
     ///
     /// **`SGIR` generates SGIs only: interrupt numbers 0 to 15.**  It has no
     /// field for a device line, because a device line is raised by the device.
     /// A boot that asked it for interrupt 40 wrote a number the distributor
     /// read as an SGI id, delivered nothing, and then had to reconcile "the
-    /// path works" — an unclaimed PPI arrived on its own — with "my interrupt
+    /// path works", an unclaimed PPI arrived on its own, with "my interrupt
     /// never came".
     ///
     /// The path an SGI takes is the same one a device's interrupt takes: the
@@ -502,7 +502,7 @@ impl Gic {
     /// Finish interrupt `number`, which is what lets the next one be delivered.
     ///
     /// Without this the line stays active and the CPU takes nothing further at
-    /// that priority — an interrupt handler that returns without an EOI is a
+    /// that priority, an interrupt handler that returns without an EOI is a
     /// machine that handles one interrupt and then appears to hang.
     ///
     /// # Safety
@@ -520,13 +520,13 @@ impl Gic {
 ///
 /// Bit 0 is `EnableGrp0` and bit 1 is `EnableGrp1`, and they are separate
 /// switches over separate groups of interrupts.  This kernel puts every line it
-/// uses in group 1 — that is the non-secure group, the only one deliverable at
-/// non-secure EL1 — so a CPU interface enabled with bit 0 alone receives
+/// uses in group 1, that is the non-secure group, the only one deliverable at
+/// non-secure EL1, so a CPU interface enabled with bit 0 alone receives
 /// nothing, however well the distributor is configured.
 ///
 /// The symptom is exact and was lived through here: `GICD_ISPENDR0` showed the
 /// timer's interrupt as **pending**, `GICD_ISENABLER0` showed it enabled, and
-/// the CPU took no interrupt — because the one register that gates delivery of
+/// the CPU took no interrupt, because the one register that gates delivery of
 /// that group was off.
 pub const CPU_CTLR_ENABLE: u32 = 0b11;
 
@@ -553,8 +553,8 @@ mod tests {
         assert_eq!(Distributor::enable_bit(63), 1 << 31);
         assert_eq!(Distributor::enable_bit(64), 1, "the next register's bit 0");
 
-        // `ISENABLER0` covers interrupts 0..31, so the first device line — 32 —
-        // is bit 0 of the *second* enable register.
+        // `ISENABLER0` covers interrupts 0..31, so the first device line, 32,
+        // // is bit 0 of the *second* enable register.
         assert_eq!(
             DIST.array_address(super::DIST_ISENABLER, 32, 32),
             0x0800_0104
@@ -617,7 +617,7 @@ mod tests {
             0x0800_0428
         );
         // Forty is bit 8 of the second enable register, and byte 0 of the
-        // eleventh priority register — because forty divides by four exactly.
+        // eleventh priority register, because forty divides by four exactly.
         // The same interrupt, two different registers, two different offsets
         // inside them; that is the whole point of the divisors being separate.
         assert_eq!(Distributor::enable_bit(40), 1 << 8);

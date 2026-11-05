@@ -16,7 +16,7 @@ use paging::PAGE_SIZE;
 /// script.
 ///
 /// The numbers are made up and the *shape* is what the image has: text
-/// first, then read-only data, then writable data — a `BTreeMap` of ranges
+/// first, then read-only data, then writable data, a `BTreeMap` of ranges
 /// would be a different test.
 const TEXT: u64 = 0x1000;
 const TEXT_END: u64 = 0x8000;
@@ -61,7 +61,7 @@ fn the_permissions_are_what_the_sections_are_for() {
 /// overlap.
 ///
 /// `end` is exclusive because that is how a linker places the next section
-/// — `__text_end` and `__rodata_start` are the same address — and a rule
+///, `__text_end` and `__rodata_start` are the same address, and a rule
 /// that claimed its end would give that address two permissions.
 #[test]
 fn a_region_owns_its_start_and_not_its_end() {
@@ -101,7 +101,7 @@ fn no_rules_means_no_changes() {
 ///
 /// The two addresses either side of the boundary are the test's point: a
 /// window owns its start and not its end, so `0x0800_0000` is a device and
-/// `0x4000_0000` — where RAM begins — is not.
+/// `0x4000_0000`, where RAM begins, is not.
 #[test]
 fn a_device_window_is_uncached_and_ends_where_it_ends() {
     let windows: &[(usize, usize)] = &[(0x0000_0000, 0x4000_0000)];
@@ -126,7 +126,7 @@ fn a_device_window_is_uncached_and_ends_where_it_ends() {
 /// A device window wins over an image rule.
 ///
 /// The two overlap only if the firmware loaded the image on top of a
-/// device, which is not a state a permission rule can repair — but the
+/// device, which is not a state a permission rule can repair, but the
 /// ordering has to be decided rather than left to whichever loop runs
 /// first, and the decision is that a register is a register.
 #[test]
@@ -187,8 +187,8 @@ fn the_user_window_refuses_what_is_not_in_it() {
 /// A machine with no device windows behaves exactly as it did before the
 /// question was asked.
 ///
-/// x86_64 answers with an empty slice — it has no fixed peripheral
-/// window — so this is that machine's case, and the assertion is that
+/// x86_64 answers with an empty slice, it has no fixed peripheral
+/// window, so this is that machine's case, and the assertion is that
 /// introducing the question changed nothing for it.
 #[test]
 fn no_windows_leaves_the_rules_alone() {

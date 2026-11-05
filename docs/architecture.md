@@ -11,12 +11,12 @@ follows is the argument, and it is the part a new crate has to be placed against
 That is not the same rule as "no cycles", and the difference is the reason this
 document exists.  A graph can be perfectly acyclic and still wrong: a filesystem
 that depends on the scheduler closes no loop and is exactly the edge that makes
-neither side auditable — the filesystem now has to know what a thread is in order
+neither side auditable, the filesystem now has to know what a thread is in order
 to answer a read.  Layering refuses that edge on the day it is written, instead
 of at the point where unwinding it costs a month.
 
 Two crates in one layer may not depend on each other either.  If they must, one
-of them is in the wrong layer — or there is a type both need that has not been
+of them is in the wrong layer, or there is a type both need that has not been
 extracted yet.
 
 ## The layers
@@ -38,7 +38,7 @@ extracted yet.
 `ipc` and `power` sit at layer 2 with the algorithms, not with the kernel, and
 that placement is a decision with an argument.  A pipe's ring buffer is a
 buffer, two cursors and a count; a frequency governor is arithmetic over a load
-sample and a range.  Neither needs a machine, a scheduler or a thread — which is
+sample and a range.  Neither needs a machine, a scheduler or a thread, which is
 exactly why both can be tested on a host, and why they are crates whose contents
 run in a third of a second rather than only during a boot.
 
@@ -52,7 +52,7 @@ opposite arrangement, where a ring's arithmetic reached up for the scheduler.
 The numbers are not aesthetic.  Each is the answer to "what does a reader have to
 understand before this crate makes sense?"
 
-### Layer 0 — nothing of this tree
+### Layer 0, nothing of this tree
 
 A crate here names `core`, and `alloc` where a value is a collection.  Nothing
 else.  Everything above may name a layer-0 crate, so anything added here is a
@@ -60,7 +60,7 @@ cost the whole tree pays.
 
 `cell` is a `Sync`-capable `UnsafeCell`: four lines and a safety argument, needed
 by the heap, by an architecture crate and by the kernel.  `profiler` is operation
-counters whose whole design is that they cost nothing when off — a claim checked
+counters whose whole design is that they cost nothing when off, a claim checked
 by a test rather than stated.  `unicode` is character conversion and
 normalisation; `rights` is two constants four layers name; `audit` is the record
 and its ring buffer.
@@ -70,7 +70,7 @@ The flags are read by the filesystem, by device descriptors, by the audit log an
 by the handle table.  As a module under any one of them, the other three would
 have to depend on it.  As a crate at layer 0, they all depend on a leaf.
 
-### Layer 1 — the wire format
+### Layer 1, the wire format
 
 `abi` is what the kernel and a program both compile against: the error type and
 its discriminants, the syscall status encoding, the boot information.
@@ -83,14 +83,14 @@ The rule for this crate is that nothing may be added that needs `alloc`: a
 program's ABI is a word.  Where that is inconvenient, the type does not belong
 here.
 
-**What this crate replaces.**  The previous tree carried the ABI twice — the
-kernel's copy and a vendored copy for the user side — kept identical below the
+**What this crate replaces.**  The previous tree carried the ABI twice, the
+kernel's copy and a vendored copy for the user side, kept identical below the
 header by a census script with a baseline of recorded differences.  The copy
 existed because a payload is compiled separately and could not `use` the kernel's
 crate.  A crate both sides depend on removes the reason, and the script that
 compared two copies is not needed.
 
-### Layer 2 — algorithms over the ABI's types
+### Layer 2, algorithms over the ABI's types
 
 `crypto` and `async_io` name `abi` for the error type.  A cipher that returned
 `Result` without sharing the tree's `Error` would force every caller to
@@ -100,9 +100,9 @@ Both are testable on a host, which is the property that justifies them being
 crates: a hash has published vectors, and a request/completion queue has a state
 machine that can be driven without an emulator.
 
-`crypto` is one module per algorithm — `sha256`, `crc`, `chacha20`, `poly1305`,
+`crypto` is one module per algorithm, `sha256`, `crc`, `chacha20`, `poly1305`,
 `aes`, `gcm`, `xts`, `hmac`, `hkdf`, `pbkdf2`, `x25519`, `ecdsa`, `rsa`, and the
-two that are not algorithms at all — `constant_time` and `salt`.  The split is
+two that are not algorithms at all, `constant_time` and `salt`.  The split is
 the crate argument applied one level down: a primitive is added or removed one
 at a time, and the `use` lines between the modules are the dependency graph.  A
 mode names the block cipher it wraps (`gcm` and `xts` import `aes`), a
@@ -110,7 +110,7 @@ construction names its hash (`hmac` imports `sha256`, `hkdf` and `pbkdf2` import
 `hmac`).  Nothing is re-exported through an intermediate module, so there is one
 place each function can be found.
 
-### Layer 3 — the machines
+### Layer 3, the machines
 
 `arch_x86_64`, `arch_aarch64` and `arch_riscv64` are three crates, not one crate
 with three `#[cfg]` arms.  The difference shows when an operation is missing: with
@@ -122,7 +122,7 @@ That happened in this tree.  The spinlock closes the interrupt window by
 disabling local interrupts, and only x86_64 had a crate that could; the other two
 got their `interrupts` module in the change that first asked them for one.
 
-### Layer 4 — the route
+### Layer 4, the route
 
 `arch` selects between the three by `cfg(target_arch)` in its own manifest.
 
@@ -135,7 +135,7 @@ would notice is the assembler, if it did.
 Cargo evaluates the `cfg(target_arch)` tables against the target being built, so
 the choice is made once and cannot be overridden.  Selecting none is not
 expressible: a target no table names gets no implementation, and the re-exports
-then name crates that are not there — an error that says the architecture has no
+then name crates that are not there, an error that says the architecture has no
 implementation, which is the true statement.
 
 **The promise this layer makes** is that nothing above it learns which machine it
@@ -143,8 +143,7 @@ runs on.  `scripts/check-arch-fanout.sh` holds it: every `target_arch` name
 outside `arch/` is counted, each file in the census carries a reason, and the
 number is expected to reach zero.
 
-**It is now zero.**  The census's first honest reading was one row —
-`bootloader/src/main.rs`, five occurrences — and the reason on it said the entry
+**It is now zero.**  The census's first honest reading was one row, `bootloader/src/main.rs`, five occurrences, and the reason on it said the entry
 symbol and the panic handler are things only a binary can define.  That was true
 and it was not the question: the *symbol* is a binary's, but the *instruction* it
 reaches for is the machine's.  Five `target_arch` gates meant five places
@@ -159,8 +158,7 @@ The distinction the row was missing is the one this tree now states explicitly:
 
 A new loader changes the first; a new machine changes the second.  So the
 machine's entry assembly, its linker script and its stop instruction all live in
-`arch/<machine>/`, and `bootloader` defines one neutral symbol —
-`protofire_entry` — that every machine's assembly calls.  The kernel's own four
+`arch/<machine>/`, and `bootloader` defines one neutral symbol, `protofire_entry`, that every machine's assembly calls.  The kernel's own four
 gates went the same way: the handshake is the architecture's to parse and the
 kernel takes no arguments.
 
@@ -185,13 +183,12 @@ price, it is cheaper than the alternative, and it is written down because an
 exception nobody argues for is what the gate is for.
 
 `memory` is at a lower layer and does *not* name `arch`: the frame pool is a range
-and a bitmap, and the one place it needs the machine — "make this range writable"
-— is an injected function.  That is what keeps the page table out of a data
+and a bitmap, and the one place it needs the machine, "make this range writable", is an injected function.  That is what keeps the page table out of a data
 structure, and it is why the frame pool's arithmetic can be tested on a host.
 
 ### `virtio_core`: a framework below the drivers
 
-`virtio_core` is the virtio framework — one split virtqueue, the feature
+`virtio_core` is the virtio framework, one split virtqueue, the feature
 negotiation, the status state machine a device goes through, and a `Transport`
 trait with the PCI modern register offsets.  `virtio_block` is the block device
 on top of it: a request header, a data buffer, a status byte, and the two block
@@ -207,7 +204,7 @@ narrowest one its facts allow: `arch` (4) gives `pci` (5) the port mechanism,
 `pci` walks a capability list so `virtio_core` (6) sits above it, and
 `virtio_block` (7) is the device on top.
 
-A framework belongs under the drivers that name it — the same argument that put
+A framework belongs under the drivers that name it, the same argument that put
 `block` at 4.  What moved it up is that it also *names* the bus: a virtio PCI
 device is found through a capability walk, and the walk is `pci`'s.  The
 alternative was moving `PciTransport` into `virtio_block`, which would make the
@@ -218,8 +215,8 @@ three rings in memory, so a host test builds one over a `Vec` and stands in for
 the device by writing into the used ring.  A transport is register accesses at
 addresses a machine chose, so its host arm reports "no device" rather than
 pretending.  The block driver is written against `Transport` rather than against
-PCI, which is what lets a host test drive the whole of it — initialisation,
-request encoding, the descriptor chain, the doorbell, the used ring — with a
+PCI, which is what lets a host test drive the whole of it, initialisation,
+request encoding, the descriptor chain, the doorbell, the used ring, with a
 fake device that behaves like one.
 
 That last point is the reason the trait exists.  Without it the driver would be
@@ -244,7 +241,7 @@ arithmetic, a handler table's lookup.  A tool's signature is one function; a
 role's is a set of methods a caller must satisfy.
 
 The test is not the dependency graph.  `crypto` names `abi` and `sync` names
-`arch`, so both depend on this tree — and both are still tools, because
+`arch`, so both depend on this tree, and both are still tools, because
 `sha256(&[u8]) -> [u8; 32]` is a function a caller calls and `SpinLock` is a
 lock a caller takes.  Filing them by dependency would put a cipher beside a
 filesystem and a lock beside the machine, which says nothing about either.
@@ -252,7 +249,7 @@ filesystem and a lock beside the machine, which says nothing about either.
 **What moved, and why it is recorded.**  `crypto`, `irq` and `paging` were
 built or placed in the root, and all three are tools: a set of algorithms, a
 handler table, a page table.  That `crypto` sat in the root is a decision this
-tree inherited rather than made — a single-crate tree has no `libs/`, and the
+tree inherited rather than made, a single-crate tree has no `libs/`, and the
 directory arrived with the workspace.  Moving them is the rule applied to a
 tree that now has both directories.
 
@@ -261,7 +258,7 @@ tree that now has both directories.
 `block` is at layer 4, below the drivers that implement it, and it is in the
 root rather than under `libs/`.  Both facts are the same argument.
 
-`block` defines a *role* — what a disk driver is — and a role is the thing
+`block` defines a *role*, what a disk driver is, and a role is the thing
 `drivers/` and `fs/` share rather than something either one owns.  That is the
 position `abi` and `fs` are in, which is why they are siblings of it; filing
 `block` under `libs/` made the tree say it was a toolbox when it was a
@@ -269,7 +266,7 @@ contract.
 
 It sits at layer 4 because the drivers have to name it to implement it.  With
 `block` at layer 6 and `virtio` at layer 5, the trait was one no driver could
-implement — an upward edge — and that is why `drivers/block/virtio` was an
+implement, an upward edge, and that is why `drivers/block/virtio` was an
 empty file for as long as it was.  The layer was wrong, not the driver.
 
 The price of layer 4 is that `block` cannot name `sync`, which is at layer 5
@@ -280,8 +277,8 @@ lock where the interrupt question is its own.
 
 The crate holds two traits.  `BlockDevice` is what every device is;
 `QueuedBlockDevice` is what a device that can be ahead of its caller is.  They
-are separate because `submit_read` is `unsafe` — the caller's buffer has to
-stay put until the device is done — and an interface every device implements
+are separate because `submit_read` is `unsafe`, the caller's buffer has to
+stay put until the device is done, and an interface every device implements
 should not carry a borrow contract only some of them need.
 
 ### The subsystems and the core
@@ -311,7 +308,7 @@ own, and the way to see that is to move one and change nothing else.
 `crypto` is the case that shows it: it crossed the boundary with
 `use crate::Error` becoming `use abi::Error` and nothing else.  The tests are the
 same tests, they run on a host instead of needing a boot, and they still fail
-when the code is wrong — flipping one SHA-256 initial constant turns five of them
+when the code is wrong, flipping one SHA-256 initial constant turns five of them
 red.  `unicode` moved with no source change at all.
 
 A test run is `cargo test -p crypto`: seconds, and no machine.
@@ -327,7 +324,7 @@ A test run is `cargo test -p crypto`: seconds, and no machine.
 
 The first three are censuses: each records a number, refuses growth, and refuses a
 stale row.  A ratchet moves in the change that moves it, with its argument in the
-baseline's own prose — which is why `scripts/layering.txt` is longer than the list
+baseline's own prose, which is why `scripts/layering.txt` is longer than the list
 of crates it describes.
 
 ## Two failures this arrangement was built against
@@ -341,7 +338,7 @@ census here now walks the whole tree, and a row whose file no longer exists fail
 **A gate that makes a build succeed can hide the code.**  Two architecture crates
 carried `#![cfg(target_arch = "…")]` at the crate root so a host build would not
 assemble `wfi` into an x86 binary.  It also made both crates entirely empty on a
-host, *including their tests* — which reported zero, and had never been compiled
+host, *including their tests*, which reported zero, and had never been compiled
 once.  The gate was removed; the modules keep their own `cfg(target_os)` arms, and
 the host arms do something testable rather than nothing.
 

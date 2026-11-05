@@ -4,7 +4,7 @@
 //!
 //! ## Two loaders, two conventions
 //!
-//! A multiboot2 loader — GRUB — enters `_start` with a magic in `%eax` and an
+//! A multiboot2 loader, GRUB, enters `_start` with a magic in `%eax` and an
 //! information structure's address in `%ebx`.  QEMU's `-kernel` reads the PVH
 //! ELF note instead and enters with **no handshake at all**: there is nothing
 //! in `%eax` to check.

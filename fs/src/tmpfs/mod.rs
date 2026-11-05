@@ -37,7 +37,7 @@ use crate::vnode::VNode;
 ///
 /// A tmpfs stamps every node it creates and every write it accepts, and those
 /// timestamps are the only thing here that needs a clock.  The clock is the
-/// machine's — an RTC, a timer tick, a boot's idea of "now" — so the filesystem
+/// machine's, an RTC, a timer tick, a boot's idea of "now", so the filesystem
 /// asks for it through a slot the kernel fills rather than reaching for an
 /// architecture module.  That is the same shape as the allocator's diagnostic
 /// sink, and for the same reason: a filesystem that named `arch::timer` could

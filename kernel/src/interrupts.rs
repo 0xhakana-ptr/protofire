@@ -5,12 +5,12 @@
 //! ## The two halves
 //!
 //! The machine's half is a table of gates and a stub that saves the registers
-//! and calls here — `arch`'s.  This half is the *decision*: which vector means
+//! and calls here, `arch`'s.  This half is the *decision*: which vector means
 //! what, and who asked to be told.
 //!
 //! A vector is delivered to whoever registered for its number.  Nothing is
 //! registered yet, so every frame answers "not handled" and the dispatch stops
-//! the machine with the vector on the console — which is the honest answer to
+//! the machine with the vector on the console, which is the honest answer to
 //! an interrupt this kernel has no business receiving, and it is what makes a
 //! boot past `sti` a proof that the path works.
 //!
@@ -74,7 +74,7 @@ pub unsafe fn install() {
     // The 8259 is masked first, and that is not tidiness.  Its reset vector
     // bases are 8 and 0x70; vector 8 is the double fault.  A machine whose
     // timer still reaches the 8259 takes its first tick as a double fault
-    // through a gate this kernel wrote for a fault it will never raise — which
+    // through a gate this kernel wrote for a fault it will never raise, which
     // is exactly what happened the first time this line existed.  q35 has an
     // IOAPIC, so the legacy controller is masked rather than remapped: two
     // controllers able to raise one line is a worse state than one controller
@@ -136,8 +136,8 @@ pub fn handle(frame: irq::Frame) -> bool {
         //
         // The scheduler is one structure with no lock: wake_expired and the
         // preemption hook both write it.  A second CPU that ran them would be a
-        // second writer, and the failure — a task resumed with another CPU's
-        // context — is the sort this tree refuses to leave in.  So another CPU
+        // second writer, and the failure, a task resumed with another CPU's
+        // context, is the sort this tree refuses to leave in.  So another CPU
         // counts its tick and re-arms its clock, and the boot CPU does the
         // deciding until the scheduler grows a per-CPU half.
         if !crate::per_cpu::on_boot_cpu() {
@@ -173,8 +173,8 @@ pub fn handle(frame: irq::Frame) -> bool {
         return true;
     }
 
-    // A fault the kernel raised on itself.  There is no recovery yet — that
-    // needs a process to hand the fault to — so the honest answer is "not
+    // A fault the kernel raised on itself.  There is no recovery yet, that
+    // needs a process to hand the fault to, so the honest answer is "not
     // handled", and the dispatch prints the vector and stops.
     false
 }
@@ -182,14 +182,14 @@ pub fn handle(frame: irq::Frame) -> bool {
 /// The sentinel [`TEST_INTERRUPT_RAISED`] holds before an interrupt arrives.
 ///
 /// `usize::MAX` is not an interrupt number any controller reports, so it is
-/// distinguishable from every real one — including zero, which some machines'
+/// distinguishable from every real one, including zero, which some machines'
 /// self-tests raise.
 const NO_INTERRUPT: usize = usize::MAX;
 
 /// The interrupt the test raised, if any.
 ///
 /// A static because the sink is a plain `fn` and has no context to be handed
-/// one — the same shape the trap sink itself has.  It lives here because the
+/// one, the same shape the trap sink itself has.  It lives here because the
 /// sink is the only reader and the writer is one function in this module.
 pub static TEST_INTERRUPT_RAISED: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(NO_INTERRUPT);
@@ -228,7 +228,7 @@ fn raise_test_interrupt() {
     let line = test_interrupt();
 
     // SAFETY: the controller is enabled and the sink is installed by the time
-    // this runs.  An SGI needs no enable — its bit is always set — and a
+    // this runs.  An SGI needs no enable, its bit is always set, and a
     // self-directed APIC interrupt needs none either, so this asks the
     // controller to raise it and nothing else.
     let raised = unsafe { arch::raise_interrupt(line) };

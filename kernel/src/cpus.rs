@@ -6,8 +6,8 @@
 //!
 //! A machine that starts a CPU and does not wait for it is a boot that cannot
 //! tell "the CPU came up" from "the firmware accepted the request and nothing
-//! ran".  The wait is bounded — a CPU that never comes up is a line on the
-//! console rather than a boot that hangs — and the line names the CPU, so a
+//! ran".  The wait is bounded, a CPU that never comes up is a line on the
+//! console rather than a boot that hangs, and the line names the CPU, so a
 //! reader of the log can tell a start nobody made from one that made and
 //! failed.
 //!
@@ -15,7 +15,7 @@
 //!
 //! Zero, and that is an answer rather than a gap: `start_secondary_harts`
 //! answers how many CPUs it *accepted*, and every machine in this tree answers
-//! honestly — zero where nothing starts one.  A caller that asked `is this
+//! honestly, zero where nothing starts one.  A caller that asked `is this
 //! machine done starting its CPUs` gets a fact, which is what the boot line
 //! needs.
 
@@ -60,7 +60,7 @@ pub fn start_the_others() {
 /// How long the boot waits for a started CPU to record that it is running.
 ///
 /// A policy about the *report*, not about the start: the firmware's answer is
-/// asynchronous, so the wait is what turns "accepted" into "came up" — and a
+/// asynchronous, so the wait is what turns "accepted" into "came up", and a
 /// CPU that never records is reported rather than waited on forever.
 #[cfg(target_os = "none")]
 const MAX_START_SPINS: u64 = 50_000_000;
@@ -70,9 +70,9 @@ const MAX_START_SPINS: u64 = 50_000_000;
 /// The count is the evidence the start cannot give: a CPU that stored its flag
 /// and then stopped prints "online" and nothing else, while a CPU doing work
 /// prints a number that grew.  On this tree the started CPU takes no interrupt
-/// — the trap entry is one address and the sink behind it is the boot CPU's —
-/// so its count stays zero, and the line says that rather than implying work it
-/// is not doing.
+///, the trap entry is one address and the sink behind it is the boot CPU's,
+/// /// so its count stays zero, and the line says that rather than implying
+/// work it is not doing.
 #[cfg(target_os = "none")]
 pub fn report_activity() {
     arch::serial::write_str("protofire: cpus online = ");

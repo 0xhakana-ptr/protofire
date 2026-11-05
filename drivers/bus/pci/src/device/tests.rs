@@ -164,7 +164,7 @@ fn the_bars_are_decoded_and_the_second_half_is_not_a_bar() {
     };
     // BAR0: 32-bit memory at 0xFE00_0000.
     config.set(address, REG_BAR0, 0xFE00_0000);
-    // BAR1: 64-bit memory at 0x1_0000_0000 — low half, then high half.
+    // BAR1: 64-bit memory at 0x1_0000_0000, low half, then high half.
     config.set(address, REG_BAR0 + 1, 0x0000_0004);
     config.set(address, REG_BAR0 + 2, 0x0000_0001);
 

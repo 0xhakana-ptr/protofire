@@ -20,7 +20,7 @@
 //!
 //! ## What is here and what is not
 //!
-//! The encoding, and `install` — a `cr3` write.  The arithmetic that decides
+//! The encoding, and `install`, a `cr3` write.  The arithmetic that decides
 //! which index selects which level is `memory::paging`'s, and it is tested on a
 //! host because a shift off by one is the kind of bug a machine shows as
 //! corruption far from its cause.
@@ -56,7 +56,7 @@ pub const FLAG_UNCACHED: u64 = FLAG_PAGE_WRITE_THROUGH | FLAG_PAGE_CACHE_DISABLE
 
 /// The mask a physical address occupies in an entry.
 ///
-/// Bits 12..52 — forty bits, which is the widest physical address x86_64's page
+/// Bits 12..52, forty bits, which is the widest physical address x86_64's page
 /// tables can name.  Bits 52..63 hold flags on a 64-bit entry: no-execute is
 /// bit 63, and bits 52..63 are reserved.  A mask of `!0xFFF` would keep
 /// no-execute in the address, and an address with bit 63 set is one no machine
@@ -70,8 +70,8 @@ pub const PHYSICAL_ADDRESS_MASK: u64 = ((1u64 << 52) - 1) & !0xFFFu64;
 /// Encode an entry as the word the machine reads.
 ///
 /// The level is accepted and unused, so that all three machines answer the same
-/// signature: x86_64's word does not vary by level — the `PS` bit that makes a
-/// 2 MiB mapping is the caller's to set — while aarch64's page and block
+/// signature: x86_64's word does not vary by level, the `PS` bit that makes a
+/// 2 MiB mapping is the caller's to set, while aarch64's page and block
 /// descriptors differ in their low bits.  A kernel that had to pass a level on
 /// one machine and not another would need to know which one it was running on.
 pub fn encode(entry: Entry, _level: Level) -> u64 {
@@ -99,8 +99,8 @@ pub fn encode(entry: Entry, _level: Level) -> u64 {
 ///
 /// Whether the entry is a leaf follows from the level and one bit: only a page
 /// directory's entries may name 2 MiB (bit 7, PS), and the two levels above
-/// ignore that bit.  A word alone does not say whether it is a leaf — bit 7
-/// means "large page" in a page directory and "pat" in a page table — so a
+/// ignore that bit.  A word alone does not say whether it is a leaf, bit 7
+/// means "large page" in a page directory and "pat" in a page table, so a
 /// decoder that guessed from the word would call a 4 KiB page a table.
 pub fn decode(word: u64, level: Level) -> Entry {
     let present = word & FLAG_PRESENT != 0;
@@ -130,8 +130,8 @@ pub struct Encoding;
 impl EntryEncoding for Encoding {
     /// x86_64's word is the same at every level, so the level is not used.
     ///
-    /// The one bit that differs — `PS`, bit 7, which says "this entry covers
-    /// 2 MiB" — is set by whoever builds a large-page mapping, not by the
+    /// The one bit that differs, `PS`, bit 7, which says "this entry covers
+    /// 2 MiB", is set by whoever builds a large-page mapping, not by the
     /// encoder: a `Entry::page` at a page-directory level with `FLAG_PAGE_SIZE`
     /// already in its address is how this tree writes one.  aarch64 needs the
     /// level because its page and block descriptors differ in bits `[1:0]`;
@@ -160,7 +160,7 @@ impl EntryEncoding for Encoding {
 pub fn flush_translation() {
     let root = current_root_table();
     // SAFETY: rewriting `cr3` with the value it already holds invalidates the
-    // TLB and changes nothing else — the table it names is the one in use.
+    // TLB and changes nothing else, the table it names is the one in use.
     unsafe {
         core::arch::asm!("mov cr3, {}", in(reg) root, options(nostack, preserves_flags));
     }
@@ -180,7 +180,7 @@ pub fn flush_translation() {}
 ///
 /// The contrast is the machine that answers differently.  A device-tree
 /// platform puts its UART and its interrupt controller at addresses fixed by
-/// the platform — before anything has been discovered — so "everything is
+/// the platform, before anything has been discovered, so "everything is
 /// ordinary memory" is false there and the answer is a range.  That difference
 /// is the machine's, which is why the question is asked here and not in the
 /// code that builds a table.
@@ -222,7 +222,7 @@ impl Default for Windows {
 pub fn current_root_table() -> usize {
     let value: usize;
     // SAFETY: reading `cr3` is unprivileged at ring 0 and has no side effect.
-    // The low twelve bits are flags — PCID and the cache-disable bit — and the
+    // The low twelve bits are flags, PCID and the cache-disable bit, and the
     // address is what remains.
     unsafe {
         core::arch::asm!("mov {}, cr3", out(reg) value, options(nomem, nostack, preserves_flags))
@@ -232,8 +232,8 @@ pub fn current_root_table() -> usize {
 
 /// Install `table` as the root, and answer whether this was a change.
 ///
-/// The `invlpg` is not needed for a `cr3` write — writing `cr3` flushes the
-/// whole non-global TLB — but the table's own page must be reachable through
+/// The `invlpg` is not needed for a `cr3` write, writing `cr3` flushes the
+/// whole non-global TLB, but the table's own page must be reachable through
 /// it, which is why the caller maps the table before installing it.
 ///
 /// # Safety

@@ -8,14 +8,14 @@
 //! A volume in the tree would be one nobody rebuilt, and a format change would
 //! find the stale copy before it found the code.  So the boot builds its PyroFS
 //! image, writes it to a real disk when the machine has one, mounts it through
-//! the driver, and reads a file back — which is what turns "the crates compile"
+//! the driver, and reads a file back, which is what turns "the crates compile"
 //! into "the filesystem works on a machine".
 //!
 //! ## Why three filesystems
 //!
 //! A mount table with one entry has never resolved anything.  The boot's volume
 //! owns `/`, a tmpfs owns `/tmp` so the table answers by longest prefix, and an
-//! ISO 9660 disc owns `/cdrom` — read-only, and therefore the one whose
+//! ISO 9660 disc owns `/cdrom`, read-only, and therefore the one whose
 //! contents cannot have been changed since the image was built.
 
 use crate::halt;
@@ -41,8 +41,8 @@ const TMPFS_BYTES: usize = 1024 * 1024;
 
 /// The sector the driver's probe writes and reads back.
 ///
-/// A sector no filesystem structure uses — the mount below reads sector 0 for
-/// the superblock — so the probe cannot corrupt what it is about to mount.
+/// A sector no filesystem structure uses, the mount below reads sector 0 for
+/// the superblock, so the probe cannot corrupt what it is about to mount.
 const BOOT_DISK_PROBE_SECTOR: u64 = 63;
 
 /// The bytes the probe writes.
@@ -147,7 +147,7 @@ fn attach_device(
 ///
 /// The mount below would exercise the same path and would fail on an empty disk
 /// for a reason that says nothing about the driver.  This is the driver's own
-/// check, and it runs only when a real device answered — the in-memory fallback
+/// check, and it runs only when a real device answered, the in-memory fallback
 /// has no disk to write.
 fn probe_device(device: &alloc::sync::Arc<dyn block::QueuedBlockDevice>) {
     let mut probe_sector = [0u8; 512];
@@ -179,7 +179,7 @@ fn probe_device(device: &alloc::sync::Arc<dyn block::QueuedBlockDevice>) {
 /// Write the image to a disk that is not a PyroFS volume.
 ///
 /// QEMU's disk starts empty, so the first boot writes the image and every later
-/// step reads it back through the driver — which is what makes the mount a read
+/// step reads it back through the driver, which is what makes the mount a read
 /// from a device rather than from a `Vec`.  The check is the mount itself: a
 /// volume that opens is one to use, and one that does not is a disk to format.
 /// Trying to open first is what keeps a second boot from overwriting what the
@@ -275,7 +275,7 @@ fn read_the_disc(namespace: &fs::MountTable) {
 
 /// Read the boot's file through the syscall table.
 ///
-/// Three calls — open, read, close — each built the way a program builds one: a
+/// Three calls, open, read, close, each built the way a program builds one: a
 /// number, six argument words, and a value or an error back.  The result is
 /// whether the bytes are the ones the image was built with; a caller that wants
 /// the reason a boot failed has the console, which is what the boot prints.
@@ -291,7 +291,7 @@ pub fn read_greeting_through_syscall() -> bool {
     //
     // The identity is the boot's own: the kernel reads its volume as the system
     // label, which is the subject the installed policy allows.  A caller with
-    // no identity is unlabelled, and the same policy denies it — which is what
+    // no identity is unlabelled, and the same policy denies it, which is what
     // the boot's deny case demonstrates rather than asserts.
     let mut context = SyscallContext::new(
         ::syscall::SyscallNumber::Open as usize,

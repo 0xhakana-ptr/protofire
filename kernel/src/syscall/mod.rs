@@ -11,19 +11,19 @@
 //!
 //! ## Why the table is here and not in the `syscall` crate
 //!
-//! Every slot names a subsystem — the filesystem, the network, the scheduler —
-//! and the `syscall` crate must not know that any of them exist.  A table there
-//! would have to import them, which is the edge `scripts/check-layering.sh`
-//! refuses.  The crate keeps the numbering, the context and the validators;
-//! where the handlers live is the kernel's business, because the kernel is the
-//! only crate that may name them all.
+//! Every slot names a subsystem, the filesystem, the network, the scheduler,
+//! //! and the `syscall` crate must not know that any of them exist.  A table
+//! there would have to import them, which is the edge
+//! `scripts/check-layering.sh` refuses.  The crate keeps the numbering, the
+//! context and the validators; where the handlers live is the kernel's
+//! business, because the kernel is the only crate that may name them all.
 //!
 //! ## What is served today
 //!
-//! Three handlers — `open`, `read` and `close` — backed by the one mounted
+//! Three handlers, `open`, `read` and `close`, backed by the one mounted
 //! volume.  That is the smallest set that makes the registry real: a program
 //! cannot read without opening, opening without closing leaks the slot, and the
-//! three together exercise every part of the interface — a number, an argument
+//! three together exercise every part of the interface, a number, an argument
 //! vector, the validators, a dispatch value, and an error that comes back as a
 //! status word.
 //!
@@ -36,12 +36,12 @@
 //!
 //! `SyscallContext` carries six words, and a word may be an address.  This
 //! boot has no user address space, so the only caller is the kernel itself and
-//! the two address-shaped arguments arrive as borrows — [`Arguments::path`]
-//! and [`Arguments::buffer`] — rather than as integers a handler would have to
+//! the two address-shaped arguments arrive as borrows, [`Arguments::path`]
+//! and [`Arguments::buffer`], rather than as integers a handler would have to
 //! turn back into pointers.
 //!
 //! That is deliberate.  A handler that does `from_raw_parts` on
-//! `context.arg(1)` carries a promise it cannot show — the comment would say
+//! `context.arg(1)` carries a promise it cannot show, the comment would say
 //! "the caller promises this is valid", and nothing would check it.  Taking a
 //! `&mut [u8]` moves the promise to the one place that can keep it: the code
 //! that built the borrow.  When a program can call these, the entry path copies

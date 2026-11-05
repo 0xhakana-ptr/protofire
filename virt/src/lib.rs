@@ -8,19 +8,19 @@
 //! A kernel with a `virt` module is doing one of two things, and the names
 //! collide often enough that this header states which:
 //!
-//! - **Host** — running other kernels.  A hypervisor owns the hardware, a guest
+//! - **Host**, running other kernels.  A hypervisor owns the hardware, a guest
 //!   does not, and the exit path from a guest to this kernel is a convention
 //!   the machine defines (VMX/SVM on x86_64, EL2 on aarch64, the H-extension on
 //!   riscv64).  The kernel's job here is the trap handler, the guest's memory,
 //!   and the device model.
 //!
-//! - **Guest** — running under someone else's hypervisor.  Then the kernel is
+//! - **Guest**, running under someone else's hypervisor.  Then the kernel is
 //!   the one taking exits, and it needs to know which paravirtualised
 //!   interfaces are present: a hypercall page, a shared-info structure, a
 //!   paravirt clock, and the "do not touch this device, the host owns it" list.
 //!
-//! Both are one crate because both are the same question — "what of this
-//! machine is not the machine, and who is answering for it" — and two crates
+//! Both are one crate because both are the same question, "what of this
+//! machine is not the machine, and who is answering for it", and two crates
 //! would end up disagreeing about what a guest is.
 //!
 //! ## Why it names `arch`
@@ -43,7 +43,7 @@
 //!   timer that will not tick.
 //!
 //! - **The host side needs a trap handler**, and a trap handler needs the
-//!   interrupt path to be able to return to the code that caused the trap —
+//!   interrupt path to be able to return to the code that caused the trap, //!
 //!   which is the scheduler's problem, so that half arrives after the scheduler
 //!   does.
 //!

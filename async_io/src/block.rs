@@ -72,7 +72,7 @@ struct Pending {
     /// A real driver would describe the transfer with a bus address and let the
     /// device write into it; this arm copies, so what it needs is the slice it
     /// was handed.  The address is kept rather than a `&mut [u8]` because the
-    /// request outlives the call that submitted it — which is the same reason a
+    /// request outlives the call that submitted it, which is the same reason a
     /// driver keeps a physical address.
     buffer: usize,
     length: usize,
@@ -214,7 +214,7 @@ impl Service for MemoryBlockService {
             BlockOp::Write { sector, count } => {
                 let offset = sector as usize * SECTOR_SIZE;
                 let length = count * SECTOR_SIZE;
-                // SAFETY: as above, with the direction reversed — the caller
+                // SAFETY: as above, with the direction reversed, the caller
                 // promised the buffer is readable for this transfer.
                 unsafe {
                     core::ptr::copy_nonoverlapping(

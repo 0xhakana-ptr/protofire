@@ -20,8 +20,7 @@ wrong.
 | **Test-only helpers** | inside the `tests` module, or a `test_util.rs` declared `#[cfg(test)]` |
 
 There is no `tests/` directory of integration binaries.  A "test that needs the
-whole crate" is a test in the crate, and it can call anything the crate can —
-the crate *is* the boundary the split drew.
+whole crate" is a test in the crate, and it can call anything the crate can, the crate *is* the boundary the split drew.
 
 ### Why this differs from a single-crate tree
 
@@ -32,7 +31,7 @@ only boundary available was the process.
 
 Here the boundary is the crate.  `cargo test -p fs` builds `fs` and nothing
 else, and a test inside `fs/src/pyrofs/tests.rs` has exactly the access an
-integration binary had — plus the private items, which an integration binary
+integration binary had, plus the private items, which an integration binary
 could not reach and which are usually where the interesting arithmetic is.
 
 ### A crate with no tests fails the gate
@@ -40,7 +39,7 @@ could not reach and which are usually where the interesting arithmetic is.
 [`scripts/check-crate-tests.sh`](../../scripts/check-crate-tests.sh) refuses a
 crate above sixty lines of source with no tests, unless its row in
 [`scripts/crate-tests-baseline.txt`](../../scripts/crate-tests-baseline.txt)
-carries the reason it cannot have one — which is a sentence a reviewer can
+carries the reason it cannot have one, which is a sentence a reviewer can
 disagree with, not a silence.
 
 The same gate refuses a crate whose count **falls**.  Deleting a test is
@@ -89,8 +88,8 @@ building the trait for: a driver tested only by booting tells you that it failed
 and not which of forty things was wrong.
 
 **A fake is not a mock.**  The `FakeDevice` in `drivers/virtio/block/src/device.rs`
-does what a device does — it reads the descriptor chain the driver published and
-writes the data — rather than recording that it was called.  A mock that asserts
+does what a device does, it reads the descriptor chain the driver published and
+writes the data, rather than recording that it was called.  A mock that asserts
 a call sequence tests the implementation; a fake that behaves like the thing
 tests the contract.
 
@@ -117,7 +116,7 @@ A test that cannot fail is worse than no test, because it is counted.
 
 - **Break the code and watch the test fail.**  Every gate in this tree that
   matters has been mutation-tested: flip a constant, delete an assertion, make
-  the expected line impossible — and confirm the gate goes red.
+  the expected line impossible, and confirm the gate goes red.
 - **Test the property, not the implementation.**  A test that asserts the
   sequence of calls passes on an implementation that is wrong in the same way.
 - **An assertion about a value the build chose is a prefix match.**  The boot's
@@ -198,7 +197,7 @@ have passed one.
 - [ ] Boundary, rejection and error cases are covered, not just the happy path.
 - [ ] A test that installs a global removes it, or holds a lock if two tests
       share one.
-- [ ] No test passes vacuously — assert that the fixture produced the intended
+- [ ] No test passes vacuously, assert that the fixture produced the intended
       condition.
 - [ ] `cargo test --workspace` is green.
 - [ ] For a behaviour a host cannot reach, the boot gate covers it.
@@ -207,6 +206,6 @@ have passed one.
 
 ## Related documents
 
-- [`docs/fmts/code-style.md`](code-style.md) — the global install pattern
-- [`docs/contributing.md`](../contributing.md) — the gate and what a change must carry
-- [`docs/migration.md`](../migration.md) — what has a test and what has not moved in yet
+- [`docs/fmts/code-style.md`](code-style.md), the global install pattern
+- [`docs/contributing.md`](../contributing.md), the gate and what a change must carry
+- [`docs/migration.md`](../migration.md), what has a test and what has not moved in yet

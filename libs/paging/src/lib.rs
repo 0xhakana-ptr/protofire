@@ -8,7 +8,7 @@
 //! Two crates below the machine need the same thing and may not depend on each
 //! other: `arch` encodes an entry and installs a table, and `memory` hands out
 //! the frames a table is built in.  Keeping the table here means neither
-//! reaches across — and `arch` sits at layer 3 while `memory` is at 4, so the
+//! reaches across, and `arch` sits at layer 3 while `memory` is at 4, so the
 //! edge between them would be upward, which the layering gate refuses.
 //!
 //! The crate names nothing: not a machine, not a frame allocator, not a lock.

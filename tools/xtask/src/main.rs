@@ -9,7 +9,7 @@
 //! same shape: build the image, start QEMU, capture the serial log, grep for a
 //! line.  The shape is fine; the medium is not.  An assertion written as a
 //! `grep` is a string in a shell, and the only way to know whether it can fail
-//! is to break the kernel and run a boot — so the gates accumulate as copies of
+//! is to break the kernel and run a boot, so the gates accumulate as copies of
 //! each other, and the logic that decides pass from fail is the part nobody
 //! tests.
 //!
@@ -17,7 +17,7 @@
 //! line it wants and returns what is wrong with them; a unit test calls it with
 //! a log that does not contain the line, and the failure path is exercised
 //! without an emulator.  The QEMU invocation stays, because that is genuinely
-//! an external process — but it is one implementation, spelled once, and every
+//! an external process, but it is one implementation, spelled once, and every
 //! check is a short argument list over it.
 //!
 //! ## What does not live here
@@ -44,8 +44,8 @@ use clap::Parser;
 /// implementation in a `cfg(target_arch)` table, so a triple that no crate has
 /// an implementation for fails to build rather than picking one silently.
 ///
-/// The accepted spellings are the ones the target triples use — `x86_64`, not
-/// `x8664` — because a caller reads them from `rustc --print target-list` and
+/// The accepted spellings are the ones the target triples use, `x86_64`, not
+/// `x8664`, because a caller reads them from `rustc --print target-list` and
 /// from every other command in this tree.  An alias that disagreed with the
 /// thing it names is a papercut the previous tree's `Makefile` had in the other
 /// direction (`run-x8664` beside `x86_64-unknown-none`).
@@ -103,8 +103,8 @@ impl Machine {
                 // `disable-legacy=on` asks for the modern interface only.
                 //
                 // The default is a *transitional* device, which offers both a
-                // legacy and a modern interface and — this is the part that
-                // costs a boot — a capability list whose virtio structures a
+                // legacy and a modern interface and, this is the part that
+                // costs a boot, a capability list whose virtio structures a
                 // modern-only parser does not read the way it expects.  This
                 // tree implements the modern transport, so it asks for the
                 // device that has only that.  On x86_64 the same flag is
@@ -130,8 +130,8 @@ impl Machine {
                 // `disable-legacy=on` asks for the modern interface only.
                 //
                 // The default is a *transitional* device, which offers both a
-                // legacy and a modern interface and — this is the part that
-                // costs a boot — a capability list whose virtio structures a
+                // legacy and a modern interface and, this is the part that
+                // costs a boot, a capability list whose virtio structures a
                 // modern-only parser does not read the way it expects.  This
                 // tree implements the modern transport, so it asks for the
                 // device that has only that.  On x86_64 the same flag is
@@ -144,8 +144,8 @@ impl Machine {
             // tree describes; the disk rides the PCIe bus, which is the same
             // `virtio-blk-pci` the other two machines are given and the same
             // modern-only interface request.  `-smp 2` because the boot starts
-            // the machine's second hart — the tree lists what the firmware
-            // cold-booted and asks the firmware for the rest — and a gate that
+            // the machine's second hart, the tree lists what the firmware
+            // cold-booted and asks the firmware for the rest, and a gate that
             // booted one hart would never exercise the start.
             Self::Riscv64 => vec![
                 "-machine".to_string(),
@@ -187,7 +187,7 @@ impl Machine {
     ///
     /// The fourth is the heap's own bounds.  It is here rather than treated as
     /// a log line because reaching it means `bounds()` ran, which is what makes
-    /// the allocator lay out its free lists — a boot that printed the first
+    /// the allocator lay out its free lists, a boot that printed the first
     /// line and stopped before the second has a loader but no heap.  The
     /// address itself is not asserted: it moves with the image, and the gate
     /// is that the line is there, not where it points.
@@ -205,14 +205,14 @@ impl Machine {
     ///
     /// The fifth is the disc's file read back.  The disc is the one filesystem
     /// the boot cannot have written, so bytes coming out of it came from the
-    /// image — which is why it is the line that proves the namespace rather
+    /// image, which is why it is the line that proves the namespace rather
     /// than the mounts.
     ///
     /// The fifth names where the block device came from.  The boot falls back
     /// to its in-memory image when the bus has no disk, so "the filesystem
-    /// mounted" alone would pass on a machine where the driver never ran —
-    /// `virtio-blk on pci` is the line that says it did.
-    /// Lines the log has to contain more than once, and how many.
+    /// mounted" alone would pass on a machine where the driver never ran, ///
+    /// `virtio-blk on pci` is the line that says it did. Lines the log has to
+    /// contain more than once, and how many.
     ///
     /// A separate list from [`Machine::required_lines`] because it answers a
     /// different question: that one asks "did the boot reach this step", and
@@ -254,7 +254,7 @@ impl Machine {
                 ("protofire: mac policy enabled, ", false),
                 // The frame pool, and the allocator exercised rather than
                 // described.  The count of tables taken from frames is zero on
-                // this machine — its spare tables are enough — so the check is
+                // this machine, its spare tables are enough, so the check is
                 // what stands in for a branch that has never run.
                 // The whole line, because its tail is the outcome.
                 //
@@ -299,7 +299,7 @@ impl Machine {
                 // "Interrupts on" is a flag; a boot that printed it and never
                 // took an interrupt has said nothing.  This line means the
                 // controller delivered a vector, the gate and the stub ran, and
-                // the `iretq` returned — and it can fail: with the raise
+                // the `iretq` returned, and it can fail: with the raise
                 // disabled the boot prints "raised but not delivered" instead.
                 //
                 // The vector is the machine's, not a constant: `arch`'s
@@ -333,15 +333,15 @@ impl Machine {
                 // The fork's two answers, checked as a pair on one line: the
                 // parent (pid 1) exits with its child's pid 4, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
-                // their statuses are whatever their last call left behind —
-                // reported, and deliberately not asserted.
-                // Sleeping, and the wake that ended it.
+                // their statuses are whatever their last call left behind, //
+                // reported, and deliberately not asserted. Sleeping, and the
+                // wake that ended it.
                 //
                 // Two lines, because they are two facts: a program asked for a
                 // deadline, and one was woken by the timer.  A boot that slept
                 // and never woke prints the first and not the second, and the
-                // program's second "says hello" — which is what the wake
-                // produced — is what the exit line counts.
+                // program's second "says hello", which is what the wake
+                // produced, is what the exit line counts.
                 ("protofire: a program sleeps until counter ", false),
                 ("protofire: a program woke, ", false),
                 // And the timer moved the CPU between them.
@@ -357,7 +357,7 @@ impl Machine {
             // in-memory image and the `block device from` line names that.
             //
             // The interrupt line is required here for the same reason it is
-            // required on x86_64 — but on this machine it is a stronger claim.
+            // required on x86_64, but on this machine it is a stronger claim.
             // `install_interrupt_table` raises a supervisor call after writing
             // `VBAR_EL1` and answers `true` only if it arrived at the entry it
             // should have and returned, so the line means the save/restore
@@ -365,11 +365,12 @@ impl Machine {
             // that reported `false` here printed that instead, and the gate
             // refused it: this is the line that would have caught the boot that
             // stopped after the heap.
-            Self::Aarch64 => &[
+            Self::Aarch64 => {
+                &[
                 // A program at EL0, and its calls served.
                 //
                 // `program mapped 1` means a frame of machine code was mapped
-                // `user` — without that bit the `eret` into EL0 faults on its
+                // `user`, without that bit the `eret` into EL0 faults on its
                 // first fetch.  `hello from ring 3` is the program's `Write`
                 // reaching the console through the trap path.
                 ("protofire: entering ring 3", true),
@@ -404,8 +405,7 @@ impl Machine {
                 // The fork's two answers, checked as a pair on one line: the
                 // parent (pid 1) exits with its child's pid 4, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
-                // their statuses are whatever their last call left behind —
-                // reported, and deliberately not asserted.
+                // their statuses are whatever their last call left behind, // reported, and deliberately not asserted.
                 // The policy, asked twice through the real handler.
                 //
                 // A rule the boot installs allows one label and not another,
@@ -416,12 +416,12 @@ impl Machine {
                 ("protofire: mac policy enabled, ", false),
                 // The frame pool, and the allocator exercised rather than
                 // described.  The count of tables taken from frames is zero on
-                // this machine — its spare tables are enough — so the check is
+                // this machine, its spare tables are enough, so the check is
                 // what stands in for a branch that has never run.
                 // A program at EL0, and its calls served.
                 //
                 // `program mapped 1` means a frame of machine code was mapped
-                // `user` — without that bit the `eret` into EL0 faults on its
+                // `user`, without that bit the `eret` into EL0 faults on its
                 // first fetch.  `hello from ring 3` is the program's `Write`
                 // reaching the console through the trap path.
                 ("protofire: entering ring 3", true),
@@ -456,8 +456,7 @@ impl Machine {
                 // The fork's two answers, checked as a pair on one line: the
                 // parent (pid 1) exits with its child's pid 4, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
-                // their statuses are whatever their last call left behind —
-                // reported, and deliberately not asserted.
+                // their statuses are whatever their last call left behind, // reported, and deliberately not asserted.
                 // The whole line, because its tail is the outcome.
                 //
                 // A prefix would accept `pool check FAILED`: the numbers before
@@ -487,7 +486,7 @@ impl Machine {
                 // took an interrupt has said nothing about whether the machine
                 // can.  This line means a controller delivered a line, the
                 // vector fired, the handler ran and the interrupt was finished
-                // — and the check behind it can fail: with the raise disabled
+                //, and the check behind it can fail: with the raise disabled
                 // the boot prints "raised but not delivered" instead.
                 ("protofire: interrupt delivered to its handler", true),
                 ("protofire: heap at ", false),
@@ -512,14 +511,15 @@ impl Machine {
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,
                 ),
-            ],
+            ]
+            }
             // The OpenSBI machine, at the same milestones as the other two:
             // the tree parsed, the kernel's own table installed, the frame
             // pool exercised, the interrupt path proven by a line the machine
             // raised itself, a timer the firmware owns the deadline of, and
-            // three programs at U-mode — one asleep, one blocked on a pipe,
+            // three programs at U-mode, one asleep, one blocked on a pipe,
             // one writing to it.  The pool's count is exact for the same
-            // reason aarch64's is — the numbers are fixed by the machine's
+            // reason aarch64's is, the numbers are fixed by the machine's
             // memory and the linker's span, so a shape-check would accept a
             // `pool check FAILED` tail.
             Self::Riscv64 => &[
@@ -599,11 +599,11 @@ impl Machine {
                 // The fork's two answers, checked as a pair on one line: the
                 // parent (pid 1) exits with its child's pid 4, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
-                // their statuses are whatever their last call left behind —
-                // reported, and deliberately not asserted.
-                // Sleeping, and the wake that ended it: the deadline is a
-                // firmware call on this machine, and a boot that slept and
-                // never woke prints the sleep line and not the wake.
+                // their statuses are whatever their last call left behind, //
+                // reported, and deliberately not asserted. Sleeping, and the
+                // wake that ended it: the deadline is a firmware call on this
+                // machine, and a boot that slept and never woke prints the
+                // sleep line and not the wake.
                 ("protofire: a program sleeps until counter ", false),
                 ("protofire: a program woke, ", false),
                 ("protofire: the timer preempted, ", false),
@@ -716,7 +716,7 @@ fn run(machine: Machine, profile: &str, timeout: u64, log: Option<&Path>) -> Res
 
     // The disk the machine boots with.  A file rather than a constant buffer:
     // the driver writes to it, and QEMU refuses a `raw` drive over a file that
-    // does not exist unless it is told to create one — so the file is created
+    // does not exist unless it is told to create one, so the file is created
     // here, sized to what a boot's writes can reach.
     let disk = std::env::temp_dir().join(format!(
         "protofire-{}-{}.disk",
@@ -766,7 +766,7 @@ fn run(machine: Machine, profile: &str, timeout: u64, log: Option<&Path>) -> Res
         .with_context(|| format!("starting {}", machine.qemu()))?;
 
     // Sleep in small steps rather than one long one, so a machine that exits
-    // early — a crash, a bad image — is noticed without waiting the whole
+    // early, a crash, a bad image, is noticed without waiting the whole
     // budget.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout);
     loop {
@@ -888,9 +888,9 @@ fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()> {
 ///
 /// The comparison is against whole lines with trailing carriage returns
 /// removed.  The serial writer emits `\r\n` because the reader is a terminal,
-/// and a check that required the `\r` would fail the moment the sink changed —
-/// the byte is not what the gate is about.  Whole-line equality rather than a
-/// substring, on the other hand, is: `<expected>` inside a longer line is a
+/// and a check that required the `\r` would fail the moment the sink changed,
+/// /// the byte is not what the gate is about.  Whole-line equality rather than
+/// a substring, on the other hand, is: `<expected>` inside a longer line is a
 /// different line, and a log that printed `garbage <expected>` has not printed
 /// `<expected>`.
 fn expect_line(log: &str, expected: &str) -> std::result::Result<(), String> {
@@ -913,7 +913,7 @@ fn expect_line(log: &str, expected: &str) -> std::result::Result<(), String> {
 /// Whether a serial log has a line starting with `prefix`.
 ///
 /// The counterpart to [`expect_line`] for lines whose tail is a value the build
-/// chose — an address moves with the image, and asserting one would make the
+/// chose, an address moves with the image, and asserting one would make the
 /// gate fail for a correct kernel.  The prefix is what names the fact; the tail
 /// is what the log reports about it.
 fn expect_line_prefix(log: &str, prefix: &str) -> std::result::Result<(), String> {

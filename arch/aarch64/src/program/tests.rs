@@ -9,7 +9,7 @@
 /// The syscall numbers a program's words ask for, in order.
 ///
 /// Every call is `movz x8, <number>` followed immediately by `svc #0`, so the
-/// pair names it — a scan for the register write rather than a table of indices
+/// pair names it, a scan for the register write rather than a table of indices
 /// a reader would have to count.
 #[cfg(test)]
 fn call_numbers(words: &[u32]) -> alloc::vec::Vec<usize> {

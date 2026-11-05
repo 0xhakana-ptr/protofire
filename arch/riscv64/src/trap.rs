@@ -7,14 +7,14 @@
 //! `entry.S`'s `trap_entry` builds [`ExceptionFrame`] on the kernel stack
 //! before calling `riscv64_trap_dispatch`, and the two files agree on every
 //! offset because the offsets are written down in both.  That is a fact no
-//! compiler checks — a `repr(C)` struct and a run of `sd`s are two
-//! descriptions of one layout — so the offsets are asserted here against
+//! compiler checks, a `repr(C)` struct and a run of `sd`s are two
+//! descriptions of one layout, so the offsets are asserted here against
 //! `offset_of!` instead of being trusted.
 //!
 //! ## The machine does not save the FPU, and neither does this frame
 //!
 //! `sstatus.FS` is left off from the entry onward, so a float instruction
-//! faults rather than silently corrupting state — the same answer x86_64's
+//! faults rather than silently corrupting state, the same answer x86_64's
 //! frame gives for SSE.  aarch64's frame saves its vector registers because
 //! that machine's compiler provably emits them for `memcpy`; this one's does
 //! not, and a frame that saved registers nothing in this tree uses would be
@@ -24,7 +24,7 @@
 //!
 //! `stvec` names a single address, and the cause read there is the whole of
 //! what arrived: bit 63 says interrupt against exception, and the code says
-//! which.  There is no vector table to index and no group to decode — what
+//! which.  There is no vector table to index and no group to decode, what
 //! x86_64's 256 gates and aarch64's sixteen entries pre-decide, this machine
 //! asks.
 //!
@@ -41,7 +41,7 @@ use crate::stvec::Cause;
 /// `sstatus` bit 5: interrupts are enabled on return from `sret`.
 ///
 /// A program is entered with it set, so the first trap back sets `SPIE` to
-/// what `SIE` was and the handler runs masked — the same shape x86_64's
+/// what `SIE` was and the handler runs masked, the same shape x86_64's
 /// interrupt gate gives.
 pub const SSTATUS_SPIE: u64 = 1 << 5;
 /// `sstatus` bit 8: the privilege `sret` returns to.  Set is S-mode, clear is
@@ -49,7 +49,7 @@ pub const SSTATUS_SPIE: u64 = 1 << 5;
 pub const SSTATUS_SPP: u64 = 1 << 8;
 /// `sstatus` bit 18: the supervisor may reach a page whose `U` bit is set.
 ///
-/// RISC-V is the reverse of x86_64 here — the kernel may **not** touch user
+/// RISC-V is the reverse of x86_64 here, the kernel may **not** touch user
 /// pages unless this bit says so, where x86_64 may unless `SMAP` was switched
 /// on.  The entry sets it once, and it is part of a program's initial state so
 /// the first `sret` does not clear it out from under the pipe handlers.
@@ -77,7 +77,7 @@ pub const EXTERNAL_INTERRUPT: usize = 9;
 /// machine saved and a handler reads them; nothing here has an invariant a
 /// setter would protect.
 ///
-/// `registers[i]` is `x[i]`, with `x0` stored as the zero it always reads —
+/// `registers[i]` is `x[i]`, with `x0` stored as the zero it always reads, ///
 /// the frame is one shape for all thirty-two, and an index that skipped `x0`
 /// would make every register's slot two opinions about where it lives.
 #[repr(C)]
@@ -87,12 +87,12 @@ pub struct ExceptionFrame {
     pub registers: [u64; 32],
     /// `sepc`: the instruction that was interrupted.
     ///
-    /// For a program's `ecall` this names the **call itself** — the machine
+    /// For a program's `ecall` this names the **call itself**, the machine
     /// does not advance past it the way aarch64's `ELR` moves past an `svc`.
     /// The advance is this module's job, and forgetting it is a program that
     /// re-executes every call forever.
     pub sepc: u64,
-    /// `sstatus`: the state to return to — the privilege, the masks, the
+    /// `sstatus`: the state to return to, the privilege, the masks, the
     /// float state.
     pub sstatus: u64,
     /// `scause`: what the trap was, flag and code together.
@@ -113,9 +113,9 @@ pub struct CallFrame {
     pub number: usize,
     /// The six arguments from `a0`..`a5`.
     pub arguments: [usize; 6],
-    /// The instruction after the `ecall`, which is where the program resumes —
-    /// the dispatcher advanced `sepc` before the handler saw this frame, so a
-    /// handler that parks it parks a resume past the call.
+    /// The instruction after the `ecall`, which is where the program resumes,
+    /// /// the dispatcher advanced `sepc` before the handler saw this frame, so
+    /// a handler that parks it parks a resume past the call.
     pub resume: usize,
 }
 
@@ -130,9 +130,9 @@ pub enum CallOutcome {
     /// ## Why this carries no value
     ///
     /// A scheduler that answers "resume *this* context" would be answering
-    /// about a dead one.  So the handler does the switch itself — writing the
+    /// about a dead one.  So the handler does the switch itself, writing the
     /// next context into the frame and, if the next program lives somewhere
-    /// else, writing `satp` — and answers only that this program is done.  The
+    /// else, writing `satp`, and answers only that this program is done.  The
     /// trap path then returns through the same epilogue as a normal call,
     /// which is what keeps one restore path rather than two.
     Exit,
@@ -155,11 +155,11 @@ const _: () = assert!(core::mem::align_of::<ExceptionFrame>() == 8);
 pub(crate) const REGISTER_A0: usize = 10;
 /// `a1`: the second argument, which `Write` prints as the program's number.
 pub(crate) const REGISTER_A1: usize = 11;
-/// `a7`: the register the call's number travels in — this machine's choice,
+/// `a7`: the register the call's number travels in, this machine's choice,
 /// where aarch64 uses `x8` and x86_64 the gate's own vector.
 pub(crate) const REGISTER_A7: usize = 17;
 
-/// `a6`, which no call in this tree writes — used by a program to keep a value
+/// `a6`, which no call in this tree writes, used by a program to keep a value
 /// across a call that would overwrite `a0`.
 pub(crate) const REGISTER_A6: usize = 16;
 
@@ -231,7 +231,7 @@ fn sink() -> Option<Sink> {
 ///
 /// Separate from the sink because the two answer different questions.  The
 /// sink says whether the line was claimed; this decides whether the CPU moves
-/// to another task, and it is called only for a claimed line — an interrupt
+/// to another task, and it is called only for a claimed line, an interrupt
 /// nobody handled is not a reason to switch programs.
 #[cfg(target_os = "none")]
 pub type PreemptSink = fn(&mut ExceptionFrame);
@@ -260,9 +260,9 @@ fn preempt_sink() -> Option<PreemptSink> {
 /// The function a supervisor call is handed to.
 ///
 /// It takes the frame itself, not a copy of the few fields a call names,
-/// because an `Exit` has to replace the whole context with another program's —
-/// every register, `sepc` and `sstatus`.  A sink that received only the number
-/// and the arguments could answer a call and could not switch tasks.
+/// because an `Exit` has to replace the whole context with another program's,
+/// /// every register, `sepc` and `sstatus`.  A sink that received only the
+/// number and the arguments could answer a call and could not switch tasks.
 #[cfg(target_os = "none")]
 pub type CallSink = fn(CallFrame, &mut ExceptionFrame) -> CallOutcome;
 
@@ -315,8 +315,8 @@ fn installed_table() -> usize {
 /// Install the trap vector, and answer whether the machine took the write.
 ///
 /// There is no self-test `ecall` here, and the absence is not an omission: an
-/// `ecall` from S-mode is the **firmware's** door — the same instruction that
-/// arms the timer — and OpenSBI owns it.  A supervisor call raised as a probe
+/// `ecall` from S-mode is the **firmware's** door, the same instruction that
+/// arms the timer, and OpenSBI owns it.  A supervisor call raised as a probe
 /// would be a request to another program's handler, not a trap into this one.
 /// The proof the path works comes from the line this machine can raise
 /// itself, the software interrupt, which the boot raises the moment this
@@ -373,11 +373,11 @@ pub unsafe fn clear_software_pending() {
 ///
 /// ## Why `sepc` is advanced before the handler runs, not after it answers
 ///
-/// The machine names the `ecall` itself, not the instruction after it — the
+/// The machine names the `ecall` itself, not the instruction after it, the
 /// opposite of aarch64, whose `ELR` the hardware has already moved past the
 /// `svc` before any handler exists.  And a handler may **park the frame**: a
 /// sleep saves it with a deadline, a blocked read saves it for a writer.  What
-/// a wake later resumes is whatever the frame held when it was parked — so the
+/// a wake later resumes is whatever the frame held when it was parked, so the
 /// advance has to be inside the frame *before* the handler sees it.  Placed
 /// after the answer, it repairs only the call that returned immediately: the
 /// sleeper resumed at the call it had just made, slept again, and did so
@@ -386,8 +386,8 @@ pub unsafe fn clear_software_pending() {
 #[cfg(target_os = "none")]
 fn serve_user_call(frame: &mut ExceptionFrame) {
     // The one instruction the machine did not advance: the `ecall` is four
-    // bytes, and everything from here on — the handler's saved frames, the
-    // answer's resume — names the instruction after it.
+    // bytes, and everything from here on, the handler's saved frames, the
+    // answer's resume, names the instruction after it.
     frame.sepc = frame.sepc.wrapping_add(4);
 
     let call = CallFrame {
@@ -426,7 +426,7 @@ fn serve_user_call(frame: &mut ExceptionFrame) {
 /// its pending bit; `complete` with the same number is what lets the source be
 /// delivered again.  A handler that returned after only the claim would leave a
 /// device able to raise one interrupt and then silence for the rest of the boot
-/// — the same failure a GIC without its `EOIR` produces, and just as invisible
+///, the same failure a GIC without its `EOIR` produces, and just as invisible
 /// until the device's second event is the one that mattered.
 ///
 /// A claim of nothing is not a failure: an interrupt can be withdrawn between
@@ -506,7 +506,7 @@ static CONTROLLER: cell::SyncUnsafeCell<Option<crate::plic::Plic>> =
 ///
 /// `extern "C"` because `entry.S` calls it, with a pointer to the frame that
 /// file built on the kernel stack.  The pointer must name a live
-/// [`ExceptionFrame`], which is the assembly's contract — and it does not
+/// [`ExceptionFrame`], which is the assembly's contract, and it does not
 /// unwind: a trap has no context to unwind into.
 #[cfg(target_os = "none")]
 #[unsafe(no_mangle)]
@@ -521,7 +521,7 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     //
     // The kernel's sink is the boot CPU's: it wakes sleepers and hands frames
     // to a scheduler that is one structure with no lock.  A second CPU that
-    // called it would write state the boot CPU owns — and the first thing the
+    // called it would write state the boot CPU owns, and the first thing the
     // log showed was a fault inside the device tree, because the other CPU had
     // walked into the console sink's path.  What a second CPU does with a trap
     // is count it, silence any source it raised, and return; its clock is
@@ -538,7 +538,7 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     if cause.interrupt {
         // An external source is claimed from the controller, handed to the
         // sink by its number, and finished.  Without the claim the trap has no
-        // identity — the PLIC answers one on request and a handler needs it —
+        // identity, the PLIC answers one on request and a handler needs it, //
         // and without the finish the source is never delivered a second time.
         if cause.code == EXTERNAL_INTERRUPT {
             return finish_external(frame);
@@ -562,7 +562,7 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
 
         // The preemption point, after the source is silenced: whether the CPU
         // now goes to another program is the scheduler's decision, and the
-        // frame is the machine's — this interrupt interrupted whatever the
+        // frame is the machine's, this interrupt interrupted whatever the
         // program was doing, so its saved state is the whole context.
         if handled && let Some(preempt) = preempt_sink() {
             preempt(frame);
@@ -638,7 +638,7 @@ pub fn starting_context(entry: usize, stack_top: usize) -> Context {
 }
 
 /// `x2`, which is both the ABI's stack pointer and the register the trap path
-/// restores last — the frame's `sp` slot is the one the assembly's return path
+/// restores last, the frame's `sp` slot is the one the assembly's return path
 /// treats specially.
 const STACK_POINTER_REGISTER: usize = 2;
 
@@ -670,7 +670,7 @@ pub fn set_return_value(context: &mut Context, value: usize) {
 /// Whether a context is a program's rather than the kernel's.
 ///
 /// `sstatus`'s `SPP` bit names the privilege an `sret` returns to, and clear
-/// is U-mode — the only state a program runs in.  Set is S-mode, which is
+/// is U-mode, the only state a program runs in.  Set is S-mode, which is
 /// what the boot's own traps carry.
 pub fn is_user_context(context: &Context) -> bool {
     context.sstatus & SSTATUS_SPP == 0
@@ -685,7 +685,7 @@ pub fn return_state(context: &Context) -> u64 {
 ///
 /// That is the whole of a task switch: the epilogue restores every register,
 /// `sepc` and `sstatus` from this frame, so replacing it replaces what the
-/// machine does next — including the privilege it returns to.
+/// machine does next, including the privilege it returns to.
 #[cfg(target_os = "none")]
 pub fn install_context(frame: &mut ExceptionFrame, context: &Context) {
     *frame = *context;

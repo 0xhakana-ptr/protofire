@@ -35,7 +35,7 @@ pub fn hkdf_sha256_expand(prk: &[u8; 32], info: &[u8], output_len: usize) -> Vec
         input.push(i as u8 + 1);
         let t = hmac_sha256(prk, &input);
         okm.extend_from_slice(&t);
-        // t_prev points into okm — safe because Vec never moves elements
+        // t_prev points into okm, safe because Vec never moves elements
         // after they are written, and we only append.
         let start = i * 32;
         t_prev = &okm[start..start + 32];

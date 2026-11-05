@@ -76,14 +76,14 @@ fn every_slot_names_a_distinct_interrupt() {
 }
 
 /// The payload is the slot, which is what a log shows and what a device
-/// writes — but the frame acts on the address, so a wrong payload still
+/// writes, but the frame acts on the address, so a wrong payload still
 /// raises the right interrupt.
 #[test]
 fn the_payload_does_not_select_the_interrupt() {
     let frame = Frame::from_typer(BASE, 0x0040_0040);
     assert_eq!(frame.data(0), 0);
     assert_eq!(frame.data(5), 5);
-    // Two slots, two addresses, two interrupts — whatever the payload.
+    // Two slots, two addresses, two interrupts, whatever the payload.
     assert_ne!(frame.address(0), frame.address(1));
     assert_ne!(frame.interrupt(0), frame.interrupt(1));
 }

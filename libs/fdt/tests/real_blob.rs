@@ -3,7 +3,7 @@
 //! The tree `qemu-system-aarch64 -machine virt` actually hands over.
 //!
 //! `assets/qemu-virt.dtb` is the output of `qemu-system-aarch64 -machine virt
-//! -cpu max -m 512M,dumpdtb=...` — firmware's own bytes, not `dtc`'s rendering
+//! -cpu max -m 512M,dumpdtb=...`, firmware's own bytes, not `dtc`'s rendering
 //! of a source file.  The difference matters: a generator and a parser written
 //! from the same reading of a specification agree with each other, and a
 //! firmware blob is the only input that disagrees when that reading is wrong.
@@ -51,7 +51,7 @@ fn the_uart_address_comes_out_of_the_tree() {
 /// The PCIe host bridge, whose `reg` is the ECAM window.
 ///
 /// `0x40_1000_0000` is above four gigabytes, so decoding it needs the tree's
-/// two-cell address — a one-cell reading would give `0x1000_0000` and map the
+/// two-cell address, a one-cell reading would give `0x1000_0000` and map the
 /// wrong gigabyte.
 #[test]
 fn the_pcie_ecam_window_is_above_four_gigabytes() {

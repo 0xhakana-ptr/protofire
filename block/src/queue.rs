@@ -26,7 +26,7 @@
 //! - `submit` may refuse a run it cannot hold (`Busy`), rather than blocking or
 //!   dropping it.
 //! - `poll` answers for a ticket the device handed out, and answers an error
-//!   for one it did not — an unknown ticket is a caller's bug and a hang would
+//!   for one it did not, an unknown ticket is a caller's bug and a hang would
 //!   hide it.
 //! - A request accepted is eventually completed.  Nothing enforces this; what
 //!   makes it checkable is that a slot not freed is a slot the device cannot
@@ -38,7 +38,7 @@ use crate::block::BlockDevice;
 
 /// A read a device has accepted but not yet completed.
 ///
-/// The ticket is opaque — a device hands one back from
+/// The ticket is opaque, a device hands one back from
 /// [`QueuedBlockDevice::submit_read`] and the caller gives it to
 /// [`QueuedBlockDevice::poll`].  [`Ticket::DONE`] is the ticket a device
 /// returns when it completed the read in place, which is what a device of
@@ -109,8 +109,8 @@ pub trait QueuedBlockDevice: BlockDevice {
     ///
     /// `buffer.len()` is a whole number of blocks and the request covers them
     /// all: a run is one request, not one request per block.  A device that
-    /// queues **may refuse** a run it cannot hold — `InvalidArgument`, refused
-    /// rather than split behind the caller's back — so a caller that wants a
+    /// queues **may refuse** a run it cannot hold, `InvalidArgument`, refused
+    /// rather than split behind the caller's back, so a caller that wants a
     /// run has to be prepared to fall back.  The waiting call,
     /// [`BlockDevice::read_blocks`], takes any size and splits it into runs the
     /// device can take.

@@ -174,7 +174,7 @@ impl Fe256 {
         // The index arithmetic is the algorithm: `prod[i + j]` accumulates the
         // schoolbook product's columns, and an `enumerate()` iterator would
         // have to be re-indexed through a running offset to say the same thing
-        // — which is what the lint suggests and what this comment refuses.  The
+        //, which is what the lint suggests and what this comment refuses.  The
         // lint is right that both indices walk the array; it is wrong that the
         // walk is what the loop is about.
         #[allow(clippy::needless_range_loop)]
@@ -448,7 +448,7 @@ impl Fe256 {
         // The index arithmetic is the algorithm: `prod[i + j]` accumulates the
         // schoolbook product's columns, and an `enumerate()` iterator would
         // have to be re-indexed through a running offset to say the same thing
-        // — which is what the lint suggests and what this comment refuses.  The
+        //, which is what the lint suggests and what this comment refuses.  The
         // lint is right that both indices walk the array; it is wrong that the
         // walk is what the loop is about.
         #[allow(clippy::needless_range_loop)]

@@ -37,7 +37,7 @@ use abi::Result;
 /// kernel that accepted arbitrary bytes would have to decide what a name
 /// comparison means for two byte strings that no encoding agrees on.  The
 /// price is that a filesystem whose on-disk names are not UTF-8 has to convert
-/// them, and `String::from_utf8_lossy` is what PyroFS does — which is lossy,
+/// them, and `String::from_utf8_lossy` is what PyroFS does, which is lossy,
 /// and the comment at that call site says so.
 ///
 /// Disk data that is not valid UTF-8 must therefore be handled gracefully; how
@@ -202,7 +202,7 @@ pub trait FileSystem: Send + Sync {
 
 /// The read half of a filesystem that cannot be modified.
 ///
-/// A synthetic filesystem — `/proc`, `/service` — is a view over kernel state,
+/// A synthetic filesystem, `/proc`, `/service`, is a view over kernel state,
 /// not storage: it answers lookups and directory listings and refuses every
 /// mutation.  Writing those refusals out by hand in each implementation is how
 /// one of them eventually forgets one, so they are written here once.

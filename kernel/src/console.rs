@@ -6,7 +6,7 @@
 //! ## Why the allocator's sink lives here
 //!
 //! `allocator::diag::set_writer` takes a `fn(&str)`, and the function has to
-//! write the console and allocate nothing — it is called from inside a failed
+//! write the console and allocate nothing, it is called from inside a failed
 //! allocation.  That is a fact about the console, not about the allocator, and
 //! keeping it beside the lines that report the handshake means a reader looking
 //! for "what does this boot print at startup" finds one file.
@@ -15,7 +15,7 @@
 ///
 /// A free function rather than a closure because `set_writer` takes a `fn`, and
 /// because this is the one place the allocator's output and the machine's
-/// console are joined — naming it makes that join visible in a search.
+/// console are joined, naming it makes that join visible in a search.
 pub fn write_to_console(text: &str) {
     arch::serial::write_str(text);
     arch::serial::write_str("\n");
@@ -26,7 +26,7 @@ pub fn write_to_console(text: &str) {
 /// A device-tree machine puts a pointer in a register and the pointer may name
 /// anything: firmware that handed over something unauthoritative, a loader that
 /// cleared the register, a blob whose header disagrees with its bytes.  So the
-/// answer is a line rather than an assumption — and it is the line that says
+/// answer is a line rather than an assumption, and it is the line that says
 /// whether the console's address, the memory map and the boot's device windows
 /// came from a tree or from a fallback.
 pub fn report_handshake() {

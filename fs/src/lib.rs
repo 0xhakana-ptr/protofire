@@ -7,12 +7,12 @@
 //!
 //! `VNode` and `FileSystem` are the contract every filesystem in this tree is
 //! written against, and they are what `pipe`'s endpoints implement so that a
-//! pipe is a file.  Neither names a filesystem, a device or a scheduler — the
+//! pipe is a file.  Neither names a filesystem, a device or a scheduler, the
 //! first because it is the interface, the second because the trait's whole
 //! purpose is to be implemented by something that does.
 //!
-//! The types beside them — `Metadata`, `NodeKind`, `DirectoryEntry`,
-//! `XattrEntry` — are the vocabulary the contract is stated in.
+//! The types beside them, `Metadata`, `NodeKind`, `DirectoryEntry`,
+//! `XattrEntry`, are the vocabulary the contract is stated in.
 //!
 //! ## What is not here yet
 //!
@@ -48,7 +48,7 @@ pub mod vnode;
 // Everything the type module publishes, because the contract's vocabulary is
 // its whole surface and a reader of `VNode` needs all of it.  Enumerating the
 // names here would be a second list to keep in step with the first, and the
-// first version of this file left `SecurityDescriptor` out of it — which the
+// first version of this file left `SecurityDescriptor` out of it, which the
 // tests caught, and which is the reason the re-export is a glob.
 pub use filesystem::*;
 pub use mount::MountInfo;

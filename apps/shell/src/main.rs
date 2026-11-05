@@ -5,7 +5,7 @@
 //! ## What it is
 //!
 //! A prompt, a line reader, and the commands the previous tree's `src/shell`
-//! carried — but a program, not a kernel module.  The distinction matters for
+//! carried, but a program, not a kernel module.  The distinction matters for
 //! what a command can do: a shell in ring 3 can only do what its user could do
 //! by writing the same syscalls, so "the shell can do it" and "the user can do
 //! it" become the same sentence.  A shell inside the kernel makes every

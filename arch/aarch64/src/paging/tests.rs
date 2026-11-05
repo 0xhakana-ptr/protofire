@@ -105,7 +105,7 @@ fn the_translation_control_says_what_the_table_is() {
 /// `PARange` and `IPS` number the same sizes the same way, so the
 /// translation is a copy.
 ///
-/// The test this replaced asserted the opposite — it claimed 40 bits was
+/// The test this replaced asserted the opposite, it claimed 40 bits was
 /// `0b010` as `PARange` and `0b001` as `IPS`, and that a kernel copying one
 /// into the other would be wrong.  Copying is exactly right; the test was
 /// encoding a belief rather than the architecture, and the boot proved it:
@@ -265,7 +265,7 @@ fn a_leaf_is_a_block_where_a_block_is_allowed() {
         "the fourth level's leaf is a 4 KiB page, not a block"
     );
     // A leaf at the root would be a block the root cannot hold, so the
-    // encoder writes a page descriptor — the one encoding that is at least
+    // encoder writes a page descriptor, the one encoding that is at least
     // not a block.  Nothing builds such a table: the kernel places leaves
     // at `Level::Leaf`.  This records what the function does rather than
     // what a caller should ask for.

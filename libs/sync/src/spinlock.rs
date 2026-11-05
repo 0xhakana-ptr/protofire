@@ -20,7 +20,7 @@ pub struct SpinLock<T> {
 // SAFETY: a `SpinLock<T>` is a mutex over its `T`: sending it moves the only
 // handle, and sharing it is what the lock is for, given `T: Send`.
 unsafe impl<T: Send> Send for SpinLock<T> {}
-// SAFETY: as the `Send` impl above — the lock serialises every access to the
+// SAFETY: as the `Send` impl above, the lock serialises every access to the
 // `UnsafeCell` inside, so `&SpinLock<T>` is safe to share.
 unsafe impl<T: Send> Sync for SpinLock<T> {}
 
@@ -51,7 +51,7 @@ impl<T> SpinLock<T> {
                 }
                 backoff = backoff.saturating_mul(2).min(1024);
             }
-            // Lock just became free — reset backoff for fairness.
+            // Lock just became free, reset backoff for fairness.
             backoff = 1;
         }
 
@@ -72,7 +72,7 @@ impl<T> SpinLock<T> {
     /// - **A holder here is preemptible.**  If another thread acquires the same
     ///   lock with [`lock`](Self::lock), that thread spins with interrupts
     ///   masked.  On a single CPU the preempted holder then needs the timer to
-    ///   be rescheduled, and the timer needs interrupts — so neither side ever
+    ///   be rescheduled, and the timer needs interrupts, so neither side ever
     ///   moves again.  This is a permanent wedge, not a slow path.
     /// - **Masking interrupts here instead is not free either.**  Some callers
     ///   hold a lock across `memory::global_mut()`.  If another CPU holds the
@@ -93,9 +93,9 @@ impl<T> SpinLock<T> {
     /// the ordinary [`lock`](Self::lock).
     ///
     /// Prefer removing the reason over choosing a discipline.  Restructure the
-    /// caller to release this lock before touching the memory manager — the
+    /// caller to release this lock before touching the memory manager, the
     /// two-phase load in `user/program/launch_reference.rs` is the worked
-    /// example — and then [`lock`](Self::lock) is correct and the wedge above
+    /// example, and then [`lock`](Self::lock) is correct and the wedge above
     /// cannot happen at all.
     ///
     /// # Current status
@@ -108,7 +108,7 @@ impl<T> SpinLock<T> {
     /// that its critical section acquires the memory-manager lock, and on SMP
     /// hardware, not just under emulation.
     pub fn lock_without_irq_disable(&self) -> SpinLockGuard<'_, T> {
-        // Note: interrupts are NOT saved/disabled — the caller must ensure
+        // Note: interrupts are NOT saved/disabled, the caller must ensure
         // it is safe to receive interrupts while holding this lock.
         let saved = arch::interrupts::save_and_disable();
         arch::interrupts::restore(saved);
@@ -191,7 +191,7 @@ mod tests {
     /// This is the property the type exists for, and it is checked rather than
     /// assumed: a lock that never released would pass every compile and hang
     /// the first boot that took it twice.  The host build's interrupt
-    /// functions are no-ops, so this exercises the atomic half — which is the
+    /// functions are no-ops, so this exercises the atomic half, which is the
     /// half that is this crate's own.
     #[test]
     fn a_guard_excludes_and_releases() {

@@ -8,7 +8,7 @@
 //! The 8259 is masked by `pic::mask_all` before the kernel enables interrupts,
 //! and that is deliberate: q35 has an IOAPIC, so the legacy controller is a
 //! second source for the same lines.  What is left to drive a timer is the
-//! local APIC's own timer, which needs no IOAPIC routing at all — it is
+//! local APIC's own timer, which needs no IOAPIC routing at all, it is
 //! per-CPU, it raises a vector directly, and on a machine with one CPU it is
 //! the shortest path from "arm a countdown" to "take an interrupt".
 //!
@@ -18,7 +18,7 @@
 //! not architecturally fixed: on a PC the `IA32_APIC_BASE` MSR holds it, and
 //! firmware leaves it enabled at `0xFEE0_0000` with a bit saying so.  This
 //! module reads the MSR rather than assuming the address, and reports
-//! [`Apic::probe`]'s `None` when the bit is clear — the same shape every other
+//! [`Apic::probe`]'s `None` when the bit is clear, the same shape every other
 //! machine question here has.
 //!
 //! ## The timer's frequency, and why it is measured
@@ -45,7 +45,7 @@ pub const APIC_BASE_ENABLE: u64 = 1 << 11;
 ///
 /// The low twelve bits are flags and the high twelve are reserved, so a mask of
 /// `!0xFFF` would keep flags in the address and read a register at an address
-/// no machine has — the same defect the page-table address mask had.
+/// no machine has, the same defect the page-table address mask had.
 pub const APIC_BASE_MASK: u64 = ((1u64 << 52) - 1) & !0xFFF;
 
 /// Register offsets from the base.
@@ -68,8 +68,8 @@ pub mod register {
 
 /// The vector the local APIC's spurious interrupt arrives on.
 ///
-/// Every APIC has one and it must be enabled — bit 8 of the spurious-vector
-/// register — or the APIC delivers nothing at all.  `0xFF` is the conventional
+/// Every APIC has one and it must be enabled, bit 8 of the spurious-vector
+/// register, or the APIC delivers nothing at all.  `0xFF` is the conventional
 /// choice, and it is above the vectors this kernel assigns.
 pub const SPURIOUS_VECTOR: u8 = 0xFF;
 
@@ -87,7 +87,7 @@ const _: () = assert!(TIMER_VECTOR >= 32);
 /// The divide configuration's value for a divide by 16.
 ///
 /// The field is not a number: `0b0011` is 16, and the encodings are a table
-/// rather than arithmetic — `0b1011` is 1, not 11.  Dividing by 16 is the
+/// rather than arithmetic, `0b1011` is 1, not 11.  Dividing by 16 is the
 /// conventional choice: it keeps the counter's range large enough for a
 /// millisecond at a bus clock near a gigahertz and small enough that the count
 /// is a number a reader can sanity-check.
@@ -98,7 +98,7 @@ pub const DIVIDE_BY_16: u32 = 0b0011;
 /// 1.193182 MHz exactly: the PIT's crystal is a third of the NTSC colour
 /// burst's 3.579545 MHz, which is why the number is not round.  It is the
 /// calibration's only constant and the only thing this module assumes about the
-/// machine — and it is the one thing the PC architecture documents.
+/// machine, and it is the one thing the PC architecture documents.
 pub const PIT_FREQUENCY: u64 = 1_193_182;
 
 /// The PIT's channel 2 data port.
@@ -131,7 +131,7 @@ impl Apic {
     /// # Safety
     ///
     /// Reads an MSR.  The base address it answers must be mapped as device
-    /// memory before any register is touched — the boot's identity map covers
+    /// memory before any register is touched, the boot's identity map covers
     /// `0xFEE0_0000` only because that address is below four gigabytes and the
     /// kernel's table re-mapped it uncached.
     pub unsafe fn probe() -> Option<Apic> {
@@ -178,7 +178,7 @@ impl Apic {
     /// Bit 8 is the "this APIC is enabled" bit and it is not optional: an APIC
     /// with it clear delivers no interrupt at all, and a timer armed against
     /// one counts down in silence.  The low four bits of the field are the
-    /// vector and must be at least 16 — a spurious interrupt numbered below the
+    /// vector and must be at least 16, a spurious interrupt numbered below the
     /// exceptions is one the processor would treat as a fault.
     ///
     /// # Safety
@@ -202,7 +202,7 @@ impl Apic {
     ///
     /// The local APIC holds a line in service until this is written, and a
     /// handler that returned without it takes exactly one interrupt and then
-    /// appears to hang — the same failure aarch64's `EOIR` exists to prevent.
+    /// appears to hang, the same failure aarch64's `EOIR` exists to prevent.
     ///
     /// # Safety
     ///
@@ -230,8 +230,8 @@ impl Apic {
             // wrong twice over: bit 16 is left set by `disarm_timer`, so a
             // count loaded first starts a masked timer, and the LVTTL write
             // then masks the count it was meant to enable.  The boot's own
-            // report showed it — `timer control 65568`, which is `0x10020`,
-            // with bit 16 set — and the tick count was zero.
+            // report showed it, `timer control 65568`, which is `0x10020`,
+            // with bit 16 set, and the tick count was zero.
             //
             // Bit 17 is the mode: 0 is one-shot, 1 is periodic.  Periodic is
             // what a scheduler wants: it re-arms itself, so a handler that
@@ -288,7 +288,7 @@ impl Apic {
     ///
     /// The ICR's bit 12 is "delivery status", and it reads 1 while a send is in
     /// flight.  A second write before it clears is dropped, so this waits for
-    /// it — bounded, because a machine whose APIC does not answer should report
+    /// it, bounded, because a machine whose APIC does not answer should report
     /// `false` rather than hang the boot.
     ///
     /// # Safety
@@ -375,7 +375,7 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
 ///
 /// ## How
 ///
-/// Channel 2 is put into mode 0 — count down once, then stop — with a known
+/// Channel 2 is put into mode 0, count down once, then stop, with a known
 /// initial count.  The APIC's timer is started at its maximum count at the same
 /// moment.  When the PIT reaches zero (its output bit in port `0x61` goes
 /// high), the APIC's counter is read: the difference is how many APIC ticks
@@ -390,7 +390,7 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
 ///
 /// The measurement needs the timer running, and a timer left running would fire
 /// before the boot has a handler.  So it is disarmed here and armed again by
-/// whichever code wants a tick — which is the same discipline the generic timer
+/// whichever code wants a tick, which is the same discipline the generic timer
 /// follows on the other machine.
 ///
 /// # Safety
@@ -402,7 +402,7 @@ pub unsafe fn calibrate(apic: &Apic) -> Option<u64> {
     let pit_count = PIT_MAX_COUNT;
 
     // The gate's bits: bit 0 gates channel 2, bit 1 its speaker output.  They
-    // are cleared before the count is loaded — a counter that was already
+    // are cleared before the count is loaded, a counter that was already
     // counting would start from wherever it was.
     let gate = crate::port::inb(PIT_GATE);
     // SAFETY: as above; bit 0 low disables the gate and bit 1 low disables the
@@ -434,7 +434,7 @@ pub unsafe fn calibrate(apic: &Apic) -> Option<u64> {
     // Wait for the output bit (bit 5 of port 0x61) to go high: mode 0 sets it
     // when the count reaches zero.
     //
-    // The bound is not a timeout in the error sense — it exists so a machine
+    // The bound is not a timeout in the error sense, it exists so a machine
     // whose PIT does not answer returns `None` instead of hanging the boot.  A
     // million reads is generously more than 65536 PIT ticks.
     let mut spins = 0u32;
@@ -467,7 +467,7 @@ pub unsafe fn calibrate(apic: &Apic) -> Option<u64> {
 
     // The APIC's frequency: elapsed APIC ticks per `pit_count` PIT ticks, times
     // the PIT's frequency.  Dividing by the divide-by-16 factor is part of the
-    // definition — the counter counts at bus/16, so the bus clock is sixteen
+    // definition, the counter counts at bus/16, so the bus clock is sixteen
     // times what was measured per second.
     let per_second = elapsed * PIT_FREQUENCY / pit_count as u64;
     Some(per_second * 16)
@@ -481,7 +481,7 @@ pub unsafe fn calibrate(apic: &Apic) -> Option<u64> {
 /// deadline is a TSC reading, so converting a duration to a deadline needs the
 /// TSC's rate; a countdown is an APIC count, so arming the timer needs the
 /// APIC's.  One number cannot serve both, and the first version of this code
-/// used the APIC's for the TSC as well — which worked on this emulator because
+/// used the APIC's for the TSC as well, which worked on this emulator because
 /// a twenty-millisecond sleep has enough slack to absorb being sixteen times
 /// too short, and would not have worked on anything that asked for a small one.
 ///
@@ -555,7 +555,7 @@ pub unsafe fn read_tsc() -> u64 {
 /// How many APIC ticks are `microseconds` long, at `frequency`.
 ///
 /// At least one: a request shorter than a single tick would give zero, and a
-/// counter loaded with zero fires immediately — which reads as a timer that
+/// counter loaded with zero fires immediately, which reads as a timer that
 /// works and is actually a tight loop of interrupts.
 pub const fn ticks_for_microseconds(frequency: u64, microseconds: u64) -> u32 {
     // The multiply is guarded rather than wrapped: a wrapped count is a *short*
@@ -588,8 +588,8 @@ mod tests {
 
     /// The APIC's base mask keeps the flags out of the address.
     ///
-    /// The low twelve bits of `IA32_APIC_BASE` are flags — the enabled bit, the
-    /// BSP bit, and one reserved — so a mask of `!0xFFF` would keep them in the
+    /// The low twelve bits of `IA32_APIC_BASE` are flags, the enabled bit, the
+    /// BSP bit, and one reserved, so a mask of `!0xFFF` would keep them in the
     /// address and read a register at a misaligned address no machine has.
     #[test]
     fn the_apic_address_does_not_reach_the_flags() {
@@ -614,7 +614,7 @@ mod tests {
     /// A time slice converts to a count, and never to zero.
     ///
     /// A count of zero fires immediately, which looks like a working timer and
-    /// is a loop of interrupts — the same defect a zero-length time slice would
+    /// is a loop of interrupts, the same defect a zero-length time slice would
     /// be.
     #[test]
     fn a_request_shorter_than_one_tick_becomes_one_tick() {
@@ -632,14 +632,14 @@ mod tests {
     /// The vectors are above the processor's exceptions, and the two differ.
     ///
     /// A device's line numbered like a fault is a fault handler entered by a
-    /// device — the defect the 8259's reset vector base of 8 produced here,
+    /// device, the defect the 8259's reset vector base of 8 produced here,
     /// where a timer tick arrived as a double fault.
     ///
     /// These are `const` assertions and not a test, because they are relations
     /// between constants: `TIMER_VECTOR >= 32` is a fact about a literal, and a
     /// test that asserted it would run every time to check something the
     /// compiler had already decided.  The spurious vector is separately pinned
-    /// to `u8::MAX` — the APIC's convention is the highest vector, above every
+    /// to `u8::MAX`, the APIC's convention is the highest vector, above every
     /// one this kernel assigns, and a value in the middle would collide with a
     /// device's line.
     #[test]

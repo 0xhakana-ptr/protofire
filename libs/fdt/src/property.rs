@@ -5,7 +5,7 @@
 //! ## Why the bytes are borrowed and not copied
 //!
 //! A device tree is firmware's memory, mapped read-only and already in place.
-//! Copying a property would need an allocator — which a boot does not have when
+//! Copying a property would need an allocator, which a boot does not have when
 //! it first reads the tree, since the tree is what tells it how much memory
 //! there is.  So a [`Property`] is two slices into the blob, and its lifetime
 //! is the blob's.

@@ -20,7 +20,7 @@ use crate::config::DeviceAddress;
 /// A configuration space with one BAR, modelled the way a device behaves.
 ///
 /// Writing all ones returns the size mask, because that is the mechanism a
-/// probe is *defined* against — a fake that stored the write would answer
+/// probe is *defined* against, a fake that stored the write would answer
 /// `0xFFFF_FFFF` and call every BAR nonexistent.  A fake that only stored
 /// values would let a broken probe pass.
 struct FakeBar {
@@ -31,7 +31,7 @@ struct FakeBar {
     ///
     /// A real device clears the bits below its window size; the fake does
     /// the same, because a fake that merely stored the write would answer
-    /// `0xFFFF_FFFF` and call every BAR nonexistent — and a probe bug would
+    /// `0xFFFF_FFFF` and call every BAR nonexistent, and a probe bug would
     /// pass.
     mask: u32,
 }
@@ -78,7 +78,7 @@ impl FakeBar {
     /// state before anything has programmed it.  The type bits come from
     /// `base`, so `0b100` there makes it a 64-bit memory BAR.
     fn new(base: u32, size: u32) -> FakeBar {
-        // A size of zero is "no window", and its mask is all ones — which
+        // A size of zero is "no window", and its mask is all ones, which
         // is what a register with no BAR behind it answers, and what
         // `size` reports as `None`.  `saturating_sub` rather than `-` so
         // the test helper does not panic on the input it is given.

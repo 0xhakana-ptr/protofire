@@ -161,8 +161,8 @@ impl SecurityDescriptor {
     // Only the tests call this today: its callers are the filesystem
     // implementations, and none has moved into this crate yet.  The condition
     // that removes this attribute is the first implementation that applies an
-    // update from a real request — `setattr`, `chmod` or `chown` reaching it
-    // through `FileSystem` — because from that point on `cargo clippy` will see
+    // update from a real request, `setattr`, `chmod` or `chown` reaching it
+    // through `FileSystem`, because from that point on `cargo clippy` will see
     // a caller and the attribute becomes dead.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn apply_update(self, update: SecurityDescriptorUpdate) -> Result<Self> {
@@ -453,7 +453,7 @@ impl DirectoryEntry {
     }
 }
 
-/// An extended attribute (xattr) — a name/value pair attached to a file or
+/// An extended attribute (xattr), a name/value pair attached to a file or
 /// directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XattrEntry {
@@ -657,7 +657,7 @@ mod tests {
     ///
     /// `chmod` sends a mode and nothing else, `chown` a uid or a gid, and a
     /// descriptor that reset the fields an update left unset would silently
-    /// hand a file to uid 0 — the failure this method's `unwrap_or` exists to
+    /// hand a file to uid 0, the failure this method's `unwrap_or` exists to
     /// prevent, and one a compiler cannot see because every field is a `u32`.
     #[test]
     fn an_update_touches_only_what_it_names() {

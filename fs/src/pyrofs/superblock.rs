@@ -53,8 +53,8 @@ impl PyroFs {
         // Read-ahead at depth 4, which the boot-work counters chose: with the
         // prefetch coalesced into one request per run, a demo boot issues 208
         // device reads instead of 327 (the same boot with read-ahead off) for
-        // 236032 bytes instead of 233984 — 36 % fewer commands for 0.9 % more
-        // traffic — and the caller sees 83 misses instead of 256.  Deeper
+        // 236032 bytes instead of 233984, 36 % fewer commands for 0.9 % more
+        // traffic, and the caller sees 83 misses instead of 256.  Deeper
         // depths trade more waste for few commands (depth 8: 189 reads, 237568
         // bytes), and the other filesystems keep it off until a boot measures
         // them.
@@ -237,13 +237,13 @@ impl PyroFs {
     /// already hold the same bytes there.
     ///
     /// A commit writes into the slot that holds the table from *two*
-    /// generations back — the previous commit published into the other slot —
+    /// generations back, the previous commit published into the other slot, ///
     /// so the bytes to compare against are the slot's **current** content, not
     /// the last committed image.  That content was populated into the block
     /// cache when the slot was last written, so the comparison usually comes
     /// straight out of the cache.  Only a handful of a table's blocks differ
-    /// after a burst of metadata edits — of the 1436 blocks a demo boot wrote
-    /// whole, 370 had changed — and the rest is traffic the device never has
+    /// after a burst of metadata edits, of the 1436 blocks a demo boot wrote
+    /// whole, 370 had changed, and the rest is traffic the device never has
     /// to see.
     ///
     /// Consecutive differing blocks go out as one request, so a full write is
@@ -251,7 +251,7 @@ impl PyroFs {
     /// metadata writes keep their indices for the first commit after a mount.
     ///
     /// `full` forces every block out in one request, which the first commit
-    /// after a mount must do — nothing has described the shadow slot yet, and
+    /// after a mount must do, nothing has described the shadow slot yet, and
     /// a commit that failed part way may have left it partly updated.
     pub(crate) fn write_shadow_table(&self, base: usize, image: &[u8], full: bool) -> Result<()> {
         if self.device.device_health() == DeviceHealth::Failed {
@@ -299,7 +299,7 @@ impl PyroFs {
     /// writes it back to the device first.  This batches small data-block
     /// writes and reduces device I/O for multi-block file operations.
     ///
-    /// Currently unused — the infrastructure is in place for a future
+    /// Currently unused, the infrastructure is in place for a future
     /// write-back optimisation.
     #[allow(dead_code)]
     pub(crate) fn write_blocks_cached_wb(&self, lba: u64, data: &[u8]) -> Result<()> {

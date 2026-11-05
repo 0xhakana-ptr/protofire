@@ -182,7 +182,7 @@ impl PyroFs {
 /// The two bits are on the inode's flags byte, which every format has; what
 /// only V4 has is a promise that the byte reaches the disk.  A V2 volume
 /// would accept a set and lose it at the next mount, so the setter refuses
-/// there rather than answering `Ok` for something it cannot keep — the read
+/// there rather than answering `Ok` for something it cannot keep, the read
 /// side still answers, because a record parsed from a V4 volume may carry the
 /// bits even when this driver cannot set them.
 impl PyroFs {
@@ -221,8 +221,8 @@ impl PyroFs {
         if !self.format_version.supports_persistent_xattrs() {
             return Err(Error::Unsupported);
         }
-        // The dedup bit is the filesystem's bookkeeping — it says an extent is
-        // in the pool and the refcount map agrees — so a caller clearing it
+        // The dedup bit is the filesystem's bookkeeping, it says an extent is
+        // in the pool and the refcount map agrees, so a caller clearing it
         // would leave the two disagreeing.  Only compression is the program's.
         let mutable = abi::fs::FILE_FLAG_COMPRESSED;
         if set & !mutable != 0 || clear & !mutable != 0 {

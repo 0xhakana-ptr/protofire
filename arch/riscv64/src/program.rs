@@ -7,7 +7,7 @@
 //! A program is machine code, so the array lives with the machine that executes
 //! it: `ecall` is the call, `a7` carries the number and `a1` holds this
 //! program's own number because `Write` prints its second argument.  The kernel
-//! names `arch::program_bytes` and gets whichever machine answered — an array
+//! names `arch::program_bytes` and gets whichever machine answered, an array
 //! in the kernel would have to be right for three architectures, and there is
 //! no array that is.
 //!
@@ -42,7 +42,7 @@ pub const PIPE_WRITER: u16 = 2;
 ///
 /// Two thousand, and that is the encoding's answer rather than a preference:
 /// the sleep travels in an `addi` immediate, whose twelve signed bits reach
-/// two thousand and forty-seven — the aarch64 program's twenty thousand needs
+/// two thousand and forty-seven, the aarch64 program's twenty thousand needs
 /// the sixteen bits a `movz` has, which this machine's instruction does not.
 /// Two milliseconds is twenty time slices at this boot's hundred, which is
 /// what the duration is for: a wake observably later than the request, where
@@ -57,9 +57,9 @@ use crate::trap::REGISTER_A7;
 
 /// `addi rd, rs, imm`, as the word the machine reads.
 ///
-/// The workhorse of a hand-written program: every immediate the ABI needs — a
+/// The workhorse of a hand-written program: every immediate the ABI needs, a
 /// call number in `a7`, a duration in `a0`, this program's own number in `a1`
-/// — is one of these.  A helper rather than thirty literals, because an
+///, is one of these.  A helper rather than thirty literals, because an
 /// immediate encoded wrong by hand is an instruction the machine reads as
 /// something else and the failure is a plausible-looking wrong answer.
 const fn addi(rd: u32, rs: u32, immediate: i32) -> u32 {
@@ -71,7 +71,7 @@ const fn addi(rd: u32, rs: u32, immediate: i32) -> u32 {
 ///
 /// The busy loop's only branch: one register counted down against zero, back
 /// to the instruction `offset` bytes before.  Encoded here for the same reason
-/// `addi` is — a branch offset in the wrong field loops to an address the
+/// `addi` is, a branch offset in the wrong field loops to an address the
 /// program did not mean, and the failure is a fault far from the word that
 /// caused it.
 const fn bne_against_zero(rs: u32, offset: i32) -> u32 {
@@ -99,7 +99,7 @@ pub const PROGRAM_WORDS: usize = 24;
 /// Without it a program finishes in microseconds, no tick arrives, and a boot
 /// that never preempted is indistinguishable from one that could not.  The
 /// loop is nested because one register's twelve-bit immediate is a small
-/// count, and the counts are the aarch64 program's — the same work per
+/// count, and the counts are the aarch64 program's, the same work per
 /// iteration, so the same number of them spans a slice under the same
 /// emulator.
 const BUSY_LOOP: [u32; 6] = [
@@ -119,10 +119,10 @@ const BUSY_LOOP: [u32; 6] = [
 /// ## Why the order is loop, Write, Sleep, Write, Exit
 ///
 /// The first `Write` says which program ran.  `Sleep` then takes it out of the
-/// rotation for [`SLEEP_MICROSECONDS`], during which the *other* program runs —
-/// so a log that shows two "says hello" lines before the second program's is a
-/// log where sleeping worked.  The second `Write` after the sleep is what makes
-/// the wake visible: a program that never woke prints one line, not two.
+/// rotation for [`SLEEP_MICROSECONDS`], during which the *other* program runs,
+/// /// so a log that shows two "says hello" lines before the second program's
+/// is a log where sleeping worked.  The second `Write` after the sleep is what
+/// makes the wake visible: a program that never woke prints one line, not two.
 const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
     [
         BUSY_LOOP[0],
@@ -145,15 +145,15 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         // The child resumes here with `a0` = 0 and the parent with `a0` = the
         // child's pid.  Both then make the same two calls: a `Write` whose
         // second argument is that answer, and an `Exit` whose status is the
-        // same number.  So the log carries one line per process — the parent's
-        // naming the child, the child's naming zero — and the boot's exit
+        // same number.  So the log carries one line per process, the parent's
+        // naming the child, the child's naming zero, and the boot's exit
         // statuses carry the same two numbers.
         addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Fork as i32),
         0x0000_0073, // ecall
         // The answer is kept in `a6`, which no call of this program writes:
         // `Write` fills `a0` with its own answer, and `Exit` reads `a0`, so a
         // fork's answer left in `a0` would be the write's count by the time the
-        // status is taken — which is exactly what the first run printed
+        // status is taken, which is exactly what the first run printed
         // (`1 -> 21`, and 21 is what `Write` answers).
         addi(REGISTER_A6 as u32, REGISTER_A0 as u32, 0), // mv a6, a0
         addi(REGISTER_A1 as u32, REGISTER_A6 as u32, 0), // mv a1, a6
@@ -173,7 +173,7 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
 /// it makes no earlier call; this sleep then makes the order a fact rather
 /// than a hope.
 ///
-/// `x2` — the stack pointer — points at the write end's descriptor, and the
+/// `x2`, the stack pointer, points at the write end's descriptor, and the
 /// four bytes it sends are the word above it.
 const PIPE_WRITER_PROGRAM: [u32; 24] = [
     BUSY_LOOP[0],
@@ -205,8 +205,8 @@ const PIPE_WRITER_PROGRAM: [u32; 24] = [
 /// The reader: wait on a descriptor the boot left on its stack.
 ///
 /// `x2` points at the read end's descriptor and the four-byte buffer is the
-/// word above it.  The read blocks — the pipe is empty and its writer is
-/// alive — and the writer's syscall is the only thing that ends the wait.
+/// word above it.  The read blocks, the pipe is empty and its writer is
+/// alive, and the writer's syscall is the only thing that ends the wait.
 const PIPE_READER_PROGRAM: [u32; 21] = [
     BUSY_LOOP[0],
     BUSY_LOOP[1],

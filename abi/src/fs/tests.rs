@@ -18,7 +18,7 @@ use crate::fs::PermissionMetadataRecord;
 /// states, checked against the records themselves.
 ///
 /// The document is where a reader looks for the wire sizes, and those
-/// numbers are copies of facts these types own — two of them were wrong
+/// numbers are copies of facts these types own, two of them were wrong
 /// (a mount record with the wrong arithmetic, a termination record missing
 /// a field) until this test was written.  A number a document copies is a
 /// number that can drift, so the copy is what is pinned here.

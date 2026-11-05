@@ -116,8 +116,8 @@ impl VfsFileSystem for PyroFsVolume {
     /// (`kernel::maintenance` → `fs::sync_global_caches_aged`) so that dirty
     /// data reaches the device without waiting for an explicit `sync`.  Until
     /// this method existed the VFS default answered `0` here and PyroFs was
-    /// the filesystem that never took part in it — only fat32 implemented the
-    /// call — so its data reached the device through an explicit sync,
+    /// the filesystem that never took part in it, only fat32 implemented the
+    /// call, so its data reached the device through an explicit sync,
     /// pressure, or eviction and nothing else.
     fn flush_aged(&self, age_ticks: u64) -> Result<usize> {
         self.inner.cache.flush_aged(age_ticks)
@@ -162,7 +162,7 @@ impl PyroFsVolume {
 ///
 /// A staging area is a directory (typically `.staging`) where new content can
 /// be prepared, verified, and atomically published via rename.  Orphaned
-/// staging entries — left behind after a crash — can be cleaned up on next
+/// staging entries, left behind after a crash, can be cleaned up on next
 /// mount by calling [`cleanup`](StagingArea::cleanup).
 ///
 /// # Lifecycle
@@ -172,8 +172,7 @@ impl PyroFsVolume {
 ///   (write files into the staging directory via normal FS operations)
 /// verify            →  check checksums, metadata, etc.
 /// publish(target)   →  atomically rename to target path
-///   — or —
-/// abort("myapp")    →  recursively remove the staging directory
+/// , or, /// abort("myapp")    →  recursively remove the staging directory
 /// ```
 impl VNode for SimpleVNode {
     fn name(&self) -> &str {
@@ -228,7 +227,7 @@ impl VNode for SimpleVNode {
 
     fn set_file_flags(&self, set: u32, clear: u32) -> Result<()> {
         // Inside a transaction, so the inode's flags byte and the tables it
-        // lives in commit together — the same shape every other metadata
+        // lives in commit together, the same shape every other metadata
         // mutation here takes.
         self.fs.transaction(|context| {
             context

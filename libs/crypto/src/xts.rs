@@ -25,12 +25,12 @@ use crate::aes::aes256_encrypt_block;
 /// carries **into the higher byte**, with the bit shifted out of the last byte
 /// folded back into the first with the polynomial's 0x87.
 ///
-/// This was written the other way round — carry out of `t[0]`, 0x87 into
-/// `t[15]`, which is the big-endian reading — and the comment above said
+/// This was written the other way round, carry out of `t[0]`, 0x87 into
+/// `t[15]`, which is the big-endian reading, and the comment above said
 /// "big-endian" to match.  It is wrong, and a LUKS2 keyslot area is where it
 /// shows: a decrypted area came out right for its first block and garbage
 /// after, because the first block is the only one whose tweak is used as
-/// computed — every later one needs this step.  Measured against the tree's
+/// computed, every later one needs this step.  Measured against the tree's
 /// own fixture, the correct direction and the old one agree on the leading
 /// 16 bytes and nothing after them.  With the carry reversed the whole unit
 /// matches OpenSSL's XTS.

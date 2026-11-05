@@ -16,7 +16,7 @@
 //! | `0x400` | lower EL, 64-bit: the same four |
 //! | `0x600` | lower EL, 32-bit: the same four |
 //!
-//! The kernel runs at EL1h — EL1 with `SP_EL1` — so its own faults and its own
+//! The kernel runs at EL1h, EL1 with `SP_EL1`, so its own faults and its own
 //! `svc` are the **`0x200` group**, entries 4..8.  The `0x000` group is the
 //! same privilege with `SP_EL0` selected, which is where a kernel running on
 //! the user's stack would land, and the lower-EL groups are what a user
@@ -25,14 +25,14 @@
 //! Reading the table backwards is easy and costs a boot: entry 0 and entry 4
 //! are both "something inside the kernel", and only the `PSTATE.SP` bit tells
 //! them apart.  That is why the enum names the stack pointer rather than
-//! calling one "own" and one "shared" — the words describe the state, not who
+//! calling one "own" and one "shared", the words describe the state, not who
 //! the memory belongs to.
 //!
 //! ## Why each entry has a lot of room
 //!
 //! 128 bytes is thirty-two instructions.  The architecture gives each entry
 //! that much because a handler is expected to save the context it needs
-//! *before* branching anywhere — there is no stack switched for it, and using
+//! *before* branching anywhere, there is no stack switched for it, and using
 //! the interrupted one requires knowing what is safe to clobber.
 //!
 //! This table's entries jump to one common path after saving the registers a
@@ -57,7 +57,7 @@ pub const TABLE_SIZE: usize = ENTRIES * ENTRY_STRIDE;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     /// The current exception level with `SP_EL0` selected.  A kernel running on
-    /// the user's stack, which this one does not do — but a fault taken while
+    /// the user's stack, which this one does not do, but a fault taken while
     /// `PSTATE.SP` is 0 lands here and not at 4.
     CurrentSp0,
     /// The current exception level with `SP_ELx` selected.  **What this kernel
@@ -187,7 +187,7 @@ mod tests {
     /// The kernel's own exceptions are the **4..8** group, not 0..4: it runs at
     /// EL1h, so `PSTATE.SP` is 1 and the machine reads the `SP_ELx` row.  A
     /// table whose numbering assumed the first row would send every kernel
-    /// fault through the entry a user-stack fault uses — the same code, but the
+    /// fault through the entry a user-stack fault uses, the same code, but the
     /// wrong vector in the frame a handler reads.
     #[test]
     fn the_groups_are_where_the_architecture_puts_them() {

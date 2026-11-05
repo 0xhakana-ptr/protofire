@@ -71,8 +71,8 @@ pub trait VNode: Send + Sync {
     /// Punch a hole in this node: the range reads as zeros, and the storage the
     /// filesystem can give back for it is released.
     ///
-    /// The length of the node does not change — that is what a punch is, as
-    /// against a truncation — and neither does anything else about it.  The
+    /// The length of the node does not change, that is what a punch is, as
+    /// against a truncation, and neither does anything else about it.  The
     /// default implementation refuses with [`Error::PermissionDenied`], for the
     /// same reason as [`Self::write`]; a filesystem that does not make holes
     /// says [`Error::NotImplemented`].
@@ -81,7 +81,7 @@ pub trait VNode: Send + Sync {
     }
 
     /// Where the next data or hole at or after `offset` begins, or `None` when
-    /// there is none — POSIX's `ENXIO`, which the caller answers `NotFound`
+    /// there is none, POSIX's `ENXIO`, which the caller answers `NotFound`
     /// with.
     ///
     /// The default implementation is **exact for a node that has no holes**:

@@ -8,16 +8,16 @@
 //!
 //! ## No crate-level architecture gate
 //!
-//! The first version of this file had one, so that `cargo build --workspace` —
-//! which builds every member for the host — would not try to assemble `wfi`
+//! The first version of this file had one, so that `cargo build --workspace`,
+//! //! which builds every member for the host, would not try to assemble `wfi`
 //! into an x86 binary.  What that also did was make the whole crate empty on a
 //! host, including the tests: `cargo test -p arch_aarch64` reported zero, and
 //! every assertion in `interrupts.rs` was dead code that had never been
 //! compiled.
 //!
 //! A gate that silences a build by removing the code is the wrong tool.  Each
-//! module keeps its own `cfg(target_os)` arms — a host has no `satp` and no
-//! `wfi`, so those arms are no-ops that a test can still run — and the crate
+//! module keeps its own `cfg(target_os)` arms, a host has no `satp` and no
+//! `wfi`, so those arms are no-ops that a test can still run, and the crate
 //! stays compilable everywhere it is named.
 
 #![no_std]
@@ -31,8 +31,8 @@ extern crate alloc;
 // same file: one entry for every trap, because `stvec` names one address, and
 // one road in for every hart the firmware starts.
 //
-// The constant the assembly needs from the Rust side — how big one parked
-// hart's stack is — is interpolated, so `smp`'s bound and the assembly's
+// The constant the assembly needs from the Rust side, how big one parked
+// hart's stack is, is interpolated, so `smp`'s bound and the assembly's
 // reservation are one fact.
 //
 // Here rather than in `bootloader` for the reason the other machines' entries
@@ -87,7 +87,7 @@ pub use trap::starting_context;
 /// Which CPU this code runs on, as the machine reports it.
 ///
 /// `tp` is the thread pointer the RISC-V ABI reserves for exactly this, and the
-/// entry assembly writes the CPU's slot into it before anything Rust runs — one
+/// entry assembly writes the CPU's slot into it before anything Rust runs, one
 /// register, no memory, and the answer a trap needs without a lock.
 #[cfg(target_os = "none")]
 pub fn current_cpu_slot() -> usize {
@@ -162,7 +162,7 @@ pub unsafe fn send_ipi_to_others() -> bool {
 /// linker resolves.
 ///
 /// The firmware cold-boots exactly one hart, and which one it chose is a fact
-/// of this entry — not an assumption about hart zero.  It reaches the same
+/// of this entry, not an assumption about hart zero.  It reaches the same
 /// kind of static the device-tree pointer does, for the same reason.
 ///
 /// # Safety
@@ -177,7 +177,7 @@ pub unsafe extern "C" fn riscv64_set_boot_hart(hart: usize) {
 // The kernel stack a program's trap lands on.  `sscratch` holds it while a
 // program runs, and the trap entry's swap turns a program's `sp` into this
 // one.  The symbol is the entry assembly's, which is where the stack is
-// defined — a second definition here would be a second opinion about where
+// defined, a second definition here would be a second opinion about where
 // the kernel's stack is.  A `//` and not a `///`: a doc comment on an extern
 // block decorates nothing.
 #[cfg(target_os = "none")]
@@ -212,7 +212,7 @@ pub fn halt() -> ! {
 ///
 /// The trap entry tells "a program's trap" from "the kernel's own" by whether
 /// the `sscratch` swap produced a stack.  While a program runs, `sscratch`
-/// parks the program's `sp` — and a tick taken inside this window is the
+/// parks the program's `sp`, and a tick taken inside this window is the
 /// **kernel's own** trap, which that parked value would misroute onto the
 /// program's stack.  The value is not lost: the frame the trap already built
 /// carries it, and the return path re-arms `sscratch` from the frame it
@@ -228,7 +228,7 @@ pub fn halt() -> ! {
 /// enable.
 ///
 /// The `csrci` after puts the mask back, and the `sret` that eventually leaves
-/// this trap restores the interrupted state anyway — the mask covers the wait
+/// this trap restores the interrupted state anyway, the mask covers the wait
 /// and nothing else.
 #[cfg(target_os = "none")]
 pub fn wait_for_a_wakeup() {
@@ -251,7 +251,7 @@ pub fn wait_for_a_wakeup() {}
 /// Install the trap vector.
 ///
 /// Returns whether one was installed, which on this machine means whether the
-/// register kept the write — the entry assembly exists and `stvec` can name
+/// register kept the write, the entry assembly exists and `stvec` can name
 /// it.  There is no self-test `ecall` here, and the absence is not an
 /// omission: an `ecall` from S-mode is the firmware's door, the same
 /// instruction that arms the timer, and raising one as a probe would be a
@@ -264,7 +264,7 @@ pub fn wait_for_a_wakeup() {}
 /// Called once, with the sink already installed and the console up.
 #[cfg(target_os = "none")]
 pub unsafe fn install_interrupt_table() -> bool {
-    // SAFETY: the caller's contract is this function's — once, with the sink
+    // SAFETY: the caller's contract is this function's, once, with the sink
     // installed and the stack valid.
     let installed = unsafe { trap::install_table() };
     if !installed {
@@ -318,7 +318,7 @@ pub unsafe fn set_interrupt_dispatch(sink: fn(irq::Frame) -> bool) {
 ///
 /// The two lines this machine has are the supervisor timer's and the
 /// supervisor software one, and both are bits in `sie` rather than registers
-/// in a controller — the enable is a CSR write, which is what makes it cheap
+/// in a controller, the enable is a CSR write, which is what makes it cheap
 /// and also what makes it per-line.  Anything else is a line this crate does
 /// not drive, and `false` is the answer a caller reports rather than a gap it
 /// works around.
@@ -330,7 +330,7 @@ pub unsafe fn set_interrupt_dispatch(sink: fn(irq::Frame) -> bool) {
 pub unsafe fn enable_interrupt_line(number: usize) -> bool {
     match number {
         trap::TIMER_INTERRUPT => {
-            // SAFETY: setting the timer's enable bit in `sie` — the line the
+            // SAFETY: setting the timer's enable bit in `sie`, the line the
             // caller is turning on.
             unsafe { set_sie_bit(timer::ENABLE_TIMER) };
             true
@@ -394,7 +394,7 @@ pub unsafe fn interrupt_line_enabled(number: usize) -> bool {
 /// The one line this machine can be *asked* for is its software interrupt:
 /// `sip`'s own bit, which S-mode may set on itself.  A timer's fire is a
 /// deadline, not a raise, and an external interrupt belongs to a device.
-/// Unlike a GIC's software interrupts — whose enable bits reset set — this
+/// Unlike a GIC's software interrupts, whose enable bits reset set, this
 /// line's enable resets clear, so the raise includes it: a line that can be
 /// raised on demand must be deliverable on demand.
 ///
@@ -422,8 +422,8 @@ pub unsafe fn raise_interrupt(number: usize) -> bool {
 
 /// The machine's message-signalled interrupt frame: none this crate drives.
 ///
-/// A PLIC is a level controller a hart claims through, and an IMSIC — the
-/// AIA's message device — is not part of this machine's tree.  `None` is the
+/// A PLIC is a level controller a hart claims through, and an IMSIC, the
+/// AIA's message device, is not part of this machine's tree.  `None` is the
 /// honest answer, and the boot that reads it learns there is no MSI frame
 /// rather than inheriting a guess.
 ///
@@ -441,13 +441,13 @@ pub unsafe fn message_frame() -> Option<()> {
 ///
 /// Everything up to here runs in S-mode.  Returning to a lower privilege is an
 /// `sret` with `sstatus` naming U-mode and `sepc` naming where in the program
-/// to start — the same instruction the trap path already ends with, pointed
+/// to start, the same instruction the trap path already ends with, pointed
 /// somewhere new.
 ///
 /// ## Why it does not return
 ///
 /// Control does not come back here.  The program returns to the kernel through
-/// a trap — a syscall or an exit — and the trap path is what resumes the
+/// a trap, a syscall or an exit, and the trap path is what resumes the
 /// kernel.  A function that "returned" would be claiming a program can finish
 /// without trapping, which it cannot: U-mode has no way out except an
 /// exception.
@@ -458,7 +458,7 @@ pub unsafe fn message_frame() -> Option<()> {
 /// between them destroys it: a trap taken here saves the interrupted `sepc`
 /// **and restores it on the way out**, clobbering the entry this function just
 /// wrote, and the `sret` then returns to a kernel address in U-mode.  That is
-/// not hypothetical — it is the aarch64 entry race, found at four thousand
+/// not hypothetical, it is the aarch64 entry race, found at four thousand
 /// ticks a second on the machine whose story is written down beside it.
 ///
 /// `csrci sstatus, 2` masks, and `sret` needs no matching unmask: it loads the
@@ -469,7 +469,7 @@ pub unsafe fn message_frame() -> Option<()> {
 ///
 /// `entry` must be a virtual address mapped `user` and executable, `stack_top`
 /// must be a `user`-accessible page's end, and the caller must have no live
-/// state on the kernel stack that a trap could not restore — the trap path
+/// state on the kernel stack that a trap could not restore, the trap path
 /// builds its own frame and resumes through it.
 #[cfg(target_os = "none")]
 pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
@@ -533,7 +533,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 /// fetch happens through the new one: a switch made from an address only the
 /// old table maps faults on the instruction after the write.
 ///
-/// That is why this kernel's program roots copy the kernel's entry 0 — the
+/// That is why this kernel's program roots copy the kernel's entry 0, the
 /// kernel's code, its stack and the trap vector are reachable through every
 /// root, so a switch can happen anywhere in the kernel and the trap path does
 /// not have to be careful about where it is.
@@ -549,7 +549,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 /// # Safety
 ///
 /// `root` must be a page-aligned root table whose entry 0 maps every address
-/// the kernel is running on — its text, its stack and the trap vector —
+/// the kernel is running on, its text, its stack and the trap vector, ///
 /// because the next fetch happens through it.
 #[cfg(target_os = "none")]
 pub unsafe fn switch_address_space(root: usize) -> bool {
@@ -587,7 +587,7 @@ pub unsafe fn timer_frequency() -> Option<u64> {
 /// The monotonic clock's rate.
 ///
 /// The same counter the timer arms against: `time` is this machine's only
-/// clock, which x86_64's are not — there the APIC counts at one rate and the
+/// clock, which x86_64's are not, there the APIC counts at one rate and the
 /// TSC at another, and a deadline computed against the wrong one sleeps the
 /// wrong amount.
 ///
@@ -669,7 +669,7 @@ pub unsafe fn timer_fired() -> bool {
 
 /// The external controller, as the boot found and enabled it.
 ///
-/// `(windows, context, sources)` — the PLIC's base and size from the tree, the
+/// `(windows, context, sources)`, the PLIC's base and size from the tree, the
 /// context this hart claims through, and how many sources the tree declares.
 /// `None` on a machine whose tree names no controller, which is a fact a boot
 /// reports rather than a failure it works around.
@@ -685,7 +685,7 @@ pub fn external_controller() -> Option<(usize, usize, usize)> {
 /// Enable one source at the controller, and answer whether it did.
 ///
 /// The line's own enable is [`enable_interrupt_line`]`(EXTERNAL_INTERRUPT)`;
-/// this is the controller's per-source bit, and both are needed — a source
+/// this is the controller's per-source bit, and both are needed, a source
 /// enabled at the PLIC still needs the hart's external line, and a hart taking
 /// the external line still needs the source's bit.
 ///
@@ -754,7 +754,7 @@ pub const fn external_interrupt() -> usize {
 ///
 /// A trap vector is an address in `stvec`, not a table of descriptors plus a
 /// task state segment: the architecture has no privilege transition that needs
-/// a stack the CPU finds for itself — the entry assembly swaps one in — so
+/// a stack the CPU finds for itself, the entry assembly swaps one in, so
 /// `false` is the honest answer and a boot that reports it is reporting a fact
 /// about the machine.
 ///
@@ -769,7 +769,7 @@ pub unsafe fn install_descriptor_tables(_interrupt_stack_top: usize) -> bool {
 /// Where a trap from a program lands.
 ///
 /// On the kernel stack the entry assembly swaps in, which is `sscratch`'s
-/// answer and not this function's — there is no TSS to name one, and `0` is
+/// answer and not this function's, there is no TSS to name one, and `0` is
 /// the answer a caller that checks it will find unremarkable.
 #[cfg(target_os = "none")]
 pub fn interrupt_stack_top() -> usize {

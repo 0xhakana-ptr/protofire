@@ -97,7 +97,7 @@ impl PyroFs {
                 self.mark_extent_free(state, data_block, block_count);
             }
         } else {
-            // No pool entry (shouldn't happen for a deduped inode) — free the
+            // No pool entry (shouldn't happen for a deduped inode), free the
             // extent defensively so it is never leaked.
             self.mark_extent_free(state, data_block, block_count);
         }
@@ -230,14 +230,14 @@ impl PyroFs {
 
     /// Flush in-memory metadata to disk using a two-phase commit protocol.
     ///
-    /// Phase 1 — Mark: write `pending_commit = target_generation` to both
+    /// Phase 1, Mark: write `pending_commit = target_generation` to both
     /// superblock mirrors so a crash during the write is detectable on next
     /// mount.  The superblock still points to the **current** active tables.
     ///
-    /// Phase 2 — Write: flush the shadow metadata tables (inode then dirent),
+    /// Phase 2, Write: flush the shadow metadata tables (inode then dirent),
     /// skipping the blocks whose bytes already match the slot they overwrite.
     ///
-    /// Phase 3 — Publish: write both superblock mirrors with swapped
+    /// Phase 3, Publish: write both superblock mirrors with swapped
     /// active/shadow pointers, the bumped generation, and `pending_commit`
     /// cleared.  Only after both superblocks are written does the in-memory
     /// state swap.
@@ -249,7 +249,7 @@ impl PyroFs {
     /// The slot a commit writes holds the table from *two* generations back:
     /// the previous commit published into the other slot, which left the write
     /// target as the copy from before it.  Phase 2 therefore compares against
-    /// the slot's own bytes rather than against the last commit's image — the
+    /// the slot's own bytes rather than against the last commit's image, the
     /// difference is the union of the last two generations' changes, and a
     /// block the previous commit wrote but this one did not would otherwise
     /// stay stale in the copy the publish is about to make active.  The slot
@@ -340,7 +340,7 @@ impl PyroFs {
             )?;
         }
 
-        // Phase 3: Publish — swap active/shadow, bump generation, clear
+        // Phase 3: Publish, swap active/shadow, bump generation, clear
         // pending_commit.  The old active slot becomes the new shadow slot.
         {
             let publish_record = SuperblockRecord {
@@ -411,7 +411,7 @@ impl PyroFs {
         };
 
         // Count superblock slots that don't match the expected runtime
-        // state — each mismatch represents an interrupted commit that left
+        // state, each mismatch represents an interrupted commit that left
         // one superblock mirror stale.  Also explicitly check the
         // pending_commit field on both superblock mirrors for V3+ formats:
         // a non-zero value means a crash occurred mid-commit (between
@@ -444,7 +444,7 @@ impl PyroFs {
         }
 
         // A no-op commit republishes the current in-memory tree into the
-        // inactive slot — writing every block of it that differs — and
+        // inactive slot, writing every block of it that differs, and
         // rewrites both mirrored superblocks.  Running it up to twice repairs
         // whichever slot was stale or torn.
         for _ in 0..2 {

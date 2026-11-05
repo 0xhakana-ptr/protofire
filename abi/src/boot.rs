@@ -4,8 +4,8 @@
 //!
 //! ## Why this is an ABI type
 //!
-//! The architecture crate parses the handshake — multiboot2 registers, a PVH
-//! note, a device tree in a register the machine's own convention names — and
+//! The architecture crate parses the handshake, multiboot2 registers, a PVH
+//! note, a device tree in a register the machine's own convention names, and
 //! the kernel consumes the result.  If the type lived in the kernel, `arch`
 //! would have to name it, and that is the one edge this tree exists to forbid:
 //! the previous tree's `arch` names `kernel` 322 times, 171 of them to reach

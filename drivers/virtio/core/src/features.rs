@@ -8,7 +8,7 @@
 //! driver says what it can do, and the device runs with the intersection.  A
 //! driver that wrote a `u64` of its own would have to remember to mask it
 //! against the device's set; a driver that forgot would set a bit the device
-//! never offered, and the device is entitled to misbehave — that is the whole
+//! never offered, and the device is entitled to misbehave, that is the whole
 //! of what "not offered" means.
 //!
 //! [`Features::negotiate`] is that intersection, and it is a function so the
@@ -19,8 +19,8 @@
 //! Only the ones the framework must act on: `VIRTIO_F_VERSION_1` (the device
 //! speaks the modern interface, which is the only one this tree implements) and
 //! `VIRTIO_F_RING_EVENT_IDX` (the interrupt-suppression scheme the queue
-//! implements).  A device's own feature bits — a block device's
-//! `VIRTIO_BLK_F_FLUSH`, a network card's checksum offloads — belong to the
+//! implements).  A device's own feature bits, a block device's
+//! `VIRTIO_BLK_F_FLUSH`, a network card's checksum offloads, belong to the
 //! device crate, because the framework has nothing to do with what they mean.
 
 /// Bit 32: the device implements the modern (1.0 and later) interface.
@@ -84,7 +84,7 @@ impl Features {
     /// Whether the accepted set contains every feature this framework needs.
     ///
     /// A device that does not offer `VIRTIO_F_VERSION_1` cannot be driven by
-    /// this tree, and this is where that is noticed — before a queue is set
+    /// this tree, and this is where that is noticed, before a queue is set
     /// up, rather than at the first submit.
     pub const fn has_required(self) -> bool {
         self.driver & FRAMEWORK_REQUIRED == FRAMEWORK_REQUIRED

@@ -4,7 +4,7 @@
 //!
 //! ## Why here and not in `process`
 //!
-//! `process` is what the kernel does with a program's *call* — the handler a
+//! `process` is what the kernel does with a program's *call*, the handler a
 //! trap reaches.  This module is what the *boot* does with a program: pick an
 //! address space, copy the machine code in, hand a pipe end through the stack,
 //! and enter the first one.  A reader asking "how does a call get served" reads
@@ -50,8 +50,8 @@ pub fn run() {
 
     // The pipe the reader waits on, made before either program runs.  The
     // writer is program 2 and the reader is program 3, so the ordering is the
-    // point: the reader reaches its `Read` first — its loop is shorter and it
-    // makes no earlier call — and the pipe is empty, so it blocks.  Program 2's
+    // point: the reader reaches its `Read` first, its loop is shorter and it
+    // makes no earlier call, and the pipe is empty, so it blocks.  Program 2's
     // write is what ends that wait, and nothing else can.
     let Some((reader_end, writer_end)) = make_pipe() else {
         return;
@@ -92,7 +92,7 @@ pub fn run() {
     }
 
     arch::serial::write_str("protofire: entering ring 3\n");
-    // SAFETY: the entry is mapped `user` in the installed space — the first
+    // SAFETY: the entry is mapped `user` in the installed space, the first
     // task's root is not yet installed, so this switches to it as it enters.
     let Some(root) = crate::scheduler::first_root() else {
         arch::serial::write_str("protofire: no root table for the first program\n");
@@ -110,7 +110,7 @@ pub fn run() {}
 
 /// Make the pipe two of the boot's programs share.
 ///
-/// Answers both ends, or `None` when the table has no room — in which case the
+/// Answers both ends, or `None` when the table has no room, in which case the
 /// boot says so rather than starting programs whose descriptors name nothing.
 #[cfg(target_os = "none")]
 fn make_pipe() -> Option<(usize, usize)> {
@@ -134,8 +134,8 @@ fn make_pipe() -> Option<(usize, usize)> {
 
 /// Build one program: its address space, its frames, and its task.
 ///
-/// The two frames are the program's image and its stack.  The pipe's end — when
-/// this program is one of the two that shares one — is written into the stack
+/// The two frames are the program's image and its stack.  The pipe's end, when
+/// this program is one of the two that shares one, is written into the stack
 /// before the program runs, because that is the one place both sides agree on:
 /// a program reads `[sp]` for its descriptor.
 #[cfg(target_os = "none")]
@@ -203,12 +203,12 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
 ///
 /// The stack's top is a boundary, not storage: a program's `rsp` points at it
 /// and `[rsp]` is the first four bytes *above* it.  So the words go below the
-/// boundary and the stack pointer moves down to them — which is what a `push`
+/// boundary and the stack pointer moves down to them, which is what a `push`
 /// would have done, done early.
 ///
 /// The **physical** frame, not its virtual address: a program's pages are
 /// mapped in its own address space, and the boot is running through the
-/// kernel's — so the virtual address is one this walk does not reach.  The
+/// kernel's, so the virtual address is one this walk does not reach.  The
 /// frame is identity mapped here, so the kernel writes the bytes where they
 /// will be and the program reads them through its own mapping of the same page.
 #[cfg(target_os = "none")]

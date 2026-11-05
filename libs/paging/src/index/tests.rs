@@ -20,7 +20,7 @@ use crate::index::span;
 /// partition a 48-bit address.
 ///
 /// A shift off by one maps the wrong page, and the failure shows up as
-/// corruption somewhere else entirely — which is why this is pinned.
+/// corruption somewhere else entirely, which is why this is pinned.
 #[test]
 fn the_levels_shift_by_nine_bits_each() {
     assert_eq!(Level::Leaf.shift(), 12);
@@ -117,7 +117,7 @@ fn permissions_become_entry_flags() {
 /// A device mapping is not cached, and an ordinary one is.
 ///
 /// A device's registers read through a cached mapping return stale values,
-/// and a store to one may never reach the device — which is the difference
+/// and a store to one may never reach the device, which is the difference
 /// between a driver that works and one that works on an emulator.
 #[test]
 fn a_device_mapping_is_not_cached() {
@@ -128,7 +128,7 @@ fn a_device_mapping_is_not_cached() {
 /// A kernel mapping is not user-accessible, and that is not incidental.
 ///
 /// If the flag were always set, a user program could read the kernel's
-/// memory — and nothing in a boot would notice.
+/// memory, and nothing in a boot would notice.
 #[test]
 fn a_kernel_mapping_is_not_user_accessible() {
     assert_eq!(

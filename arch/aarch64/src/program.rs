@@ -82,7 +82,7 @@ const PIPE_WRITER_PROGRAM: [u32; 25] = [
 /// The reader: wait on a descriptor the boot left on its stack.
 ///
 /// `[sp]` is the read end's descriptor and `[sp + 8]` the four-byte buffer.
-/// The read blocks — the pipe is empty and its writer is alive — and the
+/// The read blocks, the pipe is empty and its writer is alive, and the
 /// writer's syscall is the only thing that ends the wait.
 const PIPE_READER_PROGRAM: [u32; 21] = [
     0xD280_0803, // movz x3, #64
@@ -127,10 +127,10 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 /// ## Why the order is loop, Write, Sleep, Write, Exit
 ///
 /// The first `Write` says which program ran.  `Sleep` then takes it out of the
-/// rotation for [`SLEEP_MICROSECONDS`], during which the *other* program runs —
-/// so a log that shows two "says hello" lines before the second program's is a
-/// log where sleeping worked.  The second `Write` after the sleep is what makes
-/// the wake visible: a program that never woke prints one line, not two.
+/// rotation for [`SLEEP_MICROSECONDS`], during which the *other* program runs,
+/// /// so a log that shows two "says hello" lines before the second program's
+/// is a log where sleeping worked.  The second `Write` after the sleep is what
+/// makes the wake visible: a program that never woke prints one line, not two.
 const fn program_words(number: u16) -> [u32; 24] {
     [
         // A busy loop, so a program outlives a time slice.
@@ -138,7 +138,7 @@ const fn program_words(number: u16) -> [u32; 24] {
         // Without it a program finishes in microseconds, no tick arrives, and a
         // boot that never preempted is indistinguishable from one that could
         // not.  The loop is nested because one register's 16-bit immediate is
-        // about twelve microseconds — the first version was one register and
+        // about twelve microseconds, the first version was one register and
         // the count was zero.
         0xD280_0803, // movz x3, #64      (outer)
         0xD280_2002, // movz x2, #256     (inner)

@@ -5,7 +5,7 @@
 //!
 //! This sits below the filesystem on purpose.  A disk driver has to name the
 //! device interface to implement it, and it must not have to name the
-//! filesystem to do that — the filesystem is one consumer of the interface, not
+//! filesystem to do that, the filesystem is one consumer of the interface, not
 //! its owner.
 
 use alloc::string::String;
@@ -54,7 +54,7 @@ pub struct DeviceIo {
     /// This is the height *below* `read_ops`/`write_ops`: those count what a
     /// caller asked the device for, and this counts what the driver asked the
     /// hardware for.  The two differ exactly when one request covers more than
-    /// one device command — which is what a run-capable request is for, so
+    /// one device command, which is what a run-capable request is for, so
     /// this is the row that shows a driver going back to one command per
     /// block.
     ///
@@ -180,7 +180,7 @@ mod io_counters {
 
 /// Count one request a driver put on a device's own queue.
 ///
-/// A driver calls this where it submits — one call per command the hardware
+/// A driver calls this where it submits, one call per command the hardware
 /// receives.  A run-capable request is one command however many blocks it
 /// covers, so a driver that went back to one command per block moves this row
 /// and nothing else.
@@ -210,7 +210,7 @@ pub fn device_io_snapshot() -> DeviceIo {
 /// is the one place every device the filesystem can read through passes: a
 /// driver's published disk, and the in-memory and sliced volumes the boot
 /// installs.  A slice delegates to its parent, so a read through a slice is
-/// counted once — at the slice, which is the device the filesystem was handed.
+/// counted once, at the slice, which is the device the filesystem was handed.
 pub fn counting_device(device: Arc<dyn QueuedBlockDevice>) -> Arc<dyn QueuedBlockDevice> {
     #[cfg(feature = "perf_baseline")]
     {
@@ -303,7 +303,7 @@ impl QueuedBlockDevice for CountingDevice {
     unsafe fn submit_read(&self, lba: u64, buffer: &mut [u8]) -> Result<Ticket> {
         io_counters::count_read(buffer.len() as u64);
         let guard = io_counters::InFlight::enter(io_counters::Direction::Read);
-        // SAFETY: the caller's buffer contract passes through unchanged — the
+        // SAFETY: the caller's buffer contract passes through unchanged, the
         // same buffer, and the same promise that it outlives the ticket.
         let ticket = match unsafe { self.inner.submit_read(lba, buffer) } {
             Ok(ticket) => ticket,
@@ -424,7 +424,7 @@ pub struct BlockSliceDevice {
     /// Queued rather than plain: a slice of a device that queues is a device
     /// that queues, and a slice of one that does not is a device of depth one.
     /// Holding the plainer type would make every slice report depth one and
-    /// silently drop a parent's queue — the parent would still queue, but the
+    /// silently drop a parent's queue, the parent would still queue, but the
     /// slice in front of it would never say so.
     parent: Arc<dyn QueuedBlockDevice>,
     start_block: u64,
@@ -603,7 +603,7 @@ impl BlockDevice for BlockSliceDevice {
 /// A slice of a device that queues is a device that queues.
 ///
 /// The window is on the same hardware, not a copy of it, so every queue answer
-/// comes from the parent — including a `Busy`, which is the parent's queue
+/// comes from the parent, including a `Busy`, which is the parent's queue
 /// being full rather than the slice's.
 impl QueuedBlockDevice for BlockSliceDevice {
     fn as_block_device(&self) -> &dyn BlockDevice {
@@ -629,7 +629,7 @@ impl QueuedBlockDevice for BlockSliceDevice {
             .start_block
             .checked_add(lba)
             .ok_or(Error::InvalidArgument)?;
-        // SAFETY: the caller's buffer contract passes through — the slice hands
+        // SAFETY: the caller's buffer contract passes through, the slice hands
         // the parent the same buffer, so it is the same promise.
         unsafe { self.parent.submit_read(parent_lba, buffer) }
     }
@@ -676,7 +676,7 @@ impl QueuedBlockDevice for BlockSliceDevice {
 /// installs itself here, and the driver calls [`publish_device`].
 ///
 /// Deliberately a plain function pointer rather than a closure: no allocation,
-/// no capture, and one sink — a second source of truth for "which devices
+/// no capture, and one sink, a second source of truth for "which devices
 /// exist" is the thing this is here to avoid.
 /// The sink a published device goes to: its name, and the device.
 pub type DeviceSink = fn(&str, Arc<dyn BlockDevice>);
@@ -691,7 +691,7 @@ pub fn set_device_publisher(publisher: DeviceSink) {
 /// Hand a device to the installed sink.
 ///
 /// Returns whether it was delivered.  With no sink installed the device is
-/// dropped — that is the case in a build that never installs one, such as a
+/// dropped, that is the case in a build that never installs one, such as a
 /// host test that builds its devices directly, and it is reported rather than
 /// passed over in silence.
 pub fn publish_device(name: &str, device: Arc<dyn BlockDevice>) -> bool {
@@ -728,8 +728,8 @@ mod tests {
     /// when a test says so.
     ///
     /// The data is copied at submit rather than at completion, so the test can
-    /// check what the interface promises — depth, tickets, `Busy`, and an
-    /// answer for a ticket the device does not know — without a raw pointer to
+    /// check what the interface promises, depth, tickets, `Busy`, and an
+    /// answer for a ticket the device does not know, without a raw pointer to
     /// hand around.
     struct QueuedMock {
         storage: Vec<u8>,
@@ -790,8 +790,8 @@ mod tests {
         assert_eq!(device.queue_depth(), 1);
 
         let mut buffer = [0_u8; BLOCK_SIZE];
-        // SAFETY: the buffer outlives the ticket — the default submit fills it
-        // before it returns — and nothing else names it.
+        // SAFETY: the buffer outlives the ticket, the default submit fills it
+        // before it returns, and nothing else names it.
         let ticket = unsafe { device.submit_read(0, &mut buffer) }.expect("submit");
         assert!(ticket.is_done(), "a depth-one device finishes in place");
         assert_eq!(buffer, [7_u8; BLOCK_SIZE], "and the data is already there");

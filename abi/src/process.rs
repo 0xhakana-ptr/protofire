@@ -204,7 +204,7 @@ pub const SIGNAL_FRAME_REGS: usize = 15;
 /// The kernel writes it below the user's current RSP before rewriting the
 /// InterruptContext to jump to the user handler.  When the handler returns,
 /// the ring3 trampoline passes a pointer to this frame to `SYS_SIGRETURN`,
-/// which puts the interrupted context back — the registers below, and the
+/// which puts the interrupted context back, the registers below, and the
 /// instruction pointer, stack pointer and flags after them.  A handler is
 /// free to clobber registers because they are all here.
 #[repr(C)]

@@ -53,7 +53,7 @@ fn the_flags_are_in_the_machines_bits() {
 /// neither.
 ///
 /// The boot's identity map set neither, so every BAR the kernel reached
-/// was mapped as cached memory — which works on an emulator and is wrong
+/// was mapped as cached memory, which works on an emulator and is wrong
 /// on hardware.
 #[test]
 fn a_device_mapping_disables_the_cache() {
@@ -105,7 +105,7 @@ fn the_address_does_not_reach_the_flags() {
 ///
 /// This is the bug the first version had: the address mask was `!0xFFF`,
 /// which kept bit 63, so every non-executable mapping decoded to an
-/// address above 2^63 — a number no machine has.  The mask is the
+/// address above 2^63, a number no machine has.  The mask is the
 /// forty bits a physical address occupies, not everything that is not a
 /// flag.
 #[test]

@@ -251,7 +251,7 @@ fn compact_preserves_content_of_moved_frames() {
     let moved = allocator.compact(|_, _| true);
     assert_eq!(moved, 8);
 
-    // After compaction the live frames occupy slots 0..8 — contents must
+    // After compaction the live frames occupy slots 0..8, contents must
     // match the original frames 1, 3, .., 15 (values 2, 4, .., 16).
     let expected: Vec<u8> = (0..8).map(|k| ((k * 2) + 2) as u8).collect();
     for (slot, &value) in expected.iter().enumerate() {

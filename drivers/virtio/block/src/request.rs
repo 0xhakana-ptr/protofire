@@ -14,7 +14,7 @@
 //! ```
 //!
 //! Sixteen bytes, always first in the chain, always written by the driver.
-//! `sector` is an absolute 512-byte sector number — not a byte offset, which
+//! `sector` is an absolute 512-byte sector number, not a byte offset, which
 //! is the confusion this header's comment exists to prevent.
 //!
 //! ## The status byte (5.2.6.1)
@@ -29,7 +29,7 @@
 //!
 //! There is no other error channel.  The used ring reports a *length*, not a
 //! result, so a request whose status is not zero failed even though the device
-//! completed it — and a driver that only checked the length would report a
+//! completed it, and a driver that only checked the length would report a
 //! failed write as a success.
 //!
 //! ## Why the types are explicit
@@ -88,9 +88,9 @@ pub const STATUS_LEN: u32 = 1;
 
 /// Encode a request header into its wire bytes.
 ///
-/// Little-endian, because that is what the specification says the fields are —
-/// not because this tree's machines happen to be little-endian.  A big-endian
-/// machine would need this to stay exactly as it is.
+/// Little-endian, because that is what the specification says the fields are,
+/// /// not because this tree's machines happen to be little-endian.  A
+/// big-endian machine would need this to stay exactly as it is.
 pub fn encode_header(request_type: RequestType, sector: u64) -> [u8; HEADER_LEN as usize] {
     let mut bytes = [0u8; HEADER_LEN as usize];
     bytes[0..4].copy_from_slice(&(request_type as u32).to_le_bytes());

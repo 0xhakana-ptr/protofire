@@ -5,10 +5,10 @@
 //!
 //! ## What the machine has
 //!
-//! The device tree lists the harts — `/cpus`'s `cpu@` children, each `reg`
-//! naming its hart id and `status` saying whether firmware means to use it —
-//! and the firmware owns the power state.  A hart that is not running is
-//! parked in M-mode, and S-mode cannot wake one by writing a register: it
+//! The device tree lists the harts, `/cpus`'s `cpu@` children, each `reg`
+//! naming its hart id and `status` saying whether firmware means to use it, //!
+//! and the firmware owns the power state.  A hart that is not running is parked
+//! in M-mode, and S-mode cannot wake one by writing a register: it
 //! **asks**, through the HSM extension, and the firmware enters the hart at
 //! the address the ask names, with the hart's id in `a0` and the asker's
 //! opaque word in `a1`.
@@ -16,7 +16,7 @@
 //! ## What a started hart does, and what it deliberately does not
 //!
 //! A started hart gets a stack of its own, the trap vector, and one job:
-//! record that it is online, and park.  It does not run the scheduler — the
+//! record that it is online, and park.  It does not run the scheduler, the
 //! scheduler is a single structure today, and two harts in it would be two
 //! writers nothing locks.  It does not take interrupts: `sstatus.SIE` stays
 //! clear, so the park is a park and not a second CPU feeding ticks into code
@@ -31,8 +31,8 @@ use core::sync::atomic::Ordering;
 /// How many harts past the boot one this tree starts.
 ///
 /// The gate's machine asks for two harts in total.  The stacks the entry
-/// assembly reserves are sized from this number — one fact, interpolated into
-/// the assembly rather than written there a second time — and a machine whose
+/// assembly reserves are sized from this number, one fact, interpolated into
+/// the assembly rather than written there a second time, and a machine whose
 /// tree names more harts than the cap has a boot that starts the first of
 /// them rather than one that guesses at a bigger reservation.
 pub const MAX_SECONDARY_HARTS: usize = 4;
@@ -135,15 +135,15 @@ unsafe fn sbi_hart_start(hart: u64, start: u64, opaque: u64) -> i64 {
 
 /// Start every hart the machine names past the boot one.
 ///
-/// Answers how many the firmware **accepted** — the count of slots the boot
+/// Answers how many the firmware **accepted**, the count of slots the boot
 /// can wait on.  A hart the tree lists but the firmware refuses is counted in
 /// [`refused_harts`] and reported, not dropped: the difference between "the
 /// machine has one hart" and "the machine has two and one refused" is the
 /// whole of what a reader of the log needs.
 ///
-/// The boot hart runs this after its own tables are up and the bss is clear —
-/// the bss clear is the boot hart's, and a hart started before it would find
-/// whatever the firmware left in the flags it is about to store.
+/// The boot hart runs this after its own tables are up and the bss is clear,
+/// /// the bss clear is the boot hart's, and a hart started before it would
+/// find whatever the firmware left in the flags it is about to store.
 ///
 /// # Safety
 ///
@@ -168,7 +168,7 @@ pub unsafe fn start_secondary_harts() -> usize {
         }
         let slot = asked;
         SLOT_HART[slot].store(hart, Ordering::Release);
-        // SAFETY: the caller's contract is this function's — once per hart,
+        // SAFETY: the caller's contract is this function's, once per hart,
         // from the boot hart, with the entry address the secondary path owns.
         let error =
             unsafe { sbi_hart_start(hart as u64, secondary_entry_address() as u64, slot as u64) };
@@ -200,7 +200,7 @@ fn secondary_entry_address() -> usize {
 ///
 /// The firmware hands back what the boot hart put in the ask: the hart's own
 /// id in `a0` and the slot the boot hart chose in `a1`.  The slot is the only
-/// thing the hart needs — its stack and its flag are both indexed by it, and
+/// thing the hart needs, its stack and its flag are both indexed by it, and
 /// the boot hart only ever hands out slots the reservation holds, which is
 /// the promise the entry assembly's stack setup is written against.
 ///
@@ -220,7 +220,7 @@ pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
     //
     // **One past `slot`**, because slot zero is the boot CPU's: this `slot` is
     // an index among the harts the boot started, and using it raw made the
-    // first started hart the boot CPU in `per_cpu`'s eyes — so it ran the
+    // first started hart the boot CPU in `per_cpu`'s eyes, so it ran the
     // scheduling half while the boot hart was still building the scheduler, and
     // the ring-3 entry that followed faulted at an address no program was ever
     // given.
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
     // kernel's sink, and hands a frame to a scheduler that is one structure and
     // locks nothing.  A second hart entering the same path is a second writer,
     // and the two boots it produced were a fault inside the device tree and a
-    // store to address three — neither of them anywhere near the CPU that
+    // store to address three, neither of them anywhere near the CPU that
     // caused it.
     //
     // So a started hart keeps `SIE` clear and parks.  What the boot can prove
@@ -251,7 +251,7 @@ pub unsafe extern "C" fn riscv64_secondary_main(hart: usize, slot: usize) -> ! {
 /// Stop this hart until something it cannot yet name arrives.
 ///
 /// `sstatus.SIE` is clear, so no interrupt is taken and the loop does not
-/// exit — which is the point: the hart is parked, not idle, and the change
+/// exit, which is the point: the hart is parked, not idle, and the change
 /// that gives it work is the change that gives it a wake.
 #[cfg(target_os = "none")]
 fn park() -> ! {

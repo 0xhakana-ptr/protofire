@@ -16,7 +16,7 @@
 //!
 //! The structure block does not store names inline.  A property token carries
 //! an offset into the strings block, and the same name is therefore stored once
-//! no matter how many nodes use it — which is why a device tree with three
+//! no matter how many nodes use it, which is why a device tree with three
 //! hundred `reg` properties is a few kilobytes rather than thirty.
 //!
 //! ## Why this is a `libs` crate and not `arch`'s

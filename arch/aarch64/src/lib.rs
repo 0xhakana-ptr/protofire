@@ -10,7 +10,7 @@
 //! ## No crate-level architecture gate
 //!
 //! The first version of this file had `#![cfg(target_arch = "aarch64")]`, so
-//! that `cargo build --workspace` — which builds every member for the host —
+//! that `cargo build --workspace`, which builds every member for the host, //!
 //! would not try to assemble `wfi` into an x86 binary.  What that also did was
 //! make the whole crate empty on a host, *including its tests*:
 //! `cargo test -p arch_aarch64` reported zero, and every assertion in
@@ -76,8 +76,8 @@ pub mod vbar;
 /// the function `-> !`: an interrupt that returns here would fall into whatever
 /// follows, and there is nothing after a stop.
 ///
-/// A host has no `wfi`.  The no-op arm does not loop, which would be a spin —
-/// it stops the process the way the real one stops the core, so a test that
+/// A host has no `wfi`.  The no-op arm does not loop, which would be a spin,
+/// /// it stops the process the way the real one stops the core, so a test that
 /// calls it returns rather than hanging.  That difference is the honest one:
 /// this is the only function in the crate a test has no reason to call, and a
 /// test build that hung would be worse than one that did not run it.
@@ -110,7 +110,7 @@ pub fn halt() -> ! {
 /// x86_64 needs `sti` before its `hlt` because a supervisor call arrives
 /// through an interrupt gate, which clears the flag.  aarch64's exception
 /// entry restores `PSTATE` from `SPSR_EL1` on the way out and masks nothing on
-/// the way in for this path, so there is no flag to set — and `wfi` returns
+/// the way in for this path, so there is no flag to set, and `wfi` returns
 /// when an interrupt is pending whether or not one is masked at the time.
 ///
 /// A host has no `wfi` and no interrupt to wait for, so the host arm returns
@@ -122,7 +122,7 @@ pub fn wait_for_a_wakeup() {
     //
     // The same reason x86_64's `sti; hlt` does, in this machine's words.  A
     // supervisor call arrives through an exception, and `entry.S` masks `IRQ`
-    // on the way in — so the kernel runs with interrupts off for the whole of
+    // on the way in, so the kernel runs with interrupts off for the whole of
     // a served call, and a wait that did not unmask them never takes the tick
     // that would end it.  `wfi` alone then returns immediately for ever: it is
     // a hint about the core's power state, not an enable.
@@ -146,9 +146,9 @@ pub fn wait_for_a_wakeup() {}
 /// Install the exception vector table, and prove it delivers.
 ///
 /// Returns whether this machine will now take an exception through
-/// [`trap::aarch64_exception_dispatch`].  The table itself is `entry.S`'s —
+/// [`trap::aarch64_exception_dispatch`].  The table itself is `entry.S`'s, ///
 /// sixteen entries that record their index in `x16` and branch to one common
-/// save/restore path — and this installs the register that names it.
+/// save/restore path, and this installs the register that names it.
 ///
 /// The answer is not "the register was written".  A register written and never
 /// exercised is the recurring defect in this tree: code that is written, wired,
@@ -156,7 +156,7 @@ pub fn wait_for_a_wakeup() {}
 /// from EL1 after installing, and the supervisor call has to arrive at entry 4
 /// and return.  That exercises the save, the restore, the vector numbering, the
 /// sink and the `eret` in one go, and the frame's offsets are what the return
-/// path restored — a frame laid out wrong would return into garbage instead of
+/// path restored, a frame laid out wrong would return into garbage instead of
 /// returning at all.
 ///
 /// It runs here rather than in a separate probe because it needs nothing the
@@ -171,7 +171,7 @@ pub fn wait_for_a_wakeup() {}
 /// not safe anywhere else.
 #[cfg(target_os = "none")]
 pub unsafe fn install_interrupt_table() -> bool {
-    // SAFETY: the caller's contract is this function's — once, with the sink
+    // SAFETY: the caller's contract is this function's, once, with the sink
     // installed and the stack valid.
     let installed = unsafe { trap::install_table() };
     if !installed {
@@ -202,7 +202,7 @@ pub unsafe fn install_interrupt_table() -> bool {
 /// The machine's message-signalled interrupt frame, probed.
 ///
 /// `None` when the tree names no frame.  The two numbers this answers are the
-/// ones `MSI_TYPER` holds — read from the register, not assumed — so a caller
+/// ones `MSI_TYPER` holds, read from the register, not assumed, so a caller
 /// learns which interrupts the frame can raise rather than inheriting a guess.
 ///
 /// # Safety
@@ -223,7 +223,7 @@ pub const USER_EXCEPTION_LEVEL: u64 = 0;
 
 /// `SPSR_EL1` for a return to EL0.
 ///
-/// The `M` field is `0b0000` — EL0t, the only state a program runs in — and the
+/// The `M` field is `0b0000`, EL0t, the only state a program runs in, and the
 /// DAIF bits are set, so a program does not take an interrupt directly.  A
 /// program that could would be one taking an exception the kernel has no frame
 /// for.
@@ -240,7 +240,7 @@ pub const SPSR_EL0T: u64 = 0x340;
 ///
 /// Everything up to here runs at EL1.  Returning to a lower exception level is
 /// an `eret` with `SPSR_EL1` naming EL0 and `ELR_EL1` naming where in the
-/// program to start — the same instruction the trap path already ends with,
+/// program to start, the same instruction the trap path already ends with,
 /// pointed somewhere new.  What made it impossible before is not the
 /// instruction: it is that no mapping was `user` and no frame carried a
 /// program.
@@ -248,7 +248,7 @@ pub const SPSR_EL0T: u64 = 0x340;
 /// ## Why it does not return
 ///
 /// Control does not come back here.  The program returns to the kernel through
-/// a trap — a syscall or an exit — and the trap path is what resumes the
+/// a trap, a syscall or an exit, and the trap path is what resumes the
 /// kernel.  A function that "returned" would be claiming a program can finish
 /// without trapping, which it cannot: EL0 has no way out except an exception.
 ///
@@ -256,7 +256,7 @@ pub const SPSR_EL0T: u64 = 0x340;
 ///
 /// `entry` must be a virtual address mapped `user` and executable, `stack_top`
 /// must be a `user`-accessible page's end, and the caller must have no live
-/// state on the kernel stack that an exception could not restore — the trap
+/// state on the kernel stack that an exception could not restore, the trap
 /// path builds its own frame and resumes through it.
 /// Enter EL0 with a context, which is the form a scheduler has.
 ///
@@ -271,7 +271,7 @@ pub const SPSR_EL0T: u64 = 0x340;
 ///  The three `msr`s and the `eret` are one transaction, and a timer tick
 ///  between them destroys it.  An exception taken here is taken at EL1, so
 ///  `entry.S` saves the interrupted `ELR_EL1`/`SPSR_EL1` **and restores them
-///  on the way out** — clobbering the entry this function just wrote.  The
+///  on the way out**, clobbering the entry this function just wrote.  The
 ///  `eret` then returns to whatever address the tick interrupted, which is
 ///  inside this very function, and it does so at EL0 because the `spsr` was
 ///  rewritten to EL0t again.  The machine takes an instruction abort on a
@@ -310,7 +310,7 @@ pub unsafe fn enter_user_with_context(context: &Context) -> ! {
 ///
 /// `entry` must be a virtual address mapped `user` and executable, `stack_top`
 /// must be a `user`-accessible page's end, and the caller must have no live
-/// state on the kernel stack that an exception could not restore — the trap
+/// state on the kernel stack that an exception could not restore, the trap
 /// path builds its own frame and resumes through it.
 #[cfg(target_os = "none")]
 pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
@@ -345,7 +345,7 @@ pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
 /// fetch happens through the new one: a switch made from an address only the
 /// old table maps faults on the instruction after the write.
 ///
-/// That is why this kernel's program roots copy the kernel's entry 0 — the
+/// That is why this kernel's program roots copy the kernel's entry 0, the
 /// kernel's code, its stack and the trap vectors are reachable through every
 /// root, so a switch can happen anywhere in the kernel and the trap path does
 /// not have to be careful about where it is.
@@ -361,7 +361,7 @@ pub unsafe fn enter_user(entry: usize, stack_top: usize) -> ! {
 /// # Safety
 ///
 /// `root` must be a page-aligned root table whose entry 0 maps every address
-/// the kernel is running on — its text, its stack and the vectors — because the
+/// the kernel is running on, its text, its stack and the vectors, because the
 /// next fetch happens through it.
 #[cfg(target_os = "none")]
 pub unsafe fn switch_address_space(root: usize) -> bool {
@@ -478,7 +478,7 @@ pub unsafe fn timer_fired() -> bool {
 /// The line a boot raises to prove the interrupt path.
 ///
 /// Zero, because `GICD_SGIR` generates software interrupts 0..15 and nothing
-/// above them — a device's line is raised by its device, and the only line this
+/// above them, a device's line is raised by its device, and the only line this
 /// controller can be *asked* for is one of the sixteen.
 pub const fn test_interrupt() -> usize {
     0
@@ -546,7 +546,7 @@ pub unsafe fn enable_interrupt_line(number: usize) -> bool {
         return false;
     };
     let gic = gic::Gic::new(distributor, cpu);
-    // SAFETY: the caller's contract is this function's — after the controller
+    // SAFETY: the caller's contract is this function's, after the controller
     // is enabled, once per line.
     unsafe { gic.enable_interrupt(number) }
 }
@@ -555,7 +555,7 @@ pub unsafe fn enable_interrupt_line(number: usize) -> bool {
 ///
 /// The frame reaches [`trap::aarch64_exception_dispatch`], which calls this
 /// sink and stops the machine when it answers `false`.  Installing one is what
-/// makes an exception observable rather than a silent `wfe` — which is exactly
+/// makes an exception observable rather than a silent `wfe`, which is exactly
 /// what this machine's first boot was, and why it printed four lines and
 /// stopped with nothing after them.
 ///
@@ -599,7 +599,7 @@ pub fn interrupt_stack_top() -> usize {
 /// Start this machine's other cores: this machine starts none.
 ///
 /// A device-tree machine wakes a secondary core through PSCI, the firmware
-/// call its tree names in the `psci` node's `cpu_on` function — but this
+/// call its tree names in the `psci` node's `cpu_on` function, but this
 /// machine's boot reads no PSCI node and has no secondary entry to name, so
 /// the honest answer is zero: a machine with more than one core runs one,
 /// and a count without a path behind it is the claim this tree's boot lines

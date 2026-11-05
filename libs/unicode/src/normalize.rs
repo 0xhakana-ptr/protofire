@@ -4,7 +4,7 @@
 //!
 //! Uses the auto-generated [`super::normalize_tables`] tables.  Only the
 //! canonical decompositions (NFD) and the two-code-point compositions (NFC)
-//! are supported — compatibility decompositions (NFKD/NFKC) are deliberately
+//! are supported, compatibility decompositions (NFKD/NFKC) are deliberately
 //! excluded because filenames rarely need them and the table would balloon.
 //!
 //! The entry points are [`is_normalized_nfd`] / [`normalize_nfd`] and

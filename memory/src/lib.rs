@@ -17,8 +17,8 @@
 //!
 //! ## What is not here yet
 //!
-//! The rest of the previous tree's `src/memory/` — the manager, the page table
-//! walk, the architecture glue, the swapping — is the half that does name a
+//! The rest of the previous tree's `src/memory/`, the manager, the page table
+//! walk, the architecture glue, the swapping, is the half that does name a
 //! machine.  It arrives in changes of its own, because each of those files
 //! reaches for `arch` and for the kernel, and moving them together would be a
 //! change nobody could review.
@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn the_default_mapping_hook_is_safe_to_call() {
         let mut allocator = FrameAllocator::new();
-        // No pool, so `allocate` refuses before it ever reaches the hook —
+        // No pool, so `allocate` refuses before it ever reaches the hook, //
         // which is the other half of the same property: an uninitialised
         // allocator does not call into a machine that has not been told about
         // it.

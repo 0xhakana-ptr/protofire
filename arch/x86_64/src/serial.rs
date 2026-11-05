@@ -4,7 +4,7 @@
 //!
 //! ## Why this is here and not in a driver crate
 //!
-//! A serial port is not a device the kernel discovers — it is part of the
+//! A serial port is not a device the kernel discovers, it is part of the
 //! machine the way a register is, present on every PC since the first one, at a
 //! fixed I/O address, with no enumeration and no interrupt required.  The
 //! kernel's first output has to work before there is a driver registry, an
@@ -23,7 +23,7 @@ const COM1: u16 = 0x3F8;
 
 // The 16550's register offsets, so the initialisation sequence can name the
 // register each write reaches.  With DLAB set, `DATA` and `IER` become the
-// divisor latch's low and high halves — which is why the same two offsets
+// divisor latch's low and high halves, which is why the same two offsets
 // appear twice below with different meanings.
 #[cfg(target_os = "none")]
 const DATA: u16 = 0;
@@ -81,11 +81,11 @@ pub fn init() {
     // number, so the sequence reads as the datasheet's table.  `DATA` is the
     // base address itself, which is why the first write below is not
     // `COM1 + 0`: naming the register and adding zero would be the same port
-    // twice, and clippy is right that the second spelling has no effect — but
+    // twice, and clippy is right that the second spelling has no effect, but
     // the register name is what makes the block readable, so the constant is
     // what the code says.
-    // SAFETY: COM1 is present on any machine this kernel boots on — a PC
-    // without it is not one these three ports describe — and each write below
+    // SAFETY: COM1 is present on any machine this kernel boots on, a PC
+    // without it is not one these three ports describe, and each write below
     // is the documented sequence for programming the divisor latch.
     unsafe {
         outb(COM1 + IER, 0x00); // disable all UART interrupts
@@ -236,7 +236,7 @@ mod tests {
     /// trusted, because it is the one arithmetic fact the function depends on.
     ///
     /// Counted by division rather than by `to_string`: this crate is `no_std`
-    /// and does not link `alloc`, so `Display` is not available — and the
+    /// and does not link `alloc`, so `Display` is not available, and the
     /// arithmetic is what `write_u32` itself does, which makes this a check of
     /// the same operation rather than of a different one.
     #[test]
@@ -271,7 +271,7 @@ mod tests {
     /// A newline is written as CRLF, because the reader is a terminal.
     ///
     /// The gate that reads a boot's serial log strips the CR, so this is not
-    /// what that check is about — but a sink that dropped it would make every
+    /// what that check is about, but a sink that dropped it would make every
     /// log unusable in a terminal, and nothing else in the tree would notice.
     #[cfg(not(target_os = "none"))]
     #[test]

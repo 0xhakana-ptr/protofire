@@ -12,7 +12,7 @@
 //! and a host test has neither.
 //!
 //! The allocator cannot simply drop the messages.  An allocation failure with
-//! no explanation is the worst thing a heap can do — the caller gets a null
+//! no explanation is the worst thing a heap can do, the caller gets a null
 //! pointer and the log says nothing about which of five overflow checks fired.
 //! So the messages stay, and the *sink* is injected.
 //!
@@ -43,7 +43,7 @@ static WRITER: AtomicUsize = AtomicUsize::new(0);
 /// # Safety
 ///
 /// The function must be safe to call from any context the allocator runs in,
-/// including from an allocation made while a lock is held — which in practice
+/// including from an allocation made while a lock is held, which in practice
 /// means it must not allocate.  It must also be `'static`: the allocator stores
 /// its address and has no way to know when the caller's borrow ends.
 pub unsafe fn set_writer(writer: Option<fn(&str)>) {
@@ -123,7 +123,7 @@ mod tests {
     /// With no writer installed, writing is a no-op rather than a fault.
     ///
     /// This is the state a host test that installed nothing is in, and a null
-    /// call there would turn every allocation failure into a segfault — which
+    /// call there would turn every allocation failure into a segfault, which
     /// is a much worse diagnostic than none.
     #[test]
     fn with_no_writer_nothing_happens() {

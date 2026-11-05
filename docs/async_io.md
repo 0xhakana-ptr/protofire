@@ -28,7 +28,7 @@ caller                          service
 
 The caller takes completions from a [`CompletionQueue`](../async_io/src/queue.rs)
 it owns, not from the service.  That is what makes the queue's accounting
-checkable — what went in, what came out, what was refused — and it is the same
+checkable, what went in, what came out, what was refused, and it is the same
 split an `io_uring` ring has, where the program sizes the ring and the kernel
 fills it.
 
@@ -43,8 +43,7 @@ operations* in the ABI.  Adding one would mean extending a wire format, and ever
 service would have to understand operations it does not provide.
 
 Here the request is opaque to the queue.  A service decides what it accepts, and
-the crate never learns what an operation is.  The `io_uring` ABI stays what it is
-— a program's view of a submission — and is translated into these requests at the
+the crate never learns what an operation is.  The `io_uring` ABI stays what it is, a program's view of a submission, and is translated into these requests at the
 syscall boundary.
 
 ## What "everything is a service" buys
@@ -60,7 +59,7 @@ A service is anything that accepts a request and completes it later:
 The last two are the reason the trait takes opaque requests.  Starting a program
 is a request; its completion is `Ok(exit_status)`.  Nothing about that is
 I/O-shaped, and a queue with operation codes would have had to grow an
-`IORING_OP_SPAWN` to express it — where here it is a service like any other.
+`IORING_OP_SPAWN` to express it, where here it is a service like any other.
 
 ## The three methods
 
@@ -72,12 +71,12 @@ cached block is the case; a program launch never is.
 version of the one test service in this crate returned the second, and a test
 failed on it: a poll that decremented a delay had changed something and produced
 nothing, and the two answers disagree for exactly one poll per request.  The
-trait's word is the one that matters — a driver's poll is "drain what the device
+trait's word is the one that matters, a driver's poll is "drain what the device
 finished", not "advance time".
 
 `cancel` produces a completion.  A caller with nowhere to put a completion for the
 request it cancelled would leak its own token, and a service that had already
-taken the operation cannot un-take it — so cancellation is a request, not a
+taken the operation cannot un-take it, so cancellation is a request, not a
 command.
 
 ## The obligation the trait states and cannot enforce
@@ -87,15 +86,13 @@ express that, and a timeout would be a policy this crate has no basis for.
 
 What makes it checkable is that everything a service does goes through the queue:
 a request accepted and never completed leaves the queue's accounting disagreeing
-with the service's.  The test service in `service_tests.rs` is checked that way —
-`every_accepted_request_is_completed` — and a driver's version of that check is a
+with the service's.  The test service in `service_tests.rs` is checked that way, `every_accepted_request_is_completed`, and a driver's version of that check is a
 boot that drains its queue, which is a different gate and a later change.
 
 ## Why the queue is bounded
 
 A completion is a value a service produces and a caller takes.  If the producer
-can outrun the consumer forever, the queue is a memory leak with a polite name —
-and a service that completed four thousand requests during one syscall is exactly
+can outrun the consumer forever, the queue is a memory leak with a polite name, and a service that completed four thousand requests during one syscall is exactly
 the shape that fills one.
 
 So the queue has a capacity, filling it is an error the producer is told about,
@@ -105,7 +102,7 @@ outran its ring becomes visible instead of being a dropped completion.
 
 The capacity is the caller's, not the crate's.  A const-generic queue would have
 had to name a maximum here, which is a policy about how many devices a kernel
-runs — and only the kernel knows that.  The kernel's queue is 64
+runs, and only the kernel knows that.  The kernel's queue is 64
 (`COMPLETION_QUEUE_CAPACITY` in `kernel/src/lib.rs`), and the number is stated
 there with its reason.
 
@@ -133,7 +130,7 @@ says how a service is driven; the kernel has no producer for it, so there is no
 boot line and no gate that runs one.
 
 That is a deliberate state and not an oversight.  The completion queue this boot
-once drained was a wiring proof — a queue with nothing producing into it — and
+once drained was a wiring proof, a queue with nothing producing into it, and
 the change that made the boot read a file through the syscalls superseded it:
 that read is a real operation whose result a reader can verify, and a queue
 drained by hand proved less by showing more.  `DISK_SECTORS` and

@@ -91,7 +91,7 @@ impl AuditBuffer {
             }
 
             // Try to atomically claim this slot.  Only one producer
-            // succeeds per CAS — others retry with a fresh head.  The
+            // succeeds per CAS, others retry with a fresh head.  The
             // Acquire ordering keeps the slot write below from being
             // hoisted above the claim.
             if self

@@ -524,7 +524,7 @@ impl PyroFs {
             }
         }
 
-        // Re-read inode — children removal may have shifted entries.
+        // Re-read inode, children removal may have shifted entries.
         let current = state
             .inodes
             .get(inode_index)

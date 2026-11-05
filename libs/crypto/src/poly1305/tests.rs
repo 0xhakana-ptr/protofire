@@ -113,7 +113,7 @@ fn poly1305_debug_trace_rfc8439() {
         assert_eq!(a1, 0x06f46206369687061, "blk0 after add a1");
         assert_eq!(
             a2, 0x1,
-            "blk0 after add a2 — need +1 for 0x01 byte at bit 128"
+            "blk0 after add a2, need +1 for 0x01 byte at bit 128"
         );
 
         crate::poly1305::poly1305_mul_mod(&mut a0, &mut a1, &mut a2, [r0, r1]);
@@ -195,6 +195,6 @@ fn poly1305_debug_trace_rfc8439() {
             0xa8, 0x06, 0x1d, 0xc1, 0x30, 0x51, 0x36, 0xc6, 0xc2, 0x2b, 0x8b, 0xaf, 0x0c, 0x01,
             0x27, 0xa9
         ],
-        "final tag mismatch — got {tag:02x?}"
+        "final tag mismatch, got {tag:02x?}"
     );
 }

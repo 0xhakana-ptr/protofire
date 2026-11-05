@@ -1,6 +1,6 @@
 //! src/memory/heap/allocator.rs
 //!
-//! `KernelGlobalAllocator` — the core TLSF-based kernel heap allocator with
+//! `KernelGlobalAllocator`, the core TLSF-based kernel heap allocator with
 //! exponential-backoff spinlock and `GlobalAlloc` trait implementation.
 
 use core::alloc::GlobalAlloc;
@@ -37,7 +37,7 @@ pub struct KernelGlobalAllocator {
     /// The free lists and bitmaps, behind the crate's lock.
     ///
     /// The previous tree hand-rolled a spinlock here, with its own backoff and
-    /// its own interrupt save/restore — a third copy of what `sync` already
+    /// its own interrupt save/restore, a third copy of what `sync` already
     /// provides, carrying the same comment ("the same pattern used by
     /// SpinLock") that says so.  One lock is one place to get the interrupt
     /// ordering right, and this is it.
@@ -104,10 +104,10 @@ impl KernelGlobalAllocator {
     ///
     /// # Parameters
     ///
-    /// * `state` — mutable reference to the allocator state containing the free
+    /// * `state`, mutable reference to the allocator state containing the free
     ///   lists and bitmaps.
-    /// * `layout` — the requested size and alignment.
-    /// * `profiler` — profiler for tracking allocated byte counts.
+    /// * `layout`, the requested size and alignment.
+    /// * `profiler`, profiler for tracking allocated byte counts.
     pub(crate) fn allocate_locked(
         state: &mut AllocatorState,
         layout: Layout,
@@ -115,7 +115,7 @@ impl KernelGlobalAllocator {
     ) -> *mut u8 {
         let requested_size = layout.size().max(1);
         // Reserve room for the block's canary.  It is part of what the block
-        // must hold, so it has to be in the size the carve is computed from —
+        // must hold, so it has to be in the size the carve is computed from, //
         // otherwise the canary would land on the caller's last bytes.
         let reserved_size = requested_size.saturating_add(super::tlsf::CANARY_SIZE);
         let requested_align = layout.align().max(HEAP_BLOCK_ALIGNMENT);
@@ -132,7 +132,7 @@ impl KernelGlobalAllocator {
             .saturating_add(end_round);
 
         // Find a suitable free block via the TLSF bitmaps.
-        // If alignment padding makes the chosen block too tight (rare —
+        // If alignment padding makes the chosen block too tight (rare, //
         // happens when there is a gap smaller than MIN_FREE_BLOCK that
         // cannot be carved into a prefix), we re-insert it and search
         // for a larger one instead of giving up.
@@ -244,8 +244,8 @@ impl KernelGlobalAllocator {
                 // Leaving it out orphans the bytes between this allocation and
                 // the next block: they belong to no block, their header is
                 // never written, and `state.available` never accounts for
-                // them.  Any walk along the physical block list — and any
-                // coalesce that reaches a neighbouring free block — then steps
+                // them.  Any walk along the physical block list, and any
+                // coalesce that reaches a neighbouring free block, then steps
                 // into that gap, reads a size of zero, and reports a damaged
                 // heap from a place that was never a block.
                 //
@@ -303,8 +303,8 @@ impl KernelGlobalAllocator {
                     // free block it was carved from, so the block after it has
                     // a new physical predecessor.  Leaving the old value in
                     // place is invisible whenever `alloc_start` happens to
-                    // equal the free block's original start — which is every
-                    // case without a prefix — but as soon as a prefix is
+                    // equal the free block's original start, which is every
+                    // case without a prefix, but as soon as a prefix is
                     // created the successor still points at the pre-split
                     // start, and the next full walk reports a defect far from
                     // the operation that caused it.
@@ -343,10 +343,10 @@ impl KernelGlobalAllocator {
     ///
     /// # Parameters
     ///
-    /// * `state` — mutable reference to the allocator state.
-    /// * `ptr` — pointer to the payload (must have been returned by a prior
-    ///   call to [`allocate_locked`]).
-    /// * `profiler` — profiler for tracking freed byte counts.
+    /// * `state`, mutable reference to the allocator state.
+    /// * `ptr`, pointer to the payload (must have been returned by a prior call
+    ///   to [`allocate_locked`]).
+    /// * `profiler`, profiler for tracking freed byte counts.
     pub(crate) fn deallocate_locked(
         state: &mut AllocatorState,
         ptr: *mut u8,
@@ -373,7 +373,7 @@ impl KernelGlobalAllocator {
             // SAFETY: `nominal` was clamped into the heap above, and its first
             // word is either the block's size (odd, because the used flag is
             // set) or the forwarding pointer this allocator writes for an
-            // absorbed alignment prefix — both are words the allocator put
+            // absorbed alignment prefix, both are words the allocator put
             // there.
             let fwd = unsafe { *(nominal as *const usize) };
             if fwd >= state.start
@@ -418,7 +418,7 @@ impl KernelGlobalAllocator {
         // SAFETY: the same block, whose size is non-zero and at least a header,
         // so its size word is a block header's.
         if !unsafe { block_is_used(header_start) } {
-            // Already free — double‑free is a no‑op.
+            // Already free, double‑free is a no‑op.
             return false;
         }
 
@@ -426,8 +426,8 @@ impl KernelGlobalAllocator {
         // still identifiable as this allocation: the address reported points at
         // the allocation that overran rather than at whichever free-list walk
         // later stumbled over the damage.
-        // SAFETY: the canary is inside the block — the check refuses a block
-        // too small to hold one — and it is read while the block is still
+        // SAFETY: the canary is inside the block, the check refuses a block
+        // too small to hold one, and it is read while the block is still
         // marked used, before a free-list walk could trip over an overrun.
         if let Err(defect) = unsafe { super::tlsf::canary_check(header_start) } {
             // SAFETY: this is the damage path and the heap is suspect; the

@@ -1,7 +1,7 @@
 # `certs/`: the trust anchors
 
 This directory is data, not code.  Nothing here is compiled, nothing here is
-linked, and no crate depends on it: a file in here is a **build input** — read
+linked, and no crate depends on it: a file in here is a **build input**, read
 at image-build time and embedded into the kernel's trust store.  The kernel
 never reads this directory at run time.
 
@@ -11,8 +11,7 @@ Because the thing it holds is a *decision* rather than a program.  A root
 certificate is bytes a CA published; a TOML file beside it says which root a
 machine is built to trust and why.  Encoding that as a Rust array would make
 every certificate rotation a rebuild of a crate that also contains code, and
-would hide the one question a reader should be able to ask of a trust store —
-"what is this machine trusting, and who said so" — inside a source file.
+would hide the one question a reader should be able to ask of a trust store, "what is this machine trusting, and who said so", inside a source file.
 
 ## What a trust anchor is for here
 
@@ -22,8 +21,8 @@ load, or a program that verifies a server, reduces every question about a
 signature to "is this chain rooted at something in the store".
 
 So this directory is the bottom of the boot's integrity story.  Everything
-above it — a signature over the kernel image, a secure-boot check, a TLS
-handshake — is only as strong as the set of anchors here, and a machine built
+above it, a signature over the kernel image, a secure-boot check, a TLS
+handshake, is only as strong as the set of anchors here, and a machine built
 with an anchor nobody argued for is a machine that trusts whoever holds that
 key.
 

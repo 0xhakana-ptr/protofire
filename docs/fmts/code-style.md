@@ -5,8 +5,8 @@
 
 The repository is a large Rust tree written over time by more than one hand, and
 it keeps growing. Consistency is what keeps that readable: a contributor should
-be able to open an unfamiliar module — a filesystem driver, a network protocol,
-the scheduler — and recognise the shape of it without learning a new author's
+be able to open an unfamiliar module, a filesystem driver, a network protocol,
+the scheduler, and recognise the shape of it without learning a new author's
 habits first.
 
 The rules below are the ones this codebase actually follows. Where a rule is
@@ -25,8 +25,8 @@ convention, it says that too, and it is on you and your reviewer.
 This is the rule the rest of the document elaborates, and it outranks any
 stylistic preference you brought with you.
 
-When you edit a module, follow **its** conventions — the same comment density,
-the same naming, the same structure — even where this document would permit
+When you edit a module, follow **its** conventions, the same comment density,
+the same naming, the same structure, even where this document would permit
 something else. A change that is locally consistent and globally slightly
 idiosyncratic is a much smaller cost than a diff that reformats a file to a new
 standard while claiming to fix a bug. Do not mix a refactor into a behavioural
@@ -45,7 +45,7 @@ rather than a bare `cargo fmt` if you are unsure which toolchain is active.
 
 ```bash
 cargo fmt --all   # format the tree
-cargo fmt --all -- --check    # what the gate runs — must be clean
+cargo fmt --all -- --check    # what the gate runs, must be clean
 ```
 
 Settings worth knowing before you fight the formatter:
@@ -54,7 +54,7 @@ Settings worth knowing before you fight the formatter:
 |---------|-------|--------|
 | `max_width` | `100` | Line width; wider than the usual 80, which is why separator rules fill to ~100. |
 | `comment_width` | `80` | Comments wrap narrower than code. |
-| `wrap_comments` | `true` | The formatter reflows your comment text — write comments as prose and let it wrap. |
+| `wrap_comments` | `true` | The formatter reflows your comment text, write comments as prose and let it wrap. |
 | `imports_granularity` | `Item` | One `use` per item; it will not merge them. |
 | `binop_separator` | `Front` | A wrapped expression breaks *before* the operator. |
 | `trailing_comma` | `Vertical` | Multi-line lists get a trailing comma. |
@@ -78,7 +78,7 @@ of string literals (`format_strings = false`).
 
 Files are named after what they contain, in `snake_case`, with no camel case
 anywhere in the tree. A module directory with no `mod.rs` of its own uses
-`#[path = "..."]` from its parent instead — see §4.
+`#[path = "..."]` from its parent instead, see §4.
 
 ### Established suffixes
 
@@ -86,9 +86,9 @@ These suffixes carry meaning, and a reader will assume them:
 
 | Suffix / shape | Means |
 |----------------|-------|
-| `install_global` / `install_global_unchecked` / `global()` | The global-singleton pattern — see §8. `_unchecked` marks the variant that skips the lifetime requirement and is therefore `unsafe`. |
+| `install_global` / `install_global_unchecked` / `global()` | The global-singleton pattern, see §8. `_unchecked` marks the variant that skips the lifetime requirement and is therefore `unsafe`. |
 | `_locked` | Requires the caller to already hold the relevant lock. Almost always `pub(crate)`, and always documented as such. Examples: `resolve_path_locked`, `allocate_locked`. |
-| `try_*` | A non-blocking or fallible attempt. Returns `Option<T>`, `Result<T>`, or `bool` — never a bare value. Examples: `try_read_byte`, `try_consume_send_nonce`. |
+| `try_*` | A non-blocking or fallible attempt. Returns `Option<T>`, `Result<T>`, or `bool`, never a bare value. Examples: `try_read_byte`, `try_consume_send_nonce`. |
 | `raw_*` | Hands back an underlying handle or un-wrapped object rather than a safe abstraction. Examples: `raw_sockets`, `raw_socket_object`. |
 | `*_count`, `*_initialized`, `*_probed` | Counter and status-flag statics. |
 
@@ -130,8 +130,8 @@ pub mod user;
 pub mod util;
 ```
 
-A crate root declares its modules the same way — `pub mod boot;` and onward,
-alphabetically — with feature-gated modules carrying their `#[cfg]` and a note
+A crate root declares its modules the same way, `pub mod boot;` and onward,
+alphabetically, with feature-gated modules carrying their `#[cfg]` and a note
 explaining the gate.
 
 The rest of a `mod.rs` follows this order:
@@ -161,7 +161,7 @@ several files (`fs/src/pyrofs/`, `net/src/tcp/`), a normal
 Re-export deliberately rather than wholesale: `pub use` in a `mod.rs` is how a
 subsystem presents a flat surface (`process::HANDLE_RIGHT_READ`) while its
 implementation lives in submodules. If a `pub use` exists to make a sibling
-module's imports read better, say so in a comment — a bare re-export with no
+module's imports read better, say so in a comment, a bare re-export with no
 consumer is hard to justify later.
 
 ### File-level `allow(dead_code)`
@@ -190,14 +190,14 @@ uses; "the compiler was complaining" is not.
 ## 5. Imports
 
 [`.rustfmt.toml`](../../.rustfmt.toml) sets `imports_granularity = "Item"` and
-`reorder_imports = true`, but `group_imports = "Preserve"` — meaning rustfmt
+`reorder_imports = true`, but `group_imports = "Preserve"`, meaning rustfmt
 sorts *within* a group and leaves *which group an import is in* to you. The
 grouping is therefore a convention you have to maintain by hand, and it has
 three tiers separated by blank lines:
 
-1. **External crates** — `core::`, then `alloc::`, each internally sorted.
-2. **Crate-absolute paths** — `crate::…`, sorted.
-3. **Parent-relative paths** — `super::…`, sorted, last.
+1. **External crates**, `core::`, then `alloc::`, each internally sorted.
+2. **Crate-absolute paths**, `crate::…`, sorted.
+3. **Parent-relative paths**, `super::…`, sorted, last.
 
 ```rust
 use alloc::sync::Arc;
@@ -223,8 +223,7 @@ use crate::fs::FileMetadata;
 use crate::fs::NodeKind;
 ```
 
-Prefer `super::` over `crate::` when the item is genuinely in the parent module
-— it keeps a module readable in isolation. Reach for `crate::` when crossing
+Prefer `super::` over `crate::` when the item is genuinely in the parent module, it keeps a module readable in isolation. Reach for `crate::` when crossing
 subsystems. `#[cfg]`-gated imports sit in the group they belong to, on their own
 line.
 
@@ -240,12 +239,12 @@ code; do not take those files as the model.
 `pub(crate)`, and `pub(super)` is for items that exist only for the parent
 module, like syscall handlers.
 
-- **`pub(crate)`** — shared across the kernel but not part of any public
+- **`pub(crate)`**, shared across the kernel but not part of any public
   surface. This is the normal choice for a helper that another subsystem needs.
-- **`pub(super)`** — visible only to the parent, typically a handler reached via
+- **`pub(super)`**, visible only to the parent, typically a handler reached via
   a registry table. Syscall handlers are `pub(super)` for exactly this reason:
   they are callable through `SYSCALL_REGISTRY` and nowhere else.
-- **`pub`** — reserved for the ABI (`abi/src/`), types genuinely shared between
+- **`pub`**, reserved for the ABI (`abi/src/`), types genuinely shared between
   the kernel and ring-3 code (`abi/src/`), and the small set of kernel
   entry points. A `pub` item in `kernel/src/` should be defensible as a
   deliberate surface, not a habit.
@@ -258,8 +257,8 @@ The same judgement, applied to `#[allow(dead_code)]`: it says the compiler
 cannot prove what you can, and it is worth less the longer it lives.  A
 module-wide one has to carry **why** the item is unread and **when** the line
 goes.  The two file-level allows this rule was written for had both gone
-stale — one covered an unused skeleton whose consumers had existed for months,
-the other a "no caller yet" set that had six callers — and nothing in the tree
+stale, one covered an unused skeleton whose consumers had existed for months,
+the other a "no caller yet" set that had six callers, and nothing in the tree
 said so.  Prefer the narrowest form that silences exactly what is
 intentionally unread: an attribute on the item, a `#[cfg]` gate naming the
 targets that do read it, or `#[cfg(test)]` for a surface only tests use.
@@ -281,7 +280,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 Use `crate::Result<T>` in signatures. Domain-specific errors are separate enums
 named `<Domain>Error` (`ConfigError`, `FuseError`, `VirglCommandError`),
-converted at the boundary into `Error` — they do not replace it, and they do not
+converted at the boundary into `Error`, they do not replace it, and they do not
 leak into the syscall surface.
 
 ### Human-readable text: `as_str`, not `Display`
@@ -311,7 +310,7 @@ build is wrong.** It is never a way to reject input.
 The legitimate cases, all of which are assertions about the code rather than
 about the data:
 
-- Layout assertions checked at startup — `PerCpuData must be exactly 64 bytes`,
+- Layout assertions checked at startup, `PerCpuData must be exactly 64 bytes`,
   `PerCpuData.cpu_id must be at offset 0`.
 - Heap-integrity checks in the TLSF allocator (corruption, misalignment,
   invalid size).
@@ -328,13 +327,12 @@ Production paths prefer a fallback (`unwrap_or`, `unwrap_or_default`) over a
 bare `unwrap()`, and prefer an explicit error over `expect`. The large counts of
 `unwrap`/`expect` in the tree are concentrated in `#[cfg(test)]` code and demo
 scaffolding, where panicking is the point. `expect` with a message is a last
-resort, not a substitute for propagating an error — if the compiler is telling
+resort, not a substitute for propagating an error, if the compiler is telling
 you a value could be `None`, the question is whether that is a bug or a case you
 should handle, and the answer is only rarely "abort the kernel".
 
 `assert!`/`assert_eq!` are used freely in tests and host-side code. In kernel
-paths, prefer `debug_assert!` for expensive checks that hold by construction —
-`debug_assert!` is compiled out of release builds, so it must never be load-
+paths, prefer `debug_assert!` for expensive checks that hold by construction, `debug_assert!` is compiled out of release builds, so it must never be load-
 bearing.
 
 ---
@@ -380,8 +378,7 @@ Rules that make this pattern safe to read:
   annotated with the reason the reference outlives the process.
 
 Do not add a fourth variant or a new global without a reason the existing three
-cannot express. And do not reach for a global to avoid threading a parameter —
-the pattern exists for things interrupt handlers must find, not for convenience.
+cannot express. And do not reach for a global to avoid threading a parameter, the pattern exists for things interrupt handlers must find, not for convenience.
 
 ---
 
@@ -393,7 +390,7 @@ Features are declared in [`Cargo.toml`](../../Cargo.toml) and documented in
 `educational_networking`. The default set is empty; the bare-metal kernel builds
 with no features, and the demo shell and most tests are built with `demo-disk`.
 
-There is **no central `cfg` convergence point** — gates are written at the
+There is **no central `cfg` convergence point**, gates are written at the
 definition and use site. The shapes in use:
 
 ```rust
@@ -409,7 +406,7 @@ pub mod demo;
 Guidance:
 
 - **Profiler features gate counters and recording points, not logic.** With the
-  feature off the code must behave identically — that is what makes the profile
+  feature off the code must behave identically, that is what makes the profile
   trustworthy.
 - **`target_arch` / `target_os` gates outnumber feature gates.** Architecture
   dispatch is done with `#[cfg(target_arch = "...")]` in the manifests'
@@ -430,7 +427,7 @@ Guidance:
 The overwhelmingly common derive set is
 `#[derive(Debug, Clone, Copy, PartialEq, Eq)]`, and the guidance is simple:
 derive `Debug` on everything, add `Clone`/`Copy` when the type is small and
-value-like, and add `PartialEq`/`Eq` when there is a real comparison — usually
+value-like, and add `PartialEq`/`Eq` when there is a real comparison, usually
 for tests.
 
 Two types use `#[repr(usize)]` because they cross an ABI or storage boundary
@@ -448,7 +445,7 @@ everyday code:
 
 - **`core` and `alloc` only.** There is no `std`. `Box`, `Vec`, `Arc`, and
   `String` come from the kernel heap, which is initialized partway through
-  `Kernel::init()` — so allocation is available only *after* that point, and not
+  `Kernel::init()`, so allocation is available only *after* that point, and not
   at all in the earliest boot path.
 - **No floating point** in kernel paths, and no `libm`.
 - **Be careful with `format!` in hot paths.** It allocates. In an interrupt
@@ -460,7 +457,7 @@ everyday code:
   from the tick handler, so a driver's transmit path is an ISR path, and a
   completion wait that parked there would hold the SLAAC lock across the park.
   A wait that can be reached that way asks `arch::interrupts::are_enabled()`
-  first and polls instead of parking — the caller re-reads its ring either way.
+  first and polls instead of parking, the caller re-reads its ring either way.
 
 ---
 
@@ -494,9 +491,8 @@ dependency graph, and the graph is checked.
 points at the same layer or upward.  A crate may name a crate in a lower layer
 and nothing else.
 
-The layers are argued in that file rather than assumed, and the one exception —
-`sync` names `arch`, because closing a spinlock's interrupt window needs the
-machine's flag — is written there with its cost.  A new edge has to be argued
+The layers are argued in that file rather than assumed, and the one exception, `sync` names `arch`, because closing a spinlock's interrupt window needs the
+machine's flag, is written there with its cost.  A new edge has to be argued
 for in the change that adds it, not discovered later.
 
 Two directions are wrong by definition:
@@ -508,8 +504,8 @@ Two directions are wrong by definition:
   `abi` and reaches everything else through syscalls, which is why the programs
   are at the top layer with nothing depending on them.
 
-The old rule — "the census is debt with a number attached, and a cut is
-finished when its rows reach zero" — described a tree where the edges were
+The old rule, "the census is debt with a number attached, and a cut is
+finished when its rows reach zero", described a tree where the edges were
 inside one crate and could only be counted.  Here the edges are crate
 dependencies, so the gate does not count them: it refuses them.
 
@@ -556,24 +552,24 @@ The number is what porting costs.  An architecture is supposed to be
 is a file the fourth architecture has to be taught as well.  The way down is
 the same as the way down for the dependency graph: a gate that says "on this
 architecture, do it this way" is a question the architecture should be
-answering, so it moves behind a shim in `arch/` — `arch::thread`,
-`arch::mmu`, `arch::tlb`, and the rest — and the kernel-side code asks the
+answering, so it moves behind a shim in `arch/`, `arch::thread`,
+`arch::mmu`, `arch::tlb`, and the rest, and the kernel-side code asks the
 question instead of naming an architecture.
 
 Not every row can go that way, and the baseline says which is which.  Each row
 carries a reason after the count, and it has to be one of two things:
 
-- **`fact:`** — the file names an architecture because the thing it carries
+- **`fact:`**, the file names an architecture because the thing it carries
   *is* that architecture's: an ABI record, a driver for its hardware, an
   instruction, a test of its page tables, or a query only its own code asks.
   A fourth architecture decides what it does here; there is no shim to write.
-- **`gap:`** — the file names an architecture only because a question has not
+- **`gap:`**, the file names an architecture only because a question has not
   been moved behind `arch/` yet, and the reason says where it belongs.
 
 `sh scripts/check-arch-fanout.sh` refuses a row that gives neither, so a new gate
 outside the arch layer is either moved or argued for in that change.  A row
 whose count *grows* fails with its own reason printed, because a reason that
-covered the old count may not cover the new one — and a `--record` keeps every
+covered the old count may not cover the new one, and a `--record` keeps every
 reason, so a re-record is a change in the tree rather than a change of mind
 about why the row exists.  The rows to drive down are the `gap:` ones; the
 `fact:` rows are the census telling the truth about what porting costs.
@@ -582,17 +578,17 @@ about why the row exists.  The rows to drive down are the `gap:` ones; the
 "is there a kernel here or a host" does not move when one is added.
 
 The same rule applies to tests: a suite that needs one target's host build
-puts the gate on the module — `#[cfg(all(test, target_arch = "x86_64"))] mod
-tests { … }` — rather than on each function inside it, so the gate is read
+puts the gate on the module, `#[cfg(all(test, target_arch = "x86_64"))] mod
+tests { … }`, rather than on each function inside it, so the gate is read
 once and a new test cannot arrive without one.
 
 ---
 
 ## Related documents
 
-- [docs/fmts/comments.md](comments.md) — file headers, doc comments, `// SAFETY:`
-- [docs/fmts/unsafe-and-safety.md](unsafe-and-safety.md) — what is allowed in an
+- [docs/fmts/comments.md](comments.md), file headers, doc comments, `// SAFETY:`
+- [docs/fmts/unsafe-and-safety.md](unsafe-and-safety.md), what is allowed in an
   `unsafe` block
-- [docs/fmts/testing.md](testing.md) — test layout and registration
-- [`docs/architecture.md`](../architecture.md) — where each layer sits and why
-- [`docs/contributing.md`](../contributing.md) — the short form of these rules
+- [docs/fmts/testing.md](testing.md), test layout and registration
+- [`docs/architecture.md`](../architecture.md), where each layer sits and why
+- [`docs/contributing.md`](../contributing.md), the short form of these rules

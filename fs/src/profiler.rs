@@ -23,8 +23,8 @@ pub struct FsProfilerSnapshot {
     /// Bytes the read operations were *asked* for: the summed length of the
     /// buffers a caller handed to `read`, counted where the operation itself
     /// is counted.  What the layer above wanted is the one thing a filesystem
-    /// can say about volume — how much of it a cache serves and how much
-    /// reaches a device is the layer below's business — and counting the
+    /// can say about volume, how much of it a cache serves and how much
+    /// reaches a device is the layer below's business, and counting the
     /// request rather than the result also means a read that fails still
     /// shows up as demand.
     pub read_bytes: u64,

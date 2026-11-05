@@ -9,7 +9,7 @@
 /// The syscall numbers a program's words ask for, in order.
 ///
 /// Every call is `li a7, <number>` followed immediately by `ecall`, so the pair
-/// is what names it — a scan for the register write rather than a table of
+/// is what names it, a scan for the register write rather than a table of
 /// indices a reader would have to count.
 #[cfg(test)]
 fn call_numbers(words: &[u32]) -> alloc::vec::Vec<usize> {
@@ -35,12 +35,12 @@ fn call_numbers(words: &[u32]) -> alloc::vec::Vec<usize> {
 /// Found by role: the last `addi reg, x0, imm` before the call's `ecall` whose
 /// destination is `register`.  A program that sets the register earlier and
 /// leaves it alone is one this helper reads correctly, because the last write
-/// wins — which is what the machine does too.
+/// wins, which is what the machine does too.
 /// The immediate the `li reg, imm` before a call's `ecall` carries.
 ///
 /// A linear scan: remember the last `addi reg, x0, imm` that wrote `register`,
 /// and answer it when the matching `ecall` arrives.  The last write wins, which
-/// is what the machine does too — so a program that sets the register once and
+/// is what the machine does too, so a program that sets the register once and
 /// leaves it alone is read correctly.
 #[cfg(test)]
 fn immediate_before(words: &[u32], call: abi::SyscallNumber, register: u32) -> i32 {
@@ -163,7 +163,7 @@ fn the_program_writes_sleeps_writes_forks_writes_and_exits() {
         "the program writes, sleeps, writes, forks, writes and exits"
     );
     // The `Write` after the fork is the one that reports it: both processes
-    // reach it, and the number each prints is the fork's answer — the child's
+    // reach it, and the number each prints is the fork's answer, the child's
     // pid in the parent, zero in the child.
     assert_eq!(
         calls[4],
@@ -216,7 +216,7 @@ fn the_number_is_the_only_word_that_differs() {
 #[test]
 fn the_writer_reads_its_descriptor_from_the_stack() {
     let words = crate::program::PIPE_WRITER_PROGRAM;
-    // `ld a0, 0(sp)` — the load's width field is 3 and the register is the
+    // `ld a0, 0(sp)`, the load's width field is 3 and the register is the
     // stack pointer's.
     assert_eq!(words[15], 0x0001_3503);
     assert_eq!(addi_immediate(words[16]), 8, "the buffer is at sp + 8");
@@ -251,7 +251,7 @@ fn the_reader_clears_the_length_before_it_announces_again() {
 }
 
 /// The branch helper agrees with the encoder it tests, on a positive
-/// offset too — a helper and its subject written from one reading of the
+/// offset too, a helper and its subject written from one reading of the
 /// layout would agree on the one value they were both written for.
 #[test]
 fn the_branch_decoder_decodes_what_the_encoder_encoded() {
