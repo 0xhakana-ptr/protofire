@@ -36,11 +36,10 @@
 # point of writing them anyway: they are a **guard**, not a workaround, and
 # each names why its file is the product.
 #
-# The one alternative would be a second target directory: `target-elf/` was
-# created once, to link the aarch64 image as an ELF with symbols so a gdb
-# session could name addresses (scripts/debug-aarch64-smp.sh rebuilds it when
-# it is missing), and it is covered by the rule above rather than by a
-# `.gitignore` of its own, for the reason the header states.
+# The one alternative would be a second target directory: `target-elf/` is
+# where the aarch64 image is relinked as an ELF with symbols when a gdb session
+# needs to name addresses, and it is covered by a rule of its own below rather
+# than by the one above, for the reason that rule gives.
 #
 # ## Why there is no entry for a generated file
 #
@@ -64,11 +63,12 @@
 # `cargo bench` writes criterion's reports here.
 **/criterion/
 
-# A second target directory, created once to link the aarch64 image as an ELF
-# with symbols so a gdb session could name addresses.  The leading slash of the
-# rule above anchors it to the root, which is exactly why a sibling spelling
-# needs its own line: a pattern that covered every directory named `target*`
-# would be a rule with no reason attached.
+# A second target directory, for the aarch64 image relinked as an ELF with
+# symbols so a gdb session can name addresses.  `.cargo/config.toml` has the
+# command that builds it, under the `--oformat=binary` flag it has to undo.
+# The leading slash of the rule above anchors it to the root, which is exactly
+# why a sibling spelling needs its own line: a pattern that covered every
+# directory named `target*` would be a rule with no reason attached.
 /target-elf/
 
 # Build products a document names

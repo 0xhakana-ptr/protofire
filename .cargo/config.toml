@@ -37,6 +37,28 @@ rustflags = [
     "-C", "link-arg=--oformat=binary",
 ]
 
+# ## Debugging this machine, which the flag above makes harder
+#
+# This is the only target that links a raw binary, and a raw binary has no
+# symbol table: gdb attached to a stub can say "the core is at 0x40011234" and
+# not which function that is.  The other two machines link ELF images, and
+# QEMU reads their entry point, so their symbols are already there.
+#
+# To step through this one, link the same image again **without only this
+# flag**, into a target directory of its own.  It must be its own directory:
+# the same `cargo build` producing two different files in one directory makes
+# the second run believe the first is current and skip the relink.
+#
+#     CARGO_TARGET_DIR=target-elf \
+#     RUSTFLAGS="-C relocation-model=static -C link-arg=-Tarch/aarch64/linker-aarch64.ld" \
+#         cargo build --offline -p bootloader --target aarch64-unknown-none
+#
+# Every other flag is the configuration above, so each address in the ELF names
+# the instruction the running machine is at.  Boot the raw image with QEMU's
+# `-s -S`, point gdb-multiarch at `target-elf/aarch64-unknown-none/debug/bootloader`,
+# and `target remote :1234`.  `/target-elf/` is git-ignored for the reason the
+# rules there give.
+
 [target.riscv64gc-unknown-none-elf]
 rustflags = [
     "-C", "relocation-model=static",
