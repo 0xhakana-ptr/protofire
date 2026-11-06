@@ -265,11 +265,22 @@ impl Machine {
                 ],
                 // The second CPU, on one line: the slot the kernel numbered it
                 // with, the hart the machine named, that it takes its own
-                // interrupts, and the interrupt this boot aimed at it.  The ipi
-                // count is exact, one, because the boot sends exactly one and
-                // waits for it; the tick count depends on how long the boot ran
-                // before the line, so it is not named here.
-                &["cpu 1 id 1, ticking, "],
+                // interrupts, and the interrupt this boot aimed at it.
+                //
+                // The hart id is **not** asserted.  Which hart the firmware
+                // cold-boots is the firmware's choice, and QEMU alternates
+                // between 0 and 1: a boot where it chose 1 printed
+                // `cpu 0 id 1` and `cpu 1 id 0`, both correct, and a gate that
+                // required `id 1` failed on it once in forty.  What is
+                // invariant is the slot the kernel numbered: a started CPU is
+                // slot 1, and it is ticking and has taken an interrupt.
+                &["cpu 1 id ", ", ticking, "],
+                // The started hart said so on a line that names it and says it
+                // is online.  A hart that did not come up prints `hart N did
+                // not come up` on the same prefix, which carries no ` online`,
+                // so the pair is what separates a start from a failure rather
+                // than the prefix alone.
+                &["hart ", " online"],
             ],
         }
     }
@@ -647,11 +658,17 @@ impl Machine {
                 ("protofire: interrupt table installed, interrupts on", true),
                 ("protofire: interrupt delivered to its handler", true),
                 // The second hart, started through the firmware and counted
-                // rather than assumed.  The line names the hart: one that
-                // never stored its flag prints "did not come up", and a boot
-                // that printed nothing for a hart it asked for would be a
-                // start nobody could tell from a start nobody made.
-                ("protofire: hart 1 online", true),
+                // rather than assumed.  One that never stored its flag prints
+                // "did not come up", and a boot that printed nothing for the
+                // harts it asked for would be a start nobody could tell from a
+                // start nobody made.
+                //
+                // The number is the machine's, not the gate's: firmware may
+                // cold-boot any hart, so `hart 0 online` and `hart 1 online`
+                // are both correct answers depending on which one it chose.
+                // The prefix is what the line has to say; the id is the
+                // machine's fact.
+                ("protofire: hart ", false),
                 // The interrupt the boot aimed at the started CPU, and whether
                 // it arrived.  A hart that stored its flag and stopped prints
                 // `not taken`: this is the line that separates "the firmware
@@ -664,7 +681,10 @@ impl Machine {
                 // above, and does not run a task, which the line says by
                 // naming the owner on the other CPU.
                 ("protofire: cpus online = 2", true),
-                ("protofire: cpu 0 id 0, scheduler owner, ", false),
+                // The boot CPU is slot zero and owns the scheduler.  Its hart
+                // id is whichever one the firmware cold-booted, so the number
+                // after `id` is the machine's answer rather than the gate's.
+                ("protofire: cpu 0 id ", false),
                 // The external controller, initialized rather than merely
                 // named: base, the context this hart claims through, the
                 // machine's source count, and the hart line the PLIC reaches
