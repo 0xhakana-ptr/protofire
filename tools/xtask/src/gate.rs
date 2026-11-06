@@ -91,9 +91,13 @@ impl Machine {
     pub(crate) fn paired_lines(self) -> &'static [&'static [&'static str]] {
         match self {
             Self::X8664 | Self::Aarch64 => &[
-                // The parent's status is its child's pid and the child's is
-                // zero: the same call, answered twice, differently.
-                &["exit statuses 1 -> 4", "4 -> 0"],
+                // The exec'd process exits with its own pid — the image it
+                // became asks the kernel who it is and exits with the answer —
+                // and the forked child exits with zero.  The pair on one line
+                // is the whole of both stories: `exec` kept the task's
+                // identity, and `fork` answered its two processes
+                // differently.
+                &["exit statuses 1 -> 1", "4 -> 0"],
                 // A task was placed on a CPU other than the one it last ran
                 // on.  The line names the move when there was one, and **there
                 // is not always one**: placement depends on which CPU reaches
@@ -104,7 +108,7 @@ impl Machine {
                 // twice.  `required_lines` carries the prefix.
             ],
             Self::Riscv64 => &[
-                &["exit statuses 1 -> 4", "4 -> 0"],
+                &["exit statuses 1 -> 1", "4 -> 0"],
                 // The second CPU, on one line: the slot the kernel numbered it
                 // with, the hart the machine named, that it takes its own
                 // interrupts, and the interrupt this boot aimed at it.
@@ -273,8 +277,18 @@ impl Machine {
                 // which is the pair reading itself.
                 ("protofire: copy-on-write copy at ", false),
                 ("protofire: copy-on-write promote at ", false),
+                // The exec, as a line that names both sides of the change:
+                // the task that called and the image it became.  The number
+                // and the image are this boot's facts — pid 1 calls, image 4
+                // is what it becomes — so the line is required whole.
+                //
+                // The exec'd task's exit status is its own pid, reported by
+                // the image it became through `GetPid`, which is the pair the
+                // fragment check reads: a process that lost its identity in
+                // the change could not exit as 1.
+                ("protofire: process 1 exec'd image 4", true),
                 // The fork's two answers, checked as a pair on one line: the
-                // parent (pid 1) exits with its child's pid 4, and pid 4 exits
+                // exec'd parent (pid 1) exits with its own pid, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
                 // their statuses are whatever their last call left behind, //
                 // reported, and deliberately not asserted. Sleeping, and the
@@ -352,8 +366,12 @@ impl Machine {
                 // answers exist.
                 ("protofire: copy-on-write copy at ", false),
                 ("protofire: copy-on-write promote at ", false),
+                // The exec, as a line that names both sides of the change: the
+                // task that called and the image it became.  This boot's facts
+                // are pid 1 and image 4, so the line is required whole.
+                ("protofire: process 1 exec'd image 4", true),
                 // The fork's two answers, checked as a pair on one line: the
-                // parent (pid 1) exits with its child's pid 4, and pid 4 exits
+                // exec'd parent (pid 1) exits with its own pid, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
                 // their statuses are whatever their last call left behind, // reported, and deliberately not asserted.
                 // The policy, asked twice through the real handler.
@@ -611,8 +629,12 @@ impl Machine {
                 // answers exist.
                 ("protofire: copy-on-write copy at ", false),
                 ("protofire: copy-on-write promote at ", false),
+                // The exec, as a line that names both sides of the change: the
+                // task that called and the image it became.  This boot's facts
+                // are pid 1 and image 4, so the line is required whole.
+                ("protofire: process 1 exec'd image 4", true),
                 // The fork's two answers, checked as a pair on one line: the
-                // parent (pid 1) exits with its child's pid 4, and pid 4 exits
+                // exec'd parent (pid 1) exits with its own pid, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
                 // their statuses are whatever their last call left behind, //
                 // reported, and deliberately not asserted. Sleeping, and the

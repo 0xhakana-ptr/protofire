@@ -483,10 +483,10 @@ mod tests {
 // | `45 85 C0` | `test r8d, r8d` | the child's answer is zero |
 // | `74 0E` | `jz +14` | the child takes the second path |
 // | `6A 2A` | `push 42` | write the stack: the copy-on-write fault |
-// | `44 89 C7` | `mov edi, r8d` | the answer becomes `Exit`'s argument |
-// | `B8 03 00 00 00` | `mov eax, 3` | syscall 3, `Exit` |
+// | `BF 04 00 00 00` | `mov edi, 4` | the image `exec` hands the task to |
+// | `B8 1A 00 00 00` | `mov eax, 0x1A` | syscall 26, `ExecProcess` |
 // | `CD 80` | `int 0x80` | |
-// | `EB FE` | `jmp $` | never reached |
+// | `EB FE` | `jmp $` | never reached: exec replaced the program |
 // | `6A 2A` | `push 42` | the child writes the stack too |
 // | `31 FF` | `xor edi, edi` | the child exits zero |
 // | `B8 03 00 00 00` | `mov eax, 3` | syscall 3, `Exit` |
@@ -504,10 +504,10 @@ mod tests {
 // instructions this table says they are, the same discipline the aarch64
 // program's words had.
 
-/// The longer of the three images.  A program is copied into a whole page, so
+/// The longer of the four images.  A program is copied into a whole page, so
 /// the exact length matters only to the copy; a shorter array would truncate
 /// the announcing program's last instruction.
-pub const PROGRAM_LEN: usize = 107;
+pub const PROGRAM_LEN: usize = 109;
 
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.
@@ -529,6 +529,11 @@ const NUMBER_OFFSET: usize = 25;
 /// first act is to block.  Everything about it is the machine code below, which
 /// is why it is a second array rather than a parameter.
 pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
+    if number == EXEC_IMAGE {
+        let mut bytes = [0u8; PROGRAM_LEN];
+        bytes[..EXEC_TARGET_PROGRAM.len()].copy_from_slice(&EXEC_TARGET_PROGRAM);
+        return bytes;
+    }
     if number == PIPE_READER {
         let mut bytes = [0u8; PROGRAM_LEN];
         bytes[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);
@@ -548,6 +553,12 @@ pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
 pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;
+
+/// The image `exec` may name, and the highest number `program_bytes` answers
+/// for with a purpose-built program.  One through this are the images this
+/// boot has; a call beyond it is one the kernel refuses, there being no
+/// program behind the number.
+pub const EXEC_IMAGE: u16 = 4;
 
 /// The writer: announce, sleep, announce again, then put bytes in the pipe.
 ///
@@ -628,6 +639,30 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
     0xEB, 0xFE, // jmp $
 ];
 
+/// The image `exec` hands a process over to: announce, then prove whose it is.
+///
+/// The process that execs into this keeps its pid, which is the one thing
+/// `exec` must not change, and this image is built to show it: it announces
+/// the image's own number, then asks the kernel who it is and exits with the
+/// answer.  A boot line that reports `process 1 exec'd image 4` and an exit
+/// status of `1 -> 1` are the pair that proves the task survived the change
+/// — a rebuilt process with a new identity would have exited with 4's window
+/// number and no way to say 1.
+///
+/// Its exit travels in `edi`, moved from `eax` where `GetPid` answers, for the
+/// same reason the announcing program moves its own.
+const EXEC_TARGET_PROGRAM: [u8; 30] = [
+    0xBE, 0x04, 0x00, 0x00, 0x00, // mov esi, 4          (announce the image)
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6          (Write)
+    0xCD, 0x80, // int 0x80
+    0xB8, 0x51, 0x00, 0x00, 0x00, // mov eax, 81         (GetPid)
+    0xCD, 0x80, // int 0x80
+    0x89, 0xC7, // mov edi, eax        (the pid becomes Exit's argument)
+    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
+    0xCD, 0x80, // int 0x80
+    0xEB, 0xFE, // jmp $
+];
+
 /// The program with a zero number, which [`program_bytes`] patches.
 ///
 /// The loop has to outlive a time slice, or the boot reports a timer that never
@@ -641,7 +676,7 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
 /// bound is real: 0x1000 × 0x10000 was too long, and under the emulator the
 /// trap cost of ten thousand ticks a second left the program unable to reach
 /// its first `int` at all.
-const PROGRAM_BASE: [u8; 107] = [
+const PROGRAM_BASE: [u8; 109] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -673,14 +708,17 @@ const PROGRAM_BASE: [u8; 107] = [
     // is shared and read-only now, so the write faults, and the kernel's
     // answer to that fault is the whole of what this image exercises.
     0x45, 0x85, 0xC0, // test r8d, r8d
-    0x74, 0x0E, // jz +14 (the child takes the second path)
-    // The parent: write, then exit with the fork's answer, which is the
-    // child's pid and the status the boot reports for this process.
+    0x74, 0x10, // jz +16 (the child takes the second path)
+    // The parent: write, then become the image `exec` names.  The task
+    // survives the change with its pid, and its exit status comes from the
+    // image it became — which asks the kernel who it is and exits with the
+    // answer, so the boot's report of `1 -> 1` is the evidence that identity
+    // carried over.
     0x6A, 0x2A, // push 42 (the copy-on-write fault)
-    0x44, 0x89, 0xC7, // mov edi, r8d (the answer becomes Exit's argument)
-    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3 (Exit)
+    0xBF, 0x04, 0x00, 0x00, 0x00, // mov edi, 4 (the image exec hands the task to)
+    0xB8, 0x1A, 0x00, 0x00, 0x00, // mov eax, 26 (ExecProcess)
     0xCD, 0x80, // int 0x80
-    0xEB, 0xFE, // jmp $
+    0xEB, 0xFE, // jmp $ (never reached: exec replaced the program)
     // The child: the same write, on its own copy of the page, then an exit
     // whose status is zero, which is what the pair check reads.
     0x6A, 0x2A, // push 42 (the child's copy-on-write fault)
@@ -777,13 +815,14 @@ mod program_tests {
 
     /// Every syscall number the program uses is the ABI's own.
     ///
-    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, and two `Exit`s — one per
-    /// path, because the fork leaves two processes and each ends on its own.
-    /// A program compiled against a number this build does not serve would
-    /// print its first line and then fail silently, which is the one failure a
-    /// sleep program could have and still look healthy.
+    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and one
+    /// `Exit` — the parent's path ends in the exec, and the child's is the
+    /// only path that exits itself.  A program compiled against a number this
+    /// build does not serve would print its first line and then fail silently,
+    /// which is the one failure a sleep program could have and still look
+    /// healthy.
     #[test]
-    fn the_program_writes_sleeps_writes_forks_writes_and_exits_twice() {
+    fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
         let bytes = program_bytes(1);
         // By call number rather than by offset: an offset a reader has to count
         // goes stale the moment an instruction is inserted, which is what
@@ -796,15 +835,42 @@ mod program_tests {
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Fork as u32,
                 abi::SyscallNumber::Write as u32,
-                abi::SyscallNumber::Exit as u32,
+                abi::SyscallNumber::ExecProcess as u32,
                 abi::SyscallNumber::Exit as u32,
             ],
-            "the program writes, sleeps, writes, forks, writes, and both paths exit"
+            "the program writes, sleeps, writes, forks, writes, execs, and the child exits"
         );
 
-        // And the status travels in `edi`: `mov edi, eax` sits between the
+        // The parent's last call names the image it becomes: `mov edi, 4`
+        // ahead of the exec, which is the argument `ExecProcess` reads.
+        assert!(
+            bytes
+                .windows(5)
+                .any(|window| window == [0xBF, 0x04, 0x00, 0x00, 0x00]),
+            "the exec's argument is the image number, in edi"
+        );
+    }
+
+    /// The image `exec` hands a process to proves whose it became: it
+    /// announces, asks the kernel who it is, and exits with the answer, so a
+    /// task that kept its pid through the change exits with it and one that
+    /// did not cannot fake the pair.
+    #[test]
+    fn the_exec_target_proves_its_identity() {
+        let bytes = program_bytes(super::EXEC_IMAGE);
+        assert_eq!(
+            super::call_numbers(&bytes),
+            alloc::vec![
+                abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::GetPid as u32,
+                abi::SyscallNumber::Exit as u32,
+            ],
+            "the target announces, asks, and exits with the answer"
+        );
+
+        // And the answer travels in `edi`: `mov edi, eax` sits between the
         // identity answer and the exit, which is the one instruction this
-        // machine's program has that the other two do not.
+        // machine's image needs that the other two do not.
         assert!(
             bytes.windows(2).any(|pair| pair == [0x89, 0xC7]),
             "the pid is moved into Exit's argument register"

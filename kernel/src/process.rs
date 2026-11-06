@@ -335,6 +335,38 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         };
     }
 
+    // Exec: the running process becomes the image it names.
+    //
+    // The argument is an image number, and the images are the boot's own: the
+    // machine's `program_bytes` answers for every number through
+    // `arch::EXEC_IMAGE`, and a number outside that range is a call this boot
+    // has nothing to serve, answered as an argument error rather than as a
+    // program nobody built.  The task keeps its pid, its parent and its window;
+    // the image, the stack and the instruction it resumes at are the new
+    // program's, which is the whole of what `exec` is.
+    if number == SyscallNumber::ExecProcess as usize {
+        let image = call.arguments[0];
+        if image == 0 || image > arch::EXEC_IMAGE as usize {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        return match crate::scheduler::exec_current(frame, image as u16) {
+            Some(pid) => {
+                // The one line that says the mechanism ran: the task that
+                // called is the task named, and the image is the one it asked
+                // for.  A reader can pair this with the exit statuses — the
+                // exec'd task's status is its own pid, which only a task that
+                // kept its identity across the change could report.
+                arch::serial::write_str("protofire: process ");
+                arch::serial::write_u32(pid);
+                arch::serial::write_str(" exec'd image ");
+                arch::serial::write_u32(image as u32);
+                arch::serial::write_str("\n");
+                CallOutcome::Return(0)
+            }
+            None => CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory)),
+        };
+    }
+
     if number == SyscallNumber::GetPid as usize {
         return match crate::scheduler::current_pid() {
             Some(pid) => CallOutcome::Return(pid as usize),

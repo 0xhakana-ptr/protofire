@@ -377,6 +377,66 @@ pub fn allocate_image_frame() -> Option<usize> {
     (!frame.is_null()).then_some(frame as usize)
 }
 
+/// A new address space holding one program: `bytes` at `image_va`, a stack at
+/// `stack_va`, and nothing else.
+///
+/// `exec`'s builder.  The mapping is the boot's own [`map_user_page`]-shaped
+/// pair — image read-only and executable, stack writable — and the addresses
+/// are the **caller's**, not this function's choice: `exec` swaps the frames
+/// behind the window a task already owns rather than giving the task a new
+/// window, because the window is the one thing about a process that its
+/// callers may have come to rely on.
+///
+/// Every failure returns with the space released: the root and each frame the
+/// builder recorded go back, so a failed `exec` does not shrink the pool by a
+/// program.  The image frame is recorded **before** the stack is taken, which
+/// is the order that makes that true — a builder that took both frames first
+/// and recorded them after would leak the image frame of every `exec` that
+/// found the pool empty at its second ask.
+///
+/// # Safety
+///
+/// `image_va` and `stack_va` must be page-aligned addresses in the caller's
+/// user window that are not already mapped by the returned space, and `bytes`
+/// must fit in one page.  The frames the pool hands out are zeroed and live.
+#[cfg(target_os = "none")]
+pub unsafe fn image_space(bytes: &[u8], image_va: usize, stack_va: usize) -> Option<AddressSpace> {
+    let mut space = unsafe { AddressSpace::new() }?;
+    let Some(image_frame) = allocate_image_frame() else {
+        unsafe { space.release() };
+        return None;
+    };
+    if !space.own(image_frame) {
+        unsafe { space.release() };
+        return None;
+    }
+    let Some(stack_frame) = allocate_image_frame() else {
+        // The image frame is recorded, so the release takes it back with the
+        // root, which is the whole of why the order above is the order.
+        unsafe { space.release() };
+        return None;
+    };
+    if !space.own(stack_frame) {
+        unsafe { space.release() };
+        return None;
+    }
+    // SAFETY: `image_frame` is a live frame the pool handed out and zeroed,
+    // the image is smaller than one page, and the boot is identity mapped, so
+    // the frame's physical address is one the kernel can write.
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), image_frame as *mut u8, bytes.len());
+    }
+    // SAFETY: both frames belong to this space, and the two addresses are the
+    // caller's own window, which this space does not map yet.
+    let mapped = unsafe { space.map(image_va, image_frame, false) }
+        && unsafe { space.map(stack_va, stack_frame, true) };
+    if !mapped {
+        unsafe { space.release() };
+        return None;
+    }
+    Some(space)
+}
+
 /// Take one frame, as a page table would, and report whether it worked.
 ///
 /// The spare tables are enough for every window this machine has, so

@@ -338,6 +338,8 @@ pub use space::allocate_image_frame;
 #[cfg(target_os = "none")]
 pub use space::fork_from;
 #[cfg(target_os = "none")]
+pub use space::image_space;
+#[cfg(target_os = "none")]
 pub use space::map_user_page;
 #[cfg(target_os = "none")]
 pub use space::mapped_pages;

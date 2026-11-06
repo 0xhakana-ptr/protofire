@@ -32,6 +32,12 @@ pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;
 
+/// The image `exec` may name, and the highest number `program_bytes` answers
+/// for with a purpose-built program.  One through this are the images this
+/// boot has; a call beyond it is one the kernel refuses, there being no
+/// program behind the number.
+pub const EXEC_IMAGE: u16 = 4;
+
 /// The writer: announce, sleep, announce again, then put bytes in the pipe.
 ///
 /// The reader must reach its `Read` first and block, or a write into a pipe
@@ -101,6 +107,25 @@ const PIPE_READER_PROGRAM: [u32; 21] = [
     0xD400_0001, // svc #0
 ];
 
+/// The image `exec` hands a process over to: announce, then prove whose it is.
+///
+/// The process that execs into this keeps its pid, which is the one thing
+/// `exec` must not change, and this image is built to show it: it announces
+/// the image's own number, then asks the kernel who it is and exits with the
+/// answer — which is already where `GetPid` leaves it, `x0` being both the
+/// answer register and `Exit`'s argument on this machine, so the two calls
+/// need no move between them.
+const EXEC_TARGET_PROGRAM: [u32; 8] = [
+    0xD280_0081, // movz x1, #4      (announce the image)
+    0xD280_00C8, // movz x8, #6      (Write)
+    0xD400_0001, // svc #0
+    0xD280_0A28, // movz x8, #81     (GetPid)
+    0xD400_0001, // svc #0
+    0xD280_0068, // movz x8, #3      (Exit, whose status is x0)
+    0xD400_0001, // svc #0
+    0x1400_0000, // b .
+];
+
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.  A sleep the timer could
 /// not distinguish from "did not sleep" would be a call that ran and proved
@@ -164,13 +189,16 @@ const fn program_words(number: u16) -> [u32; 33] {
         // The parent holds its child's pid, the child holds zero: `cbz` sends
         // the child five words down, to the same shape with a zero status.
         0xB400_00F3, // cbz x19, +7 words (the child takes the second path)
-        // The parent: write the shared page, then exit with the fork's answer.
+        // The parent: write the shared page, then become the image `exec`
+        // names.  The task survives the change with its pid, and its exit
+        // status comes from the image it became, which asks the kernel who it
+        // is and exits with the answer.
         0xD100_43FF, // sub sp, sp, #16   (room below the boundary)
         0xF900_03E0, // str x0, [sp]      (the copy-on-write fault)
-        0xAA13_03E0, // mov x0, x19       (the answer becomes Exit's status)
-        0xD280_0068, // movz x8, #3       (Exit)
+        0xD280_0080, // movz x0, #4       (the image exec hands the task to)
+        0xD280_0348, // movz x8, #26      (ExecProcess)
         0xD400_0001, // svc #0
-        0x1400_0000, // b .               (never reached)
+        0x1400_0000, // b .               (never reached: exec replaced the program)
         // The child: the same write, on its own copy of the page, then an
         // exit whose status is zero.
         0xD100_43FF, // sub sp, sp, #16   (room below the boundary)
@@ -186,7 +214,9 @@ const fn program_words(number: u16) -> [u32; 33] {
 pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
     let mut bytes = [0u8; PROGRAM_LEN];
     let mut words = [0u32; PROGRAM_LEN / 4];
-    if number == PIPE_WRITER {
+    if number == EXEC_IMAGE {
+        words[..EXEC_TARGET_PROGRAM.len()].copy_from_slice(&EXEC_TARGET_PROGRAM);
+    } else if number == PIPE_WRITER {
         words[..PIPE_WRITER_PROGRAM.len()].copy_from_slice(&PIPE_WRITER_PROGRAM);
     } else if number == PIPE_READER {
         words[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);

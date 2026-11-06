@@ -1476,3 +1476,37 @@ stack writes print `fault at 0x8040001ff8, write, mapped read-execute, user, not
 writable` and stop the machine, and all three machines' gates go red.  With it
 wired, the same write is the two lines above, and the boot reports four exits
 whose statuses are unchanged — the fork's contract, kept by cheaper means.
+
+### Exec, and the window it kept
+
+    protofire: process 1 exec'd image 4
+    protofire: exit statuses 1 -> 1, 2 -> 1, 3 -> 0, 4 -> 0
+
+`ExecProcess` was a number in the frozen range that no boot served.  Serving it
+is one function with one ordering decision in it, and the ordering is the whole
+of the change: the old root is installed on the CPU serving the call, and
+freeing a root the machine is translating through is a fault on the next
+instruction — the same lesson the exit-time release learned, at 186 faults.
+So `exec` builds the new space whole **before** touching the task, then swaps
+the task onto it, installs the new root, and releases the old space only after
+the switch — and every machine's switch is a whole-TLB flush, which is what
+makes the release safe at that point rather than a promise about it: no CPU
+translates through the old root any more, because this one just flushed and
+switched, the task is marked running here and nowhere else, and no other CPU
+ever held it.
+
+Two things carry over and two do not.  The **window** carries over: the new
+image maps at the virtual addresses the task already owned, read from its own
+table rather than remembered anywhere, because the table is the truth and a
+second record of it is the first thing to diverge.  The **identity** carries
+over: same task, same pid, same parent, which is what separates `exec` from a
+new process.  What does not is the image behind the window and the context — a
+program that asked to become another does not resume where it was.
+
+The boot proves the identity with the image it execs into: it announces, asks
+the kernel who it is, and exits with the answer, so the pair — `process 1
+exec'd image 4`, then `1 -> 1` — is a fact the exec'd task itself reports, and
+a process that lost its identity in the change could not print it.  The
+mutation — installing no new frame, leaving the trap path to resume the
+program it replaced — faults the machine before it can print the line, and the
+gate goes red.

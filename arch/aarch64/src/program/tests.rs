@@ -90,7 +90,7 @@ fn the_busy_loop_branches_back_to_itself() {
 /// line and then fail silently, which is the one failure a sleep program could
 /// have and still look healthy.
 #[test]
-fn the_program_writes_sleeps_writes_forks_writes_and_exits_twice() {
+fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
     let words = program_words(1);
     assert_eq!(
         call_numbers(&words),
@@ -100,10 +100,10 @@ fn the_program_writes_sleeps_writes_forks_writes_and_exits_twice() {
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Fork as usize,
             abi::SyscallNumber::Write as usize,
-            abi::SyscallNumber::Exit as usize,
+            abi::SyscallNumber::ExecProcess as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the program writes, sleeps, writes, forks, writes, and both paths exit"
+        "the program writes, sleeps, writes, forks, writes, execs, and the child exits"
     );
 
     // The sleep's duration is the immediate of the `movz x0` that precedes
@@ -125,4 +125,28 @@ fn the_number_is_the_only_word_that_differs() {
     assert_eq!(differing, alloc::vec![6], "only `movz x1` differs");
     assert_eq!((one[6] >> 5) & 0xFFFF, 1);
     assert_eq!((two[6] >> 5) & 0xFFFF, 2);
+}
+
+/// The image `exec` hands a process to proves whose it became: it announces,
+/// asks the kernel who it is, and exits with the answer — which is already in
+/// `x0`, `Exit`'s argument register, so no move is needed between the two.
+#[test]
+fn the_exec_target_proves_its_identity() {
+    let bytes = program_bytes(crate::program::EXEC_IMAGE);
+    let words: alloc::vec::Vec<u32> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
+        .take_while(|&word| word != 0)
+        .collect();
+    assert_eq!(
+        call_numbers(&words),
+        alloc::vec![
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::GetPid as usize,
+            abi::SyscallNumber::Exit as usize,
+        ],
+        "the target announces, asks, and exits with the answer"
+    );
 }

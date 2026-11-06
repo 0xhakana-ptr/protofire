@@ -1,13 +1,16 @@
 //! kernel/src/scheduler/core/life.rs
 //!
-//! The two events in a task's life that are not a switch: it is forked, and its
-//! pages are released.
+//! The three events in a task's life that are not a switch: it is forked, it
+//! becomes another program, and its pages are released.
 //!
-//! A fork copies the running task's space and its frame, so the child resumes
-//! at the instruction after the parent's `fork` with the parent's registers and
-//! a copy of its pages.  The release is the other end: pages go back once
-//! nothing walks them, and `Scheduler::reap_finished` argues why that moment is
-//! the end of the boot rather than each exit.
+//! A fork shares the running task's pages with a child, so the child resumes
+//! at the instruction after the parent's `fork` with the parent's registers
+//! and a read-only view of the parent's pages.  An exec replaces the task's
+//! image with another program's and starts it from that image's first
+//! instruction, keeping the task, its pid and its window.  The release is the
+//! other end: pages go back once nothing walks them, and
+//! `Scheduler::reap_finished` argues why that moment is the end of the boot
+//! rather than each exit.
 
 use super::Scheduler;
 #[cfg(target_os = "none")]
@@ -67,6 +70,92 @@ impl Scheduler {
         arch::set_return_value(child.context_mut(), 0);
         self.tasks.push(child);
         Some(pid as usize)
+    }
+
+    /// Replace the running task's image with `image`'s, and start it over.
+    ///
+    /// This is `exec`: the same task, the same pid, the same parent, running a
+    /// different program from that program's first instruction.  What carries
+    /// over is the **window** — the virtual addresses the task already owns —
+    /// and what does not is everything behind them: a fresh root, a fresh image
+    /// frame with the machine's bytes for `image`, a fresh stack, and a context
+    /// built from scratch, because a program that asked to become another does
+    /// not resume where it was.
+    ///
+    /// ## The order that makes releasing the old space sound
+    ///
+    /// The old root is installed on the CPU serving the call when this runs,
+    /// and freeing a root the machine is translating through is a fault on the
+    /// next instruction.  So the new space is built first, the task is swapped
+    /// onto it, and `switch_address_space` installs the new root — which on
+    /// every machine is a whole-TLB flush — **before** the old space is
+    /// released.  At the moment of the release no CPU translates through the
+    /// old root: this one just switched away, the machine's switches all flush,
+    /// and the task is marked running here and nowhere else, so no other CPU
+    /// ever held it.  A release done before the switch would have the pool
+    /// handing the old root's frame to the new space while this CPU still
+    /// walked it.
+    ///
+    /// ## Why the failure is answerless rather than partial
+    ///
+    /// Every step that can fail happens before the task is touched: the old
+    /// layout is read from the old space, the new space is built whole, and
+    /// only then is the task's space, context and frame replaced.  A failure
+    /// leaves the task exactly as it was, running the program it was running,
+    /// and the caller answers an error rather than a pid.
+    ///
+    /// The layout is read rather than remembered: the task does not carry its
+    /// base and stack top as fields, and the table is the truth — the first two
+    /// pages in address order are the image and the stack, which is what every
+    /// builder in this kernel makes them.
+    #[cfg(target_os = "none")]
+    pub fn exec_current(&mut self, cpu: usize, frame: &mut Context, image: u16) -> Option<u32> {
+        let task_index = self.running.get(cpu).copied().flatten()?;
+        // The window the task owns, read from its table before anything moves.
+        let old_space = self.tasks.get(task_index)?.space?;
+        let mut pages = [crate::address_space::MappedPage {
+            virtual_address: 0,
+            physical: 0,
+            writable: false,
+        }; 4];
+        let count = crate::address_space::mapped_pages(&old_space, &mut pages)?;
+        if count < 2 {
+            return None;
+        }
+        let entry_va = pages[0].virtual_address;
+        let stack_va = pages[1].virtual_address;
+
+        let bytes = crate::process::program_bytes(image);
+        // SAFETY: the two addresses are this task's own mapped pages, page
+        // aligned and mapped by no other space; the image fits in a page,
+        // which is what every builder maps.
+        let new_space = unsafe { crate::address_space::image_space(&bytes, entry_va, stack_va) }?;
+        let new_root = new_space.root();
+
+        let pid = self.tasks.get(task_index)?.pid();
+        let task = self.tasks.get_mut(task_index)?;
+        let old_space = task.space.replace(new_space)?;
+        // A fresh context, not a copy: the program starts at its own first
+        // instruction, on a stack that carries nothing from the program it
+        // replaced.
+        *task.context_mut() =
+            crate::scheduler::starting_context(entry_va, stack_va + paging::PAGE_SIZE);
+        // And the trap frame resumes the new image, because the caller's
+        // epilogue is what returns to a program and this task is the one
+        // running.
+        *frame = *task.context();
+
+        // SAFETY: the new root is a live table this task owns, and every root
+        // shares the kernel's entry 0, which covers the code performing the
+        // call.
+        unsafe { arch::switch_address_space(new_root) };
+        // The switch flushed, so nothing translates through the old root any
+        // more, and the release is the safe kind: see the order above.
+        //
+        // SAFETY: this CPU installed the new root above, no other CPU ever
+        // held this task, and nothing walks the old space's pages.
+        unsafe { old_space.release() };
+        Some(pid)
     }
 
     /// Release every finished task's address space, answering how many went

@@ -526,6 +526,24 @@ pub fn fork_current(_frame: &arch::Context) -> Option<u32> {
     None
 }
 
+/// Replace the running process's image with `image`'s, and answer its pid.
+///
+/// `None` when the machine cannot serve it: no scheduler, no task running, no
+/// space to read a window from, or a pool too empty to build the new one.  The
+/// caller answers an error rather than inventing a pid, and the process keeps
+/// running the program it was running.
+#[cfg(target_os = "none")]
+pub fn exec_current(frame: &mut arch::Context, image: u16) -> Option<u32> {
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| scheduler.as_mut()?.exec_current(cpu, frame, image))
+}
+
+/// A host has no image to replace and no window to replace it in.
+#[cfg(not(target_os = "none"))]
+pub fn exec_current(_frame: &mut arch::Context, _image: u16) -> Option<u32> {
+    None
+}
+
 /// The process id of the running task, if a scheduler is installed.
 pub fn current_pid() -> Option<u32> {
     let cpu = this_cpu();

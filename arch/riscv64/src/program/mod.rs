@@ -30,6 +30,12 @@ pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;
 
+/// The image `exec` may name, and the highest number `program_bytes` answers
+/// for with a purpose-built program.  One through this are the images this
+/// boot has; a call beyond it is one the kernel refuses, there being no
+/// program behind the number.
+pub const EXEC_IMAGE: u16 = 4;
+
 /// Two thousand, and that is the encoding's answer rather than a preference:
 /// the sleep travels in an `addi` immediate, whose twelve signed bits reach
 /// two thousand and forty-seven, the aarch64 program's twenty thousand needs
@@ -176,13 +182,20 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         // The parent holds its child's pid, the child holds zero: `beq` sends
         // the child seven words down, to the same shape with a zero status.
         beq_against_zero(REGISTER_A6 as u32, 28), // beq a6, x0, the child path
-        // The parent: write the shared page, then exit with the fork's answer.
-        addi(2, 2, -16),                                 // addi sp, sp, -16
-        store_against_sp(REGISTER_A6 as u32),            // sd a6, 0(sp) (the fault)
-        addi(REGISTER_A0 as u32, REGISTER_A6 as u32, 0), // mv a0, a6
-        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
+        // The parent: write the shared page, then become the image `exec`
+        // names.  The task survives the change with its pid, and its exit
+        // status comes from the image it became, which asks the kernel who it
+        // is and exits with the answer.
+        addi(2, 2, -16),                      // addi sp, sp, -16
+        store_against_sp(REGISTER_A6 as u32), // sd a6, 0(sp) (the fault)
+        addi(REGISTER_A0 as u32, 0, 4),       // li a0, #4  (the image exec names)
+        addi(
+            REGISTER_A7 as u32,
+            0,
+            abi::SyscallNumber::ExecProcess as i32,
+        ),
         0x0000_0073, // ecall
-        0x0000_006F, // j .   (never reached)
+        0x0000_006F, // j .   (never reached: exec replaced the program)
         // The child: the same write, on its own copy of the page, then an
         // exit whose status is zero.
         addi(2, 2, -16),                      // addi sp, sp, -16
@@ -193,6 +206,25 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         0x0000_006F, // j .
     ]
 }
+
+/// The image `exec` hands a process over to: announce, then prove whose it is.
+///
+/// The process that execs into this keeps its pid, which is the one thing
+/// `exec` must not change, and this image is built to show it: it announces
+/// the image's own number, then asks the kernel who it is and exits with the
+/// answer — which is already where `GetPid` leaves it, `a0` being both the
+/// answer register and `Exit`'s argument on this machine, so the two calls
+/// need no move between them.
+const EXEC_TARGET_PROGRAM: [u32; 8] = [
+    addi(REGISTER_A1 as u32, 0, 4), // li a1, #4      (announce the image)
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
+    0x0000_0073, // ecall
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::GetPid as i32),
+    0x0000_0073, // ecall
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
+    0x0000_0073, // ecall
+    0x0000_006F, // j .
+];
 
 /// The writer: announce, sleep, announce again, then put bytes in the pipe.
 ///
@@ -267,7 +299,9 @@ const PIPE_READER_PROGRAM: [u32; 21] = [
 pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
     let mut bytes = [0u8; PROGRAM_LEN];
     let mut words = [0u32; PROGRAM_LEN / 4];
-    if number == PIPE_WRITER {
+    if number == EXEC_IMAGE {
+        words[..EXEC_TARGET_PROGRAM.len()].copy_from_slice(&EXEC_TARGET_PROGRAM);
+    } else if number == PIPE_WRITER {
         words[..PIPE_WRITER_PROGRAM.len()].copy_from_slice(&PIPE_WRITER_PROGRAM);
     } else if number == PIPE_READER {
         words[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);

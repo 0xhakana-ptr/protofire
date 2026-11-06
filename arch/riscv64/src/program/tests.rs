@@ -145,7 +145,7 @@ fn the_busy_loop_branches_back_to_itself() {
 /// line and then fail silently, which is the one failure a sleep program could
 /// have and still look healthy.
 #[test]
-fn the_program_writes_sleeps_writes_forks_writes_and_exits_twice() {
+fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
     let words = program_words(1);
     // By name, not by index: an index a reader has to count goes stale the
     // moment a word is inserted, which is what happened twice while this
@@ -159,10 +159,10 @@ fn the_program_writes_sleeps_writes_forks_writes_and_exits_twice() {
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Fork as usize,
             abi::SyscallNumber::Write as usize,
-            abi::SyscallNumber::Exit as usize,
+            abi::SyscallNumber::ExecProcess as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the program writes, sleeps, writes, forks, writes, and both paths exit"
+        "the program writes, sleeps, writes, forks, writes, execs, and the child exits"
     );
     // The `Write` after the fork is the one that reports it: both processes
     // reach it, and the number each prints is the fork's answer, the child's
@@ -260,4 +260,28 @@ fn the_branch_decoder_decodes_what_the_encoder_encoded() {
     assert_eq!(branch_offset(bne_against_zero(12, -4)), -4);
     assert_eq!(branch_offset(bne_against_zero(13, -16)), -16);
     assert_eq!(branch_offset(bne_against_zero(12, 8)), 8);
+}
+
+/// The image `exec` hands a process to proves whose it became: it announces,
+/// asks the kernel who it is, and exits with the answer — which is already in
+/// `a0`, `Exit`'s argument register, so no move is needed between the two.
+#[test]
+fn the_exec_target_proves_its_identity() {
+    let bytes = program_bytes(crate::program::EXEC_IMAGE);
+    let words: alloc::vec::Vec<u32> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
+        .take_while(|&word| word != 0)
+        .collect();
+    assert_eq!(
+        call_numbers(&words),
+        alloc::vec![
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::GetPid as usize,
+            abi::SyscallNumber::Exit as usize,
+        ],
+        "the target announces, asks, and exits with the answer"
+    );
 }
