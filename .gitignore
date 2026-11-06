@@ -1,5 +1,12 @@
 # File: .gitignore
 # Purpose: What a build writes, and the files that survive a rule anyway.
+#
+# Do not add files generated in the specific subdirectories here, but in
+# the '.gitignore' files in that subdirectory.
+#
+# Run 'git ls-files -i -c --exclude-per-directory=.gitignore' after changing
+# this file, to check if there are any traced files that are ignored after the
+# change.
 
 #
 # Normal rules (sorted alphabetically)

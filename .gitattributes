@@ -1,6 +1,6 @@
 # File: .gitattributes
 # Purpose: Pin line endings and mark binary assets so the working tree is
-# identical on Linux, macOS, and Windows checkouts.
+# identical.
 
 # Text files are stored and checked out with LF.  The POSIX scripts, the
 # Makefile, the assembly payloads, and the linker scripts are all consumed by
