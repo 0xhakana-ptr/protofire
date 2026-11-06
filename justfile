@@ -2,8 +2,6 @@
 # Purpose: The thin entry point.  Workflows live in `tools/xtask`; this file
 #          names them, so a reader can find every command in one screen.
 #
-# ## Installing `just`
-#
 # `just` is not part of the Rust toolchain and not a dependency of anything
 # here, so it has to be installed once:
 #

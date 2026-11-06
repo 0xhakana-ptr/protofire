@@ -1,7 +1,7 @@
 # rust-toolchain.toml
 # Pinned Rust toolchain, components, and targets used by this repository.
 #
-# ## One development host
+# ## The development host
 #
 # Linux, x86_64.  The three targets below are the machines this kernel runs on;
 # the host target is not listed because a target the toolchain has by default is
@@ -13,7 +13,7 @@
 # one host was found by whoever ran the gate there.  This tree has one host, and
 # a build that does not work on it is broken rather than unsupported.
 #
-# ## The three machines
+# ## The machines
 #
 # | Target | Machine |
 # |---|---|
