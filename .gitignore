@@ -1,153 +1,48 @@
 # File: .gitignore
-# Purpose: What is built, not written, and the files that are tracked even
-#          when a pattern would otherwise catch them.
-#
-# ## Why a root file and no others
-#
-# Cargo puts every workspace member's output in **one** `target/` at the root,
-# because the members are one workspace.  A `/target` in each crate ignores a
-# directory cargo never creates, and fourteen copies of a rule that cannot fire
-# are fourteen things to read before finding the one that matters.
-#
-# The patterns that matter here are extension and directory-name patterns
-# (`*.log`, `*.o`, `*.d`, `__pycache__/`), and git applies those at **every depth**
-# from the file that states them, so a crate beside one needs no copy.  What a
-# second file would buy is a rule scoped to one directory, and this tree has no
-# artifact scoped to one directory: cargo writes one `target/` at the root, and
-# `cargo xtask` writes its logs and disks into `target/` or the system's
-# temporary directory.
-#
-# That absence is checked rather than trusted: `scripts/check-repo-integrity.sh`
-# refuses a file that is tracked and ignored, and refuses a tracked build
-# product whatever the ignore set says.  A crate that ever does gain an artifact
-# of its own gets a `.gitignore` beside it, and the gate is what makes the
-# difference between "nobody needed one" and "nobody noticed".
-#
-# ## Why there are `!` rules
-#
-# A negative rule is how this file says "this one is the product, not the
-# output".  It costs a line now and it is the difference between a clone that
-# builds and one that does not: a pattern added later that swallowed
-# `Cargo.lock` or `.cargo/config.toml` would be a build failure discovered by
-# whoever cloned next, and the exception written beside the pattern is the
-# thing that stops it.
-#
-# None of the patterns below currently matches any of these files.  That is the
-# point of writing them anyway: they are a **guard**, not a workaround, and
-# each names why its file is the product.
-#
-# The one alternative would be a second target directory: `target-elf/` is
-# where the aarch64 image is relinked as an ELF with symbols when a gdb session
-# needs to name addresses, and it is covered by a rule of its own below rather
-# than by the one above, for the reason that rule gives.
-#
-# ## Why there is no entry for a generated file
-#
-# This header used to claim one: `arch/x86_64/src/kaslr_relocs.generated.rs`,
-# described as generated and tracked because the `kaslr` build `include!`s it.
-# The tree has no such file (`find` and `git ls-files` both come up empty), so
-# the paragraph was describing a file that does not exist.  It is recorded here
-# rather than deleted silently because a reader who remembers it would otherwise
-# think the rule had been dropped by mistake.  When the `kaslr` build does write
-# one, it belongs in the section above, named, with the reason it must survive.
+# Purpose: What a build writes, and the files that survive a rule anyway.
 
-# Cargo
 #
-# The workspace's one output directory.  The leading slash anchors it to this
-# repository's root, so a path a document cites is not silently swallowed.
-/target/
-
-# Cargo's incremental state, when a crate is built outside the workspace.
-**/target/debug/incremental/
-
-# `cargo bench` writes criterion's reports here.
-**/criterion/
-
-# A second target directory, for the aarch64 image relinked as an ELF with
-# symbols so a gdb session can name addresses.  `.cargo/config.toml` has the
-# command that builds it, under the `--oformat=binary` flag it has to undo.
-# The leading slash of the rule above anchors it to the root, which is exactly
-# why a sibling spelling needs its own line: a pattern that covered every
-# directory named `target*` would be a rule with no reason attached.
-/target-elf/
-
-# Build products a document names
+# Normal rules (sorted alphabetically)
 #
-# `cargo xtask run` writes the serial log and the disk image it boots with.
-*.log
+.*
 *.disk
-
-# An ISO or a disc image built for a gate.
-*.iso
-*.img
-
-# Object, dependency and disassembly files a tool may drop beside an image.
-*.o
-*.d
-*.dSYM/
-
-# Rust
-#
-# `cargo fmt` backups and rust-analyzer's cache.
-*.rs.bk
-.rust-analyzer/
-rustc-ice-*.txt
-
-# Python
-#
-# `tools/extract_tests.py` is the only Python in the tree, and it is a tool
-# rather than a package: no build directory, no egg.  What it leaves is a
-# bytecode cache, which was committed once before this rule existed.
-__pycache__/
+*.log
 *.py[cod]
-.pytype/
-
-# A virtual environment, if a reader makes one to run the tool.
-.venv/
-venv/
-
-# Editors and agents
-#
-# The rule is the tool's output, not the tool: a `.vscode/settings.json` a
-# reader wants to share is theirs to force in.
-.idea/
-.vscode/
+*.rs.bk
 *.swp
 *.swo
 *~
+\#*#
 
+#
+# Top-level generic files
+#
+/target/
+/target-elf/
+
+#
+# These files should be kept even if they are dot-files.
+#
+!.cargo/
+!.cargo/config.toml
+!.gitattributes
+!.gitignore
+!.rustfmt.toml
+
+#
+# Editors and agents
+#
+__pycache__/
+
+#
 # Operating systems
+#
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Local, not shared
-*.local
-
+#
 # Files that are the product, not the output
 #
-# Each line says why it has to survive a pattern someone may add later.  A
-# `.gitignore` is read top to bottom and the last match wins, so these sit last
-# on purpose: a rule added above them cannot shadow them.
-
-# The dependency graph this workspace resolves to.  A binary crate's lock file
-# is the build input that makes a clone build the same versions; without it,
-# two clones of one commit can build different trees.
 !Cargo.lock
-
-# The toolchain the tree is written against.  `rust-toolchain.toml` selects the
-# compiler and its components; a clone without it picks whatever the host has.
 !rust-toolchain.toml
-
-# Per-target linker scripts and rustflags.  Every bare-metal image depends on
-# this file for the address it links at.
-!.cargo/config.toml
-
-# The formatting the gate checks.  Without it `cargo fmt --check` measures a
-# different style.
-!.rustfmt.toml
-
-# Line endings and binary markers, which are what keep a checkout identical
-# across hosts.
-!.gitattributes
-!.gitignore
