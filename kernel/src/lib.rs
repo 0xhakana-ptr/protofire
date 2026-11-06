@@ -30,6 +30,7 @@
 //! | [`interrupts`] | what an interrupt frame means to the kernel |
 
 //! | [`scheduler`] | the tasks, their states, and the switch |
+//! | [`shootdown`] | making a translation change visible to the other CPUs |
 //! | [`process`] | what a program's supervisor call does |
 //! | [`pipe`] | the pipe's endpoints and the table that holds them |
 //! | [`syscall`] | the registry and the handlers a boot serves |
@@ -66,6 +67,7 @@ pub mod policy;
 pub mod process;
 pub mod programs;
 pub mod scheduler;
+pub mod shootdown;
 pub mod syscall;
 pub mod tick;
 pub mod volume;

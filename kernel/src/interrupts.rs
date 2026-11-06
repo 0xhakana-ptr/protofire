@@ -169,6 +169,11 @@ pub fn handle(frame: irq::Frame) -> bool {
     // evidence the boot's own IPI proof reads.
     #[cfg(target_os = "none")]
     if vector == arch::ipi_interrupt() {
+        // The sending side's contract, discharged before the count: a CPU that
+        // recorded the interrupt and had not flushed would be an
+        // acknowledgement of a change it cannot see.  `acknowledge` flushes
+        // first and then stores, so the count below and the epoch word agree.
+        crate::shootdown::acknowledge();
         let slot = crate::per_cpu::current_slot();
         crate::per_cpu::count_ipi(slot);
         TEST_INTERRUPT_RAISED.store(vector, core::sync::atomic::Ordering::Release);

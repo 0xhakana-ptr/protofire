@@ -28,9 +28,11 @@
 //! completes a source nobody finishes.  The line stays disabled on a started
 //! hart, and the dispatch says so if a machine ever enables it.
 //!
-//! It also has no load balancing and no task migration: a task stays on the CPU
-//! that claimed it, because moving one would need a TLB shootdown and
-//! `paging::flush_translation` is local to the hart that calls it.  A machine
+//! It also has no load balancing.  It does have task placement: a task is not
+//! pinned to a hart, the only binding is the scheduler's `running` array, and a
+//! task that is preempted or woken may be selected here or there.  Moving one
+//! needs no TLB shootdown, because `satp`'s write is a whole-TLB fence: the
+//! hart that leaves a task has already discarded its translations.  A machine
 //! with more work than CPUs runs what it has; one with more CPUs than work
 //! leaves the extra CPUs in `wait_for_work`, which is the shape this tree
 //! scales in.

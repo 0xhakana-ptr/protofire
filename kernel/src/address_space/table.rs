@@ -220,15 +220,46 @@ pub unsafe fn map_device(start: usize, length: usize) -> bool {
 /// per 2 MiB covers a whole ECAM window with a handful of entries, where a page
 /// table per 2 MiB would be a thousand tables for the same span and the same
 /// permissions throughout.
+///
+/// ## Every CPU, not this one
+///
+/// These are the **kernel's** tables.  Every program root copies this root's
+/// entry 0, so the identity map and the device windows are one set of tables
+/// that every CPU walks, and a change made here is invisible to the CPUs that
+/// did not make it.  The boot has a live case: the second CPU is online before
+/// the first one remaps a device window uncached, so without the broadcast the
+/// second CPU keeps the cached translation and its stores to the device's
+/// registers may never arrive.
+///
+/// The broadcast is sent **after the lock is dropped**, which is why the two
+/// halves are separate statements here.  A receiver flushes and returns without
+/// taking this lock, so sending while holding it would only cost the sender the
+/// wait, but the lock's guard is also this function's borrow of the allocator
+/// and the tables, and a second CPU's scheduling decision waits behind it.
 #[cfg(target_os = "none")]
 pub fn map_region(start: usize, length: usize, permissions: Permissions) -> bool {
-    let mut guard = TABLES.lock();
-    let tables = &mut *guard;
-
-    if start >= IDENTITY_LIMIT {
-        return map_device_blocks(tables, start, length, permissions);
+    let changed = {
+        let mut guard = TABLES.lock();
+        let tables = &mut *guard;
+        if start >= IDENTITY_LIMIT {
+            map_device_blocks(tables, start, length, permissions)
+        } else {
+            re_encode(tables, start, length, permissions)
+        }
+    };
+    if changed {
+        crate::shootdown::invalidate_others();
     }
+    changed
+}
 
+/// Re-encode the leaf entries of an already-mapped region, answering whether
+/// any entry changed.
+///
+/// The sender's own TLB is flushed here, before the caller broadcasts: a change
+/// this CPU cannot see is one it would report as made.
+#[cfg(target_os = "none")]
+fn re_encode(tables: &mut Tables, start: usize, length: usize, permissions: Permissions) -> bool {
     let mut changed = false;
     let end = start.saturating_add(length).min(IDENTITY_LIMIT);
     let mut address = start & !(GRANULE - 1);

@@ -355,6 +355,28 @@ pub fn report_and_finish() -> ! {
         crate::idle_this_cpu()
     }
 
+    // Every task is finished and every other CPU has been told the boot is
+    // over, so no CPU is inside a program and none will enter one.  This is the
+    // one moment the whole machine's task set is quiescent, and it is where the
+    // address spaces go back.
+    //
+    // ## Why not at each exit
+    //
+    // Because the first version did exactly that and it was wrong.  A task's
+    // slot is cleared by the switch that leaves it, so "no CPU holds this task"
+    // is true the instant it exits — and it is not the condition that matters.
+    // The other CPU may still be installed on that task's root: it can be in
+    // its own trap path, returning through a frame that belongs to the program,
+    // with the scheduler's lock not held.  Freeing then produced 186 page
+    // faults at `0x8080000030`, program 2's stack, in six boots of eight: a
+    // frame the kernel still walked, in a pool that had given it to someone
+    // else.
+    //
+    // A finished task's pages are not needed for it to stay finished.  Holding
+    // them until the machine stops costs nothing and removes the whole class of
+    // race, which is the trade this boot's programs cannot observe.
+    let reaped = crate::scheduler::reap_address_spaces();
+
     let (switches, exited) = crate::scheduler::statistics();
     let ticks = crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire) as u32;
     arch::serial::write_str("protofire: every program exited, ");
@@ -400,6 +422,35 @@ pub fn report_and_finish() -> ! {
     arch::serial::write_str("protofire: parallel, programs ended on ");
     arch::serial::write_u32(programs_on_other_cpus() as u32);
     arch::serial::write_str(" non-boot cpu(s)\n");
+
+    // What the placement rule did, as a fact rather than a policy.  A task is
+    // not pinned to a CPU: any task that left its CPU is selectable by another,
+    // so a task that was preempted or woken may resume somewhere else.  The
+    // count is how often that happened, and the last one names the process and
+    // both CPUs, because a total alone does not say what moved.
+    let (migrations, last) = crate::scheduler::migrations();
+    arch::serial::write_str("protofire: task migrations ");
+    arch::serial::write_u32(migrations as u32);
+    if let Some((pid, from, to)) = last {
+        arch::serial::write_str(", last process ");
+        arch::serial::write_u32(pid);
+        arch::serial::write_str(" from cpu ");
+        arch::serial::write_u32(from as u32);
+        arch::serial::write_str(" to cpu ");
+        arch::serial::write_u32(to as u32);
+    }
+    arch::serial::write_str("\n");
+
+    // The frames the exits gave back, and the pool they went into.  A boot that
+    // reaped nothing prints the same `0` here as a boot whose release path
+    // never ran, which is why the free count is beside it: the pool started
+    // with every frame free, so the number that matters is how many came back
+    // after the programs took them.
+    arch::serial::write_str("protofire: address spaces reaped ");
+    arch::serial::write_u32(reaped as u32);
+    arch::serial::write_str(", ");
+    arch::serial::write_u32(crate::address_space::free_frames() as u32);
+    arch::serial::write_str(" frame(s) free\n");
 
     crate::finish_and_halt()
 }

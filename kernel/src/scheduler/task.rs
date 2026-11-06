@@ -83,6 +83,20 @@ pub struct Task {
     /// number the kernel invented, and a parent waiting for that answer would
     /// read it as the program's own decision.
     pub(crate) status: Option<usize>,
+    /// The CPU slot this task last ran on, or `usize::MAX` before its first
+    /// run.
+    ///
+    /// A task is not bound to a CPU: the only binding is the scheduler's
+    /// `running` array, and leaving it is what a switch does.  So a task that
+    /// was preempted, slept, blocked or exited and was then selected again may
+    /// resume on a different CPU, and that is a migration.  The field is what
+    /// makes one visible: without it a migrated task is indistinguishable from
+    /// a task on its first run, and the boot could not say the mechanism ran.
+    ///
+    /// It is **not** an affinity.  Nothing pins a task to the CPU recorded
+    /// here; the scheduler is free to place it anywhere, and the record only
+    /// says where it was.
+    pub(crate) last_cpu: usize,
 }
 
 impl Task {
@@ -98,6 +112,7 @@ impl Task {
             pid: 0,
             parent: 0,
             status: None,
+            last_cpu: usize::MAX,
         }
     }
 
@@ -115,6 +130,7 @@ impl Task {
             pid: 0,
             parent: 0,
             status: None,
+            last_cpu: usize::MAX,
         }
     }
 

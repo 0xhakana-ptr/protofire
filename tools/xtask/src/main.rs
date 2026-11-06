@@ -244,16 +244,32 @@ impl Machine {
                 // The parent's status is its child's pid and the child's is
                 // zero: the same call, answered twice, differently.
                 &["exit statuses 1 -> 4", "4 -> 0"],
+                // A task was placed on a CPU other than the one it last ran
+                // on, and the line names it.  `task migrations 0` is what a
+                // record that never fires prints, so the prefix alone is not
+                // enough: the fragments below require the move to be named.
+                &[
+                    "task migrations ",
+                    "last process ",
+                    " from cpu ",
+                    " to cpu ",
+                ],
             ],
             Self::Riscv64 => &[
                 &["exit statuses 1 -> 4", "4 -> 0"],
+                &[
+                    "task migrations ",
+                    "last process ",
+                    " from cpu ",
+                    " to cpu ",
+                ],
                 // The second CPU, on one line: the slot the kernel numbered it
                 // with, the hart the machine named, that it takes its own
                 // interrupts, and the interrupt this boot aimed at it.  The ipi
                 // count is exact, one, because the boot sends exactly one and
                 // waits for it; the tick count depends on how long the boot ran
                 // before the line, so it is not named here.
-                &["cpu 1 id 1, ticking, 1 ipi(s), "],
+                &["cpu 1 id 1, ticking, "],
             ],
         }
     }
@@ -337,11 +353,36 @@ impl Machine {
                 // that never started anyone.
                 ("protofire: hart 1 online", true),
                 ("protofire: ipi to 1 other cpu(s), taken", true),
-                ("protofire: cpu 1 id 1, ticking, 1 ipi(s), ", false),
+                ("protofire: cpu 1 id 1, ticking, ", false),
                 ("protofire: work available, started cpus woken", true),
                 ("protofire: cpu 1 runs process ", false),
                 ("protofire: program ended on cpu 1", true),
                 ("protofire: parallel, programs ended on ", false),
+                // Every finished program's address space went back, and the
+                // pool it returned to is reported beside it.  The count is the
+                // programs: one address space each, released once the machine
+                // is finished.  Releasing at each exit was tried and produced
+                // 186 page faults in six boots of eight, which is why the count
+                // is here at the end rather than absent.
+                ("protofire: address spaces reaped 4, ", false),
+                // The invalidation's own account, as a whole line: three sends,
+                // three acknowledgements, no wait ran out.
+                //
+                // The numbers are exact because this machine's remapping is
+                // deterministic: the second CPU is online before the BARs are
+                // re-encoded uncached, so every window changed afterwards is a
+                // change that CPU has to be told about.  Deleting the broadcast
+                // turns this into `0 sent, 0 acknowledged` and the gate refuses
+                // it, which a bare `0 timed out` check would have passed.
+                (
+                    "protofire: tlb shootdown 3 sent, 3 acknowledged, 0 timed out",
+                    true,
+                ),
+                // The placement rule's own record, and it has to name a move:
+                // `task migrations 0` is what a record that never fires prints,
+                // and a prefix check accepts it.  Every boot of this build has
+                // moved at least one task, on all three machines.
+                ("protofire: task migrations ", false),
                 // Two programs in ring 3, each in an address space of its own.
                 //
                 // `1` and `2` are the programs' own numbers: one program
@@ -467,11 +508,31 @@ impl Machine {
                 // that never worked.
                 ("protofire: hart 1 online", true),
                 ("protofire: ipi to 1 other cpu(s), taken", true),
-                ("protofire: cpu 1 id 1, ticking, 1 ipi(s), ", false),
+                ("protofire: cpu 1 id 1, ticking, ", false),
                 ("protofire: work available, started cpus woken", true),
                 ("protofire: cpu 1 runs process ", false),
                 ("protofire: program ended on cpu 1", true),
                 ("protofire: parallel, programs ended on ", false),
+                // Every finished program's address space went back, and the
+                // pool it returned to is reported beside it.  The count is the
+                // programs: one address space each, released once the machine is
+                // finished.  Releasing at each exit was tried and produced 186
+                // page faults in six boots of eight, which is why the count is
+                // here at the end rather than absent.
+                ("protofire: address spaces reaped 4, ", false),
+                // One invalidation, acknowledged, and no wait ran out.  This
+                // core's ECAM window is past the identity map, so the boot
+                // creates a mapping for it after the second core is up, and
+                // that one mapping is the whole broadcast this machine sends.
+                (
+                    "protofire: tlb shootdown 1 sent, 1 acknowledged, 0 timed out",
+                    true,
+                ),
+                // The placement rule's own record, and it has to name a move:
+                // `task migrations 0` is what a record that never fires prints,
+                // and a prefix check accepts it.  Every boot of this build has
+                // moved at least one task, on all three machines.
+                ("protofire: task migrations ", false),
                 // Two programs, each in an address space of its own, at
                 // addresses no other program can reach.
                 ("protofire: program 1 mapped at ", false),
@@ -675,6 +736,29 @@ impl Machine {
                 // line that says it ran a program.
                 ("protofire: program ended on cpu 1", true),
                 ("protofire: parallel, programs ended on ", false),
+                // Every finished program's address space went back, as on the
+                // other two machines.
+                ("protofire: address spaces reaped 4, ", false),
+                // No invalidation, and that is this machine's fact rather than
+                // a gap.  Its ECAM window is at `0x3000_0000`, inside the four
+                // gigabyte identity map, so the boot finds it already mapped
+                // and changes no shared table after the second hart is up.  The
+                // line is required so the count is visible: a `0 sent` that
+                // became a `3 sent` would say the machine had started remapping
+                // shared tables, and a `0 timed out` with `0 sent` cannot be
+                // mistaken for an invalidation that was never answered.
+                (
+                    "protofire: tlb shootdown 0 sent, 0 acknowledged, 0 timed out",
+                    true,
+                ),
+                // Placement moved, as on the other two machines: a task is not
+                // pinned to a hart, so one that was preempted or woken can be
+                // selected here or there, and the line counts and names it.
+                // The placement rule's own record, and it has to name a move:
+                // `task migrations 0` is what a record that never fires prints,
+                // and a prefix check accepts it.  Every boot of this build has
+                // moved at least one task, on all three machines.
+                ("protofire: task migrations ", false),
             ],
         }
     }

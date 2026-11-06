@@ -47,6 +47,21 @@ pub struct Scheduler {
     /// cannot collide: the boot numbers its programs 1..=n, and this starts at
     /// n+1 once the boot has added them.
     pub(crate) next_pid: u32,
+    /// How many times a task was placed on a CPU other than the one it last
+    /// ran on.
+    ///
+    /// The scheduler does not balance load and does not decide to move a task:
+    /// a task that left its CPU is simply selectable by any other, and this
+    /// counts the times one was in fact taken elsewhere.  It is a measurement
+    /// of what the placement rule does, not a policy of its own.
+    pub(crate) migrations: usize,
+    /// The most recent migration: the task index, the CPU it left, and the CPU
+    /// it landed on.
+    ///
+    /// Kept so the boot can name one instead of only a count.  A total tells a
+    /// reader that placement moved; the three numbers tell them what moved and
+    /// which way, which is what a line a person reads needs.
+    pub(crate) last_migration: Option<(usize, usize, usize)>,
 }
 
 /// What a claim answered.
@@ -82,6 +97,8 @@ impl Scheduler {
             switches: 0,
             exited: 0,
             next_pid: 1,
+            migrations: 0,
+            last_migration: None,
         }
     }
 
@@ -119,6 +136,18 @@ impl Scheduler {
         self.exited
     }
 
+    /// How many times a task was taken onto a CPU other than the one it last
+    /// ran on, and the most recent one as `(task, from, to)`.
+    pub fn migrations(&self) -> (usize, Option<(usize, usize, usize)>) {
+        (self.migrations, self.last_migration)
+    }
+
+    /// The process id of a task index, for a line that names a task a reader
+    /// can recognise.
+    pub fn pid_at(&self, task: usize) -> Option<u32> {
+        self.tasks.get(task).map(Task::pid)
+    }
+
     /// The task `cpu` is running, while it is not finished.
     pub fn current(&self, cpu: usize) -> Option<&Task> {
         self.tasks
@@ -137,6 +166,14 @@ impl Scheduler {
     /// What the entry into a program does: a CPU that installs a program's
     /// context by hand, rather than through a switch, has to say which task it
     /// took, or the other CPUs would consider that task free.
+    ///
+    /// A task that arrives on a CPU other than the one it last ran on has
+    /// **migrated**, and that is recorded rather than refused.  Nothing pins a
+    /// task to a CPU here: the only binding is this array, and leaving it is
+    /// what any switch does, so a task that was preempted or woken is free to
+    /// be selected anywhere.  Writing `last_cpu` is what turns the placement
+    /// into a fact a boot can report, and [`Self::migrations`] counts the
+    /// times the two differed.
     pub fn assign(&mut self, cpu: usize, task: usize) {
         if let Some(slot) = self.running.get_mut(cpu) {
             // `usize::MAX` is this module's "this CPU owns no task".  Storing
@@ -144,6 +181,15 @@ impl Scheduler {
             // a task number no task has, which happens to be harmless and is
             // not the statement meant: `None` is.
             *slot = if task == usize::MAX { None } else { Some(task) };
+        }
+        if task != usize::MAX
+            && let Some(entry) = self.tasks.get_mut(task)
+        {
+            if entry.last_cpu != usize::MAX && entry.last_cpu != cpu {
+                self.migrations += 1;
+                self.last_migration = Some((task, entry.last_cpu, cpu));
+            }
+            entry.last_cpu = cpu;
         }
     }
 
@@ -636,24 +682,42 @@ impl Scheduler {
             .any(|task| matches!(task.state, State::Sleeping { .. } | State::Blocked))
     }
 
-    /// Release every finished program's pages.
+    /// Release every finished task's address space, answering how many went
+    /// back.
     ///
-    /// # Safety
+    /// ## When this is safe, and why the caller must say
     ///
-    /// Called when nothing is translating through any of them, after the last
-    /// program exited, with the kernel's own root installed.
+    /// A finished task's pages are free only when nothing will translate
+    /// through them again.  Clearing the task's slot is **not** that condition:
+    /// the CPU that leaves a task keeps the task's root installed while it
+    /// waits for work, and it can be inside its trap path with no lock held.
+    /// Releasing at each exit produced 186 page faults at `0x8080000030`,
+    /// program 2's stack, in six boots of eight — a frame the kernel still
+    /// walked, handed by the pool to someone else.
+    ///
+    /// So this is called once, after every task has finished and every other
+    /// CPU has been told the boot is over.  At that point no CPU is inside a
+    /// program and none will enter one, which is the whole of the safety
+    /// argument, and it is the caller's to make rather than this function's to
+    /// guess.
+    ///
+    /// A task whose space is already gone is skipped, so a second call answers
+    /// zero instead of freeing a frame twice.
     #[cfg(target_os = "none")]
-    pub unsafe fn reap(&mut self) -> usize {
+    pub fn reap_finished(&mut self) -> usize {
         let mut reaped = 0;
         for task in &mut self.tasks {
-            if task.state == State::Finished
-                && let Some(space) = task.space.take()
-            {
-                // SAFETY: the caller promises no task is translating through
-                // this space.
-                unsafe { space.release() };
-                reaped += 1;
+            if task.state != State::Finished {
+                continue;
             }
+            let Some(space) = task.space.take() else {
+                continue;
+            };
+            // SAFETY: the caller promises the machine is finished, so no CPU is
+            // running a program and none will: every task is `Finished` and
+            // every other CPU has been told to stop.
+            unsafe { space.release() };
+            reaped += 1;
         }
         reaped
     }

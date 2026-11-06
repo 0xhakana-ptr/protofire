@@ -35,12 +35,18 @@
 //! cause.
 //!
 //! So every entry below takes one lock.  It is a **global** lock and not one
-//! queue per CPU, and the choice is deliberate: a per-CPU queue needs task
-//! migration, migration needs TLB shootdown on a machine whose flush is local,
-//! and a load balancer to decide where a task goes.  A global queue needs none
-//! of those and pays for it in contention, which this kernel has no load to
-//! produce.  The change that adds per-CPU queues is the change that also adds
-//! the three things they require.
+//! queue per CPU, and the choice is deliberate.  A task is already free to be
+//! placed anywhere — nothing pins it, the `running` array is the only binding,
+//! and leaving it is what every switch does — so what a sharded scheduler adds
+//! is a *decision* about contention, and this kernel has no load to produce the
+//! cost the lock is paying.
+//!
+//! What a per-CPU queue does **not** need here is a TLB shootdown, and the
+//! earlier version of this paragraph said it did.  Every machine's
+//! `switch_address_space` is a whole-TLB flush, so the CPU that leaves a task
+//! has already discarded its translations, and a task taken elsewhere costs one
+//! flush.  The broadcast is for the **shared** kernel tables, and it is
+//! [`crate::shootdown`]'s.
 //!
 //! The lock masks interrupts while it is held, which is what keeps a tick from
 //! arriving on this CPU mid-update and taking the lock again.  Callers that
@@ -183,6 +189,29 @@ pub fn advance(frame: &mut arch::Context, exiting: bool) -> arch::CallOutcome {
     })
 }
 
+/// Release every finished task's address space, answering how many went back.
+///
+/// Called once, when the machine is finished: every task is `Finished` and
+/// every other CPU has been told to stop.  That is the only moment the whole
+/// task set is quiescent; `Scheduler::reap_finished` has the measurement that
+/// made releasing at each exit wrong.
+///
+/// A task whose space is already gone is skipped, so a second call answers
+/// zero rather than freeing a frame twice.
+#[cfg(target_os = "none")]
+pub fn reap_address_spaces() -> usize {
+    with_scheduler(|scheduler| match scheduler {
+        Some(scheduler) => scheduler.reap_finished(),
+        None => 0,
+    })
+}
+
+/// A host build has no address space to release.
+#[cfg(not(target_os = "none"))]
+pub fn reap_address_spaces() -> usize {
+    0
+}
+
 /// How many switches and exits the installed scheduler has seen.
 ///
 /// `(switches, exited)`, or `(0, 0)` when nothing ran.
@@ -191,6 +220,27 @@ pub fn statistics() -> (usize, usize) {
         scheduler.as_ref().map_or((0, 0), |scheduler| {
             (scheduler.switches(), scheduler.exited())
         })
+    })
+}
+
+/// How many tasks were taken onto a CPU other than the one they last ran on,
+/// and the most recent one as `(pid, from, to)`.
+///
+/// The count is the placement rule's own record.  A task is not pinned to a
+/// CPU: the only binding is the scheduler's `running` array, so any task that
+/// left its CPU may be selected by another, and this says whether one was.  It
+/// is a **measurement**, not a policy: this kernel has no load balancer, and a
+/// zero here means no task was ever placed twice, not that placement is
+/// refused.
+pub fn migrations() -> (usize, Option<(u32, usize, usize)>) {
+    with_scheduler(|scheduler| match scheduler {
+        Some(scheduler) => {
+            let (count, last) = scheduler.migrations();
+            let named =
+                last.and_then(|(task, from, to)| scheduler.pid_at(task).map(|pid| (pid, from, to)));
+            (count, named)
+        }
+        None => (0, None),
     })
 }
 

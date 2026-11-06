@@ -197,4 +197,20 @@ pub fn report_activity() {
         arch::serial::write_u32(cpu.ticks() as u32);
         arch::serial::write_str(" tick(s)\n");
     }
+
+    // The other CPUs' translations, after everything that changed one.  A boot
+    // remaps device windows *after* the started CPUs are online, and those
+    // tables are the kernel's own: every program root copies entry 0, so a CPU
+    // that is not told keeps the cached translation.  The count is what says
+    // the mechanism ran; the timeout count is what says every CPU heard it,
+    // and a boot whose second CPU was deaf would print a number here instead
+    // of the line being absent.
+    let (sent, acknowledged, timed_out) = crate::shootdown::totals();
+    arch::serial::write_str("protofire: tlb shootdown ");
+    arch::serial::write_u32(sent as u32);
+    arch::serial::write_str(" sent, ");
+    arch::serial::write_u32(acknowledged as u32);
+    arch::serial::write_str(" acknowledged, ");
+    arch::serial::write_u32(timed_out as u32);
+    arch::serial::write_str(" timed out\n");
 }

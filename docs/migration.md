@@ -1200,12 +1200,71 @@ starting value for the window before a program exists, and nothing more.
   printing.
 
 What is not here, and is named in `docs/status.md` rather than implied: there
-is no load balancing and no task migration.  A task stays on the CPU that
-claimed it, so the two CPUs divide the boot's programs once and never move one;
-a migration would need a TLB shootdown, and `flush_translation` is local to the
-hart that calls it.  Nor is a release proven against every CPU's frame: the
-boot releases nothing until it ends, which is why the deferred-release rule
-this section first proposed was not needed to land it.
+is no load balancing.  A task is not pinned to a CPU — the only binding is the
+scheduler's `running` array, and leaving it is what every switch does — so a
+task that was preempted, woken or blocked resumes wherever it is next selected,
+and on this boot that happens.  A boot prints
+
+    protofire: task migrations 4, last process 2 from cpu 1 to cpu 0
+    protofire: address spaces reaped 4, 16370 frame(s) free
+    protofire: tlb shootdown 3 sent, 3 acknowledged, 0 timed out
+
+and the middle line is the one that says placement moved rather than merely
+being allowed to.
+
+**A migration does not need a TLB shootdown, and the earlier version of this
+section said it did.**  The claim was that a task's pages have to be reachable
+from the new CPU and that every CPU which ever translated through that address
+space may hold a stale translation.  The second half is true and the first half
+is the reason it does not matter: every machine's `switch_address_space` is a
+**whole-TLB** operation — x86_64 rewrites `cr3`, aarch64 runs `tlbi vmalle1`,
+riscv64 runs `sfence.vma` — so the CPU that stops running a task has already
+discarded every translation into it, and the CPU that starts one discards
+whatever it had before its first fetch through the new root.  There is no
+window in which a CPU holds a translation for a root it is not installed on.
+A migration that reused address-space identifiers, or that switched roots
+without a flush, would need the shootdown; this tree does neither.
+
+What a shootdown **is** needed for is the other table: the kernel's own.  Every
+program root copies the kernel root's entry 0, so the identity map and the
+device windows are one set of tables every CPU walks, and a change made from one
+CPU is invisible to the others.  The boot has the live case — the second CPU is
+online before the first one remaps a device window uncached — and that is what
+`kernel/src/shootdown.rs` is for and what the `tlb shootdown` line reports.
+`x86_64` sends three and `aarch64` one; `riscv64` sends none, and that is a fact
+about the machine rather than a gap: its ECAM window sits inside the identity
+map, so the boot re-maps nothing after the second hart is up and there is
+nothing to broadcast.
+
+## Releasing an exited program's pages
+
+`scheduler::reap` existed and had **no callers** for as long as it existed,
+which meant every exit leaked its two image frames, its stack and its page
+tables for the length of the boot.  Four programs is small enough that the leak
+was invisible, and a program that forked twice would have found the pool
+smaller than it was.
+
+The first version of the fix released a task's space at the exit that finished
+it, on the argument that the switch that leaves a task clears its slot, so no
+CPU is running it.  That argument is wrong, and the boot showed it: **186 page
+faults at `0x8080000030`, program 2's stack, in six boots of eight.**  Clearing
+the slot is not leaving the root.  The CPU that finds no next task keeps the
+finished program's table in its register while it waits, and it can be in its
+own trap path with the scheduler's lock not held, so a reaper on the other CPU
+sees "no CPU holds this task" and frees a table the first CPU is still walking.
+
+A per-CPU record of the installed root made it worse rather than better: the
+window between the record and the register write decides whether a frame is
+freed under a live walk, and records written on both sides of that window
+produced the same faults at the same address in the same six boots of eight.
+
+So the release is **deferred to the one moment the machine is quiescent**: every
+task is `Finished`, and `report_and_finish`'s atomic exchange has told every
+other CPU the boot is over.  A finished task's pages are not needed for it to
+stay finished, so holding them costs nothing, and the race is removed rather
+than narrowed.  The pool goes from 131072 frames free at boot to 131068 after
+four programs' spaces come back, and the line is required on all three
+machines.
 
 ## What it takes to run on more than two CPUs
 
@@ -1291,22 +1350,30 @@ What a sharded scheduler needs, in the order it becomes necessary:
    global lock becomes per-queue, and the questions that cross queues (who may be
    woken, who may be stolen) are the next two.
 2. **A migration rule.**  A CPU with an empty queue takes a task from another,
-   or the machine idles one CPU while another has work.  Migration is where the
-   `running` array stops being enough: the task's pages have to be reachable
-   from the new CPU, and every CPU that ever translated through that address
-   space may hold a stale translation.
-3. **A TLB shootdown.**  `arch::flush_translation` flushes the calling hart's TLB
-   and no other, which is correct for the address spaces this tree runs: the
-   kernel's entry 0 is identical in every root, so a switch costs one register
-   write and no flush at all.  A migrated task is the first case where one CPU's
-   translation must be invalidated from another, and that is an IPI, a wait for
-   acknowledgement, and a rule about what happens if the target is in a trap.
-   `sync::SpinLock::lock_without_irq_disable`'s documentation already describes
-   the shape of that hazard.
+   or the machine idles one CPU while another has work.  A task is already free
+   to be placed anywhere — nothing pins one to a CPU — so what a rule adds is a
+   *decision* about where, not the permission.  What it costs is not a
+   shootdown: see below.
+3. **A TLB shootdown.**  Not for migration, which is the correction the section
+   above records: a root switch is a whole-TLB flush on all three machines, so a
+   migrated task pays one flush and needs no broadcast.  What needs the
+   broadcast is any change to the **shared** tables every root copies, and that
+   mechanism exists now (`kernel/src/shootdown.rs`): an epoch, a per-CPU
+   acknowledgement, and a bounded wait, driven by the same inter-processor
+   interrupt the waker already uses, with `tlb shootdown N sent, M acknowledged,
+   0 timed out` on the console.  A sharded scheduler that later changes a shared
+   table on a CPU other than the boot one sends through it; one that only moves
+   tasks does not.
 
-The order matters.  Sharding without migration is a safe intermediate that buys
-the contention away and changes no semantics.  Migration without a shootdown is a
-use-after-free that shows up as a fault in a program that never ran.
+The order matters, but less than the previous version of this paragraph said.
+Sharding without migration is a safe intermediate that buys the contention away
+and changes no semantics.  Migration without a shootdown is **not** a
+use-after-free here, because the flush is part of every root switch; what would
+make it one is an address-space identifier or a switch that skipped its flush.
+Releasing a space without knowing no CPU walks it *is* a use-after-free, and
+that one has been measured — 186 faults at a program's stack address in six
+boots of eight — which is why the release is deferred to the machine's end
+rather than narrowed.
 
 ### What this tree should not do yet
 
