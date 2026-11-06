@@ -25,6 +25,8 @@ use paging::Permissions;
 use paging::index;
 
 #[cfg(target_os = "none")]
+use super::USER_LIMIT;
+#[cfg(target_os = "none")]
 use super::table::GRANULE;
 #[cfg(target_os = "none")]
 use super::table::IDENTITY_LIMIT;
@@ -56,8 +58,10 @@ pub const USER_BASE: usize = 0x80_0000_0000;
 
 /// The most frames one address space records as its own.
 ///
-/// An image and a stack, and the pair a `fork` copies.  A program that forks
-/// twice is one this bound refuses rather than silently forgetting, the
+/// An image and a stack, and the frames a `fork` shares.  Sharing does not
+/// copy, so a child records the same frames its parent does, each once: the
+/// bound is a bound on the *records* and not on the pages, and a program that
+/// forks twice is one this bound refuses rather than silently forgetting, the
 /// refusal is `own` answering `false`, which the caller reports.
 pub const MAX_OWNED_FRAMES: usize = 4;
 
@@ -68,13 +72,17 @@ pub struct AddressSpace {
     /// The root table's frame.
     root: usize,
     /// The frames the program owns: its image, its stack, and, for a program
-    /// that forked, a copy of each of those per child it made.
+    /// that forked, the shared frame behind each page it inherited.
     ///
-    /// Four rather than two because `fork` copies both frames, and a limit that
-    /// silently dropped the third would be a leak whose symptom is a pool that
-    /// shrinks with no line in the log to say why.  A `Vec` would grow past
-    /// this, and a `Vec` in a `Copy` type is not one: the fixed bound is the
-    /// honest statement of what this kernel has decided to own per process.
+    /// Ownership is one *record* per frame this space holds a reference to, and
+    /// a frame two spaces share is recorded by both: the pool's co-owner count
+    /// is what makes that sound, and `release` is what consults it.  Four
+    /// rather than two because a fork's child records both frames it inherited,
+    /// and a limit that silently dropped the third would be a leak whose
+    /// symptom is a pool that shrinks with no line in the log to say why.  A
+    /// `Vec` would grow past this, and a `Vec` in a `Copy` type is not one: the
+    /// fixed bound is the honest statement of what this kernel has decided to
+    /// own per process.
     frames: [usize; MAX_OWNED_FRAMES],
     /// How many of `frames` are in use.
     used: usize,
@@ -187,7 +195,7 @@ impl AddressSpace {
         true
     }
 
-    /// Record a frame this space owns, so freeing the space frees it.
+    /// Record a frame this space owns, so freeing the space frees its share.
     ///
     /// Answers whether it did: a space at its bound refuses the frame rather
     /// than dropping it, because a frame nobody records is a leak the pool
@@ -201,16 +209,41 @@ impl AddressSpace {
         true
     }
 
+    /// Stop owning `old_frame` and own `new_frame` in its place.
+    ///
+    /// The copy-on-write resolver's bookkeeping: the faulting space copied the
+    /// shared frame away, so what it owns now is its private copy.  One record
+    /// out, one in — the bound does not move, and the count in the pool moves
+    /// with it, because the resolver released the shared frame's reference
+    /// when it copied and this records the copy's ownership in the same
+    /// breath.  `false` means this space never owned `old_frame`, which is not
+    /// a state the resolver can reach and is a bug report rather than a silent
+    /// swap of nothing.
+    pub fn replace_owned(&mut self, old_frame: usize, new_frame: usize) -> bool {
+        for slot in &mut self.frames[..self.used] {
+            if *slot == old_frame {
+                *slot = new_frame;
+                return true;
+            }
+        }
+        false
+    }
+
     /// The frames this space owns, in the order it took them.
     pub fn owned(&self) -> &[usize] {
         &self.frames[..self.used]
     }
 
-    /// Give every frame back.
+    /// Give every frame this space holds a reference to its share back.
     ///
     /// The frames are the program's, and a program that exited is one whose
     /// memory is available, which is the whole point of a process ending
-    /// rather than the machine stopping.
+    /// rather than the machine stopping.  Ownership is shared since the copy-
+    /// on-write fork: a frame two spaces hold is returned by the *last* space
+    /// to let go, and each release before that is one reference fewer.  The
+    /// pool answers whether a release was the last, and the frame goes back
+    /// only then — a release that freed unconditionally would hand a live
+    /// frame to the next allocation while its other owner still mapped it.
     ///
     /// # Safety
     ///
@@ -220,7 +253,13 @@ impl AddressSpace {
         let mut guard = TABLES.lock();
         let tables = &mut *guard;
         for frame in &self.frames[..self.used] {
-            let _ = tables.frames.deallocate(*frame as *mut u8, 1);
+            // The protocol, in two lines: release asks whether this was the
+            // last owner, and only a `true` returns the frame.  A frame no
+            // fork ever shared counts zero co-owners, so its first release is
+            // its last, and the ordinary path is unchanged.
+            if tables.frames.release_reference(*frame) {
+                let _ = tables.frames.deallocate(*frame as *mut u8, 1);
+            }
         }
         let _ = tables.frames.deallocate(self.root as *mut u8, 1);
     }
@@ -484,19 +523,45 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
     Some(count)
 }
 
-/// A new address space holding a copy of `parent`'s user pages.
+/// A new address space sharing `parent`'s user pages.
 ///
-/// Every page the parent maps in the user window gets a **new frame**, and the
-/// bytes are copied into it.  That is `fork`'s contract: a child that wrote to
-/// a page would otherwise change the parent's, and the first program to do that
-/// would corrupt the program it came from, a defect whose symptom is a
-/// corrupted value much later, in a process that never wrote it.
+/// Every page the parent maps in the user window, the child maps as **the same
+/// frame**.  A page the parent could write is demoted first: the parent's
+/// entry is rewritten read-only and the frame is marked for copy-on-write, so
+/// the first write on either side faults, and the fault handler — the reason
+/// this kernel has a write-fault path at all — copies the frame while the
+/// other owner still holds it and hands it over outright when it does not.  A
+/// page the parent could not write is shared as it stands: it was already
+/// read-only, there is nothing to demote, and a write to it is the program
+/// faulting on its own code, which is a real fault and stays one.
 ///
-/// Copy-on-write would be the answer a kernel with a fault path for writes
-/// uses, and this kernel has no such path: a write to a read-only page is a
-/// fault nobody handles.  Whole-page copy is the honest version of what this
-/// tree can do, and it is correct, only slower than it needs to be once a
-/// program maps many pages.
+/// That is `fork`'s contract kept by other means.  The first version copied
+/// every page into a new frame, which is correct, and slower in exactly the
+/// case a fork exists for: most of the pages a fork shares are never written
+/// by either side, and the copy paid for all of them.  The shared version
+/// pays, per page, for the pages someone actually writes, which is what the
+/// fault handler counts.
+///
+/// ## The TLB, and why a local flush is the whole of the invalidation
+///
+/// The demotion happens on the CPU serving the fork, which is the parent's
+/// own: a fork is a supervisor call, and the CPU that took it is the one the
+/// parent runs on.  Every machine's `switch_address_space` is a whole-TLB
+/// flush, so a CPU that is not running the parent holds no translations for
+/// the parent's pages — it discarded them at its last switch and has not
+/// re-fetched them through this root since.  The parent cannot write between
+/// the demotion and the share either: it is suspended inside its own syscall.
+/// One local flush is therefore the whole of the invalidation, and the
+/// machine's answer to a change in a *shared kernel table*,
+/// [`crate::shootdown`], is not what this needs.
+///
+/// ## Failure, and why the demotions it leaves behind need no repair
+///
+/// A fork that fails midway leaves the parent's earlier pages demoted, marked
+/// and counted.  That state is correct on its own: the next write on such a
+/// page faults, the handler reads the count and copies or hands over, and the
+/// parent continues.  The failed fork costs the parent copies it would have
+/// paid on its first writes anyway, and nothing else.
 ///
 /// The kernel's own entry 0 is shared, not copied: it is the same table in
 /// every root, which is what makes a switch cost one register write.
@@ -507,9 +572,9 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
 /// own the result, the new root is a frame nothing else holds.
 #[cfg(target_os = "none")]
 pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
-    // The parent's page table lists the pages; a copy needs them all in a
-    // buffer first, because allocating while the walk holds a borrow of the
-    // allocator's own state would be a second borrow of the same static.
+    // The parent's page table lists the pages; a fork needs them all in a
+    // buffer first, because mutating entries while the walk holds a borrow of
+    // the allocator's own state would be a second borrow of the same static.
     let mut pages = [MappedPage {
         virtual_address: 0,
         physical: 0,
@@ -520,23 +585,30 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
     let mut child = unsafe { AddressSpace::new() }?;
 
     for page in &pages[..count] {
-        let Some(frame) = allocate_image_frame() else {
-            // The child is abandoned: its root and every frame taken so far go
-            // back, so a failed fork does not shrink the pool by a program.
+        // Demote the parent's entry when the page was writable, and record the
+        // child as one more owner, in one pool critical section.
+        if !share_frame(
+            parent.root(),
+            page.virtual_address,
+            page.physical,
+            page.writable,
+        ) {
+            // The share is the child's first claim on the frame, so there is
+            // nothing of this page to undo: the child owns nothing yet.
             unsafe { child.release() };
             return None;
-        };
-        // SAFETY: both frames are live, and one frame is `GRANULE` bytes.
-        unsafe {
-            core::ptr::copy_nonoverlapping(page.physical as *const u8, frame as *mut u8, GRANULE);
         }
-        if !child.own(frame) {
+        if !child.own(page.physical) {
+            // The child counted itself an owner but cannot record the frame:
+            // undo that one share before the release, or the count would name
+            // a co-owner that no longer exists.
+            unshare_frame(page.physical);
             unsafe { child.release() };
             return None;
         }
-        // SAFETY: the frame is the child's, and the address is the parent's own
-        // user address, which this space does not map yet.
-        if !unsafe { child.map(page.virtual_address, frame, page.writable) } {
+        // SAFETY: the frame is shared with the parent, and the address is the
+        // parent's own user address, which this space does not map yet.
+        if !unsafe { child.map(page.virtual_address, page.physical, false) } {
             unsafe { child.release() };
             return None;
         }
@@ -545,11 +617,211 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
     Some(child)
 }
 
-/// The most pages one `fork` copies.
+/// Demote `address` in `root` when the page must be shared read-only, and
+/// record one more co-owner of `frame`.
+///
+/// One pool critical section for the pair, because they are one fact: the
+/// demotion is what makes the *next* write fault, and the mark is what makes
+/// that fault resolvable.  A demotion whose mark landed in a later section
+/// would leave a window in which the parent faults and the handler has
+/// nothing to read.  Nothing can actually take the window — the fork runs on
+/// the parent's own CPU, the task is suspended inside its syscall, and no
+/// other CPU walks this root — but the single section is cheaper than the
+/// argument it saves.
+///
+/// The walk also checks the frame it lands on: `frame` was read out of this
+/// root by [`mapped_pages`] a moment ago, and a walk that lands somewhere
+/// else means one of them is wrong, which is a refusal here rather than a
+/// demotion of the wrong page.
+///
+/// Answers whether the page is now shared: the parent read-only when it was
+/// not already, the frame counted, the mark set when the page was demoted.
+#[cfg(target_os = "none")]
+fn share_frame(root: usize, address: usize, frame: usize, demote: bool) -> bool {
+    let mut guard = TABLES.lock();
+    let tables = &mut *guard;
+
+    if demote {
+        // SAFETY: `root` is a root table's frame this space owns, and the
+        // walk reads entries this kernel wrote.
+        let root_table = unsafe { &*(root as *const PageTable) };
+        let Some(leaf) = leaf_for(root_table, address) else {
+            return false;
+        };
+        let slot = index(Level::Leaf, address);
+        let word = leaf.entry(slot);
+        let entry = arch::paging::decode(word, Level::Leaf);
+        if entry.address != frame || !entry.permissions.user {
+            return false;
+        }
+        let permissions = Permissions {
+            writable: false,
+            ..entry.permissions
+        };
+        leaf.set_entry(
+            slot,
+            encode(Entry::page(entry.address, permissions), Level::Leaf),
+        );
+        // The demotion is invisible to this CPU's TLB until it is flushed, and
+        // a stale writable entry would let the parent write the shared frame
+        // with no fault at all, which is the corruption the whole scheme
+        // exists to prevent.
+        arch::flush_translation();
+    }
+
+    if !tables.frames.add_reference(frame) {
+        return false;
+    }
+    if demote {
+        tables.frames.set_cow(frame, true);
+    }
+    true
+}
+
+/// Drop one co-owner of `frame`, returning the frame if that was the last.
+///
+/// For undoing a share that a caller cannot carry through — a fork whose child
+/// ran out of records mid-page.  The release answers whether the frame still
+/// has owners, and a frame it does not goes back; the share this undoes
+/// always had the child as its second owner, so the answer is always "still
+/// owned" and the deallocate below is the protocol's dead branch, kept for
+/// the same reason the protocol spells it: the two lines are one fact.
+#[cfg(target_os = "none")]
+fn unshare_frame(frame: usize) {
+    let mut guard = TABLES.lock();
+    let tables = &mut *guard;
+    if tables.frames.release_reference(frame) {
+        let _ = tables.frames.deallocate(frame as *mut u8, 1);
+    }
+}
+
+/// Resolve a write fault on a copy-on-write page of `space`.
+///
+/// Called from the fault path with the space the faulting CPU is running and
+/// the address the fault named.  The page must be one a fork demoted — the
+/// pool's mark says so — and the count decides the answer:
+///
+/// - **Co-owners remain.** The faulting space gets a private copy: a new frame,
+///   the bytes moved, the entry rewritten writable, and the shared frame's
+///   count dropped by one, because the faulting owner's claim went with the
+///   copy.  [`AddressSpace::replace_owned`] records the swap.
+/// - **No co-owners.** The faulting space is the last holder, so the frame is
+///   promoted in place: the mark clears and the entry turns writable.  Nothing
+///   is copied, because nobody else will ever read the old bytes.
+///
+/// Anything else is not a copy-on-write fault and answers `false`: the caller
+/// prints its diagnostic and stops the machine, which is the honest answer
+/// for a program writing a page that was never meant to be written — its own
+/// code, most likely.  The mark is what separates those: a fork demoted a
+/// writable page, so the fault is repairable; a page mapped read-only from
+/// the start was never writable at all, and no copy changes that.
+///
+/// The walk is the space's own root, compared first against the register the
+/// faulting CPU was translating through: a fault served against a different
+/// root than the one it happened in would rewrite an entry nobody faulted on.
+///
+/// The caller holds the scheduler's lock and this takes the pool's inside it —
+/// the order a fork holds the two, and the only order any code in this kernel
+/// takes them.
+#[cfg(target_os = "none")]
+pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usize) -> bool {
+    let root = space.root();
+    if arch::installed_root_table() != Some(root) {
+        return false;
+    }
+    if !(USER_BASE..USER_LIMIT).contains(&fault_address) {
+        return false;
+    }
+
+    let mut guard = TABLES.lock();
+    let tables = &mut *guard;
+
+    // SAFETY: `root` is a root table's frame this space owns, and the walk
+    // reads entries this kernel wrote.
+    let root_table = unsafe { &*(root as *const PageTable) };
+    let Some(leaf) = leaf_for(root_table, fault_address) else {
+        return false;
+    };
+    let slot = index(Level::Leaf, fault_address);
+    let word = leaf.entry(slot);
+    let entry = arch::paging::decode(word, Level::Leaf);
+    // A fault on a page that is already writable, or on one the walk says is
+    // not a user page, is not a copy-on-write fault; the second is also the
+    // guard that keeps the resolver's hands off the kernel's own mappings.
+    if !entry.permissions.user || entry.permissions.writable {
+        return false;
+    }
+    let frame = entry.address;
+    if !tables.frames.is_cow(frame) {
+        return false;
+    }
+
+    let permissions = Permissions {
+        writable: true,
+        ..entry.permissions
+    };
+    let resolved = if tables.frames.co_owners(frame) > 0 {
+        let Some(new_frame) = tables.frames.allocate(1) else {
+            return false;
+        };
+        if new_frame.is_null() {
+            return false;
+        }
+        // SAFETY: both frames are live frames inside the pool, and one frame
+        // is `GRANULE` bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(frame as *const u8, new_frame, GRANULE);
+        }
+        // The faulting owner's claim on the shared frame goes with the copy.
+        // The answer is `false` by construction — this branch ran because a
+        // co-owner remained — so nothing is deallocated, and the count that
+        // stays is whoever is left.
+        let _ = tables.frames.release_reference(frame);
+        leaf.set_entry(
+            slot,
+            encode(Entry::page(new_frame as usize, permissions), Level::Leaf),
+        );
+        // The protocol says this space owns the frame it faulted on, so the
+        // swap cannot fail; a `false` here is a bug report, and the machine
+        // stops with the diagnostic rather than running on half-torn state.
+        if !space.replace_owned(frame, new_frame as usize) {
+            return false;
+        }
+        arch::serial::write_str("protofire: copy-on-write copy at ");
+        arch::serial::write_hex(fault_address as u64);
+        arch::serial::write_str(" from frame ");
+        arch::serial::write_hex(frame as u64);
+        arch::serial::write_str(" to frame ");
+        arch::serial::write_hex(new_frame as u64);
+        arch::serial::write_str("\n");
+        true
+    } else {
+        tables.frames.set_cow(frame, false);
+        leaf.set_entry(slot, encode(Entry::page(frame, permissions), Level::Leaf));
+        arch::serial::write_str("protofire: copy-on-write promote at ");
+        arch::serial::write_hex(fault_address as u64);
+        arch::serial::write_str(" on frame ");
+        arch::serial::write_hex(frame as u64);
+        arch::serial::write_str("\n");
+        true
+    };
+
+    if resolved {
+        // The entry this CPU will next translate through changed under it: a
+        // stale read-only entry would fault the very same instruction all
+        // over again.  Every machine's flush is whole-TLB, which is also why
+        // no other CPU needs telling — none of them translates through this
+        // root.
+        arch::flush_translation();
+    }
+    resolved
+}
+
+/// The most pages one `fork` shares.
 ///
 /// The boot's programs map two each, an image and a stack, and this bound is
 /// generous relative to that.  A program with more pages than this is one whose
-/// fork is refused rather than one whose copy is silently partial, which is the
-/// only other way this could go wrong.
+/// fork is refused rather than one whose share is silently partial, which is
+/// the only other way this could go wrong.
 #[cfg(target_os = "none")]
 pub const MAX_FORK_PAGES: usize = 8;

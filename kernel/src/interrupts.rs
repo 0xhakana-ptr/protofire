@@ -197,10 +197,106 @@ pub fn handle(frame: irq::Frame) -> bool {
         return true;
     }
 
-    // A fault the kernel raised on itself.  There is no recovery yet, that
-    // needs a process to hand the fault to, so the honest answer is "not
-    // handled", and the dispatch prints the vector and stops.
+    // A fault.  One shape of it is recoverable, and it is tried first: a write
+    // to a page a fork demoted is the copy-on-write event, and resolving it
+    // resumes the very instruction that faulted, so the program never knows.
+    // Everything else stops the machine — but it stops it with the three facts
+    // that make the stop diagnosable, and only after asking the page table
+    // whether the address was mapped at all.
+    //
+    // Before this, every fault printed the same line: the vector and an
+    // address.  A program that wrote its own code page and a program that
+    // jumped into unmapped memory read identically, and the difference is the
+    // whole of what a fault handler exists to tell apart.
+    #[cfg(target_os = "none")]
+    if let Some(write) = frame.write {
+        if write && resolve_write_fault(frame.fault_address) {
+            return true;
+        }
+        describe_fault(frame, write);
+    }
     false
+}
+
+/// The write fault's one recoverable shape, tried before the machine stops.
+///
+/// The fault arrived with no task named, and the task it belongs to is the one
+/// this CPU marked as running — which is the same condition a host and the
+/// boot's own code fail, and both are answered `false`, straight to the
+/// diagnostic.  The lock order is the scheduler's and then the pool's, taken
+/// inside [`crate::scheduler::with_current_space`], the only order this kernel
+/// ever takes the two.
+#[cfg(target_os = "none")]
+fn resolve_write_fault(fault_address: usize) -> bool {
+    let cpu = crate::per_cpu::current_slot();
+    crate::scheduler::with_current_space(cpu, |space| {
+        crate::address_space::resolve_copy_on_write(space, fault_address)
+    })
+    .unwrap_or(false)
+}
+
+/// Say what a fault was, in the terms a reader can act on.
+///
+/// Three facts, and the third is the one this function exists for:
+///
+/// 1. the address the access named;
+/// 2. whether the access was a read or a write;
+/// 3. what the page table says about that address — **not mapped**, mapped with
+///    the permissions it has, or mapped as a block this kernel's walk does not
+///    describe at 4 KiB.
+///
+/// A fault with no mapping and a fault on a mapped, read-only page are the same
+/// crash and different bugs, and a log that said only the address left the
+/// reader to work it out from the address alone.
+///
+/// It allocates nothing and takes no lock: it runs inside an interrupt, where
+/// the heap may be held by the code it interrupted.  The table walk it does
+/// take reads one root table, which is the one the faulting CPU is running.
+#[cfg(target_os = "none")]
+fn describe_fault(frame: irq::Frame, write: bool) {
+    arch::serial::write_str("protofire: fault at ");
+    arch::serial::write_hex(frame.fault_address as u64);
+    arch::serial::write_str(", ");
+    arch::serial::write_str(if write { "write" } else { "read" });
+    arch::serial::write_str(", ");
+
+    // The root the faulting CPU is running, not the kernel's: a program's
+    // space is the one the address is in, and asking the kernel's would report
+    // every user address as unmapped.
+    match arch::installed_root_table() {
+        Some(root) => match crate::address_space::permissions_of(root, frame.fault_address) {
+            Some(Some(permissions)) => {
+                arch::serial::write_str("mapped ");
+                arch::serial::write_str(permissions_name(permissions));
+                if write && !permissions.writable {
+                    arch::serial::write_str(", not writable");
+                }
+            }
+            Some(None) => arch::serial::write_str("mapped as a block, not at 4 KiB"),
+            None => arch::serial::write_str("not mapped"),
+        },
+        None => arch::serial::write_str("no table installed on this cpu"),
+    }
+    arch::serial::write_str("\n");
+}
+
+/// A permission set as the three words a fault line can carry.
+#[cfg(target_os = "none")]
+fn permissions_name(permissions: paging::Permissions) -> &'static str {
+    match (
+        permissions.writable,
+        permissions.executable,
+        permissions.user,
+    ) {
+        (true, true, true) => "read-write-execute, user",
+        (true, false, true) => "read-write, user",
+        (false, true, true) => "read-execute, user",
+        (false, false, true) => "read, user",
+        (true, true, false) => "read-write-execute, supervisor",
+        (true, false, false) => "read-write, supervisor",
+        (false, true, false) => "read-execute, supervisor",
+        (false, false, false) => "read, supervisor",
+    }
 }
 
 /// The sentinel [`TEST_INTERRUPT_RAISED`] holds before an interrupt arrives.

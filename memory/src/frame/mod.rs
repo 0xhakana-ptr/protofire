@@ -21,6 +21,13 @@
 //! fragmentation.  The bitmap is `MAX_FRAMES / 8` bytes, sixteen kilobytes for
 //! the 512 MiB pool, and it lives in a `static`, so it needs no heap and no
 //! caller-supplied storage.
+//!
+//! Beside the bitmap sit two arrays with the same shape: one byte per frame
+//! counting the address spaces that own it, and one bit per frame saying the
+//! frame was demoted for copy-on-write.  Both exist for the same reason the
+//! bitmap does — a fork that shares a frame needs a fact the allocator holds
+//! rather than one each owner re-derives, and a count kept anywhere else is a
+//! second record of the same fact, and the first thing to diverge.
 
 use profiler::AllocProfiler;
 
@@ -137,6 +144,36 @@ pub struct FrameAllocator {
     /// "Free" is the set state because the common operation is "is this frame
     /// available", and a cleared word is then the common case for a full pool.
     free: [u64; BITMAP_WORDS],
+    /// Per frame, how many owners share it **beyond the first**.
+    ///
+    /// One byte per frame, 128 KiB for [`MAX_FRAMES`], the same trade the free
+    /// bitmap made: fixed-size, no heap, indexed by the frame's own position in
+    /// the pool.  Zero is the ordinary state of every frame the pool hands out
+    /// — one owner, untracked — and a fork that shares a frame raises it to one
+    /// per additional address space.
+    ///
+    /// The count is the co-owners and not the total on purpose, because the
+    /// callers this allocator already has deallocate **without** ever sharing:
+    /// a page table's root, the self-check's frame, every frame a test takes
+    /// and gives back.  Counting those would make every existing
+    /// `allocate`-then-`deallocate` a refusal.  What the count buys instead is
+    /// the release protocol: an owner that shares asks
+    /// [`Self::release_reference`] and returns the frame only when that answers
+    /// `true`, and [`Self::deallocate`] refuses a frame whose co-owner count is
+    /// above zero, which is the one shape of a premature free the count can
+    /// see. The shape it cannot see — a free after the co-owner released but
+    /// before the first owner did — is not reachable by any caller here,
+    /// because the only ones that free a shared frame go through the protocol.
+    refs: [u8; MAX_FRAMES],
+    /// Per frame, one bit: set means the frame is **demoted for
+    /// copy-on-write**.
+    ///
+    /// A demoted frame is one whose owners were given read-only mappings and
+    /// will be copied on the first write.  The bit is not derivable from the
+    /// count — a fork shares read-only image pages too, and those have the same
+    /// count with no demotion — so it is its own bit rather than a value
+    /// smuggled into `refs`.
+    cow: [u64; BITMAP_WORDS],
     /// Frame allocator profiler (zero-cost when `alloc_profiler` feature is
     /// disabled).
     pub profiler: AllocProfiler,
@@ -169,6 +206,8 @@ impl FrameAllocator {
             total_frames: 0,
             next_frame: 0,
             free: [0; BITMAP_WORDS],
+            refs: [0; MAX_FRAMES],
+            cow: [0; BITMAP_WORDS],
             profiler: AllocProfiler::new(),
             map_hook: no_mapping_needed,
         }
@@ -227,6 +266,7 @@ impl FrameAllocator {
             for frame in frame_start..frame_start + count {
                 self.set_used(frame);
             }
+            self.reset_references(frame_start, count);
             let address = self.frame_address(frame_start)?;
             let zero_bytes = (count * FRAME_SIZE) as u64;
             self.zero_frame_range(frame_start, count)?;
@@ -244,6 +284,7 @@ impl FrameAllocator {
 
         let address = self.frame_address(frame_start)?;
         self.next_frame = end_frame;
+        self.reset_references(frame_start, count);
         let zero_bytes = (count * FRAME_SIZE) as u64;
         self.zero_frame_range(frame_start, count)?;
         self.profiler.inc_frame_allocs();
@@ -295,18 +336,112 @@ impl FrameAllocator {
 
         // A double free is the caller's bug and a corruption if believed: the
         // frames would be handed out twice and two owners would write to one.
+        // A frame with co-owners is the same corruption wearing a different
+        // coat — one owner freeing while another still maps it — and it is
+        // refused here rather than at the page table, where the symptom would
+        // be a fault in whichever program kept the page.
         for frame in start_frame..end_frame {
             if self.is_free(frame) {
+                return false;
+            }
+            if self.refs[frame] != 0 {
                 return false;
             }
         }
         for frame in start_frame..end_frame {
             self.set_free(frame);
+            self.refs[frame] = 0;
+            self.clear_cow_bit(frame);
         }
 
         self.rewind_tail_high_water_mark();
         self.profiler.inc_frame_frees();
         true
+    }
+
+    /// Record that one more owner shares `frame`, answering whether it did.
+    ///
+    /// The caller is a fork that has decided two address spaces will map one
+    /// frame; the count is what turns that decision into a fact the allocator
+    /// can police.  `false` means the frame is outside the pool or the count
+    /// ran out — a fork that adds a reference to a frame nobody allocated would
+    /// otherwise be a share of nothing, and the pool would learn of it only as
+    /// a double free much later.
+    pub fn add_reference(&mut self, frame: usize) -> bool {
+        let Some(index) = self.frame_index(frame) else {
+            return false;
+        };
+        // Saturation is a refusal and not a wrap: a count that wrapped would
+        // hand a frame back while owners still held it, which is the corruption
+        // `deallocate` exists to refuse.
+        if self.refs[index] == u8::MAX {
+            return false;
+        }
+        self.refs[index] += 1;
+        true
+    }
+
+    /// One owner of `frame` lets go, answering whether it was the last.
+    ///
+    /// `true` means the caller must return the frame to the pool; `false`
+    /// means another owner still maps it and the frame stays — and **must**:
+    /// the caller that frees on a `false` is the double free the protocol
+    /// exists to prevent.  A frame whose count is zero was never shared, so
+    /// the sole owner leaving is the last owner leaving, which is why the
+    /// count reads zero both for "never shared" and for "the last co-owner
+    /// went": from the point of view of whoever holds the frame, the two are
+    /// the same state, one holder and no co-owners.
+    pub fn release_reference(&mut self, frame: usize) -> bool {
+        let Some(index) = self.frame_index(frame) else {
+            return false;
+        };
+        if self.refs[index] == 0 {
+            return true;
+        }
+        self.refs[index] -= 1;
+        false
+    }
+
+    /// How many owners share `frame` beyond the first, which is the question
+    /// a copy-on-write fault asks: a count above zero means a copy, zero means
+    /// the faulting owner may have the frame outright.
+    ///
+    /// Zero also answers for a frame outside this pool, which is the right
+    /// answer there too: a frame the pool does not manage has no co-owners to
+    /// copy away from, and the fault handler's other checks — the walk, the
+    /// demotion bit — refuse it long before the count decides.
+    pub fn co_owners(&self, frame: usize) -> usize {
+        match self.frame_index(frame) {
+            Some(index) => self.refs[index] as usize,
+            None => 0,
+        }
+    }
+
+    /// Mark whether `frame` is demoted for copy-on-write.
+    ///
+    /// A fork sets this on every writable page it shares, at the same moment
+    /// it demotes both mappings to read-only.  The pair is one fact in two
+    /// places, and the fault handler reads the bit to tell a page a fork
+    /// demoted from one that was mapped read-only to begin with — the first
+    /// wants a copy, the second wants the program to stop writing its own
+    /// code.
+    pub fn set_cow(&mut self, frame: usize, demoted: bool) {
+        let Some(index) = self.frame_index(frame) else {
+            return;
+        };
+        if demoted {
+            self.cow[index / 64] |= 1 << (index % 64);
+        } else {
+            self.cow[index / 64] &= !(1 << (index % 64));
+        }
+    }
+
+    /// Whether `frame` is demoted for copy-on-write.
+    pub fn is_cow(&self, frame: usize) -> bool {
+        match self.frame_index(frame) {
+            Some(index) => self.cow[index / 64] & (1 << (index % 64)) != 0,
+            None => false,
+        }
     }
 
     /// Shrink the high-water mark past frames that are free.
@@ -448,6 +583,20 @@ impl FrameAllocator {
                 }
                 bits[fill / 64] &= !(1 << (fill % 64));
                 bits[f / 64] |= 1 << (f % 64);
+                // The sharing state travels with the frame, not with its
+                // address: `fixup` has just repointed the page tables at the
+                // new address, so the owners that remain follow, and the
+                // vacated position reads as a sole-owner frame the next time
+                // the pool hands it out.
+                self.refs[fill] = self.refs[f];
+                self.refs[f] = 0;
+                let demoted = self.cow[f / 64] & (1 << (f % 64)) != 0;
+                if demoted {
+                    self.cow[fill / 64] |= 1 << (fill % 64);
+                } else {
+                    self.cow[fill / 64] &= !(1 << (fill % 64));
+                }
+                self.cow[f / 64] &= !(1 << (f % 64));
                 moved += 1;
             }
             fill += 1;
@@ -491,6 +640,49 @@ impl FrameAllocator {
     fn set_used(&mut self, index: usize) {
         if index < MAX_FRAMES {
             self.free[index / 64] &= !(1 << (index % 64));
+        }
+    }
+
+    /// The pool position of a frame **address**, or `None` when the address is
+    /// not one this allocator manages.
+    ///
+    /// The refcount API speaks in addresses because its callers do — a page
+    /// table names frames, not indices — and this is the one place the two
+    /// vocabularies meet.  Unaligned or out-of-span addresses answer `None`
+    /// rather than indexing a neighbour, which is what a truncating division
+    /// would do.
+    fn frame_index(&self, frame: usize) -> Option<usize> {
+        if self.base == 0 || frame < self.base {
+            return None;
+        }
+        let offset = frame.checked_sub(self.base)?;
+        if !offset.is_multiple_of(FRAME_SIZE) {
+            return None;
+        }
+        let index = offset / FRAME_SIZE;
+        (index < self.total_frames).then_some(index)
+    }
+
+    /// Forget everything sharing says about a range the allocator is handing
+    /// out: a frame that comes back has one owner — the one taking it now,
+    /// untracked — and is not demoted.
+    ///
+    /// Both allocation paths call this — the recycled holes and the bump tail —
+    /// because a reset done on one path only is a stale co-owner count on the
+    /// other, and the symptom is a fork that trusts a count a previous owner
+    /// left behind.
+    fn reset_references(&mut self, frame_start: usize, count: usize) {
+        for frame in frame_start..frame_start + count {
+            if frame < MAX_FRAMES {
+                self.refs[frame] = 0;
+                self.clear_cow_bit(frame);
+            }
+        }
+    }
+
+    fn clear_cow_bit(&mut self, index: usize) {
+        if index < MAX_FRAMES {
+            self.cow[index / 64] &= !(1 << (index % 64));
         }
     }
 

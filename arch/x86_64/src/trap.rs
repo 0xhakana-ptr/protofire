@@ -34,6 +34,17 @@ use crate::context::install_context;
 /// literal.
 pub const SYSCALL_VECTOR: usize = 0x80;
 
+/// The page-fault vector, the one exception whose error code carries a
+/// direction.
+///
+/// Every exception below 32 pushes an error code the stub normalises, but the
+/// bits mean different things per vector: bit 1 of a page fault's code is
+/// `W/R`, while bit 1 of a general-protection fault's code is part of a
+/// selector index.  A direction read outside this vector is a direction
+/// nobody reported, and the one cost of trusting it would be a resolver that
+/// rewrote a page table for a fault that was not about pages.
+pub const PAGE_FAULT_VECTOR: usize = 14;
+
 /// The `DPL` a gate needs for ring 3 to raise it.
 ///
 /// A gate at `DPL` 0 refuses `int $0x80` from ring 3 with a general protection
@@ -272,7 +283,25 @@ pub fn needs_end_of_interrupt(vector: usize) -> bool {
 /// program.
 #[cfg(target_os = "none")]
 fn finish_interrupt(frame: &mut Context) {
-    let shared = irq::Frame::fault(frame.vector as usize, unsafe { fault_address() });
+    // A device's line has no faulting address and no direction; a fault has
+    // both.  The split is made here, where the frame stops being the machine's
+    // and becomes the shared one, because a direction dropped at that boundary
+    // is one no handler downstream can recover.
+    //
+    // The boundary is the processor's own: vectors 0..31 are its exceptions and
+    // every one of them pushes at least the vector with an error code the stub
+    // normalises, and 32 upward are the lines a controller delivers.  The
+    // direction is trusted only on the page fault, where the error code's bit
+    // 1 is `W/R` and not something else's bit 1; the address is `cr2`, which
+    // every fault leaves as the last page fault left it, so a fault frame for
+    // another exception names the vector and keeps its address honest by
+    // being read only when a handler needs it.
+    let shared = if frame.vector < 32 {
+        let direction = frame.vector == PAGE_FAULT_VECTOR as u64 && frame.fault_was_write();
+        irq::Frame::fault(frame.vector as usize, unsafe { fault_address() }, direction)
+    } else {
+        irq::Frame::device(frame.vector as usize)
+    };
 
     // SAFETY: the sink is installed once before any vector can be raised.
     let sink = unsafe { *DISPATCH.get() };

@@ -1416,3 +1416,63 @@ byte.
 Both mutations turn the gate red: never enabling the source loses the
 `console source 10 enabled` line, and a sink that does not claim the number
 loses the count.
+
+### The write fault that became a fork's answer
+
+    protofire: forked a process, child pid 4
+    protofire: copy-on-write copy at 0x8040001ff8 from frame 0x4a1f000 to frame 0x4a33000
+    protofire: copy-on-write promote at 0x8040001ff8 on frame 0x4a1f000
+
+`Fork` used to copy every page whole, and the reason it gave was that a write to
+a read-only page was a fault nobody handled.  That reason stopped being true the
+day the fault path learned two things every machine was already carrying and the
+kernel was dropping at the trap boundary: **which direction** the faulting access
+went, and **what the page table says** about the address.  x86_64 keeps the
+direction in the page-fault error code's `W/R` bit — and in no other exception's,
+which is why the bit is trusted only on vector 14 — aarch64 in `ESR_EL1`'s `WnR`
+for the two data-abort classes, riscv64 in `scause` itself, where a store page
+fault and a load page fault are two different numbers and an instruction fetch is
+neither a read nor a write.  The shared frame carries it as `write: Option<bool>`,
+`None` being a device's line, which has no direction because it had no access.
+
+With the direction in hand, `fork_from` stopped copying and started sharing.  A
+writable page is demoted first — the parent's entry rewritten read-only and the
+frame marked in the pool — and both spaces map the same frame; a read-only page
+is shared as it stands, because it was never writable and a write to it is the
+program faulting on its own code, which is a real fault and stays one.  The
+demotion and the mark are one pool critical section, because they are one fact:
+a demotion whose mark landed later would leave a window where the parent faults
+and the handler has nothing to read.  The count is a byte per frame in the
+allocator, beside the free bitmap, and `deallocate` refuses a frame whose count
+is above zero, which is the premature free the count can see.
+
+The fault handler's answer depends on the same count.  Co-owners remain, the
+faulting space gets a private copy and its claim on the shared frame goes with
+it — `replace_owned` swaps the record, so the bound does not move and the count
+stays honest.  No co-owners, the frame is promoted in place: the mark clears and
+the entry turns writable, nothing copied, because nobody else will ever read the
+old bytes.  The boot log shows both answers on one page, and the promote's frame
+is the copy's source frame, which is the pair reading itself.
+
+Three arguments the change had to make, and where each is checked:
+
+- **One local flush is the whole invalidation.**  The demotion happens on the
+  CPU serving the fork, which is the parent's own; every machine's root switch
+  is a whole-TLB flush, so no other CPU holds a translation for the parent's
+  pages; and the parent cannot write between the demotion and the share because
+  it is suspended inside its own syscall.  The shootdown broadcast is for the
+  *shared kernel tables*, which this does not touch.
+- **The demotions a failed fork leaves behind need no repair.**  The state is
+  correct on its own: the next write faults, the handler reads the count, and
+  the parent continues.  A failed fork costs copies that would have been paid
+  on the first writes anyway.
+- **The resolver's lock order is the scheduler's and then the pool's**, the
+  only order any code in this kernel takes the two, taken because the fault
+  arrives with no task named and the task it belongs to is the one the CPU
+  marked as running.
+
+The mutation: with the resolver unwired from the fault path, both processes'
+stack writes print `fault at 0x8040001ff8, write, mapped read-execute, user, not
+writable` and stop the machine, and all three machines' gates go red.  With it
+wired, the same write is the two lines above, and the boot reports four exits
+whose statuses are unchanged — the fork's contract, kept by cheaper means.

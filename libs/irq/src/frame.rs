@@ -35,6 +35,25 @@ pub struct Frame {
     /// for a page fault needs it, and every machine has it, which is why it is
     /// the one field besides the vector that a frame carries.
     pub fault_address: usize,
+    /// Whether the faulting access was a write, or `None` when the vector did
+    /// not fault.
+    ///
+    /// The direction is what separates a page that may not be read from one
+    /// that may not be written, and a copy-on-write handler cannot work without
+    /// it: a write fault on a shared page is the whole event that a copy
+    /// answers, and a read fault on the same page is a program reaching an
+    /// address it was never given.
+    ///
+    /// `Option` and not a `bool` because a device's interrupt has no
+    /// direction.  A `false` there would read as "the access was a read",
+    /// which is a statement about an access that never happened — the same
+    /// reason [`fault_address`](Self::fault_address) is zero rather than
+    /// meaningful for a device's frame.
+    ///
+    /// Every machine reports it differently: x86_64 in the error code's bit 1,
+    /// aarch64 in `ESR_EL1`'s WnR bit (bit 6), riscv64 in the cause's own
+    /// value, where a store page fault and a load page fault are two numbers.
+    pub write: Option<bool>,
 }
 
 impl Frame {
@@ -47,14 +66,16 @@ impl Frame {
         Frame {
             vector,
             fault_address: 0,
+            write: None,
         }
     }
 
-    /// A frame for `vector` whose access faulted at `fault_address`.
-    pub const fn fault(vector: usize, fault_address: usize) -> Frame {
+    /// A frame for `vector` whose `write` access faulted at `fault_address`.
+    pub const fn fault(vector: usize, fault_address: usize, write: bool) -> Frame {
         Frame {
             vector,
             fault_address,
+            write: Some(write),
         }
     }
 }
@@ -71,6 +92,16 @@ mod tests {
         assert_eq!(frame.fault_address, 0);
     }
 
+    /// A device's frame has no access direction.
+    ///
+    /// `None` and not `Some(false)`: a device's line is not a read, and a
+    /// handler that treated it as one would be answering a question the
+    /// machine never asked.
+    #[test]
+    fn a_device_frame_has_no_direction() {
+        assert_eq!(Frame::device(32).write, None);
+    }
+
     /// A fault's frame carries both.
     ///
     /// The page-fault handler needs the address, and a frame that dropped it
@@ -78,8 +109,19 @@ mod tests {
     /// event that has already passed.
     #[test]
     fn a_fault_frame_carries_the_address() {
-        let frame = Frame::fault(14, 0xDEAD_0000);
+        let frame = Frame::fault(14, 0xDEAD_0000, true);
         assert_eq!(frame.vector, 14);
         assert_eq!(frame.fault_address, 0xDEAD_0000);
+    }
+
+    /// A fault's frame carries its direction, and the two differ.
+    ///
+    /// This is the field a copy-on-write handler branches on, and a frame that
+    /// reported every fault as a read would send a write to a shared page
+    /// down the "the program reached an address it was never given" path.
+    #[test]
+    fn a_fault_frame_carries_its_direction() {
+        assert_eq!(Frame::fault(14, 0x1000, true).write, Some(true));
+        assert_eq!(Frame::fault(14, 0x1000, false).write, Some(false));
     }
 }

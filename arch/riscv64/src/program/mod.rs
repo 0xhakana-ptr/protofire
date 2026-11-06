@@ -24,7 +24,7 @@
 /// The longest of the three images: the announcing program, the pipe writer
 /// and the pipe reader.  A program is copied into a whole page, so this
 /// matters only to the copy.
-pub const PROGRAM_LEN: usize = 24 * 4;
+pub const PROGRAM_LEN: usize = 33 * 4;
 
 pub const PIPE_READER: u16 = 3;
 
@@ -78,9 +78,37 @@ const fn bne_against_zero(rs: u32, offset: i32) -> u32 {
         | 0x63
 }
 
+/// `beq rs, x0, offset`, as the word the machine reads.
+///
+/// The fork's only branch: the child's answer is zero, and this is the one
+/// instruction that sends it down its own path.  The same B-type layout
+/// [`bne_against_zero`] spells, with the function bits zero — `beq` and `bne`
+/// differ in those three bits and in nothing else, which is why both are
+/// encoded here rather than one of them being a masked copy of the other.
+const fn beq_against_zero(rs: u32, offset: i32) -> u32 {
+    let immediate = (offset as u32) & 0x1FFF;
+    (immediate & 0x1000) << 19
+        | ((immediate >> 5) & 0x3F) << 25
+        | rs << 20
+        | (immediate & 0x1E) << 7
+        | (immediate & 0x800) >> 4
+        | 0x63
+}
+
+/// `sd rs2, 0(sp)`, as the word the machine reads.
+///
+/// The stack write, at offset zero off the stack pointer: an S-type store,
+/// whose immediate is split the way the B-type one is and whose function bits
+/// name the doubleword.  The immediate is zero and so is not a parameter; the
+/// register is, because both paths write and each holds the fork's answer in
+/// its own copy of it.
+const fn store_against_sp(rs2: u32) -> u32 {
+    rs2 << 20 | 2 << 15 | 3 << 12 | 0x23
+}
+
 /// Counted once here rather than inferred: the array length and the word list
 /// have to agree, and a literal on both would be two numbers to keep in step.
-pub const PROGRAM_WORDS: usize = 24;
+pub const PROGRAM_WORDS: usize = 33;
 
 /// The busy loop: outer 64, inner 256, one decrement each.
 ///
@@ -99,7 +127,7 @@ const BUSY_LOOP: [u32; 6] = [
     bne_against_zero(13, -16), // bne a3, x0, back to the inner reload
 ];
 
-/// One program's words: its number, a busy loop, and four calls.
+/// One program's words: its number, a busy loop, and its calls.
 ///
 /// Built rather than stored so the number is a parameter: a table of two
 /// constants would be two things to keep in step with the encoding.
@@ -109,6 +137,12 @@ const BUSY_LOOP: [u32; 6] = [
 /// /// so a log that shows two "says hello" lines before the second program's
 /// is a log where sleeping worked.  The second `Write` after the sleep is what
 /// makes the wake visible: a program that never woke prints one line, not two.
+///
+/// After the fork the two processes part ways on the answer alone, and each
+/// writes the stack page it inherited — the pointer moved below the boundary
+/// and a doubleword stored through it, which is what a push would have done.
+/// The page is shared and read-only now, so the write faults, and the
+/// kernel's answer to that fault is the whole of what this image exercises.
 const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
     [
         BUSY_LOOP[0],
@@ -125,27 +159,35 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         0x0000_0073, // ecall
         addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
         0x0000_0073, // ecall
-        // Fork, once, at the very end: the two processes that result are told
-        // apart by what `fork` answered, and by nothing else.
+        // Fork: the two processes that result are told apart by what `fork`
+        // answered, and by nothing else.
         //
-        // The child resumes here with `a0` = 0 and the parent with `a0` = the
-        // child's pid.  Both then make the same two calls: a `Write` whose
-        // second argument is that answer, and an `Exit` whose status is the
-        // same number.  So the log carries one line per process, the parent's
-        // naming the child, the child's naming zero, and the boot's exit
-        // statuses carry the same two numbers.
-        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Fork as i32),
-        0x0000_0073, // ecall
         // The answer is kept in `a6`, which no call of this program writes:
         // `Write` fills `a0` with its own answer, and `Exit` reads `a0`, so a
         // fork's answer left in `a0` would be the write's count by the time the
         // status is taken, which is exactly what the first run printed
         // (`1 -> 21`, and 21 is what `Write` answers).
+        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Fork as i32),
+        0x0000_0073,                                     // ecall
         addi(REGISTER_A6 as u32, REGISTER_A0 as u32, 0), // mv a6, a0
         addi(REGISTER_A1 as u32, REGISTER_A6 as u32, 0), // mv a1, a6
         addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-        0x0000_0073,                                     // ecall
+        0x0000_0073, // ecall
+        // The parent holds its child's pid, the child holds zero: `beq` sends
+        // the child seven words down, to the same shape with a zero status.
+        beq_against_zero(REGISTER_A6 as u32, 28), // beq a6, x0, the child path
+        // The parent: write the shared page, then exit with the fork's answer.
+        addi(2, 2, -16),                                 // addi sp, sp, -16
+        store_against_sp(REGISTER_A6 as u32),            // sd a6, 0(sp) (the fault)
         addi(REGISTER_A0 as u32, REGISTER_A6 as u32, 0), // mv a0, a6
+        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
+        0x0000_0073, // ecall
+        0x0000_006F, // j .   (never reached)
+        // The child: the same write, on its own copy of the page, then an
+        // exit whose status is zero.
+        addi(2, 2, -16),                      // addi sp, sp, -16
+        store_against_sp(REGISTER_A6 as u32), // sd a6, 0(sp) (the fault)
+        addi(REGISTER_A0 as u32, 0, 0),       // li a0, #0
         addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
         0x0000_0073, // ecall
         0x0000_006F, // j .

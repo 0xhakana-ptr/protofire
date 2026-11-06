@@ -314,6 +314,8 @@ pub mod space;
 pub mod table;
 
 #[cfg(target_os = "none")]
+pub(crate) use space::resolve_copy_on_write;
+#[cfg(target_os = "none")]
 use table::TABLES;
 #[cfg(target_os = "none")]
 use table::build;
@@ -321,6 +323,8 @@ use table::build;
 pub use table::map_device;
 #[cfg(target_os = "none")]
 pub use table::map_region;
+#[cfg(target_os = "none")]
+pub(crate) use table::permissions_of;
 
 #[cfg(target_os = "none")]
 pub use space::AddressSpace;

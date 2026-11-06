@@ -262,6 +262,17 @@ impl Machine {
                 // nothing, or answered the same value to both, prints neither
                 // pair.
                 ("protofire: forked a process, child pid 4", true),
+                // The fork's two faults, as the two answers they get.  The
+                // fork shares the stack page read-only, so each process's
+                // first write faults, and the count decides: one write finds
+                // the page still shared and is **copied**, the other finds
+                // itself the last holder and is handed the frame outright.
+                // Either order is correct — which process runs first decides
+                // which answer each gets — so the check is that both answers
+                // exist, and the promote's frame is the copy's source frame,
+                // which is the pair reading itself.
+                ("protofire: copy-on-write copy at ", false),
+                ("protofire: copy-on-write promote at ", false),
                 // The fork's two answers, checked as a pair on one line: the
                 // parent (pid 1) exits with its child's pid 4, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
@@ -334,6 +345,13 @@ impl Machine {
                 // nothing, or answered the same value to both, prints neither
                 // pair.
                 ("protofire: forked a process, child pid 4", true),
+                // The fork's two faults, as the two answers they get: one
+                // write finds the shared page still held by both and is
+                // copied, the other finds its holder last and is promoted in
+                // place.  Either order is correct, so the check is that both
+                // answers exist.
+                ("protofire: copy-on-write copy at ", false),
+                ("protofire: copy-on-write promote at ", false),
                 // The fork's two answers, checked as a pair on one line: the
                 // parent (pid 1) exits with its child's pid 4, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so
@@ -586,6 +604,13 @@ impl Machine {
                 // nothing, or answered the same value to both, prints neither
                 // pair.
                 ("protofire: forked a process, child pid 4", true),
+                // The fork's two faults, as the two answers they get: one
+                // write finds the shared page still held by both and is
+                // copied, the other finds its holder last and is promoted in
+                // place.  Either order is correct, so the check is that both
+                // answers exist.
+                ("protofire: copy-on-write copy at ", false),
+                ("protofire: copy-on-write promote at ", false),
                 // The fork's two answers, checked as a pair on one line: the
                 // parent (pid 1) exits with its child's pid 4, and pid 4 exits
                 // with zero.  The pipe's two programs have no identity call, so

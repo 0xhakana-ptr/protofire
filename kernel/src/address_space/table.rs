@@ -389,6 +389,50 @@ pub(crate) fn leaf_for(root: &PageTable, address: usize) -> Option<&'static Page
     Some(table)
 }
 
+/// What a faulting address is mapped as, in the root a CPU is running.
+///
+/// The question a fault handler asks before it decides what to say.  Two
+/// answers are not a permission at all, and they are different failures:
+///
+/// - `None` when the walk finds no leaf, which is a program reaching an address
+///   nothing ever mapped;
+/// - `Some(None)` when the walk finds a **block** entry above the leaf level,
+///   which on a machine with 2 MiB or 1 GiB blocks is a mapping this kernel's 4
+///   KiB walk cannot describe to a fault handler.
+///
+/// `Some(Some(permissions))` is the ordinary answer, and it is what lets a
+/// diagnostic say "the page is there and not writable" rather than "the program
+/// faulted".
+///
+/// The root is an argument rather than read from the register, because the
+/// fault handler runs on whatever CPU took the fault and its own register is
+/// the one that matters — not the boot CPU's.
+#[cfg(target_os = "none")]
+pub(crate) fn permissions_of(root: usize, address: usize) -> Option<Option<Permissions>> {
+    // SAFETY: the caller passes a root table this kernel installed.
+    let root = unsafe { &*(root as *const PageTable) };
+    let mut table: &'static PageTable = root;
+    for level in [Level::Root, Level::Second, Level::Third] {
+        let word = table.entry(index(level, address));
+        if word == 0 {
+            return None;
+        }
+        let entry = arch::paging::decode(word, level);
+        if entry.is_leaf {
+            // A block mapping: the walk stops above the 4 KiB level and this
+            // function cannot describe the permissions of a page inside it.
+            return Some(None);
+        }
+        // SAFETY: an entry this kernel wrote, naming a table it allocated.
+        table = unsafe { &*(entry.address as *const PageTable) };
+    }
+    let word = table.entry(index(Level::Leaf, address));
+    if word == 0 {
+        return None;
+    }
+    Some(Some(arch::paging::decode(word, Level::Leaf).permissions))
+}
+
 /// The machine's entry encoding, for an entry going into a table at `level`.
 ///
 /// Reached through `arch` rather than named here: what an entry's bits mean is

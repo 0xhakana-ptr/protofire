@@ -158,7 +158,11 @@ pub unsafe extern "C" fn aarch64_exception_dispatch(frame: *mut ExceptionFrame) 
         return serve_user_call(frame);
     }
 
-    let shared = irq::Frame::fault(frame.vector as usize, frame.far as usize);
+    let shared = irq::Frame::fault(
+        frame.vector as usize,
+        frame.far as usize,
+        frame.fault_was_write(),
+    );
     let handled = match sink() {
         Some(sink) => sink(shared),
         None => false,

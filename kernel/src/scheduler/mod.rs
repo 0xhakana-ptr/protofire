@@ -63,6 +63,9 @@ pub use task::starting_context;
 
 use arch::CallFrame;
 
+#[cfg(target_os = "none")]
+use crate::address_space::AddressSpace;
+
 /// The scheduler the boot installed, behind the lock every CPU takes.
 ///
 /// A `static` for the same reason the syscall registry is one: a supervisor
@@ -464,6 +467,32 @@ pub fn start_of(task: usize) -> Option<(usize, arch::Context)> {
 /// The process id a task index names.
 pub fn pid_of(task: usize) -> Option<u32> {
     with_scheduler(|scheduler| scheduler.as_ref()?.tasks.get(task).map(Task::pid))
+}
+
+/// Run `f` with the address space of the task `cpu` is running.
+///
+/// The write-fault resolver's way in: a fault arrives with no task named, and
+/// the task it belongs to is the one this CPU marked as running — a program
+/// faults while it runs, and the kernel's own code that touches a program's
+/// pages does so while serving that program's call.  `None` when no scheduler
+/// is installed or the CPU holds no task, which is the host's permanent state
+/// and the boot's before it enters ring 3.
+///
+/// The closure runs under the scheduler's lock, and the resolver takes the
+/// pool's inside it — the same order a fork holds the two, which is the only
+/// order any code here takes them, and therefore the only order that cannot
+/// deadlock against the rest.
+#[cfg(target_os = "none")]
+pub(crate) fn with_current_space<R>(
+    cpu: usize,
+    f: impl FnOnce(&mut AddressSpace) -> R,
+) -> Option<R> {
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        let task = scheduler.running.get(cpu).copied().flatten()?;
+        let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
+        Some(f(space))
+    })
 }
 
 /// Fork the running process: copy its space and context into a new task.

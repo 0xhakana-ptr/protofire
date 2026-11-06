@@ -68,6 +68,17 @@ pub const USER_ECALL: usize = 8;
 /// The supervisor external interrupt, which a PLIC source reaches a hart as.
 pub const EXTERNAL_INTERRUPT: usize = 9;
 
+/// A page fault raised by an instruction fetch.
+pub const INSTRUCTION_PAGE_FAULT: usize = 12;
+/// A page fault raised by a load.
+pub const LOAD_PAGE_FAULT: usize = 13;
+/// A page fault raised by a store, or by an atomic operation.
+///
+/// The architecture does not separate the two here: `scause` names a store
+/// fault for either, and the distinction does not matter to a handler that only
+/// has to know whether the page may be written.
+pub const STORE_PAGE_FAULT: usize = 15;
+
 /// The saved context of an interrupted instruction.
 ///
 /// Laid out by `entry.S`, offset for offset, and asserted against
@@ -617,7 +628,18 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
 
     // Everything else is a fault, and the address it named is the half that
     // makes a log line diagnosable.
-    let shared = irq::Frame::fault(cause.code, frame.stval as usize);
+    //
+    // This machine says the direction in the cause itself rather than in a bit
+    // of one: a store page fault and a load page fault are two numbers.  An
+    // instruction fetch gets the third value and is neither a read nor a
+    // write, so it is reported as a read — the page must be executable, and a
+    // copy-on-write handler that treated a fetch as a write would copy a page
+    // for a program that was only trying to execute it.
+    let shared = irq::Frame::fault(
+        cause.code,
+        frame.stval as usize,
+        cause.code == STORE_PAGE_FAULT,
+    );
     let handled = match sink() {
         Some(sink) => sink(shared),
         None => false,

@@ -293,3 +293,142 @@ fn compact_is_idempotent_on_already_compacted_pool() {
     // head/tail handles keep their allocations valid for this test scope.
     let _ = (head, tail);
 }
+
+// The reference counts: what a fork needs, and what a double free of a shared
+// frame looks like from inside the allocator.
+
+#[test]
+fn a_frame_starts_unshared_and_undemoted() {
+    let mut allocator = FrameAllocator::new();
+    allocator.init(FRAME_SIZE * 4);
+
+    let frame = allocator.allocate(1).expect("allocate frame") as usize;
+    assert_eq!(allocator.co_owners(frame), 0);
+    assert!(!allocator.is_cow(frame));
+}
+
+#[test]
+fn a_shared_frame_goes_back_only_through_its_release_protocol() {
+    let mut allocator = FrameAllocator::new();
+    allocator.init(FRAME_SIZE * 4);
+
+    let frame = allocator.allocate(1).expect("allocate frame") as usize;
+    assert!(allocator.add_reference(frame), "the fork records its share");
+    assert_eq!(allocator.co_owners(frame), 1);
+
+    // The release protocol: a `false` means the caller keeps its hands off the
+    // frame, because another owner still maps it.  The kernel's release path
+    // is written as `if release_reference { deallocate }`, and this is the
+    // sequence it runs against a fork's child going away first.
+    assert!(!allocator.release_reference(frame), "one owner remains");
+
+    assert!(allocator.release_reference(frame), "the last owner");
+    assert!(allocator.deallocate(frame as *mut u8, 1));
+    // The freed frame was the whole bump tail, so the rewind takes it back
+    // into the available tail rather than into the holes: the count that
+    // holds is the pool's whole size, not the hole count.
+    assert_eq!(
+        allocator.free_frames() + allocator.available_frames(),
+        allocator.total_frames()
+    );
+}
+
+#[test]
+fn deallocate_refuses_a_frame_with_co_owners_still_recorded() {
+    let mut allocator = FrameAllocator::new();
+    allocator.init(FRAME_SIZE * 4);
+
+    let frame = allocator.allocate(1).expect("allocate frame") as usize;
+    assert!(allocator.add_reference(frame));
+
+    // A direct free while the count is above zero is the premature free the
+    // count can see, and refusing it costs the caller nothing: the frame is
+    // still mapped by someone, so a `true` here would hand a live frame to
+    // the next allocation.
+    assert!(!allocator.deallocate(frame as *mut u8, 1));
+    assert_eq!(allocator.free_frames(), 0);
+}
+
+#[test]
+fn an_unshared_frame_releases_in_one_step() {
+    let mut allocator = FrameAllocator::new();
+    allocator.init(FRAME_SIZE * 4);
+
+    let frame = allocator.allocate(1).expect("allocate frame") as usize;
+    assert!(
+        allocator.release_reference(frame),
+        "no co-owner to wait for"
+    );
+    assert!(allocator.deallocate(frame as *mut u8, 1));
+}
+
+#[test]
+fn a_frame_the_pool_hands_out_again_carries_no_stale_owners() {
+    let mut allocator = FrameAllocator::new();
+    allocator.init(FRAME_SIZE * 4);
+
+    let frame = allocator.allocate(1).expect("allocate frame") as usize;
+    assert!(allocator.add_reference(frame));
+    allocator.set_cow(frame, true);
+    assert!(!allocator.release_reference(frame), "one owner remains");
+    assert!(allocator.release_reference(frame), "and now the last");
+    assert!(allocator.deallocate(frame as *mut u8, 1));
+
+    let recycled = allocator.allocate(1).expect("reuse the frame") as usize;
+    assert_eq!(recycled, frame, "the hole is the first candidate");
+    assert_eq!(allocator.co_owners(recycled), 0, "the count reset");
+    assert!(!allocator.is_cow(recycled), "the demotion reset");
+}
+
+#[test]
+fn an_address_outside_the_pool_is_not_a_count() {
+    let mut allocator = FrameAllocator::new();
+    allocator.init(FRAME_SIZE * 4);
+
+    assert!(!allocator.add_reference(0xDEAD_0000), "not a frame here");
+    assert!(!allocator.release_reference(0xDEAD_0000));
+    assert_eq!(allocator.co_owners(0xDEAD_0000), 0, "no co-owners, either");
+    assert!(!allocator.is_cow(0xDEAD_0000));
+}
+
+#[test]
+fn the_reference_count_refuses_to_wrap() {
+    let mut allocator = FrameAllocator::new();
+    allocator.init(FRAME_SIZE * 4);
+
+    let frame = allocator.allocate(1).expect("allocate frame") as usize;
+    for _ in 1..=255 {
+        assert!(allocator.add_reference(frame), "up to the byte's ceiling");
+    }
+    assert_eq!(allocator.co_owners(frame), 255);
+    assert!(!allocator.add_reference(frame), "saturated, refused");
+    assert_eq!(allocator.co_owners(frame), 255, "and not wrapped to zero");
+}
+
+#[test]
+fn compaction_moves_the_sharing_state_with_the_frame() {
+    let mut allocator = FrameAllocator::new();
+    allocator.init(FRAME_SIZE * 8);
+
+    let first = allocator.allocate(1).expect("allocate first") as usize;
+    let hole = allocator.allocate(1).expect("allocate the hole") as usize;
+    let shared = allocator.allocate(1).expect("allocate shared") as usize;
+
+    // The hole sits between two live frames, so compaction has exactly one
+    // move to make, and it is the shared one.
+    assert!(allocator.deallocate(hole as *mut u8, 1));
+    assert!(allocator.add_reference(shared), "a fork shares it");
+    allocator.set_cow(shared, true);
+
+    let moved = allocator.compact(|_, _| true);
+    assert_eq!(moved, 1);
+
+    // The frame now lives where the hole was, and everything the fork needed
+    // to know about it is there and not where it used to be.
+    let relocated = hole;
+    assert_eq!(allocator.co_owners(relocated), 1, "the share followed");
+    assert!(allocator.is_cow(relocated), "the demotion followed");
+    assert_eq!(allocator.co_owners(shared), 0, "the old position is reset");
+
+    let _ = first;
+}

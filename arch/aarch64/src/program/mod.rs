@@ -21,12 +21,12 @@
 
 /// Named so a test can find where *this* program ends in a buffer sized for the
 /// longest of the three.
-pub const PROGRAM_WORDS_FOR_TEST: usize = 24;
+pub const PROGRAM_WORDS_FOR_TEST: usize = 33;
 
 /// The longest of the three images: the announcing program, the pipe writer
 /// and the pipe reader.  A program is copied into a whole page, so this
 /// matters only to the copy.
-pub const PROGRAM_LEN: usize = 25 * 4;
+pub const PROGRAM_LEN: usize = 33 * 4;
 
 pub const PIPE_READER: u16 = 3;
 
@@ -107,7 +107,7 @@ const PIPE_READER_PROGRAM: [u32; 21] = [
 /// nothing.
 pub const SLEEP_MICROSECONDS: u64 = 20_000;
 
-/// One program's words: its number, a busy loop, and four calls.
+/// One program's words: its number, a busy loop, and its calls.
 ///
 /// Built rather than stored so the number is a parameter: a table of two
 /// constants would be two things to keep in step with the encoding.
@@ -117,7 +117,14 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 /// /// so a log that shows two "says hello" lines before the second program's
 /// is a log where sleeping worked.  The second `Write` after the sleep is what
 /// makes the wake visible: a program that never woke prints one line, not two.
-const fn program_words(number: u16) -> [u32; 24] {
+///
+/// After the fork the two processes part ways on the answer alone, and each
+/// writes the stack page it inherited — `sub sp, sp, #16` moving the pointer
+/// below the boundary and `str x0, [sp]` writing through it, which is what a
+/// `push` would have done.  The page is shared and read-only now, so the
+/// write faults, and the kernel's answer to that fault is the whole of what
+/// this image exercises.
+const fn program_words(number: u16) -> [u32; 33] {
     [
         // A busy loop, so a program outlives a time slice.
         //
@@ -143,11 +150,8 @@ const fn program_words(number: u16) -> [u32; 24] {
         0xD400_0001, // svc #0
         0xD280_00C8, // movz x8, #6       (Write, after the wake)
         0xD400_0001, // svc #0
-        // Who am I, last, so the answer is still in `x0` when `Exit` takes it:
-        // the boot reports the exit status, and a status that is the program's
-        // own pid is evidence the identity call ran.
-        // Fork, at the very end: the two processes that result are told apart
-        // by what it answered, and by nothing else.
+        // Fork: the two processes that result are told apart by what it
+        // answered, and by nothing else.
         0xD280_07C8, // movz x8, #62      (Fork)
         0xD400_0001, // svc #0
         // The answer is kept in `x19`, which no call here writes: `Write` fills
@@ -157,7 +161,21 @@ const fn program_words(number: u16) -> [u32; 24] {
         0xAA13_03E1, // mov x1, x19       (Write prints it)
         0xD280_00C8, // movz x8, #6       (Write)
         0xD400_0001, // svc #0
+        // The parent holds its child's pid, the child holds zero: `cbz` sends
+        // the child five words down, to the same shape with a zero status.
+        0xB400_00F3, // cbz x19, +7 words (the child takes the second path)
+        // The parent: write the shared page, then exit with the fork's answer.
+        0xD100_43FF, // sub sp, sp, #16   (room below the boundary)
+        0xF900_03E0, // str x0, [sp]      (the copy-on-write fault)
         0xAA13_03E0, // mov x0, x19       (the answer becomes Exit's status)
+        0xD280_0068, // movz x8, #3       (Exit)
+        0xD400_0001, // svc #0
+        0x1400_0000, // b .               (never reached)
+        // The child: the same write, on its own copy of the page, then an
+        // exit whose status is zero.
+        0xD100_43FF, // sub sp, sp, #16   (room below the boundary)
+        0xF900_03E0, // str x0, [sp]      (the child's copy-on-write fault)
+        0xD280_0000, // movz x0, #0       (the child exits zero)
         0xD280_0068, // movz x8, #3       (Exit)
         0xD400_0001, // svc #0
         0x1400_0000, // b .

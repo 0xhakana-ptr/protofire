@@ -158,6 +158,34 @@ impl Context {
     pub const fn is_user(&self) -> bool {
         self.code_segment & 3 == 3
     }
+
+    /// Whether this frame's fault was caused by a **write**.
+    ///
+    /// Bit 1 of the page-fault error code is `W/R`: set for a write, clear for
+    /// a read or an instruction fetch.  The bit means nothing for a vector that
+    /// pushes no error code, which is why the caller has to have established
+    /// that this frame is a fault before asking.
+    ///
+    /// The other bits are worth naming because a handler reads them together:
+    /// bit 0 is `P` (a protection violation rather than a page that was not
+    /// present), bit 2 is `U/S` (the access came from ring 3), bit 3 is `RSVD`
+    /// (a reserved bit was set in a paging structure), bit 4 is `I/D` (the
+    /// access was an instruction fetch).  A copy-on-write handler cares about
+    /// `W` and `P` together: a write to a **present, read-only** page is the
+    /// one shape it answers.
+    pub const fn fault_was_write(&self) -> bool {
+        self.error_code & 0b10 != 0
+    }
+
+    /// Whether this frame's fault found the page **present**.
+    ///
+    /// Bit 0 of the error code.  Clear means the walk found no translation at
+    /// all, which is a program reaching an address it was never given; set
+    /// means the translation was there and the access was refused, which is
+    /// the only case a permission change can repair.
+    pub const fn fault_was_present(&self) -> bool {
+        self.error_code & 1 != 0
+    }
 }
 
 impl Default for Context {
@@ -446,6 +474,21 @@ mod tests {
 // | `CD 80` | `int 0x80` | |
 // | `B8 06 00 00 00` | `mov eax, 6` | syscall 6, `Write`, after the wake |
 // | `CD 80` | `int 0x80` | |
+// | `B8 3E 00 00 00` | `mov eax, 0x3E` | syscall 62, `Fork` |
+// | `CD 80` | `int 0x80` | |
+// | `41 89 C0` | `mov r8d, eax` | keep the fork's answer |
+// | `44 89 C6` | `mov esi, r8d` | and announce it |
+// | `B8 06 00 00 00` | `mov eax, 6` | syscall 6, `Write` |
+// | `CD 80` | `int 0x80` | |
+// | `45 85 C0` | `test r8d, r8d` | the child's answer is zero |
+// | `74 0E` | `jz +14` | the child takes the second path |
+// | `6A 2A` | `push 42` | write the stack: the copy-on-write fault |
+// | `44 89 C7` | `mov edi, r8d` | the answer becomes `Exit`'s argument |
+// | `B8 03 00 00 00` | `mov eax, 3` | syscall 3, `Exit` |
+// | `CD 80` | `int 0x80` | |
+// | `EB FE` | `jmp $` | never reached |
+// | `6A 2A` | `push 42` | the child writes the stack too |
+// | `31 FF` | `xor edi, edi` | the child exits zero |
 // | `B8 03 00 00 00` | `mov eax, 3` | syscall 3, `Exit` |
 // | `CD 80` | `int 0x80` | |
 // | `EB FE` | `jmp $` | never reached |
@@ -461,10 +504,10 @@ mod tests {
 // instructions this table says they are, the same discipline the aarch64
 // program's words had.
 
-/// The longer of the two images.  A program is copied into a whole page, so the
-/// exact length matters only to the copy; a shorter array would truncate the
-/// pipe reader's last instruction.
-pub const PROGRAM_LEN: usize = 89;
+/// The longer of the three images.  A program is copied into a whole page, so
+/// the exact length matters only to the copy; a shorter array would truncate
+/// the announcing program's last instruction.
+pub const PROGRAM_LEN: usize = 107;
 
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.
@@ -598,7 +641,7 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
 /// bound is real: 0x1000 × 0x10000 was too long, and under the emulator the
 /// trap cost of ten thousand ticks a second left the program unable to reach
 /// its first `int` at all.
-const PROGRAM_BASE: [u8; 87] = [
+const PROGRAM_BASE: [u8; 107] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -613,9 +656,6 @@ const PROGRAM_BASE: [u8; 87] = [
     0xCD, 0x80, // int 0x80
     0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6 (Write, after the wake)
     0xCD, 0x80, // int 0x80
-    // Who am I, last, so the answer is still in `eax` when `Exit` takes it: the
-    // boot reports the exit status, and a status that is the program's own pid
-    // is evidence the identity call ran.
     0xB8, 0x3E, 0x00, 0x00, 0x00, // mov eax, 62 (Fork)
     0xCD, 0x80, // int 0x80
     // The answer is kept in `r8d`, which no call here writes: `Write` fills
@@ -625,7 +665,26 @@ const PROGRAM_BASE: [u8; 87] = [
     0x44, 0x89, 0xC6, // mov esi, r8d (Write prints it)
     0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6 (Write)
     0xCD, 0x80, // int 0x80
+    // The two processes part ways here, and the fork's answer is the only
+    // thing that tells them apart: the parent holds its child's pid, the
+    // child holds zero.  Each then writes the stack page it inherited — a
+    // `push`, because the word goes below the pointer and stays inside the
+    // page — which is the write the copy-on-write fork exists for: the page
+    // is shared and read-only now, so the write faults, and the kernel's
+    // answer to that fault is the whole of what this image exercises.
+    0x45, 0x85, 0xC0, // test r8d, r8d
+    0x74, 0x0E, // jz +14 (the child takes the second path)
+    // The parent: write, then exit with the fork's answer, which is the
+    // child's pid and the status the boot reports for this process.
+    0x6A, 0x2A, // push 42 (the copy-on-write fault)
     0x44, 0x89, 0xC7, // mov edi, r8d (the answer becomes Exit's argument)
+    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3 (Exit)
+    0xCD, 0x80, // int 0x80
+    0xEB, 0xFE, // jmp $
+    // The child: the same write, on its own copy of the page, then an exit
+    // whose status is zero, which is what the pair check reads.
+    0x6A, 0x2A, // push 42 (the child's copy-on-write fault)
+    0x31, 0xFF, // xor edi, edi (the child exits zero)
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3 (Exit)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $
@@ -718,12 +777,13 @@ mod program_tests {
 
     /// Every syscall number the program uses is the ABI's own.
     ///
-    /// Four calls: `Write`, `Sleep`, `Write`, `Exit`.  A program compiled
-    /// against a number this build does not serve would print its first line
-    /// and then fail silently, which is the one failure a sleep program could
-    /// have and still look healthy.
+    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, and two `Exit`s — one per
+    /// path, because the fork leaves two processes and each ends on its own.
+    /// A program compiled against a number this build does not serve would
+    /// print its first line and then fail silently, which is the one failure a
+    /// sleep program could have and still look healthy.
     #[test]
-    fn the_program_writes_sleeps_writes_forks_writes_and_exits() {
+    fn the_program_writes_sleeps_writes_forks_writes_and_exits_twice() {
         let bytes = program_bytes(1);
         // By call number rather than by offset: an offset a reader has to count
         // goes stale the moment an instruction is inserted, which is what
@@ -737,8 +797,9 @@ mod program_tests {
                 abi::SyscallNumber::Fork as u32,
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Exit as u32,
+                abi::SyscallNumber::Exit as u32,
             ],
-            "the program writes, sleeps, writes, forks, writes and exits"
+            "the program writes, sleeps, writes, forks, writes, and both paths exit"
         );
 
         // And the status travels in `edi`: `mov edi, eax` sits between the

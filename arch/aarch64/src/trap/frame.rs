@@ -90,6 +90,35 @@ impl ExceptionFrame {
         self.class() == 0x15
     }
 
+    /// Whether this exception is a data abort.
+    ///
+    /// Two classes, and the difference between them is the same one x86_64
+    /// makes with the page-fault error code's `P` bit: 0x24 is a
+    /// **translation** fault, where the walk found no valid entry, and 0x25 is
+    /// a **permission** fault, where the walk found the translation and
+    /// refused the access.  Only the second can be repaired by changing the
+    /// mapping, which is what a copy-on-write handler does.
+    pub fn is_data_abort(&self) -> bool {
+        matches!(self.class(), 0x24 | 0x25)
+    }
+
+    /// Whether this data abort was caused by a **write**.
+    ///
+    /// `ESR_EL1` bit 6 is `WnR`, and it is defined only for a data abort; on
+    /// every other class it is a different field or reserved.  A caller has to
+    /// have established the class before asking, which is why this is guarded
+    /// rather than masked unconditionally.
+    pub fn fault_was_write(&self) -> bool {
+        self.is_data_abort() && (self.esr >> 6) & 1 == 1
+    }
+
+    /// Whether this data abort found the translation **present**.
+    ///
+    /// Class 0x25 and not 0x24, for the reason [`Self::is_data_abort`] gives.
+    pub fn fault_was_present(&self) -> bool {
+        self.class() == 0x25
+    }
+
     /// Whether this exception is a supervisor call from a program.
     ///
     /// The vector is entry 8, `Lower64`'s synchronous kind, and the class is

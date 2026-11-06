@@ -139,12 +139,13 @@ fn the_busy_loop_branches_back_to_itself() {
 ///
 /// The calls this program makes, in order.
 ///
-/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `Exit`.  A program compiled
-/// against a number this build does not serve would print its first line and
-/// then fail silently, which is the one failure a sleep program could have and
-/// still look healthy.
+/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, and two `Exit`s — one per path,
+/// because the fork leaves two processes and each ends on its own.  A program
+/// compiled against a number this build does not serve would print its first
+/// line and then fail silently, which is the one failure a sleep program could
+/// have and still look healthy.
 #[test]
-fn the_program_writes_sleeps_writes_forks_writes_and_exits() {
+fn the_program_writes_sleeps_writes_forks_writes_and_exits_twice() {
     let words = program_words(1);
     // By name, not by index: an index a reader has to count goes stale the
     // moment a word is inserted, which is what happened twice while this
@@ -159,8 +160,9 @@ fn the_program_writes_sleeps_writes_forks_writes_and_exits() {
             abi::SyscallNumber::Fork as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Exit as usize,
+            abi::SyscallNumber::Exit as usize,
         ],
-        "the program writes, sleeps, writes, forks, writes and exits"
+        "the program writes, sleeps, writes, forks, writes, and both paths exit"
     );
     // The `Write` after the fork is the one that reports it: both processes
     // reach it, and the number each prints is the fork's answer, the child's

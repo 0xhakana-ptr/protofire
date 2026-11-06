@@ -488,6 +488,33 @@ pub use arch_x86_64::boot::pcie_ecam_window;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::paging::flush_translation;
 
+// The root this CPU is translating through.
+//
+// Asked by the fault handler, which has to describe a faulting address in the
+// **space the faulting CPU is running** — a program's, not the kernel's.  The
+// register is per-CPU, so the question only has an answer on the machine that
+// took the fault, and a host has no table at all.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub fn installed_root_table() -> Option<usize> {
+    Some(arch_aarch64::paging::current_root_table())
+}
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub fn installed_root_table() -> Option<usize> {
+    let root = arch_riscv64::paging::current_root_table();
+    // Zero is `satp`'s own "no table": a hart that never wrote it walks bare,
+    // and reporting that as a root would have the walk read whatever address
+    // zero happens to name.
+    (root != 0).then_some(root)
+}
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub fn installed_root_table() -> Option<usize> {
+    Some(arch_x86_64::paging::current_root_table())
+}
+#[cfg(not(target_os = "none"))]
+pub fn installed_root_table() -> Option<usize> {
+    None
+}
+
 #[cfg(target_arch = "riscv64")]
 pub use arch_riscv64::boot::boot_info;
 
