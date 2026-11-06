@@ -39,6 +39,9 @@
 #
 # Editors and agents
 #
+# '__pycache__/' is the case the kernel's first guard rail does not cover: it
+# appears wherever something is imported, so scoping it to one directory would
+# be a rule that fires only where a reader happened to put it.
 __pycache__/
 
 #
