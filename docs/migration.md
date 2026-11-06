@@ -1287,7 +1287,7 @@ x86_64 in its `GS` base.  The limits are constants:
 | `arch/riscv64/src/smp.rs`, `arch/aarch64/src/smp.rs`, `arch/x86_64/src/smp.rs` | `MAX_SECONDARY_HARTS = 4` | each machine's `kernel_stacks` reservation is sized from it, and each entry assembly indexes that array by slot |
 | `kernel/src/per_cpu.rs` | `MAX_SECONDARY_CPUS = arch::MAX_SECONDARY_HARTS` | the kernel asks the machine rather than copying the number, so the two cannot disagree |
 | `kernel/src/per_cpu.rs` | `MAX_CPUS = 1 + MAX_SECONDARY_CPUS` | slot zero is the boot CPU's |
-| `kernel/src/scheduler/core.rs` | `running: [Option<usize>; MAX_CPUS]` | one current task per CPU |
+| `kernel/src/scheduler/core/mod.rs` | `running: [Option<usize>; MAX_CPUS]` | one current task per CPU |
 | `arch/*/src/serial.rs` | `LINE_SLOTS` | one console line buffer per CPU, on every machine |
 | `arch/riscv64/src/boot.rs` | `MAX_HART_NODES = 8` | how many `/cpus` children the tree walk reads |
 | `tools/xtask/src/main.rs` | `-smp 2` | the gate's machines, not a kernel limit: all three boot with two |

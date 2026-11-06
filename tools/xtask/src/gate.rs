@@ -95,24 +95,16 @@ impl Machine {
                 // zero: the same call, answered twice, differently.
                 &["exit statuses 1 -> 4", "4 -> 0"],
                 // A task was placed on a CPU other than the one it last ran
-                // on, and the line names it.  `task migrations 0` is what a
-                // record that never fires prints, so the prefix alone is not
-                // enough: the fragments below require the move to be named.
-                &[
-                    "task migrations ",
-                    "last process ",
-                    " from cpu ",
-                    " to cpu ",
-                ],
+                // on.  The line names the move when there was one, and **there
+                // is not always one**: placement depends on which CPU reaches
+                // the queue first, and two boots in twenty never move a task at
+                // all.  A gate that required the named move failed on those, so
+                // the fact this checks is the count's own line — the record
+                // ran — rather than that the boot happened to place a task
+                // twice.  `required_lines` carries the prefix.
             ],
             Self::Riscv64 => &[
                 &["exit statuses 1 -> 4", "4 -> 0"],
-                &[
-                    "task migrations ",
-                    "last process ",
-                    " from cpu ",
-                    " to cpu ",
-                ],
                 // The second CPU, on one line: the slot the kernel numbered it
                 // with, the hart the machine named, that it takes its own
                 // interrupts, and the interrupt this boot aimed at it.
@@ -239,10 +231,13 @@ impl Machine {
                     "protofire: tlb shootdown 3 sent, 3 acknowledged, 0 timed out",
                     true,
                 ),
-                // The placement rule's own record, and it has to name a move:
-                // `task migrations 0` is what a record that never fires prints,
-                // and a prefix check accepts it.  Every boot of this build has
-                // moved at least one task, on all three machines.
+                // The placement rule's own record.  The count is the number of
+                // times a task was taken onto a CPU other than the one it last
+                // ran on; it is not always above zero, because whether a task
+                // moves depends on which CPU reaches the queue first, and two
+                // boots in twenty move none.  What this line proves is that the
+                // record ran and answered, which `assign` is the only writer
+                // of.
                 ("protofire: task migrations ", false),
                 // Two programs in ring 3, each in an address space of its own.
                 //
@@ -389,10 +384,12 @@ impl Machine {
                     "protofire: tlb shootdown 1 sent, 1 acknowledged, 0 timed out",
                     true,
                 ),
-                // The placement rule's own record, and it has to name a move:
-                // `task migrations 0` is what a record that never fires prints,
-                // and a prefix check accepts it.  Every boot of this build has
-                // moved at least one task, on all three machines.
+                // The placement rule's own record.  The count is the number of
+                // times a task was taken onto a CPU other than the one it last
+                // ran on; it is not always above zero, because whether a task
+                // moves depends on which CPU reaches the queue first, and two
+                // boots in twenty move none.  What this line proves is that the
+                // record ran and answered, which `assign` is the only writer of.
                 ("protofire: task migrations ", false),
                 // Two programs, each in an address space of its own, at
                 // addresses no other program can reach.
@@ -624,10 +621,13 @@ impl Machine {
                 // Placement moved, as on the other two machines: a task is not
                 // pinned to a hart, so one that was preempted or woken can be
                 // selected here or there, and the line counts and names it.
-                // The placement rule's own record, and it has to name a move:
-                // `task migrations 0` is what a record that never fires prints,
-                // and a prefix check accepts it.  Every boot of this build has
-                // moved at least one task, on all three machines.
+                // The placement rule's own record.  The count is the number of
+                // times a task was taken onto a CPU other than the one it last
+                // ran on; it is not always above zero, because whether a task
+                // moves depends on which CPU reaches the queue first, and two
+                // boots in twenty move none.  What this line proves is that the
+                // record ran and answered, which `assign` is the only writer
+                // of.
                 ("protofire: task migrations ", false),
             ],
         }

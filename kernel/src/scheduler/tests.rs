@@ -353,3 +353,52 @@ fn one_cpu_running_a_task_hides_it_from_the_other() {
     };
     assert_ne!(theirs, 0, "cpu 1 was offered the task cpu 0 is running");
 }
+
+/// A task placed on a CPU for the first time has not migrated.
+///
+/// The count exists to say a task **moved**, and a first placement is where a
+/// task starts.  Counting it would make every boot report one migration it did
+/// not make, and the number would stop describing placement.
+#[test]
+fn a_first_placement_is_not_a_migration() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("one"));
+    scheduler.assign(0, 0);
+    let (count, last) = scheduler.migrations();
+    assert_eq!(count, 0, "the first CPU to run a task is not a move");
+    assert_eq!(last, None);
+}
+
+/// Taking a task onto a different CPU is a migration, and it is named.
+///
+/// This is the mechanism the boot reports, and a host is the only place its
+/// arithmetic can be exercised without depending on which CPU reaches the queue
+/// first: on a real boot two runs in twenty move no task at all, which is why
+/// the gate cannot require a move and this test is what pins the rule.
+#[test]
+fn taking_a_task_elsewhere_is_a_migration_and_names_both_cpus() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("one"));
+    scheduler.assign(0, 0);
+    scheduler.assign(1, 0);
+    let (count, last) = scheduler.migrations();
+    assert_eq!(count, 1);
+    assert_eq!(
+        last,
+        Some((0, 0, 1)),
+        "the task, the CPU it left, the CPU it reached"
+    );
+}
+
+/// Re-selecting the task a CPU already holds is not a migration.
+///
+/// A preemption with one runnable task comes back to the same task, and a count
+/// that included it would grow with the timer rather than with placement.
+#[test]
+fn the_same_cpu_taking_it_back_is_not_a_migration() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("one"));
+    scheduler.assign(0, 0);
+    scheduler.assign(0, 0);
+    assert_eq!(scheduler.migrations().0, 0);
+}
