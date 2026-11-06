@@ -26,7 +26,7 @@ caller                          service
   │ pop() ──▶ Some(Completion{id: 7, Ok(4096)})
 ```
 
-The caller takes completions from a [`CompletionQueue`](../async_io/src/queue.rs)
+The caller takes completions from a [`CompletionQueue`](../async_io/src/queue/mod.rs)
 it owns, not from the service.  That is what makes the queue's accounting
 checkable, what went in, what came out, what was refused, and it is the same
 split an `io_uring` ring has, where the program sizes the ring and the kernel

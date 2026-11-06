@@ -327,7 +327,7 @@ continue with.  A **refusal** is the shape for that, at two levels:
   second, silent way to stop a boot is what this forbids.  It runs **only in
   the boot path, before the scheduler starts**, once anything but the boot
   can produce a value, `Result` is required.  The four refusals in
-  `memory/src/frame.rs` (a pool no device can address, a pool past everything
+  `memory/src/frame/mod.rs` (a pool no device can address, a pool past everything
   the machine describes, an image over defective memory, an image in no
   described region) are the named example.
 - **A core cannot join.**  An AP that finds no per-CPU block, no

@@ -244,7 +244,7 @@ checked. "SAFETY: this is fine" is not a comment, it is a hope.
 ### Capitalisation is not optional
 
 The mixed-case `// Safety:` form used to appear in the tree, mostly in
-`drivers/virtio/block/src/device.rs` and the other drivers. Those have been migrated, and
+`drivers/virtio/block/src/device/mod.rs` and the other drivers. Those have been migrated, and
 the tree now has no occurrences left: `// SAFETY:` is the only accepted spelling.
 A new `// Safety:` is a defect, not a style preference, it reads as a different
 marker to anyone grepping for the convention, which is exactly how the block

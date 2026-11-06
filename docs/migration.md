@@ -52,7 +52,7 @@ because the plan is a list of what to do and not a score.
 
 **The VFS row has moved.**  `fs/src/vnode.rs` and `fs/src/filesystem.rs` carry
 the *contract*, what a node is, what a filesystem answers, and the namespace
-is now `fs/src/mount.rs` and `fs/src/path.rs`: a mount table, longest-prefix
+is now `fs/src/mount/mod.rs` and `fs/src/path.rs`: a mount table, longest-prefix
 resolution, and path normalization.  What is still not here is the *handle
 table*, which arrives with the process layer because a handle belongs to a
 process.
@@ -367,7 +367,7 @@ interrupted.  The third is not implemented.
 
 The split is the one `scripts/layering.txt` already described: `ipc::ByteRing`
 is the arithmetic and is tested on a host, and the endpoints that park a task
-are the kernel's because parking needs the scheduler.  `kernel/src/pipe.rs`
+are the kernel's because parking needs the scheduler.  `kernel/src/pipe/mod.rs`
 holds the second half and hands bytes to the first.
 
 A task now has a third state.  `Sleeping { until }` ends when the clock passes
@@ -418,7 +418,7 @@ line above it read `187081226` and never moved.
 
 ### The frame allocator, and the loop it breaks
 
-`memory/src/frame.rs` tracked free ranges in a `BTreeMap`.  That is the right
+`memory/src/frame/mod.rs` tracked free ranges in a `BTreeMap`.  That is the right
 shape for an unbounded set and the wrong one here for a reason that is not about
 speed: **this allocator hands out the frames a page table is built from, and a
 page table has to exist before the heap does.**  A free list that needed `alloc`
@@ -453,7 +453,7 @@ compares the free count before and after.  Deleting the release makes it print
 
 ### MSI-X: the encoding, and the hop that does not arrive
 
-`drivers/bus/pci/src/msix.rs` is the MSI-X capability and table: the three
+`drivers/bus/pci/src/msix/mod.rs` is the MSI-X capability and table: the three
 structures, the entry layout, and the two bits in message control that are
 different, 15 enables the feature and 14 says the function must not fall back
 to its INTx pin.  An entry's mask bit is set-means-masked, the opposite of every
@@ -469,7 +469,7 @@ Five defects were fixed while writing it, and four were in the test fake:
 - The fake's register file was too small for offset `0x98`.
 - The fake wrote `1` into the size field to mean "one entry", which is two.
 
-`arch/aarch64/src/gicv2m.rs` is the frame: `MSI_TYPER` holds two ten-bit fields, the first interrupt and the count, and `MSI_SET_SPI` is an array where the
+`arch/aarch64/src/gicv2m/mod.rs` is the frame: `MSI_TYPER` holds two ten-bit fields, the first interrupt and the count, and `MSI_SET_SPI` is an array where the
 **address** selects which interrupt a write raises, not the payload.  The boot
 reads `MSI_TYPER` and reports what it found: `msi frame raises 80 interrupt(s)
 from 64`, which is `0x0050_0040` decoded and not assumed.
