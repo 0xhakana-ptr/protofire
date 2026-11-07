@@ -9,4 +9,3 @@ license.workspace = true
 abi.workspace = true
 # No architecture feature: `arch` selects its implementation from the target,
 # and a forwarded feature here would be a second place the machine is named.
-arch = { path = "../arch" }

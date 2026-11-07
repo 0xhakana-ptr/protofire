@@ -12,7 +12,6 @@ license.workspace = true
 # named by the host arm too, so the dependency is not target-gated.
 cell = { path = "../../libs/cell" }
 abi.workspace = true
-x86_64.workspace = true
 # The handshake slot, and the type the answer is stated in.  No `kernel`: this
 # crate is below it, and an edge upward is the one this tree forbids.
 # The page-table types and the index arithmetic.  A machine encodes an entry

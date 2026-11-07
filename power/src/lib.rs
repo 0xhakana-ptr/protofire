@@ -25,13 +25,15 @@
 //!
 //! ## The trait it will answer through
 //!
-//! [`abi::CpuFreqDriver`] is the machine's side: what frequency it is at, what
+//! `abi`'s `CpuFreqDriver` is the machine's side: what frequency it is at, what
 //! range it supports, and how to ask for a change.  It lives in `abi` rather
 //! than here because the architecture crates implement it, and in the previous
 //! tree they imported it from `kernel::power`, an upward edge, 322 of which
 //! made that tree's `arch` impossible to read alone.
 //!
-//! This crate names `abi` and nothing else.
+//! This crate names nothing: the governors are arithmetic, and the boundary to
+//! the machine is whatever the change that wires the first driver decides it
+//! is.
 
 #![no_std]
 

@@ -7,5 +7,3 @@ license.workspace = true
 
 [dependencies]
 abi.workspace = true
-async_io.workspace = true
-sync.workspace = true

@@ -48,14 +48,11 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 abi = { path = "abi" }
-async_io = { path = "async_io" }
 sync = { path = "libs/sync" }
 allocator = { path = "libs/allocator" }
 security = { path = "security" }
 syscall = { path = "syscall" }
-sound = { path = "sound" }
 spin = "0.9"
-x86_64 = "0.15.2"
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 

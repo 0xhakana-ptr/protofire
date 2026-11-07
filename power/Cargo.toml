@@ -9,4 +9,3 @@ license.workspace = true
 # The driver trait this policy will be asked through, and nothing else.  A
 # governor that needed a lock or a device would not be a pure function, and
 # being one is what lets it be tested here.
-abi.workspace = true
