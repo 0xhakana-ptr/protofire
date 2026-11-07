@@ -1,4 +1,4 @@
-//! kernel/src/tests.rs
+//! kernel/src/pipe/tests.rs
 //!
 //! The pipe's tests: the ring's arithmetic, the endpoints' counting, and the
 //! table that holds them.

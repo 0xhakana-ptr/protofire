@@ -1,4 +1,4 @@
-//! virtio/core/src/transport.rs
+//! drivers/virtio/core/src/transport.rs
 //!
 //! What a device and a driver talk through: the register set virtio defines,
 //! behind a trait so the queue code does not know whether it is PCI or MMIO.

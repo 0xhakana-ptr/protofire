@@ -1,4 +1,4 @@
-//! virtio/core/src/lib.rs
+//! drivers/virtio/core/src/lib.rs
 //!
 //! The virtio framework: a split virtqueue, the feature bits a device and a
 //! driver negotiate, the status a device goes through before it may be used,

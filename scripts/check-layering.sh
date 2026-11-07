@@ -115,6 +115,17 @@ awk '
 # Layer of each crate.
 awk '$1 == "LAYER" { print $3, $2 }' "$work/spec.txt" | sort >"$work/rank.txt"
 
+# The workspace's own crate names, for the two directions of the membership
+# checks below.
+python3 - "$work/meta.json" <<'PY' >"$work/crates.txt"
+import json
+import sys
+with open(sys.argv[1]) as handle:
+    metadata = json.load(handle)
+for package in metadata["packages"]:
+    print(package["name"])
+PY
+
 # Allowed exceptions, as `from to` pairs.
 awk '$1 == "ALLOW" { print $2, $3 }' "$work/spec.txt" | sort >"$work/allow.txt"
 
@@ -146,10 +157,15 @@ PY
 EOF
 
 # Every crate in the spec has to be in the workspace: a row for a crate that was
-# renamed or removed is a layer entry describing a tree that no longer exists.
+# renamed or removed is a layer entry describing a tree that no longer exists,
+# and the rows the workspace does not contradict would otherwise be read as if
+# the gate had checked them.  The workspace list is what the loop above read,
+# so the two directions together say the spec and the tree name exactly the
+# same crates.
 while read -r name rank; do
-    if ! awk -v n="$name" '$1 == n { found = 1 } END { exit !found }' "$work/rank.txt"; then
-        continue
+    if ! grep -qx "$name" "$work/crates.txt"; then
+        report "layering: crate $name is in $LAYERS and not in the workspace"
+        report "  the row describes a crate the tree no longer has; move it out in the change that moved the crate"
     fi
 done <"$work/rank.txt"
 

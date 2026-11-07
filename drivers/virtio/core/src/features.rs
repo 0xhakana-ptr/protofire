@@ -1,4 +1,4 @@
-//! virtio/core/src/features.rs
+//! drivers/virtio/core/src/features.rs
 //!
 //! The feature bits a device offers and a driver accepts.
 //!

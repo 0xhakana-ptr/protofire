@@ -1,4 +1,4 @@
-//! virtio/core/src/queue.rs
+//! drivers/virtio/core/src/queue.rs
 //!
 //! The split virtqueue: a descriptor table, an available ring, and a used ring,
 //! all in memory the driver owns and the device reads.

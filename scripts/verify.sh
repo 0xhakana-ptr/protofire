@@ -70,9 +70,68 @@ fail() {
     exit 1
 }
 
+# The file-header rule docs/fmts/comments.md states: line 1 is `//! ` and the
+# path from the repository root, line 2 is a bare `//!`, and a blank line
+# separates the header block from the first body line.  The report answers
+# coverage rather than a bare pass so a run that checked nothing cannot look
+# the same as one that checked everything.
+check_source_headers() {
+    path_ok=0
+    blank_ok=0
+    separated_ok=0
+    total=0
+    while IFS= read -r file; do
+        total=$((total + 1))
+        first=$(sed -n '1p' "$file")
+        if [ "$first" = "//! $file" ]; then
+            path_ok=$((path_ok + 1))
+        else
+            printf 'bad header path: %s (line 1 is "%s")\n' "$file" "$first" >&2
+        fi
+        second=$(sed -n '2p' "$file")
+        if [ "$second" = "//!" ]; then
+            blank_ok=$((blank_ok + 1))
+        else
+            printf 'bad header line 2: %s (expected a bare "//!", got "%s")\n' "$file" "$second" >&2
+        fi
+        third=$(sed -n '3p' "$file")
+        case "$third" in
+            "//!"*|"") ;;
+            *) printf 'bad header line 3: %s (expected a description line or the blank separator, got "%s")\n' "$file" "$third" >&2 ;;
+        esac
+        separated=0
+        line_no=3
+        while :; do
+            line=$(sed -n "${line_no}p" "$file")
+            case "$line" in
+                "//!"*) line_no=$((line_no + 1)) ;;
+                "") separated=1; break ;;
+                *) break ;;
+            esac
+        done
+        if [ "$separated" = 1 ]; then
+            separated_ok=$((separated_ok + 1))
+        else
+            printf 'header runs into the body: %s\n' "$file" >&2
+        fi
+    done <<EOF
+$(find . -name '*.rs' -not -path './target/*' | sed 's|^\./||' | sort)
+EOF
+    printf 'check_source_headers: path=%d blank=%d separated=%d total=%d\n' \
+        "$path_ok" "$blank_ok" "$separated_ok" "$total"
+    [ "$path_ok" -eq "$total" ] && [ "$blank_ok" -eq "$total" ] \
+        && [ "$separated_ok" -eq "$total" ]
+}
+
 run_p0() {
     step "cargo fmt --check"
     cargo fmt --all -- --check || fail "formatting"
+
+    # The headers, before anything that reads them: a file whose first line
+    # names a path it is not at is a reader already lost, and the split that
+    # moved crates around moved several without moving their headers.
+    step "check_source_headers"
+    check_source_headers || fail "a Rust file's header does not name its own path, or does not end where the header block ends"
 
     # Documents before code: a citation that does not resolve is cheaper to find
     # than to follow, and the check costs a fraction of a build.

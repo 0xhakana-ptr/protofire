@@ -1,4 +1,4 @@
-//! arch/riscv64/src/tests.rs
+//! arch/riscv64/src/program/tests.rs
 //!
 //! The riscv64 program's tests: the encoders decoded back the way the machine
 //! reads them, the busy loop's branches, and the calls this program makes.

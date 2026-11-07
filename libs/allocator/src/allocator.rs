@@ -1,4 +1,4 @@
-//! src/memory/heap/allocator.rs
+//! libs/allocator/src/allocator.rs
 //!
 //! `KernelGlobalAllocator`, the core TLSF-based kernel heap allocator with
 //! exponential-backoff spinlock and `GlobalAlloc` trait implementation.

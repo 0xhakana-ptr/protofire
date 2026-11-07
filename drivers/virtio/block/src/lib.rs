@@ -1,4 +1,4 @@
-//! virtio/block/src/lib.rs
+//! drivers/virtio/block/src/lib.rs
 //!
 //! The virtio block device: a request header, a data buffer and a status byte
 //! on a virtqueue, answering `BlockDevice` and `QueuedBlockDevice`.

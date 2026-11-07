@@ -1,4 +1,4 @@
-//! virtio/block/src/request.rs
+//! drivers/virtio/block/src/request.rs
 //!
 //! What a block request looks like on the wire: a header, the data, a status
 //! byte.

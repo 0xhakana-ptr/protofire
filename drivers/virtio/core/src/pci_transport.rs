@@ -1,4 +1,4 @@
-//! virtio/core/src/pci_transport.rs
+//! drivers/virtio/core/src/pci_transport.rs
 //!
 //! The PCI modern transport: the four capability structures a virtio device
 //! publishes, and the register accesses they name.
