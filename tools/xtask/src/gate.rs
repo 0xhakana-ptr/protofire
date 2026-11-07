@@ -40,13 +40,15 @@ impl Machine {
     pub(crate) fn paired_lines(self) -> &'static [&'static [&'static str]] {
         match self {
             Self::X8664 | Self::Aarch64 => &[
-                // The exec'd process exits with its own pid — the image it
-                // became asks the kernel who it is and exits with the answer —
-                // and the forked child exits with zero.  The pair on one line
-                // is the whole of both stories: `exec` kept the task's
-                // identity, and `fork` answered its two processes
-                // differently.
-                &["exit statuses 1 -> 1", "4 -> 0"],
+                // The exec'd process exits with the **first byte of the file
+                // it read** — `t`, 116, of "the quick brown pyrofox" — and the
+                // forked child dies by its own bad write, with the kernel's
+                // fault status.  The fragments carry their trailing commas on
+                // purpose: `1 -> 1` is a *substring* of `1 -> 116`, and a
+                // fragment check that matched prefixes would have passed this
+                // pair on the old status unchanged.  The comma is the value's
+                // boundary.
+                &["exit statuses 1 -> 116,", "4 -> 139"],
                 // A task was placed on a CPU other than the one it last ran
                 // on.  The line names the move when there was one, and **there
                 // is not always one**: placement depends on which CPU reaches
@@ -57,7 +59,7 @@ impl Machine {
                 // twice.  `required_lines` carries the prefix.
             ],
             Self::Riscv64 => &[
-                &["exit statuses 1 -> 1", "4 -> 0"],
+                &["exit statuses 1 -> 116,", "4 -> 139"],
                 // The second CPU, on one line: the slot the kernel numbered it
                 // with, the hart the machine named, that it takes its own
                 // interrupts, and the interrupt this boot aimed at it.
@@ -292,6 +294,11 @@ impl Machine {
                 // in the change would open it under some other number.
                 ("protofire: process 1 exec'd image 4", true),
                 ("protofire: process 1 opened /greeting.txt", true),
+                // The child's death, as the kernel reports it: which process,
+                // the address its write named, and the status the pair reads.
+                // A prefix, because the address is the program's own code page
+                // and the vector is the machine's answer.
+                ("protofire: process 4 died from a fault at ", false),
                 // Sleeping, and the wake that ended it.
                 //
                 // Two lines, because they are two facts: a program asked for a
@@ -430,6 +437,12 @@ impl Machine {
                     // the boot's file, read from the scheduler's own record.
                     ("protofire: process 1 exec'd image 4", true),
                     ("protofire: process 1 opened /greeting.txt", true),
+                    // The child's death, as the kernel reports it: which
+                    // process, the address its write named, and the status
+                    // the pair reads.  A prefix, because the address is the
+                    // program's own code page and the vector is the machine's
+                    // answer.
+                    ("protofire: process 4 died from a fault at ", false),
                     // The frame pool, and the allocator exercised rather than
                     // described.  The whole line, because its tail is the
                     // outcome: a prefix would accept `pool check FAILED`, the
@@ -611,6 +624,11 @@ impl Machine {
                 // scheduler's own record.
                 ("protofire: process 1 exec'd image 4", true),
                 ("protofire: process 1 opened /greeting.txt", true),
+                // The child's death, as the kernel reports it: which process,
+                // the address its write named, and the status the pair reads.
+                // A prefix, because the address is the program's own code page
+                // and the vector is the machine's answer.
+                ("protofire: process 4 died from a fault at ", false),
                 // Sleeping, and the wake that ended it: the deadline is a
                 // firmware call on this machine, and a boot that slept and
                 // never woke prints the sleep line and not the wake.

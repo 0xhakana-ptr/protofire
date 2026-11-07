@@ -305,13 +305,19 @@ pub use arch_x86_64::switch_address_space;
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::set_call_sink;
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::set_fault_sink;
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::set_preempt_sink;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::set_call_sink;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::set_fault_sink;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
 pub use arch_riscv64::set_preempt_sink;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::trap::set_call_sink;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::trap::set_fault_sink;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::trap::set_preempt_sink;
 

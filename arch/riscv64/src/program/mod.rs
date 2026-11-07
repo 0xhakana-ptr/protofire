@@ -24,7 +24,7 @@
 /// The longest of the four images: the announcing program, the pipe writer,
 /// the pipe reader and the exec target.  A program is copied into a whole
 /// page, so this matters only to the copy.
-pub const PROGRAM_LEN: usize = 33 * 4;
+pub const PROGRAM_LEN: usize = 32 * 4;
 
 pub const PIPE_READER: u16 = 3;
 
@@ -124,7 +124,7 @@ const fn store_against_sp(rs2: u32) -> u32 {
 
 /// Counted once here rather than inferred: the array length and the word list
 /// have to agree, and a literal on both would be two numbers to keep in step.
-pub const PROGRAM_WORDS: usize = 33;
+pub const PROGRAM_WORDS: usize = 32;
 
 /// The busy loop: outer 64, inner 256, one decrement each.
 ///
@@ -206,14 +206,16 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         ),
         0x0000_0073, // ecall
         0x0000_006F, // j .   (never reached: exec replaced the program)
-        // The child: the same write, on its own copy of the page, then an
-        // exit whose status is zero.
+        // The child: the same write, on its own copy of the page, and then
+        // the deliberate one — a store into its own **code** page, read-only
+        // and not copy-on-write, which no resolver answers.  The kernel kills
+        // the process for it and the machine goes on; the child's status is
+        // the kernel's, not its own.
         addi(2, 2, -16),                      // addi sp, sp, -16
         store_against_sp(REGISTER_A6 as u32), // sd a6, 0(sp) (the fault)
-        addi(REGISTER_A0 as u32, 0, 0),       // li a0, #0
-        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
-        0x0000_0073, // ecall
-        0x0000_006F, // j .
+        0x0000_0517,                          // auipc a0, 0  (this page's base)
+        0x0005_2023,                          // sw x0, 0(a0) (the fatal write)
+        0x0000_006F,                          // j .          (never reached)
     ]
 }
 

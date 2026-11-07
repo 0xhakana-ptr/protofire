@@ -70,6 +70,8 @@ pub use trap::return_value;
 #[cfg(target_os = "none")]
 pub use trap::set_call_sink;
 #[cfg(target_os = "none")]
+pub use trap::set_fault_sink;
+#[cfg(target_os = "none")]
 pub use trap::set_preempt_sink;
 pub use trap::set_resume_address;
 pub use trap::set_return_value;

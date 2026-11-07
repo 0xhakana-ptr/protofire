@@ -65,6 +65,39 @@ static PREEMPT_SINK: cell::SyncUnsafeCell<Option<PreemptSink>> = cell::SyncUnsaf
 /// # Safety
 ///
 /// Called once, before any line is unmasked.
+/// The sink for a fault in a program the kernel did not answer: the frame,
+/// the vector, and the address the fault named.  Injected like the call and
+/// preempt sinks — the machine knows where a fault happened, and only the
+/// kernel knows what a process is.
+#[cfg(target_os = "none")]
+pub type FaultSink = fn(&mut ExceptionFrame, usize, usize);
+
+#[cfg(target_os = "none")]
+static FAULT_SINK: cell::SyncUnsafeCell<Option<FaultSink>> = cell::SyncUnsafeCell::new(None);
+
+/// Install the function a fatal program fault is reported through.
+///
+/// # Safety
+///
+/// Called once, before EL0 is entered.
+#[cfg(target_os = "none")]
+pub unsafe fn set_fault_sink(sink: FaultSink) {
+    // SAFETY: the caller promises this is the only write and that it happens
+    // before ring 3 is entered.
+    unsafe { *FAULT_SINK.get() = Some(sink) };
+}
+
+#[cfg(target_os = "none")]
+pub(super) fn fault_sink() -> Option<FaultSink> {
+    // SAFETY: written once before EL0 is entered, read after.
+    unsafe { *FAULT_SINK.get() }
+}
+
+/// Install the function called after a handled interrupt.
+///
+/// # Safety
+///
+/// Called once, before any line is unmasked.
 #[cfg(target_os = "none")]
 pub unsafe fn set_preempt_sink(sink: PreemptSink) {
     // SAFETY: the caller promises this is the only write and that it happens

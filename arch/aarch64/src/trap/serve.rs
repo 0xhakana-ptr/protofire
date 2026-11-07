@@ -169,6 +169,20 @@ pub unsafe extern "C" fn aarch64_exception_dispatch(frame: *mut ExceptionFrame) 
     };
 
     if !handled {
+        // An exception from EL0 that the kernel did not answer kills the
+        // **program**, not the machine: the diagnostic is already on the
+        // console, and the death is the scheduler's — the task goes
+        // `Finished` with the kernel's fault status and the frame this tail
+        // leaves behind is whatever runs next.  `SPSR_EL1` is what says the
+        // fault was the program's and not the kernel's; a kernel that cannot
+        // trust its own translations has nothing left to schedule for, and
+        // its faults keep the halt below.
+        if crate::is_user_context(frame)
+            && let Some(sink) = super::call::fault_sink()
+        {
+            sink(frame, frame.vector as usize, frame.far as usize);
+            return;
+        }
         // A supervisor call is the one exception that is not a fault: the
         // kernel raises it deliberately.  An `svc` from EL0 is a program's
         // call and is served above; one from EL1 is the kernel's own, and

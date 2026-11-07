@@ -133,13 +133,14 @@ fn the_busy_loop_branches_back_to_itself() {
 ///
 /// The calls this program makes, in order.
 ///
-/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and one `Exit`
-/// — the parent's path ends in the exec, so the child's is the only path that
-/// exits itself.  A program compiled against a number this build does not
-/// serve would print its first line and then fail silently, which is the one
-/// failure a sleep program could have and still look healthy.
+/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess` — and no `Exit`
+/// at all: the parent's path ends in the exec, and the child's ends in the
+/// fault the kernel kills it for, so neither path exits itself.  A program
+/// compiled against a number this build does not serve would print its first
+/// line and then fail silently, which is the one failure a sleep program
+/// could have and still look healthy.
 #[test]
-fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
+fn the_program_writes_sleeps_writes_forks_writes_and_execs() {
     let words = program_words(1);
     // By name, not by index: an index a reader has to count goes stale the
     // moment a word is inserted, which is what happened twice while this
@@ -154,9 +155,8 @@ fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
             abi::SyscallNumber::Fork as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::ExecProcess as usize,
-            abi::SyscallNumber::Exit as usize,
         ],
-        "the program writes, sleeps, writes, forks, writes, execs, and the child exits"
+        "the program writes, sleeps, writes, forks, writes, and execs"
     );
     // The `Write` after the fork is the one that reports it: both processes
     // reach it, and the number each prints is the fork's answer, the child's
@@ -168,8 +168,8 @@ fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
     );
     assert_eq!(
         calls.last(),
-        Some(&(abi::SyscallNumber::Exit as usize)),
-        "and the program ends where both processes end"
+        Some(&(abi::SyscallNumber::ExecProcess as usize)),
+        "and the program ends in the exec: the parent's path ends there, and the child's is the fault the kernel answers"
     );
 
     // The sleep's duration is the immediate of the `li a0` that precedes the

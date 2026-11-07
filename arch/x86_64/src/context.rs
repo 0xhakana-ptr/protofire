@@ -507,7 +507,7 @@ mod tests {
 /// The longer of the four images.  A program is copied into a whole page, so
 /// the exact length matters only to the copy; a shorter array would truncate
 /// the announcing program's last instruction.
-pub const PROGRAM_LEN: usize = 109;
+pub const PROGRAM_LEN: usize = 110;
 
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.
@@ -693,7 +693,7 @@ const EXEC_TARGET_PROGRAM: [u8; 82] = [
 /// bound is real: 0x1000 × 0x10000 was too long, and under the emulator the
 /// trap cost of ten thousand ticks a second left the program unable to reach
 /// its first `int` at all.
-const PROGRAM_BASE: [u8; 109] = [
+const PROGRAM_BASE: [u8; 110] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -736,13 +736,16 @@ const PROGRAM_BASE: [u8; 109] = [
     0xB8, 0x1A, 0x00, 0x00, 0x00, // mov eax, 26 (ExecProcess)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $ (never reached: exec replaced the program)
-    // The child: the same write, on its own copy of the page, then an exit
-    // whose status is zero, which is what the pair check reads.
+    // The child: the same write, on its own copy of the page, and then the
+    // deliberate one — a store into its own **code** page, read-only and not
+    // copy-on-write, which no resolver answers.  The kernel kills the process
+    // for it and the machine goes on; the boot's report reads
+    // `process 4 died from a fault`, and the child's status is the kernel's,
+    // not its own.
     0x6A, 0x2A, // push 42 (the child's copy-on-write fault)
-    0x31, 0xFF, // xor edi, edi (the child exits zero)
-    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3 (Exit)
-    0xCD, 0x80, // int 0x80
-    0xEB, 0xFE, // jmp $
+    0xC7, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, // mov dword [rip+0], 0 (the fatal write)
+    0xEB, 0xFE, // jmp $ (never reached: the child is dead)
 ];
 
 /// The syscall numbers a program's bytes ask for, in order.
@@ -832,14 +835,14 @@ mod program_tests {
 
     /// Every syscall number the program uses is the ABI's own.
     ///
-    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and one
-    /// `Exit` — the parent's path ends in the exec, and the child's is the
-    /// only path that exits itself.  A program compiled against a number this
-    /// build does not serve would print its first line and then fail silently,
-    /// which is the one failure a sleep program could have and still look
-    /// healthy.
+    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess` — and no
+    /// `Exit` at all: the parent's path ends in the exec, and the child's ends
+    /// in the fault the kernel kills it for, so neither path exits itself.  A
+    /// program compiled against a number this build does not serve would print
+    /// its first line and then fail silently, which is the one failure a sleep
+    /// program could have and still look healthy.
     #[test]
-    fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
+    fn the_program_writes_sleeps_writes_forks_writes_and_execs() {
         let bytes = program_bytes(1);
         // By call number rather than by offset: an offset a reader has to count
         // goes stale the moment an instruction is inserted, which is what
@@ -853,9 +856,8 @@ mod program_tests {
                 abi::SyscallNumber::Fork as u32,
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::ExecProcess as u32,
-                abi::SyscallNumber::Exit as u32,
             ],
-            "the program writes, sleeps, writes, forks, writes, execs, and the child exits"
+            "the program writes, sleeps, writes, forks, writes, and execs"
         );
 
         // The parent's last call names the image it becomes: `mov edi, 4`

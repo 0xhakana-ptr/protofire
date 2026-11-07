@@ -247,6 +247,34 @@ pub type PreemptSink = fn(&mut ExceptionFrame);
 #[cfg(target_os = "none")]
 static PREEMPT_SINK: cell::SyncUnsafeCell<Option<PreemptSink>> = cell::SyncUnsafeCell::new(None);
 
+/// The sink for a fault in a program the kernel did not answer: the frame,
+/// the cause, and the address the fault named.  Injected like the call and
+/// preempt sinks — the machine knows where a fault happened, and only the
+/// kernel knows what a process is.
+#[cfg(target_os = "none")]
+pub type FaultSink = fn(&mut ExceptionFrame, usize, usize);
+
+#[cfg(target_os = "none")]
+static FAULT_SINK: cell::SyncUnsafeCell<Option<FaultSink>> = cell::SyncUnsafeCell::new(None);
+
+/// Install the function a fatal program fault is reported through.
+///
+/// # Safety
+///
+/// Called once, before U-mode is entered.
+#[cfg(target_os = "none")]
+pub unsafe fn set_fault_sink(sink: FaultSink) {
+    // SAFETY: the caller promises this is the only write and that it happens
+    // before ring 3 is entered.
+    unsafe { *FAULT_SINK.get() = Some(sink) };
+}
+
+#[cfg(target_os = "none")]
+fn fault_sink() -> Option<FaultSink> {
+    // SAFETY: written once before U-mode is entered, read here after.
+    unsafe { *FAULT_SINK.get() }
+}
+
 /// Install the function called after a handled interrupt.
 ///
 /// # Safety
@@ -648,6 +676,23 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     };
 
     if !handled {
+        // An exception from U-mode that the kernel did not answer kills the
+        // **program**, not the machine: the diagnostic is already on the
+        // console, and the death is the scheduler's — the task goes
+        // `Finished` with the kernel's fault status and the frame this tail
+        // leaves behind is whatever runs next.  `sstatus.SPP` is what says
+        // the fault was the program's and not the kernel's; a kernel that
+        // cannot trust its own translations has nothing left to schedule
+        // for, and its faults keep the halt below.  The sink is injected,
+        // for the reason the call and preempt sinks are: the machine knows
+        // where a fault happened, and only the kernel knows what a process
+        // is.
+        if crate::is_user_context(frame)
+            && let Some(sink) = fault_sink()
+        {
+            sink(frame, cause.code, frame.stval as usize);
+            return;
+        }
         crate::serial::write_str("protofire: unhandled exception ");
         crate::serial::write_u32(cause.code as u32);
         crate::serial::write_str(" (");

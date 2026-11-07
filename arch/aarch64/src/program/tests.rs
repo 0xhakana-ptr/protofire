@@ -84,13 +84,14 @@ fn the_busy_loop_branches_back_to_itself() {
 
 /// Every syscall number the program uses is the ABI's own.
 ///
-/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and one `Exit`
-/// — the parent's path ends in the exec, so the child's is the only path that
-/// exits itself.  A program compiled against a number this build does not
-/// serve would print its first line and then fail silently, which is the one
-/// failure a sleep program could have and still look healthy.
+/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess` — and no `Exit`
+/// at all: the parent's path ends in the exec, and the child's ends in the
+/// fault the kernel kills it for, so neither path exits itself.  A program
+/// compiled against a number this build does not serve would print its first
+/// line and then fail silently, which is the one failure a sleep program
+/// could have and still look healthy.
 #[test]
-fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
+fn the_program_writes_sleeps_writes_forks_writes_and_execs() {
     let words = program_words(1);
     assert_eq!(
         call_numbers(&words),
@@ -101,9 +102,8 @@ fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
             abi::SyscallNumber::Fork as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::ExecProcess as usize,
-            abi::SyscallNumber::Exit as usize,
         ],
-        "the program writes, sleeps, writes, forks, writes, execs, and the child exits"
+        "the program writes, sleeps, writes, forks, writes, and execs"
     );
 
     // The sleep's duration is the immediate of the `movz x0` that precedes

@@ -1612,3 +1612,36 @@ quick brown pyrofox".  A status is content, and content cannot be faked by a
 call that skipped the read.  The mutation — answering `Open` with
 `NotImplemented` before the registry is consulted — leaves the buffer zero,
 and the exit status reads `1 -> 0`, which the gate refuses.
+
+### The process that dies instead of the machine
+
+    protofire: process 4 died from a fault at 0x804000006c (vector 14), status 139
+    protofire: exit statuses 1 -> 116, 2 -> 1, 3 -> 0, 4 -> 139
+
+A fault in a program that no resolver answers used to stop the **machine**:
+the diagnostic printed, and the halt — or, on x86_64, the plain return that
+re-executes the faulting instruction forever — followed.  The machines' fault
+tails now ask `is_user_context` first, and a fault that is the program's is
+reported to a **sink the kernel injects**, the way the call and preempt sinks
+are: the machine knows where a fault happened, and only the kernel knows what
+a process is.  The task goes `Finished` with the kernel's own status — 139,
+the shape the wider world gives a death by bad memory access, whose meaning
+here is written beside the constant rather than borrowed — and whatever runs
+next is installed into the frame the epilogue restores.
+
+The boot proves it by dying on purpose.  The forked child, after its
+copy-on-write write, stores into its own **code** page — read-only, not
+demoted, nothing to resolve — and the machine reports the death and keeps
+going: four exits, the fourth with the kernel's status, every other program
+unaware.  The death travels in the machine's own currency — vector 14 on
+x86_64, vector 8 on aarch64, vector 15 on riscv64 — and the status is the
+kernel's on all three.
+
+What does not change: a fault the **kernel** takes.  A kernel that cannot
+trust its own translations has nothing left to schedule for, and its faults
+keep the old behaviour on each machine — the halt, or the flood, both of
+which say the same thing louder than a status would.
+
+The mutation — the sink halting instead of handing the frame to the
+scheduler — stops the boot before `every program exited`, and the gate goes
+red; the pair fragment `4 -> 139` is the death's own receipt.

@@ -36,10 +36,11 @@ pub const BOOT_PROCESS: u32 = 0;
 pub fn run() {
     use crate::process;
 
-    // SAFETY: both sinks are installed once, before ring 3 is entered.
+    // SAFETY: all three sinks are installed once, before ring 3 is entered.
     unsafe {
         arch::set_call_sink(process::serve);
         arch::set_preempt_sink(crate::scheduler::preempt);
+        arch::set_fault_sink(crate::scheduler::die_from_fault);
     }
 
     // The pipe the reader waits on, made before either program runs.  The

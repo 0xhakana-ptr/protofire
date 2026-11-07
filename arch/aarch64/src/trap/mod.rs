@@ -31,6 +31,8 @@ pub use call::PreemptSink;
 #[cfg(target_os = "none")]
 pub use call::set_call_sink;
 #[cfg(target_os = "none")]
+pub use call::set_fault_sink;
+#[cfg(target_os = "none")]
 pub use call::set_preempt_sink;
 pub use context::Context;
 #[cfg(target_os = "none")]

@@ -21,12 +21,12 @@
 
 /// Named so a test can find where *this* program ends in a buffer sized for the
 /// longest of the four.
-pub const PROGRAM_WORDS_FOR_TEST: usize = 33;
+pub const PROGRAM_WORDS_FOR_TEST: usize = 32;
 
 /// The longest of the four images: the announcing program, the pipe writer,
 /// the pipe reader and the exec target.  A program is copied into a whole
 /// page, so this matters only to the copy.
-pub const PROGRAM_LEN: usize = 33 * 4;
+pub const PROGRAM_LEN: usize = 32 * 4;
 
 pub const PIPE_READER: u16 = 3;
 
@@ -170,7 +170,7 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 /// `push` would have done.  The page is shared and read-only now, so the
 /// write faults, and the kernel's answer to that fault is the whole of what
 /// this image exercises.
-const fn program_words(number: u16) -> [u32; 33] {
+const fn program_words(number: u16) -> [u32; 32] {
     [
         // A busy loop, so a program outlives a time slice.
         //
@@ -220,14 +220,16 @@ const fn program_words(number: u16) -> [u32; 33] {
         0xD280_0348, // movz x8, #26      (ExecProcess)
         0xD400_0001, // svc #0
         0x1400_0000, // b .               (never reached: exec replaced the program)
-        // The child: the same write, on its own copy of the page, then an
-        // exit whose status is zero.
+        // The child: the same write, on its own copy of the page, and then
+        // the deliberate one — a store into its own **code** page, read-only
+        // and not copy-on-write, which no resolver answers.  The kernel kills
+        // the process for it and the machine goes on; the child's status is
+        // the kernel's, not its own.
         0xD100_43FF, // sub sp, sp, #16   (room below the boundary)
         0xF900_03E0, // str x0, [sp]      (the child's copy-on-write fault)
-        0xD280_0000, // movz x0, #0       (the child exits zero)
-        0xD280_0068, // movz x8, #3       (Exit)
-        0xD400_0001, // svc #0
-        0x1400_0000, // b .
+        0x9000_0000, // adrp x0, #0       (this page's base)
+        0xB900_001F, // str wzr, [x0]     (the fatal write)
+        0x1400_0000, // b .               (never reached: the child is dead)
     ]
 }
 

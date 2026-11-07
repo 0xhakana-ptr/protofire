@@ -105,6 +105,45 @@ pub unsafe fn install(scheduler: Scheduler) {
     *SCHEDULER.lock() = Some(scheduler);
 }
 
+/// The status a process dies with when a fault no resolver answered.
+///
+/// A program's own `Exit` carries the status the program chose; a death by
+/// fault carries one the kernel chose, and the two must never be mistakable.
+/// 139 is the shape the wider world gives a process killed by its own bad
+/// memory access — 128 plus the signal number — and this kernel's meaning is
+/// written here rather than borrowed from there: the program died of a fault,
+/// not of an exit, and the boot line that reports the death names the fault
+/// beside it.
+pub const FAULT_STATUS: usize = 139;
+
+/// Kill the running process: its task becomes `Finished` with
+/// [`FAULT_STATUS`], and whatever runs next is installed into the frame.
+///
+/// Called from the machines' fault tails, with the fault's vector and the
+/// address it named, after the diagnostic has printed — the line above the
+/// death says what the access was; this line says who paid for it.  A fault
+/// in **kernel** code never reaches here: the machines' tails ask
+/// `is_user_context` first, and a fault the kernel takes is still the machine
+/// stopping, because a kernel that cannot trust its own translations has
+/// nothing left to schedule for.
+///
+/// The task's space is **not** released here.  The CPU taking the fault has
+/// the task's root installed, and the exclusion the exits rely on — every
+/// task finished, every other CPU told — does not hold; the space goes back
+/// with the rest at the machine's end, the same deferral an exit takes.
+pub fn die_from_fault(frame: &mut arch::Context, vector: usize, address: usize) {
+    arch::serial::write_str("protofire: process ");
+    arch::serial::write_u32(current_pid().unwrap_or(0));
+    arch::serial::write_str(" died from a fault at ");
+    arch::serial::write_hex(address as u64);
+    arch::serial::write_str(" (vector ");
+    arch::serial::write_u32(vector as u32);
+    arch::serial::write_str("), status ");
+    arch::serial::write_u32(FAULT_STATUS as u32);
+    arch::serial::write_str("\n");
+    advance_with_status(frame, true, FAULT_STATUS);
+}
+
 /// Install the next task's context without saving the frame it was given,
 /// waiting through the wakes other CPUs take.
 ///

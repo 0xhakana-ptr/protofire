@@ -91,6 +91,32 @@ static CALL_SINK: cell::SyncUnsafeCell<Option<CallSink>> = cell::SyncUnsafeCell:
 #[cfg(target_os = "none")]
 static PREEMPT_SINK: cell::SyncUnsafeCell<Option<PreemptSink>> = cell::SyncUnsafeCell::new(None);
 
+/// The sink for a fault in a program the kernel did not answer: the frame, the
+/// vector, and the address the fault named.  Injected like the other two, for
+/// the same reason — the machine knows where a fault happened, and only the
+/// kernel knows what a process is.
+#[cfg(target_os = "none")]
+pub type FaultSink = fn(&mut Context, usize, usize);
+#[cfg(target_os = "none")]
+static FAULT_SINK: cell::SyncUnsafeCell<Option<FaultSink>> = cell::SyncUnsafeCell::new(None);
+
+/// Install the function a fatal program fault is reported through.
+///
+/// # Safety
+///
+/// Called once, before ring 3 is entered.
+#[cfg(target_os = "none")]
+pub unsafe fn set_fault_sink(sink: FaultSink) {
+    // SAFETY: as `set_call_sink`.
+    unsafe { *FAULT_SINK.get() = Some(sink) };
+}
+
+#[cfg(target_os = "none")]
+fn fault_sink() -> Option<FaultSink> {
+    // SAFETY: as `call_sink`.
+    unsafe { *FAULT_SINK.get() }
+}
+
 /// Install the function that serves a program's supervisor call.
 ///
 /// # Safety
@@ -328,6 +354,21 @@ fn finish_interrupt(frame: &mut Context) {
     }
 
     if !handled {
+        // An exception from ring 3 that the kernel did not answer kills the
+        // **program**, not the machine: the diagnostic is already on the
+        // console, and the death is the scheduler's — the task goes
+        // `Finished` with the kernel's fault status and the frame this tail
+        // leaves behind is whatever runs next.  The `cs` this frame carries
+        // is what says the fault was the program's and not the kernel's; a
+        // kernel that cannot trust its own translations has nothing left to
+        // schedule for, and its faults keep the old behaviour below.
+        if frame.vector < 32
+            && crate::is_user_context(frame)
+            && let Some(sink) = fault_sink()
+        {
+            sink(frame, frame.vector as usize, unsafe { fault_address() });
+            return;
+        }
         // Not fatal: a device with no driver raises its line whether or not
         // anything wants it, and a kernel that stopped here could not boot on a
         // machine with one device more than it knows.
