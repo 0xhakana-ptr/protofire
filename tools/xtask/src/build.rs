@@ -46,6 +46,15 @@ const INIT_PATH: &str = "/bin/init";
 /// passed on a machine where an earlier manual build had left the file.
 const INIT_PROFILE: &str = "release";
 
+/// The linker script every machine's `init` is linked with.
+///
+/// One constant, and not a per-machine table: the script carries no machine
+/// fact.  It fixes the base the kernel's user window computes and lets the
+/// target triple choose the container, which is why `arch/<machine>/` — where
+/// the kernel's scripts live, because their load addresses *are* their
+/// machines' loader conventions — is the wrong home for this one.
+const INIT_LINKER_SCRIPT: &str = "apps/init/linker.ld";
+
 /// Build `apps/init` for `machine`'s target, answering the ELF's bytes.
 ///
 /// The program's own linker script fixes its base, and its Rust flags are
@@ -55,13 +64,9 @@ const INIT_PROFILE: &str = "release";
 /// sysroot carries is built with the default code model, which the program's
 /// own CGUs must not contradict.
 fn build_init(machine: Machine) -> Result<Vec<u8>> {
-    let script = match machine {
-        Machine::X8664 => "apps/init/linker-x86_64.ld",
-        Machine::Aarch64 => "apps/init/linker-aarch64.ld",
-        Machine::Riscv64 => "apps/init/linker-riscv64.ld",
-    };
-    let rustflags =
-        format!("-C link-arg=-T{script} -C link-arg=--strip-debug -C relocation-model=pic");
+    let rustflags = format!(
+        "-C link-arg=-T{INIT_LINKER_SCRIPT} -C link-arg=--strip-debug -C relocation-model=pic"
+    );
     let mut command = Command::new("cargo");
     command
         .args(["build", "--offline", "-p", "init", "--target"])

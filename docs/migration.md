@@ -1736,3 +1736,16 @@ exits with its first byte — but the chain behind it is new: toolchain → ELF
 → filesystem → loader → address space → ring 3.  The mutation that answers
 `ExecProcess` with an error before the loader runs leaves the status at
 `1 -> 0`, and the gate refuses it.
+
+The program's linker script is one file, not three.  It arrived as three —
+one per machine, copying the kernel scripts' shape — and the machine facts
+turned out to be absent from all of them: the base is the kernel's user
+window arithmetic (`USER_BASE + USER_WINDOW`, the same number on every
+machine) and the container is the target triple's, which an absent
+`OUTPUT_FORMAT` leaves to lld.  A build with a single neutral script was
+**byte-identical** to each of the three on all three targets, which is the
+measurement that retired them.  They did not move into `arch/<machine>/`
+with the kernel's scripts because that directory is where a machine's loader
+conventions live and this file has none — a copy there would have been a
+second opinion about `USER_BASE` from a layer below the one that computes
+it.
