@@ -162,8 +162,31 @@ fn every_truncation_and_wrong_field_is_refused_by_name() {
     endian[5] = 2; // big-endian
     assert_eq!(load(&endian, MACHINE), Err(LoadError::BadEndian));
 
-    let mut dynamic = good.clone();
+    let mut core = good.clone();
+    core[16..18].copy_from_slice(&4u16.to_le_bytes()); // ET_CORE
+    assert_eq!(load(&core, MACHINE), Err(LoadError::NotExecutable));
+
+    // ET_DYN with a dynamic segment *outside* every mapped segment: the file
+    // expects relocation processing, which no loader here performs.  (A
+    // dynamic segment a LOAD carries is dead data, and loads — the real
+    // linker's own shape.)
+    let mut dynamic = elf(
+        MACHINE,
+        0x8040000008,
+        &[SegmentSpec {
+            vaddr: 0x8040000000,
+            offset: FIRST_OFFSET,
+            filesz: 0x1000,
+            memsz: 0x1000,
+            flags: FLAG_R | FLAG_X,
+        }],
+    );
     dynamic[16..18].copy_from_slice(&3u16.to_le_bytes()); // ET_DYN
+    // A second program header, PT_DYNAMIC at an offset no LOAD covers.
+    dynamic[120..124].copy_from_slice(&2u32.to_le_bytes());
+    dynamic[128..136].copy_from_slice(&0xF000u64.to_le_bytes()); // p_offset
+    dynamic[160..168].copy_from_slice(&0x100u64.to_le_bytes()); // p_filesz
+    dynamic[56..58].copy_from_slice(&2u16.to_le_bytes()); // e_phnum: 2
     assert_eq!(load(&dynamic, MACHINE), Err(LoadError::NotExecutable));
 
     let mut machine = good.clone();
@@ -345,6 +368,120 @@ fn segments_the_loader_will_not_map_are_refused_by_name() {
         ],
     );
     assert_eq!(load(&overlap, MACHINE), Err(LoadError::BadSegment));
+}
+
+#[test]
+fn a_congruent_segment_loads_where_a_stranger_is_refused() {
+    // The shape a real linker emits: file offset and vaddr agree *within* the
+    // page (0x78 ≡ 0x78) without either being page-aligned.  The first page's
+    // bytes begin 0x78 bytes into the frame, which is exactly what the
+    // congruence check is for.
+    let image = load(
+        &elf(
+            MACHINE,
+            0x8040000078,
+            &[SegmentSpec {
+                vaddr: 0x8040000078,
+                offset: 0x1078,
+                filesz: 0x1000,
+                memsz: 0x1000,
+                flags: FLAG_R | FLAG_X,
+            }],
+        ),
+        MACHINE,
+    )
+    .expect("a congruent segment loads");
+    assert_eq!(image.segments()[0].virtual_address, 0x8040000078);
+
+    // The same shape broken: the offset moved by one page *and one byte*, so
+    // the two no longer agree within the page — the file's bytes would land
+    // one byte off.
+    assert_eq!(
+        load(
+            &elf(
+                MACHINE,
+                0x8040000078,
+                &[SegmentSpec {
+                    vaddr: 0x8040000078,
+                    offset: 0x2079,
+                    filesz: 0x1000,
+                    memsz: 0x1000,
+                    flags: FLAG_R | FLAG_X,
+                }],
+            ),
+            MACHINE,
+        ),
+        Err(LoadError::BadSegment)
+    );
+}
+
+#[test]
+fn the_page_plan_slices_a_congruent_segment_honestly() {
+    // The x86_64 linker's own shape: text at ...078, one page's head holds the
+    // file's bytes and the second page finishes them.
+    let image = load(
+        &elf(
+            MACHINE,
+            0x8040000078,
+            &[SegmentSpec {
+                vaddr: 0x8040000078,
+                offset: 0x1078,
+                filesz: 0xf96,
+                memsz: 0xf96,
+                flags: FLAG_R | FLAG_X,
+            }],
+        ),
+        MACHINE,
+    )
+    .expect("the congruent image loads");
+    let pages: alloc::vec::Vec<_> = crate::loader::pages(&image.segments()[0]).collect();
+    assert_eq!(pages.len(), 2, "0x78 + 0xf96 spans two pages");
+    assert_eq!(pages[0].virtual_address, 0x8040000000);
+    assert_eq!(pages[0].file_offset, 0x1078);
+    assert_eq!(
+        pages[0].copy_len,
+        0x1000 - 0x78,
+        "the head page ends mid-file"
+    );
+    assert_eq!(pages[0].frame_offset, 0x78, "the bytes land mid-frame");
+    assert_eq!(pages[1].virtual_address, 0x8040001000);
+    assert_eq!(
+        pages[1].copy_len,
+        0xf96 - (0x1000 - 0x78),
+        "the tail finishes it"
+    );
+
+    // A BSS segment: the file's bytes end inside the second page, and the
+    // rest is the zero-fill the pool's frames already carry.
+    let image = load(
+        &elf(
+            MACHINE,
+            0x8040000008,
+            &[
+                SegmentSpec {
+                    vaddr: 0x8040000000,
+                    offset: FIRST_OFFSET,
+                    filesz: 0x1000,
+                    memsz: 0x1000,
+                    flags: FLAG_R | FLAG_X,
+                },
+                SegmentSpec {
+                    vaddr: 0x8040001000,
+                    offset: 0x2000,
+                    filesz: 0x100,
+                    memsz: 0x2000,
+                    flags: FLAG_R | FLAG_W,
+                },
+            ],
+        ),
+        MACHINE,
+    )
+    .expect("the bss image loads");
+    let pages: alloc::vec::Vec<_> = crate::loader::pages(&image.segments()[1]).collect();
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[0].copy_len, 0x100, "the file's bytes");
+    assert_eq!(pages[1].copy_len, 0, "pure BSS: nothing to copy");
+    assert_eq!(pages[1].virtual_address, 0x8040002000);
 }
 
 #[test]

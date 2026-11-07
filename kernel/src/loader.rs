@@ -19,6 +19,15 @@
 use crate::address_space::is_user_range;
 use paging::PAGE_SIZE;
 
+/// The most bytes one program image may carry.
+///
+/// The exec path reads a file **whole** before it maps any of it, and the
+/// bound is what makes that honest: a file this size is one the caller
+/// refuses before it allocates.  A quarter of the boot disk — the delivery
+/// channel — is the honest ceiling, because a program bigger than the disk
+/// that carries it cannot be delivered at all.
+pub const MAX_IMAGE_BYTES: usize = 256 * 1024;
+
 /// The most `PT_LOAD` segments one accepted image may carry.
 ///
 /// A fixed bound rather than a growable list: the segments come from a file a
@@ -84,8 +93,9 @@ pub enum LoadError {
     NotElf64,
     /// The image is big-endian; this kernel reads little-endian.
     BadEndian,
-    /// `e_type` is not `ET_EXEC`: this loader maps no dynamic or relocatable
-    /// image, there being no linker to fix one up.
+    /// `e_type` is neither `ET_EXEC` nor a dynamic-free `ET_DYN`: this loader
+    /// maps no image that expects relocation processing or an interpreter,
+    /// there being no linker and no interpreter to give it what it wants.
     NotExecutable,
     /// `e_machine` is not the machine the caller expected.
     WrongMachine,
@@ -124,7 +134,10 @@ const MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
 const CLASS_ELF64: u8 = 2;
 const DATA_LITTLE_ENDIAN: u8 = 1;
 const ET_EXEC: u16 = 2;
+const ET_DYN: u16 = 3;
 const PT_LOAD: u32 = 1;
+const PT_DYNAMIC: u32 = 2;
+const PT_INTERP: u32 = 3;
 const PROGRAM_HEADER_SIZE: usize = 56;
 const HEADER_SIZE: usize = 64;
 const FLAG_EXECUTE: u32 = 1;
@@ -184,10 +197,12 @@ fn segment_at(bytes: &[u8], offset: usize) -> Option<(Segment, u32)> {
 /// Validate one segment against the image it came from and the rules this
 /// kernel maps by, answering it unchanged.
 fn checked(segment: Segment, flags: u32, bytes: &[u8]) -> Result<Segment, LoadError> {
-    // Page alignment: the mapping walks page by page, and a segment that
-    // straddles a page's start would put the file's bytes on the wrong page.
-    if !segment.virtual_address.is_multiple_of(PAGE_SIZE)
-        || !segment.file_offset.is_multiple_of(PAGE_SIZE)
+    // Page congruence: the mapping walks page by page, and the file offset
+    // and the virtual address must agree *within* a page or the file's bytes
+    // would land on the wrong one.  Real linkers emit offsets congruent to
+    // the addresses (padding the file as little as possible), not individually
+    // aligned — requiring alignment would refuse every real image.
+    if segment.file_offset % PAGE_SIZE != segment.virtual_address % PAGE_SIZE
         || segment.memory_size < segment.file_size
         || segment.file_offset + segment.file_size > bytes.len()
     {
@@ -223,6 +238,94 @@ fn overlaps(a: &Segment, b: &Segment) -> bool {
         && b.virtual_address < a.virtual_address + a.memory_size
 }
 
+/// One page's worth of a segment's mapping.
+///
+/// The loader's segments are *ranges*, and the mapping walks pages: which
+/// page, which file bytes to copy into the frame (none for a page the file
+/// does not reach — BSS), and how many.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PagePlan {
+    /// The page-aligned virtual address the frame maps at.
+    pub virtual_address: usize,
+    /// Where the copied bytes begin in the image file.
+    pub file_offset: usize,
+    /// How many bytes to copy from the file into the frame.  The frame the
+    /// pool hands out is already zeroed, so the rest of the page is BSS by
+    /// construction.
+    pub copy_len: usize,
+    /// Where in the **frame** the copied bytes land: the segment's own start
+    /// can sit mid-page, and a plan whose segment begins `0x78` bytes into
+    /// the page copies at frame offset `0x78`, the bytes before it belonging
+    /// to no segment.
+    pub frame_offset: usize,
+}
+
+/// The pages one segment maps, yielded lowest first.
+///
+/// A plain iterator rather than an array: the page count is
+/// `ceil((vaddr + memsz) / PAGE) - (vaddr / PAGE)`, which no fixed bound fits
+/// honestly, and the caller allocates one frame per yield.
+#[derive(Debug, Clone, Copy)]
+pub struct SegmentPages {
+    /// The segment's own start: the first page's copy begins here, because
+    /// the bytes before it in the frame belong to no segment.
+    vaddr: usize,
+    /// The next page-aligned address to yield.
+    next: usize,
+    /// The segment's end, exclusive.
+    end: usize,
+    /// The file offset that corresponds to `vaddr`.
+    file_offset: usize,
+    /// The file offset where the segment's file bytes end — past this, the
+    /// memory is the zero-fill.
+    file_end: usize,
+}
+
+impl Iterator for SegmentPages {
+    type Item = PagePlan;
+
+    fn next(&mut self) -> Option<PagePlan> {
+        if self.next >= self.end {
+            return None;
+        }
+        let page_start = self.next;
+        let page_end = (page_start + PAGE_SIZE) & !(PAGE_SIZE - 1);
+        // The segment's portion of this page: the bytes before `vaddr` and
+        // past `end` belong to no segment, and the frame is zeroed already.
+        let memory_lo = self.vaddr.max(page_start);
+        let memory_hi = self.end.min(page_end);
+        // The file position that corresponds to `memory_lo`, and the copy's
+        // length clipped at the file's end — everything past it is the
+        // zero-fill.
+        let file_at = self.file_offset + (memory_lo - self.vaddr);
+        let copy_len = memory_hi - memory_lo;
+        let copy_len = copy_len.min(self.file_end.saturating_sub(file_at));
+        self.next = page_end;
+        Some(PagePlan {
+            virtual_address: page_start,
+            file_offset: file_at,
+            copy_len,
+            frame_offset: memory_lo - page_start,
+        })
+    }
+}
+
+/// The pages one accepted segment maps, lowest first.
+///
+/// The first page typically carries the segment's own start inside it — a
+/// segment whose `vaddr` is `...078` maps its first frame at `...000`, with
+/// the file's bytes beginning `0x78` bytes into the frame and nothing before
+/// them — and the last page is BSS whenever `memsz` outruns `filesz`.
+pub fn pages(segment: &Segment) -> SegmentPages {
+    SegmentPages {
+        vaddr: segment.virtual_address,
+        next: segment.virtual_address & !(PAGE_SIZE - 1),
+        end: segment.virtual_address + segment.memory_size,
+        file_offset: segment.file_offset,
+        file_end: segment.file_offset + segment.file_size,
+    }
+}
+
 /// Parse `bytes` as an ELF64 program image for `expected_machine`.
 ///
 /// Pure: no allocation, no machine, no page table — the answer is a layout
@@ -245,7 +348,15 @@ pub fn load(bytes: &[u8], expected_machine: u16) -> Result<Image, LoadError> {
     }
     let e_type = u16_at(bytes, 16).ok_or(LoadError::TooShort)?;
     let e_machine = u16_at(bytes, 18).ok_or(LoadError::TooShort)?;
-    if e_type != ET_EXEC {
+    // ET_EXEC is the fixed-base shape.  ET_DYN is accepted **conditionally**:
+    // a position-independent *file* whose bytes are linked at a fixed base
+    // and carry no dynamic section is the same thing at load time — the bytes
+    // are the whole truth, no relocation processing will happen — and
+    // rust-lld emits exactly that for a ring-3 program.  A DYN image with a
+    // dynamic segment or an interpreter is a file the loader would have to
+    // fix up, and no fixup exists here.
+    let allow_dynamic = e_type == ET_DYN;
+    if e_type != ET_EXEC && !allow_dynamic {
         return Err(LoadError::NotExecutable);
     }
     if e_machine != expected_machine {
@@ -307,6 +418,32 @@ pub fn load(bytes: &[u8], expected_machine: u16) -> Result<Image, LoadError> {
 
     if image.segment_count == 0 {
         return Err(LoadError::BadProgramHeaders);
+    }
+
+    // A DYN image's honesty check, after the LOADs are known.  A dynamic
+    // segment whose bytes a mapped segment **carries** is dead data: nothing
+    // reads it, no relocation is processed, and the loader maps it the way it
+    // maps any other byte.  A dynamic segment (or an interpreter) *outside*
+    // every mapped segment names machinery this loader does not have —
+    // relocation processing, another program to load the file — and that is a
+    // refusal, by name.
+    for header in 0..e_phnum {
+        let at = e_phoff + header * PROGRAM_HEADER_SIZE;
+        let p_type = u32_at(bytes, at).ok_or(LoadError::BadProgramHeaders)?;
+        if p_type != PT_DYNAMIC && p_type != PT_INTERP {
+            continue;
+        }
+        let p_offset = u64_at(bytes, at + 8).ok_or(LoadError::BadProgramHeaders)? as usize;
+        let p_filesz = u64_at(bytes, at + 32).ok_or(LoadError::BadProgramHeaders)? as usize;
+        if p_type == PT_INTERP
+            || !image.segments().iter().any(|segment| {
+                let start = segment.file_offset;
+                let end = start + segment.file_size;
+                p_offset >= start && p_offset + p_filesz <= end
+            })
+        {
+            return Err(LoadError::NotExecutable);
+        }
     }
 
     // The entry must be inside executable code the loader is about to map: an

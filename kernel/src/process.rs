@@ -76,7 +76,15 @@ pub const fn program_stack_page(number: u16) -> usize {
 /// `exec` has: `[sp]` is a user pointer to a NUL-terminated path the kernel
 /// placed at [`EXEC_PATH_OFFSET`], and an image that wants no path simply
 /// never reads it.
-pub const EXEC_BLOCK_BYTES: usize = 64;
+///
+/// The 96 is deliberate: a program's own push writes below its hand-over
+/// pointer — 16 bytes down on aarch64 and riscv64, 8 on x86_64 — and the
+/// first version's 64-byte block put the path's tail *inside* that push
+/// zone.  The aarch64 parent's push overwrote the path's `t` and NUL with
+/// the pointer's own bytes, the copy read a truncated string, and the exec
+/// failed with a path nobody could have guessed.  The block now ends 32
+/// bytes below the hand-over pointer, past every machine's push write.
+pub const EXEC_BLOCK_BYTES: usize = 96;
 
 /// Where in the `exec` block the path's bytes begin.
 pub const EXEC_PATH_OFFSET: usize = 16;
@@ -94,21 +102,6 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     use syscall::SyscallNumber;
 
     let number = call.number;
-    {
-        arch::serial::write_str("TEMP call n=");
-        arch::serial::write_u32(number as u32);
-        arch::serial::write_str(" resume=");
-        arch::serial::write_hex(call.resume as u64);
-        arch::serial::write_str(" a0=");
-        arch::serial::write_hex(call.arguments[0] as u64);
-        arch::serial::write_str(" a1=");
-        arch::serial::write_hex(call.arguments[1] as u64);
-        arch::serial::write_str(" pid=");
-        arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(9999));
-        arch::serial::write_str(" slot=");
-        arch::serial::write_u32(crate::per_cpu::current_slot() as u32);
-        arch::serial::write_str("\n");
-    }
 
     if number == SyscallNumber::Exit as usize {
         // The scheduler decides what runs next and puts that task's context in
@@ -369,31 +362,30 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         };
     }
 
-    // Exec: the running process becomes the image it names.
+    // Exec: the running process becomes the file it names.
     //
-    // The argument is an image number, and the images are the boot's own: the
-    // machine's `program_bytes` answers for every number through
-    // `arch::EXEC_IMAGE`, and a number outside that range is a call this boot
-    // has nothing to serve, answered as an argument error rather than as a
-    // program nobody built.  The task keeps its pid, its parent and its window;
-    // the image, the stack and the instruction it resumes at are the new
-    // program's, which is the whole of what `exec` is.
+    // The argument is a NUL-terminated path in the caller's memory, copied
+    // with the same bound and the same check the `Open` branch uses — an
+    // address from ring 3 is a number until something validates it.  The
+    // kernel reads the file through the registry's own namespace, loads it,
+    // and maps it; the task keeps its pid and its parent, and everything else
+    // is the new program's, which is the whole of what `exec` is.
     if number == SyscallNumber::ExecProcess as usize {
-        let image = call.arguments[0];
-        if image == 0 || image > arch::EXEC_IMAGE as usize {
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
-        }
-        return match crate::scheduler::exec_current(frame, image as u16) {
+        };
+        return match crate::scheduler::exec_current(frame, path) {
             Some(pid) => {
                 // The one line that says the mechanism ran: the task that
-                // called is the task named, and the image is the one it asked
-                // for.  A reader can pair this with the exit statuses — the
-                // exec'd task's status is its own pid, which only a task that
-                // kept its identity across the change could report.
+                // called is the task named, and the file is the one it asked
+                // to become.  A reader can pair this with the exit statuses —
+                // the exec'd task's status is the first byte of the file it
+                // read, which only a task that ran could report.
                 arch::serial::write_str("protofire: process ");
                 arch::serial::write_u32(pid);
-                arch::serial::write_str(" exec'd image ");
-                arch::serial::write_u32(image as u32);
+                arch::serial::write_str(" exec'd ");
+                arch::serial::write_str(path);
                 arch::serial::write_str("\n");
                 CallOutcome::Return(0)
             }
@@ -496,32 +488,9 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // reserved slots stay zero.  A NUL-terminated path needs no length
         // slot, which is what keeps the kernel-side shape — path as a borrow,
         // flags in the first argument — and the ring-3 shape one shape.
-        let path_ptr = call.arguments[0];
         let flags = call.arguments[1];
-        let mut bytes = [0u8; OPEN_PATH_MAX];
-        let mut length = 0;
-        loop {
-            if length == OPEN_PATH_MAX {
-                return CallOutcome::Return(abi::syscall::encode_error(
-                    abi::Error::InvalidArgument,
-                ));
-            }
-            if !crate::address_space::is_user_range(path_ptr + length, 1) {
-                return CallOutcome::Return(abi::syscall::encode_error(
-                    abi::Error::InvalidArgument,
-                ));
-            }
-            // SAFETY: the byte is inside the user window, which `is_user_range`
-            // just checked, and the pages behind it are the calling task's own
-            // mappings, installed on this CPU.
-            let byte = unsafe { *((path_ptr + length) as *const u8) };
-            bytes[length] = byte;
-            if byte == 0 {
-                break;
-            }
-            length += 1;
-        }
-        let Ok(path) = core::str::from_utf8(&bytes[..length]) else {
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
         };
 
@@ -585,14 +554,44 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented))
 }
 
+/// Copy a NUL-terminated path out of the caller's memory, answering it as a
+/// `&str` that borrows the buffer the caller hands in.
+///
+/// One shape for both `Open` and `ExecProcess`, which take the same kind of
+/// argument: an address in the caller's memory.  Every byte is checked against
+/// the user window before it is read, the length is bounded, the string must
+/// be UTF-8, and the copy happens once — the caller's bytes are the kernel's
+/// for the length of the call, which is what makes the rest of the handler
+/// ordinary kernel code.  The buffer is the caller's: the borrow must not
+/// outlive the stack slot the copied bytes live in.
 #[cfg(target_os = "none")]
-/// The longest path a ring-3 `Open` may name.
+fn copy_user_path(path_ptr: usize, bytes: &mut [u8; OPEN_PATH_MAX]) -> Result<&str, abi::Error> {
+    let mut length = 0;
+    loop {
+        if length == OPEN_PATH_MAX || !crate::address_space::is_user_range(path_ptr + length, 1) {
+            return Err(abi::Error::InvalidArgument);
+        }
+        // SAFETY: the byte is inside the user window, which `is_user_range`
+        // just checked, and the pages behind it are the calling task's own
+        // mappings, installed on this CPU.
+        let byte = unsafe { *((path_ptr + length) as *const u8) };
+        bytes[length] = byte;
+        if byte == 0 {
+            break;
+        }
+        length += 1;
+    }
+    core::str::from_utf8(&bytes[..length]).map_err(|_| abi::Error::InvalidArgument)
+}
+
+/// The longest path a ring-3 `Open` or `ExecProcess` may name.
 ///
 /// The registry's [`PATH_MAX`](crate::syscall::PATH_MAX) is the format's bound;
 /// this is the copy's, because the copy happens on a trap stack that one page
 /// of memory has to hold, frame and all.  A path this kernel mounts is a few
 /// dozen bytes, and a caller that needs more is a caller a later change can
 /// serve from the heap.
+#[cfg(target_os = "none")]
 const OPEN_PATH_MAX: usize = 128;
 
 #[cfg(target_os = "none")]

@@ -199,6 +199,19 @@ borrow needs no validation.  The boundary exists where programs call:
 the range with `is_user_range` before it touches a byte, because an address
 that arrives in a register is a number until something checks it.
 
+The calls a ring-3 program can make today, and the slots each carries:
+
+| Call | Slots |
+|------|-------|
+| `Open` | `a0` the path, a NUL-terminated string in the caller's memory; `a1` the flags; `a2`-`a3` reserved zero |
+| `Read` | `a0` the descriptor; `a1` the offset, or `READ_OFFSET_CURRENT`; `a2` the buffer; `a3` its length; `a4`-`a5` reserved zero |
+| `Close` | `a0` the descriptor; `a1`-`a5` reserved zero |
+| `ExecProcess` | `a0` the path, a NUL-terminated string in the caller's memory naming the file the process becomes; `a1`-`a5` reserved zero |
+
+`Read`'s buffer and length travel in slots because a ring-3 caller has no
+borrow to hand over; the kernel's own callers leave both zero and pass the
+borrow directly, which is why the reserved check starts past them.
+
 What is already decided, and is what a new call with an address argument does too:
 
 - **A caller's bytes are copied, never borrowed across a wait.**  A handler

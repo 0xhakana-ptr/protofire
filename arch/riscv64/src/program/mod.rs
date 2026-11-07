@@ -200,9 +200,13 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         // names.  The task survives the change with its pid, and its exit
         // status comes from the image it became, which asks the kernel who it
         // is and exits with the answer.
+        // The pointer comes before the addi: `sp` here is the hand-over top,
+        // and `-32(sp)` is exactly where the boot left the exec path.  `a0`
+        // survives the copy-on-write fault below — the resolver restores every
+        // register — so the exec that follows reads what this loaded.
+        0xFC01_3503,                          // ld a0, -64(sp)     (the boot's exec path)
         addi(2, 2, -16),                      // addi sp, sp, -16
         store_against_sp(REGISTER_A6 as u32), // sd a6, 0(sp) (the fault)
-        addi(REGISTER_A0 as u32, 0, 4),       // li a0, #4  (the image exec names)
         addi(
             REGISTER_A7 as u32,
             0,

@@ -41,9 +41,14 @@ const TMPFS_BYTES: usize = 1024 * 1024;
 
 /// The sector the driver's probe writes and reads back.
 ///
-/// A sector no filesystem structure uses, the mount below reads sector 0 for
-/// the superblock, so the probe cannot corrupt what it is about to mount.
-const BOOT_DISK_PROBE_SECTOR: u64 = 63;
+/// The disk's **far end** — the boot's volume is built at block 0 and a
+/// loaded image plus the filesystem's own tables reach only a few hundred
+/// blocks — so the probe writes on bytes no filesystem structure uses, at a
+/// distance no growth of the volume reaches.  It used to sit at block 63,
+/// "past the superblock" being the whole of the argument, and a volume that
+/// grew a real program into it would have taken the probe's bytes as its
+/// own.
+const BOOT_DISK_PROBE_SECTOR: u64 = 2040;
 
 /// The bytes the probe writes.
 ///

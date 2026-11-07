@@ -17,11 +17,60 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 
+use anyhow::anyhow;
+
 use crate::machine::Machine;
 
 /// The disk a boot is given: 1 MiB, which is more than the boot reads and
 /// enough that the driver's first writes cannot fail for want of space.
 const DISK_BYTES: usize = 1024 * 1024;
+
+/// The volume's label and the greeting file, as the kernel's own constants
+/// name them.
+///
+/// Two copies of each string — here and in `kernel/src/volume.rs` — because
+/// the disk is formatted **here**, before the machine runs, and the kernel's
+/// self-check reads back the constant it carries.  The boot's read-back line
+/// is what polices the pairing: drift and the gate goes red.
+const VOLUME_LABEL: &str = "protofire";
+const GREETING_PATH: &str = "/greeting.txt";
+const GREETING_CONTENT: &[u8] = b"the quick brown pyrofox";
+const INIT_PATH: &str = "/bin/init";
+
+/// Build `apps/init` for `machine`'s target, answering the ELF's bytes.
+///
+/// The program's own linker script fixes its base, and its Rust flags are
+/// named here rather than in a config so the kernel's are not inherited: a
+/// program links as PIC, because its window base is far past the absolute
+/// relocations a static build would emit, and the precompiled core the
+/// sysroot carries is built with the default code model, which the program's
+/// own CGUs must not contradict.
+fn build_init(machine: Machine) -> Result<Vec<u8>> {
+    let script = match machine {
+        Machine::X8664 => "apps/init/linker-x86_64.ld",
+        Machine::Aarch64 => "apps/init/linker-aarch64.ld",
+        Machine::Riscv64 => "apps/init/linker-riscv64.ld",
+    };
+    let rustflags =
+        format!("-C link-arg=-T{script} -C link-arg=--strip-debug -C relocation-model=pic");
+    let mut command = Command::new("cargo");
+    command
+        .args(["build", "--offline", "-p", "init", "--target"])
+        .arg(machine.triple())
+        .env("RUSTFLAGS", &rustflags);
+    if !command
+        .status()
+        .context("running cargo build for apps/init")?
+        .success()
+    {
+        bail!("cargo build failed for init on {}", machine.triple());
+    }
+    let elf = PathBuf::from("target")
+        .join(machine.triple())
+        .join("release")
+        .join("init");
+    std::fs::read(&elf).with_context(|| format!("reading the built init at {}", elf.display()))
+}
 
 /// Where cargo puts the image for a target and profile.
 fn image_path(machine: Machine, profile: &str) -> PathBuf {
@@ -79,7 +128,31 @@ pub(crate) fn run(
         std::process::id()
     ));
     let _ = std::fs::remove_file(&disk);
-    std::fs::write(&disk, vec![0u8; DISK_BYTES])
+
+    // The volume, formatted **here**: the greeting the boot's self-check reads
+    // back, and `/bin/init`, the compiled program the kernel execs from its
+    // own filesystem.  A PyroFS image built on the host from the same crate
+    // the kernel mounts — the disk file is the delivery channel, and the
+    // kernel's `format_if_empty` finds it already a volume.
+    let init = build_init(machine)?;
+    let volume = fs::pyrofs::PyroFs::build_image(
+        VOLUME_LABEL,
+        &[
+            fs::pyrofs::ImageEntry {
+                path: GREETING_PATH,
+                data: GREETING_CONTENT,
+            },
+            fs::pyrofs::ImageEntry {
+                path: INIT_PATH,
+                data: &init,
+            },
+        ],
+    )
+    .map_err(|error| anyhow!("building the PyroFS volume failed: {error:?}"))?;
+    let mut disk_bytes = vec![0u8; DISK_BYTES];
+    let volume_len = volume.len().min(DISK_BYTES);
+    disk_bytes[..volume_len].copy_from_slice(&volume[..volume_len]);
+    std::fs::write(&disk, disk_bytes.as_slice())
         .with_context(|| format!("creating the disk at {}", disk.display()))?;
     let machine_arguments = machine.qemu_arguments(&disk);
     if machine_arguments.is_empty() {

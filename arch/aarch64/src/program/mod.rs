@@ -36,12 +36,6 @@ pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;
 
-/// The image `exec` may name, and the highest number `program_bytes` answers
-/// for with a purpose-built program.  One through this are the images this
-/// boot has; a call beyond it is one the kernel refuses, there being no
-/// program behind the number.
-pub const EXEC_IMAGE: u16 = 4;
-
 /// The writer: announce, sleep, announce again, then put bytes in the pipe.
 ///
 /// The reader must reach its `Read` first and block, or a write into a pipe
@@ -111,46 +105,6 @@ const PIPE_READER_PROGRAM: [u32; 21] = [
     0xD400_0001, // svc #0
 ];
 
-/// The image `exec` hands a process over to: announce, then read a file.
-///
-/// `exec` leaves one word of inheritance below the stack top — a pointer to a
-/// NUL-terminated path, the bytes themselves just above it — and this image
-/// is the one that uses it: it opens the path, reads thirty-two bytes into
-/// its own stack below the block, closes the descriptor, and exits with the
-/// **first byte it read**, `x0` being `Exit`'s argument register.  A boot
-/// line that reports `process 1 opened /greeting.txt` and an exit status of
-/// `116` — the `t` of "the quick brown pyrofox" — are the pair that proves a
-/// task the exec rebuilt, with its own pid and its own window, read the
-/// boot's own file from ring 3.
-///
-/// The descriptor is kept in `x19`, which no call here writes, for the same
-/// reason the announcing program keeps its fork answer there.
-const EXEC_TARGET_PROGRAM: [u32; 21] = [
-    0xD280_0081, // movz x1, #4      (announce the image)
-    0xD280_00C8, // movz x8, #6      (Write)
-    0xD400_0001, // svc #0
-    0xF940_03E0, // ldr x0, [sp]     (the path, [sp])
-    0xD280_0021, // movz x1, #1      (OPEN_FLAG_READ)
-    0xD280_0048, // movz x8, #2      (Open)
-    0xD400_0001, // svc #0
-    0xAA00_03F3, // mov x19, x0      (keep the descriptor)
-    0xAA13_03E0, // mov x0, x19      (the descriptor)
-    0x9280_0001, // mov x1, #-1      (READ_OFFSET_CURRENT)
-    0xD102_03E2, // sub x2, sp, #128 (the buffer, below the block)
-    0xD280_0443, // movz x3, #32     (the length)
-    0xD280_00A8, // movz x8, #5      (Read)
-    0xD400_0001, // svc #0
-    0xAA13_03E0, // mov x0, x19      (the descriptor again)
-    0xD280_00E8, // movz x8, #7      (Close)
-    0xD400_0001, // svc #0
-    // And the read's first byte is the status: ldrb from the buffer, then the
-    // exit that carries it.
-    0x3940_0040, // ldrb w0, [x2]    (the first byte read)
-    0xD280_0068, // movz x8, #3      (Exit)
-    0xD400_0001, // svc #0
-    0x1400_0000, // b .
-];
-
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.  A sleep the timer could
 /// not distinguish from "did not sleep" would be a call that ran and proved
@@ -218,10 +172,14 @@ const fn program_words(number: u16) -> [u32; 32] {
         // names.  The task survives the change with its pid, and its exit
         // status comes from the image it became, which asks the kernel who it
         // is and exits with the answer.
-        0xD100_43FF, // sub sp, sp, #16   (room below the boundary)
-        0xF900_03E0, // str x0, [sp]      (the copy-on-write fault)
-        0xD280_0080, // movz x0, #4       (the image exec hands the task to)
-        0xD280_0348, // movz x8, #26      (ExecProcess)
+        // The pointer comes before the sub: `sp` here is the hand-over top,
+        // and `[sp, #-32]` is exactly where the boot left the exec path.
+        // `x0` survives the copy-on-write fault below — the resolver restores
+        // every register — so the exec that follows reads what this loaded.
+        0xF85C_03E0, // ldur x0, [sp, #-64] (the boot's exec path)
+        0xD100_43FF, // sub sp, sp, #16     (room below the boundary)
+        0xF900_03E0, // str x0, [sp]        (the copy-on-write fault)
+        0xD280_0348, // movz x8, #26        (ExecProcess)
         0xD400_0001, // svc #0
         0x1400_0000, // b .               (never reached: exec replaced the program)
         // The child: the same write, on its own copy of the page, and then
@@ -241,9 +199,7 @@ const fn program_words(number: u16) -> [u32; 32] {
 pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
     let mut bytes = [0u8; PROGRAM_LEN];
     let mut words = [0u32; PROGRAM_LEN / 4];
-    if number == EXEC_IMAGE {
-        words[..EXEC_TARGET_PROGRAM.len()].copy_from_slice(&EXEC_TARGET_PROGRAM);
-    } else if number == PIPE_WRITER {
+    if number == PIPE_WRITER {
         words[..PIPE_WRITER_PROGRAM.len()].copy_from_slice(&PIPE_WRITER_PROGRAM);
     } else if number == PIPE_READER {
         words[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);

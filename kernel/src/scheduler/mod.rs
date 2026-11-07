@@ -140,6 +140,10 @@ pub fn die_from_fault(frame: &mut arch::Context, vector: usize, address: usize) 
     arch::serial::write_u32(vector as u32);
     arch::serial::write_str("), status ");
     arch::serial::write_u32(FAULT_STATUS as u32);
+    arch::serial::write_str(", rip ");
+    arch::serial::write_hex(arch::resume_address(frame) as u64);
+    arch::serial::write_str(", rsp ");
+    arch::serial::write_hex(arch::stack_pointer(frame) as u64);
     arch::serial::write_str("\n");
     advance_with_status(frame, true, FAULT_STATUS);
 }
@@ -596,21 +600,22 @@ pub fn fork_current(_frame: &arch::Context) -> Option<u32> {
     None
 }
 
-/// Replace the running process's image with `image`'s, and answer its pid.
+/// Replace the running process's image with the file at `path`, and answer
+/// its pid.
 ///
-/// `None` when the machine cannot serve it: no scheduler, no task running, no
-/// space to read a window from, or a pool too empty to build the new one.  The
-/// caller answers an error rather than inventing a pid, and the process keeps
-/// running the program it was running.
+/// `None` when the machine cannot serve it: no scheduler, no task running,
+/// the file missing or malformed, or a pool too empty to build the new space.
+/// The caller answers an error rather than inventing a pid, and the process
+/// keeps running the program it was running.
 #[cfg(target_os = "none")]
-pub fn exec_current(frame: &mut arch::Context, image: u16) -> Option<u32> {
+pub fn exec_current(frame: &mut arch::Context, path: &str) -> Option<u32> {
     let cpu = this_cpu();
-    with_scheduler(|scheduler| scheduler.as_mut()?.exec_current(cpu, frame, image))
+    with_scheduler(|scheduler| scheduler.as_mut()?.exec_current(cpu, frame, path))
 }
 
-/// A host has no image to replace and no window to replace it in.
+/// A host has no file to become and no window to become it in.
 #[cfg(not(target_os = "none"))]
-pub fn exec_current(_frame: &mut arch::Context, _image: u16) -> Option<u32> {
+pub fn exec_current(_frame: &mut arch::Context, _path: &str) -> Option<u32> {
     None
 }
 

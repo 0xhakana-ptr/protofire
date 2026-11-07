@@ -70,7 +70,6 @@ pub unsafe fn install_descriptor_tables(interrupt_stack_top: usize) -> bool {
 /// against one machine.
 pub use context::Context;
 pub use context::ELF_MACHINE;
-pub use context::EXEC_IMAGE;
 pub use context::PIPE_READER;
 pub use context::PIPE_WRITER;
 pub use context::PROGRAM_LEN;

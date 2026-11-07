@@ -40,3 +40,4 @@
 
 # 0 file(s), 0 occurrence(s) outside arch/
 
+apps/init/src/main.rs 12  # fact: a ring-3 program's syscall gate is its machine's — `int 0x80`, `svc` and `ecall` are three encodings of one ABI, and the arch layer's own gates cannot speak for a program the arch layer does not link.

@@ -292,7 +292,11 @@ impl Machine {
                 // kernel prints **which process** opened it, read from the
                 // scheduler's own record.  A process that lost its identity
                 // in the change would open it under some other number.
-                ("protofire: process 1 exec'd image 4", true),
+                // The loader's own line, required as a prefix: the segment
+                // count and the entry are the compiled image's facts, and the
+                // line is what separates "the loader ran" from "a program ran".
+                ("protofire: loaded /bin/init, ", false),
+                ("protofire: process 1 exec'd /bin/init", true),
                 ("protofire: process 1 opened /greeting.txt", true),
                 // The child's death, as the kernel reports it: which process,
                 // the address its write named, and the status the pair reads.
@@ -435,7 +439,12 @@ impl Machine {
                     // required whole.  The opened line under it is the
                     // identity claim: the kernel names the process that opened
                     // the boot's file, read from the scheduler's own record.
-                    ("protofire: process 1 exec'd image 4", true),
+                    // The loader's own line, required as a prefix: the segment
+                    // count and the entry are the compiled image's facts, and
+                    // the line is what separates "the loader ran" from "a
+                    // program ran".
+                    ("protofire: loaded /bin/init, ", false),
+                    ("protofire: process 1 exec'd /bin/init", true),
                     ("protofire: process 1 opened /greeting.txt", true),
                     // The child's death, as the kernel reports it: which
                     // process, the address its write named, and the status
@@ -622,7 +631,11 @@ impl Machine {
                 // opened line under it is the identity claim: the kernel names
                 // the process that opened the boot's file, read from the
                 // scheduler's own record.
-                ("protofire: process 1 exec'd image 4", true),
+                // The loader's own line, required as a prefix: the segment
+                // count and the entry are the compiled image's facts, and the
+                // line is what separates "the loader ran" from "a program ran".
+                ("protofire: loaded /bin/init, ", false),
+                ("protofire: process 1 exec'd /bin/init", true),
                 ("protofire: process 1 opened /greeting.txt", true),
                 // The child's death, as the kernel reports it: which process,
                 // the address its write named, and the status the pair reads.

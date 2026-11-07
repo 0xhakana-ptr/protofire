@@ -614,3 +614,27 @@ fn repeated_crash_recovery_cycles_v4() {
         }
     }
 }
+// Temporary probe: does a 2-level path build + read?
+#[test]
+fn temp_probe_nested_path() {
+    use block::MemoryBlockDevice;
+    let image = crate::pyrofs::PyroFs::build_image(
+        "probe",
+        &[
+            crate::pyrofs::ImageEntry {
+                path: "/greeting.txt",
+                data: b"hello",
+            },
+            crate::pyrofs::ImageEntry {
+                path: "/bin/init",
+                data: &[0u8; 300],
+            },
+        ],
+    )
+    .expect("build");
+    let device: Arc<dyn QueuedBlockDevice> = MemoryBlockDevice::new("probe", image, false);
+    let fs = crate::pyrofs::PyroFs::open(device, true).expect("open");
+    let volume = crate::pyrofs::PyroFsVolume::new(fs);
+    let node = volume.lookup("/bin/init").expect("lookup /bin/init");
+    assert_eq!(read_full_test(&*node).len(), 300);
+}

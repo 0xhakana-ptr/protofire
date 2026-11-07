@@ -14,8 +14,10 @@
 //! after.
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use crate::pipe;
+use security::mac;
 
 use abi::Error;
 use abi::Result;
@@ -350,6 +352,43 @@ pub fn pipe_end(descriptor: usize) -> Option<pipe::End> {
 
 pub fn has_registry() -> bool {
     REGISTRY.lock().is_some()
+}
+
+/// Read a whole file from the installed registry's namespace, answering its
+/// bytes.
+///
+/// The exec path's way in: the program names a file it wants to **become**,
+/// and the bytes come back for the loader to map.  The MAC policy is asked
+/// first, with the boot's own identity, exactly as `open` asks it — an exec
+/// is a read of the file plus a jump, and the read half does not get to skip
+/// the policy the open half is policed by.
+///
+/// `max_bytes` is the bound: a file a caller cannot load is one the caller
+/// refuses before it allocates, and the error is the caller's to name.
+pub fn read_file(path: &str, identity: u32, max_bytes: usize) -> Result<Vec<u8>> {
+    let mut guard = REGISTRY.lock();
+    let table = guard.as_mut().ok_or(Error::NotFound)?;
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+
+    // The same order the open handler uses: who is asking, before what they
+    // asked for is resolved.
+    mac::check_file(identity, path, mac::MAC_CLASS_FILE, mac::MAC_PERM_READ, 0)?;
+
+    let node = namespace.lookup(path)?;
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 512];
+    let mut offset = 0u64;
+    loop {
+        let count = node.read(offset, &mut chunk)?;
+        if count == 0 {
+            return Ok(bytes);
+        }
+        if bytes.len() + count > max_bytes {
+            return Err(Error::OutOfMemory);
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+        offset += count as u64;
+    }
 }
 
 /// How many descriptors the installed table holds open.

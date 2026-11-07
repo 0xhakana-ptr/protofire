@@ -173,6 +173,20 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), image as *mut u8, bytes.len());
     }
 
+    // The exec-path block, for **every** program: the boot's choice of
+    // executable, where a program that execs reads it.  The pipe hand-over is
+    // the pipe programs' alone, but the exec path is every program's — the
+    // boot does not know which one will want to become another.
+    // The exec-path block, for **every** program: the boot's choice of
+    // executable, where a program that execs reads it.  The pipe hand-over is
+    // the pipe programs' alone, but the exec path is every program's — the
+    // boot does not know which one will want to become another.
+    // The virtual stack page, which is what the exec-path pointer must
+    // name: the bytes are written through the frame's identity mapping, but
+    // the program reads the pointer through its own mapping, so the value
+    // has to be the address as the program sees it.
+    let stack_page_virtual = process::program_stack_page(number);
+    write_exec_path(stack, stack_page_virtual);
     let handed_stack_top = hand_over_pipe(number, stack, reader_end, writer_end);
 
     let base = process::program_base(number);
@@ -191,7 +205,12 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
     arch::serial::write_hex(base as u64);
     arch::serial::write_str("\n");
 
-    let stack_top = handed_stack_top.unwrap_or_else(|| process::program_stack_top(number));
+    // The stack pointer every program starts at: 32 bytes below the page's
+    // top, which is where the hand-over block sits.  A pipe program's
+    // descriptor is at `[rsp]`; the exec path is at `[rsp-32]` for **every**
+    // program — one shape, not one per hand-over combination.
+    let stack_top = process::program_stack_top(number) - 32;
+    let _ = handed_stack_top;
     let mut task = Task::new(
         match number {
             n if n == process::PIPE_READER => "reader",
@@ -249,6 +268,48 @@ fn hand_over_pipe(
         base.add(1).write(0x64_63_62_61); // "abcd", little-endian
     }
     Some(process::program_stack_top(number) - 32)
+}
+
+/// The path the boot hands each program as its own choice of executable,
+/// NUL-terminated.
+///
+/// A program that execs reads the pointer at `[rsp-32]` — written beside the
+/// pipe descriptor by [`hand_over_pipe`] — and passes it to `ExecProcess`
+/// unchanged.  The boot names the program the tree builds rather than a
+/// constant the caller guesses at, which is what makes "the boot execs its
+/// own init" a fact about the boot and not an agreement between two arrays.
+#[cfg(target_os = "none")]
+const EXEC_PATH_FROM_BOOT: &str = "/bin/init";
+
+/// Write the boot's choice of executable into a program's stack: a pointer at
+/// `PAGE - 64` to the NUL-terminated path at `PAGE - 56`.
+///
+/// The same shape the kernel's exec block leaves for a program it starts — a
+/// program reads `[rsp-32]` and passes it straight to `ExecProcess` — because
+/// the two are one convention: what the boot leaves at start, what `exec`
+/// leaves after becoming.  Every program gets it, not just the ones that
+/// currently exec: which program wants to become another is the program's
+/// decision, not the boot's.
+#[cfg(target_os = "none")]
+fn write_exec_path(stack: usize, virtual_page: usize) {
+    // The value is the **virtual** address, `virtual_page + PAGE_SIZE - 88`:
+    // the program reads the pointer through its own mapping, and a physical
+    // address there would be a number outside the user window — the one
+    // thing every path check exists to refuse.  The first version wrote the
+    // frame's identity-mapped address, and the program execed a pointer the
+    // path check refused, spinning silently at its end.
+    let pointer_value = virtual_page + paging::PAGE_SIZE - 88;
+    // SAFETY: `stack` is the frame the program owns for its stack, the
+    // program has not run, and the block is inside the page.
+    unsafe {
+        let ptr_at = (stack + paging::PAGE_SIZE - 96) as *mut u64;
+        ptr_at.write(pointer_value as u64);
+        let path_at = (stack + paging::PAGE_SIZE - 88) as *mut u8;
+        for (index, byte) in EXEC_PATH_FROM_BOOT.as_bytes().iter().enumerate() {
+            path_at.add(index).write(*byte);
+        }
+        path_at.add(EXEC_PATH_FROM_BOOT.len()).write(0);
+    }
 }
 
 /// What a started CPU runs: the task the scheduler gives it, and its root.

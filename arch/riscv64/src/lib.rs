@@ -58,7 +58,6 @@ pub mod timer;
 pub mod trap;
 
 pub use program::ELF_MACHINE;
-pub use program::EXEC_IMAGE;
 pub use program::PIPE_READER;
 pub use program::PIPE_WRITER;
 pub use program::PROGRAM_LEN;

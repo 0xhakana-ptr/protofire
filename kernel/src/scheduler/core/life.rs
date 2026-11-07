@@ -72,15 +72,17 @@ impl Scheduler {
         Some(pid as usize)
     }
 
-    /// Replace the running task's image with `image`'s, and start it over.
+    /// Replace the running task's image with the file at `path`, and start it
+    /// over.
     ///
     /// This is `exec`: the same task, the same pid, the same parent, running a
     /// different program from that program's first instruction.  What carries
-    /// over is the **window** — the virtual addresses the task already owns —
-    /// and what does not is everything behind them: a fresh root, a fresh image
-    /// frame with the machine's bytes for `image`, a fresh stack, and a context
-    /// built from scratch, because a program that asked to become another does
-    /// not resume where it was.
+    /// over is the **identity** and nothing else — a fresh root, the file's
+    /// segments mapped at the addresses the loader accepted, a stack of the
+    /// kernel's own choosing above the image, and a context built from
+    /// scratch, because a program that asked to become another does not resume
+    /// where it was.  The window is the loaded image's own decision now: the
+    /// program was linked at a base, and the loader maps what it linked.
     ///
     /// ## The order that makes releasing the old space sound
     ///
@@ -98,47 +100,168 @@ impl Scheduler {
     ///
     /// ## Why the failure is answerless rather than partial
     ///
-    /// Every step that can fail happens before the task is touched: the old
-    /// layout is read from the old space, the new space is built whole, and
-    /// only then is the task's space, context and frame replaced.  A failure
+    /// Every step that can fail happens before the task is touched: the file
+    /// is read whole, the image is loaded into a whole new space, and only
+    /// then is the task's space, context and frame replaced.  A failure
     /// leaves the task exactly as it was, running the program it was running,
     /// and the caller answers an error rather than a pid.
-    ///
-    /// The layout is read rather than remembered: the task does not carry its
-    /// base and stack top as fields, and the table is the truth — the first two
-    /// pages in address order are the image and the stack, which is what every
-    /// builder in this kernel makes them.
     #[cfg(target_os = "none")]
-    pub fn exec_current(&mut self, cpu: usize, frame: &mut Context, image: u16) -> Option<u32> {
+    pub fn exec_current(&mut self, cpu: usize, frame: &mut Context, path: &str) -> Option<u32> {
         let task_index = self.running.get(cpu).copied().flatten()?;
-        // The window the task owns, read from its table before anything moves.
-        let old_space = self.tasks.get(task_index)?.space?;
-        let mut pages = [crate::address_space::MappedPage {
-            virtual_address: 0,
-            physical: 0,
-            writable: false,
-        }; 4];
-        let count = crate::address_space::mapped_pages(&old_space, &mut pages)?;
-        if count < 2 {
+
+        // The file, whole, from the filesystem the registry serves.  The read
+        // is bounded by the loader's own ceiling — a program bigger than this
+        // is one the caller refuses before it maps.
+        let bytes = crate::syscall::read_file(
+            path,
+            security::mac::MAC_TYPE_SYSTEM,
+            crate::loader::MAX_IMAGE_BYTES,
+        )
+        .ok()?;
+
+        // The image, mapped page by page at the addresses the loader accepted.
+        // Every failure releases the space it built, so a failed exec leaves
+        // the pool exactly as it found it.
+        //
+        // The mapped list is what makes a page two segments share correct:
+        // the linker's text can begin mid-page, with the rodata of the *same*
+        // page continuing past it, and two map calls on one address would
+        // leave the second's permissions standing — read-only where the code
+        // needed execute.  A page already mapped takes the new segment's
+        // bytes into the frame it has and the union of the two permissions,
+        // which is the only answer both segments can run under.
+        let mut space = unsafe { crate::address_space::AddressSpace::new() }?;
+        let image = crate::loader::load(&bytes, arch::ELF_MACHINE).ok()?;
+        // The loader's own line: the file was read and parsed into segments,
+        // which is the one fact the exec'd and opened lines cannot carry —
+        // they say a program ran, this one says the *loader* ran.
+        arch::serial::write_str("protofire: loaded ");
+        arch::serial::write_str(path);
+        arch::serial::write_str(", ");
+        arch::serial::write_u32(image.segment_count as u32);
+        arch::serial::write_str(" segment(s), entry ");
+        arch::serial::write_hex(image.entry as u64);
+        arch::serial::write_str("\n");
+        let mut mapped: [Option<(usize, usize, paging::Permissions)>;
+            crate::loader::MAX_SEGMENTS * 2] = [None; crate::loader::MAX_SEGMENTS * 2];
+        for segment in image.segments() {
+            for plan in crate::loader::pages(segment) {
+                let permissions = paging::Permissions {
+                    writable: segment.writable,
+                    executable: segment.executable,
+                    user: true,
+                    cache: paging::Cache::Normal,
+                };
+                let existing = mapped
+                    .iter_mut()
+                    .find(|slot| matches!(slot, Some((va, _, _)) if *va == plan.virtual_address));
+                if let Some(slot) = existing
+                    && let Some((_, frame, perms)) = slot
+                {
+                    // The page is shared: this segment's bytes join the frame
+                    // it already has, and the permissions widen to whatever
+                    // both segments need.
+                    perms.writable |= permissions.writable;
+                    perms.executable |= permissions.executable;
+                    if plan.copy_len > 0 {
+                        // SAFETY: both ranges are in bounds — the loader
+                        // checked the file range, and the frame is a whole
+                        // page whose offset the plan names.
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(
+                                bytes[plan.file_offset..].as_ptr(),
+                                (*frame as *mut u8).add(plan.frame_offset),
+                                plan.copy_len,
+                            );
+                        }
+                    }
+                    // SAFETY: the address passed the loader's window check,
+                    // and the frame is this space's own.
+                    let mapped_again =
+                        unsafe { space.map_page_with(plan.virtual_address, *frame, *perms) };
+                    if !mapped_again {
+                        unsafe { space.release() };
+                        return None;
+                    }
+                    continue;
+                }
+                // SAFETY: the frame comes from the pool.
+                let Some(frame) = crate::address_space::allocate_image_frame() else {
+                    unsafe { space.release() };
+                    return None;
+                };
+                if !space.own(frame) {
+                    unsafe { space.release() };
+                    return None;
+                }
+                if plan.copy_len > 0 {
+                    // SAFETY: both ranges are in bounds — the loader checked
+                    // the file range, and the frame is a whole page whose
+                    // offset the plan names.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            bytes[plan.file_offset..].as_ptr(),
+                            (frame as *mut u8).add(plan.frame_offset),
+                            plan.copy_len,
+                        );
+                    }
+                }
+                // SAFETY: the address passed the loader's window check, and
+                // the frame is this space's own.
+                let mapped_now =
+                    unsafe { space.map_page_with(plan.virtual_address, frame, permissions) };
+                if !mapped_now {
+                    unsafe { space.release() };
+                    return None;
+                }
+                let Some(slot) = mapped.iter_mut().find(|slot| slot.is_none()) else {
+                    unsafe { space.release() };
+                    return None;
+                };
+                *slot = Some((plan.virtual_address, frame, permissions));
+            }
+        }
+
+        // The stack, one page past the image's own end: the loader's layout is
+        // the program's, and the stack is the kernel's addition to it.
+        let image_top = image.image_top()?;
+        let stack_page = (image_top + paging::PAGE_SIZE) & !(paging::PAGE_SIZE - 1);
+        // SAFETY: the frame comes from the pool.
+        let Some(stack_frame) = crate::address_space::allocate_image_frame() else {
+            unsafe { space.release() };
+            return None;
+        };
+        if !space.own(stack_frame) {
+            unsafe { space.release() };
             return None;
         }
-        let entry_va = pages[0].virtual_address;
-        let stack_va = pages[1].virtual_address;
-
-        let bytes = crate::process::program_bytes(image);
-        // SAFETY: the two addresses are this task's own mapped pages, page
-        // aligned and mapped by no other space; the image fits in a page,
-        // which is what every builder maps.
-        let new_space = unsafe { crate::address_space::image_space(&bytes, entry_va, stack_va) }?;
-        let new_root = new_space.root();
+        // SAFETY: the address is one page past the loader's checked segments,
+        // which puts it in the same window; the frame is this space's own.
+        let stack_ok = unsafe {
+            space.map_page_with(
+                stack_page,
+                stack_frame,
+                paging::Permissions {
+                    writable: true,
+                    executable: false,
+                    user: true,
+                    cache: paging::Cache::Normal,
+                },
+            )
+        };
+        if !stack_ok {
+            unsafe { space.release() };
+            return None;
+        }
 
         // The exec block: the one inheritance an `exec` carries.  The words go
         // below the stack top, the pointer starts at them, and the path's
         // bytes sit where [`crate::process::EXEC_PATH_OFFSET`] says — written
         // through the frame's physical address, the same place the boot writes
-        // a pipe end into a stack it has not started yet.
-        let stack_frame = new_space.owned()[1];
-        let stack_top = stack_va + paging::PAGE_SIZE;
+        // a pipe end into a stack it has not started yet.  The path is the one
+        // this exec was called with, which is what a program that wants to
+        // re-exec itself reads.
+        let stack_top = stack_page + paging::PAGE_SIZE;
         let block_top = stack_top - crate::process::EXEC_BLOCK_BYTES;
         // SAFETY: the frame is the new space's own stack, zeroed by the pool
         // and not yet run; the block is `EXEC_BLOCK_BYTES` at its top and the
@@ -152,23 +275,20 @@ impl Scheduler {
             block.write((block_top + crate::process::EXEC_PATH_OFFSET) as u64);
             block.add(1).write(0);
             let path_at = (block.cast::<u8>()).add(crate::process::EXEC_PATH_OFFSET);
-            for (index, byte) in crate::volume::BOOT_VOLUME_PATH
-                .as_bytes()
-                .iter()
-                .enumerate()
-            {
+            for (index, byte) in path.as_bytes().iter().enumerate() {
                 path_at.add(index).write(*byte);
             }
-            path_at.add(crate::volume::BOOT_VOLUME_PATH.len()).write(0);
+            path_at.add(path.len()).write(0);
         }
 
+        let new_root = space.root();
         let pid = self.tasks.get(task_index)?.pid();
         let task = self.tasks.get_mut(task_index)?;
-        let old_space = task.space.replace(new_space)?;
+        let old_space = task.space.replace(space)?;
         // A fresh context, not a copy: the program starts at its own first
         // instruction, on a stack that carries the exec block and nothing from
         // the program it replaced.
-        *task.context_mut() = crate::scheduler::starting_context(entry_va, block_top);
+        *task.context_mut() = crate::scheduler::starting_context(image.entry, block_top);
         // And the trap frame resumes the new image, because the caller's
         // epilogue is what returns to a program and this task is the one
         // running.

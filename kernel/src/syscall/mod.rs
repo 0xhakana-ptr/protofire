@@ -80,6 +80,7 @@ pub use table::has_registry;
 pub use table::install;
 pub use table::open_descriptors;
 pub use table::pipe_end;
+pub use table::read_file;
 pub use table::serve;
 pub use table::served_numbers;
 

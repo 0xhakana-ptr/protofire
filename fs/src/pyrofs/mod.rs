@@ -25,7 +25,7 @@ pub(crate) mod file_io;
 pub(crate) mod format_io;
 pub(crate) mod free_fns;
 pub(crate) mod fs;
-pub(crate) mod image_staging;
+pub mod image_staging;
 pub(crate) mod inode_dirent;
 pub(crate) mod path;
 pub(crate) mod superblock;

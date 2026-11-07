@@ -529,11 +529,6 @@ const NUMBER_OFFSET: usize = 25;
 /// first act is to block.  Everything about it is the machine code below, which
 /// is why it is a second array rather than a parameter.
 pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
-    if number == EXEC_IMAGE {
-        let mut bytes = [0u8; PROGRAM_LEN];
-        bytes[..EXEC_TARGET_PROGRAM.len()].copy_from_slice(&EXEC_TARGET_PROGRAM);
-        return bytes;
-    }
     if number == PIPE_READER {
         let mut bytes = [0u8; PROGRAM_LEN];
         bytes[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);
@@ -557,12 +552,6 @@ pub const ELF_MACHINE: u16 = 62; // EM_X86_64
 pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;
-
-/// The image `exec` may name, and the highest number `program_bytes` answers
-/// for with a purpose-built program.  One through this are the images this
-/// boot has; a call beyond it is one the kernel refuses, there being no
-/// program behind the number.
-pub const EXEC_IMAGE: u16 = 4;
 
 /// The writer: announce, sleep, announce again, then put bytes in the pipe.
 ///
@@ -643,47 +632,6 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
     0xEB, 0xFE, // jmp $
 ];
 
-/// The image `exec` hands a process over to: announce, then read a file.
-///
-/// `exec` leaves one word of inheritance below the stack top — a pointer to a
-/// NUL-terminated path, the bytes themselves just above it — and this image
-/// is the one that uses it: it opens the path, reads thirty-two bytes into
-/// its own stack below the block, closes the descriptor, and exits with the
-/// **first byte it read**.  A boot line that reports `process 1 opened
-/// /greeting.txt` and an exit status of `116` — the `t` of "the quick brown
-/// pyrofox" — are the pair that proves a task the exec rebuilt, with its own
-/// pid and its own window, read the boot's own file from ring 3.  Nothing
-/// that merely kept running could print either: the status is the file's
-/// content, arrived through `Open`/`Read`/`Close` and nothing else.
-///
-/// The descriptor travels in `r8d`, which no call here writes, for the same
-/// reason the announcing program keeps its fork answer there: the `Read`
-/// between `Open` and `Close` answers into `eax`, and a descriptor left in
-/// `eax` would be the count by the time `Close` read it.
-const EXEC_TARGET_PROGRAM: [u8; 82] = [
-    0xBE, 0x04, 0x00, 0x00, 0x00, // mov esi, 4             (announce the image)
-    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6             (Write)
-    0xCD, 0x80, // int 0x80
-    0x48, 0x8B, 0x3C, 0x24, // mov rdi, [rsp]         (the path, [sp])
-    0xBE, 0x01, 0x00, 0x00, 0x00, // mov esi, 1             (OPEN_FLAG_READ)
-    0xB8, 0x02, 0x00, 0x00, 0x00, // mov eax, 2             (Open)
-    0xCD, 0x80, // int 0x80
-    0x41, 0x89, 0xC0, // mov r8d, eax           (keep the descriptor)
-    0x44, 0x89, 0xC7, // mov edi, r8d           (the descriptor)
-    0x48, 0xC7, 0xC6, 0xFF, 0xFF, 0xFF, 0xFF, // mov rsi, -1    (READ_OFFSET_CURRENT)
-    0x48, 0x8D, 0x54, 0x24, 0x80, // lea rdx, [rsp-128]     (the buffer)
-    0xB9, 0x20, 0x00, 0x00, 0x00, // mov ecx, 32            (the length)
-    0xB8, 0x05, 0x00, 0x00, 0x00, // mov eax, 5             (Read)
-    0xCD, 0x80, // int 0x80
-    0x44, 0x89, 0xC7, // mov edi, r8d           (the descriptor again)
-    0xB8, 0x07, 0x00, 0x00, 0x00, // mov eax, 7             (Close)
-    0xCD, 0x80, // int 0x80
-    0x0F, 0xB6, 0x7C, 0x24, 0x80, // movzx edi, byte [rsp-128]  (the first byte read)
-    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3             (Exit, whose status is that byte)
-    0xCD, 0x80, // int 0x80
-    0xEB, 0xFE, // jmp $
-];
-
 /// The program with a zero number, which [`program_bytes`] patches.
 ///
 /// The loop has to outlive a time slice, or the boot reports a timer that never
@@ -735,8 +683,12 @@ const PROGRAM_BASE: [u8; 110] = [
     // image it became — which asks the kernel who it is and exits with the
     // answer, so the boot's report of `1 -> 1` is the evidence that identity
     // carried over.
+    // The pointer comes before the push: `rsp` here is the hand-over top,
+    // and `[rsp-32]` is exactly where the boot left the exec path.  `rdi`
+    // survives the copy-on-write fault below — the resolver restores every
+    // register — so the exec that follows reads what this loaded.
+    0x48, 0x8B, 0x7C, 0x24, 0xC0, // mov rdi, [rsp-64] (the boot's exec path)
     0x6A, 0x2A, // push 42 (the copy-on-write fault)
-    0xBF, 0x04, 0x00, 0x00, 0x00, // mov edi, 4 (the image exec hands the task to)
     0xB8, 0x1A, 0x00, 0x00, 0x00, // mov eax, 26 (ExecProcess)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $ (never reached: exec replaced the program)
@@ -864,48 +816,13 @@ mod program_tests {
             "the program writes, sleeps, writes, forks, writes, and execs"
         );
 
-        // The parent's last call names the image it becomes: `mov edi, 4`
-        // ahead of the exec, which is the argument `ExecProcess` reads.
+        // The parent's exec loads the boot's exec-path pointer: `mov rdi,
+        // [rsp-64]`, the block the boot wrote below the hand-over top.
         assert!(
             bytes
                 .windows(5)
-                .any(|window| window == [0xBF, 0x04, 0x00, 0x00, 0x00]),
-            "the exec's argument is the image number, in edi"
-        );
-    }
-
-    /// The image `exec` hands a process to reads a file with the block the
-    /// kernel left below its stack top: it announces, opens the path, reads
-    /// into its own stack, closes, and exits with the first byte it read —
-    /// the file's content reported through the exit status, which nothing
-    /// that skipped the read could produce.
-    #[test]
-    fn the_exec_target_reads_a_file_and_exits_with_its_content() {
-        let bytes = program_bytes(super::EXEC_IMAGE);
-        assert_eq!(
-            super::call_numbers(&bytes),
-            alloc::vec![
-                abi::SyscallNumber::Write as u32,
-                abi::SyscallNumber::Open as u32,
-                abi::SyscallNumber::Read as u32,
-                abi::SyscallNumber::Close as u32,
-                abi::SyscallNumber::Exit as u32,
-            ],
-            "the target announces, opens, reads, closes, and exits with a byte"
-        );
-
-        // The descriptor travels in `r8d`, which no call here writes, and the
-        // buffer sits below the exec block: a buffer inside the block would
-        // overwrite the very path the open read.
-        assert!(
-            bytes.windows(3).any(|window| window == [0x41, 0x89, 0xC0]),
-            "the descriptor is kept in r8d"
-        );
-        assert!(
-            bytes
-                .windows(5)
-                .any(|window| window == [0x48, 0x8D, 0x54, 0x24, 0x80]),
-            "the buffer is at [rsp-128], below the block"
+                .any(|window| window == [0x48, 0x8B, 0x7C, 0x24, 0xC0]),
+            "the exec's argument is the boot's exec-path pointer, from [rsp-64]"
         );
     }
 
