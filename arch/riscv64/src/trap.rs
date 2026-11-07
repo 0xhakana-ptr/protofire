@@ -31,8 +31,10 @@
 //! A trap has no context to hand a function, which is the same reason the
 //! other two machines read their sinks from statics.  The kernel installs them
 //! with `set_interrupt_dispatch` and `set_call_sink`; until then every trap is
-//! unhandled, and an unhandled one stops the machine with its cause on the
-//! console.
+//! unhandled, and an unhandled one is reported — an external interrupt
+//! continues, because a device with no driver must not stop a boot, and an
+//! exception stops, because the instruction that raised it will raise it
+//! again.
 
 use crate::stvec::Cause;
 

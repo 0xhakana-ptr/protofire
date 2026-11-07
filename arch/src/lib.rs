@@ -237,8 +237,9 @@ pub use arch_riscv64::program_bytes;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::program_bytes;
 
-// Which numbered program is the pipe's reader and which is its writer.  The
-// numbering is the image's, so it lives with the image.
+// Which numbered program is the pipe's reader, which its writer, and which
+// the image `exec` hands a process to.  The numbering is the image's, so it
+// lives with the image.
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::EXEC_IMAGE;
 #[cfg(target_arch = "aarch64")]

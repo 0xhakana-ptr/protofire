@@ -34,11 +34,12 @@
 //!
 //! ## Arguments, and what a pointer means here
 //!
-//! `SyscallContext` carries six words, and a word may be an address.  This
-//! boot has no user address space, so the only caller is the kernel itself and
-//! the two address-shaped arguments arrive as borrows, [`Arguments::path`]
-//! and [`Arguments::buffer`], rather than as integers a handler would have to
-//! turn back into pointers.
+//! `SyscallContext` carries six words, and a word may be an address.  No
+//! user-space caller reaches this registry — the boot's programs make their
+//! calls through `process`, which validates a ring-3 address itself — so the
+//! registry's only callers are the kernel's, and the two address-shaped
+//! arguments arrive as borrows, [`Arguments::path`] and [`Arguments::buffer`],
+//! rather than as integers a handler would have to turn back into pointers.
 //!
 //! That is deliberate.  A handler that does `from_raw_parts` on
 //! `context.arg(1)` carries a promise it cannot show, the comment would say
@@ -51,10 +52,11 @@
 //!
 //! ## Descriptors
 //!
-//! A descriptor is an index into a fixed table of open nodes.  The table is per
-//! boot because there is one address space and no process yet; when the
-//! scheduler arrives it moves into the process, and this module keeps only the
-//! number-to-handler mapping, which is the part that is genuinely the kernel's.
+//! A descriptor is an index into a fixed table of open nodes.  The table is
+//! per boot because a handle table belongs to a process and the handle-table
+//! half has not arrived; the scheduler and its processes are here, and this
+//! module keeps only the number-to-handler mapping, which is the part that is
+//! genuinely the kernel's.
 
 pub mod handlers;
 pub mod table;

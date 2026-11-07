@@ -19,9 +19,11 @@
 //! the kernel to do something.  Everything else is a fault or a device's line.
 //!
 //! An interrupt has no context to hand a function, which is the same reason
-//! aarch64's sink is a static.  The kernel installs them; until it does, an
-//! interrupt is unhandled and stops the machine with its vector on the
-//! console.
+//! aarch64's sink is a static.  The kernel installs them; until it does, a
+//! trap is unhandled, and an unhandled one is reported — an interrupt
+//! continues, because a device with no driver must not stop a boot, and an
+//! exception stops, because the instruction that raised it will raise it
+//! again.
 
 use crate::context::Context;
 use crate::context::install_context;

@@ -180,7 +180,7 @@ fn a_sleeper_keeps_the_position_it_slept_at() {
 
     // The frame the task holds is the one the sleep was called from, byte
     // for byte.  `Context` is `Copy` and `PartialEq`-free, so the check is
-    // the two addresses plus a comparison of the whole value as bytes, // which
+    // the two addresses plus a comparison of the whole value as bytes, which
     // is what "the position survived" means and nothing narrower.
     let saved = *scheduler.tasks[0].context();
     assert_eq!(
@@ -229,6 +229,11 @@ fn a_resumed_task_finds_the_answer_in_x0() {
 /// two stacks at once.
 #[test]
 fn a_claim_does_not_hand_the_same_task_to_two_cpus() {
+    // The host builds with one CPU slot, so the decisive block below — an
+    // idle CPU refused a task another holds — is exercised here only as far
+    // as this host's `MAX_CPUS` reaches; the two-CPU shape itself is the
+    // machines' boot gate, which runs the same scheduler on a second CPU
+    // and requires `program ended on cpu 1` for it.
     let mut scheduler = Scheduler::new();
     for index in 0..3 {
         let name: &'static str = ["a", "b", "c"][index];

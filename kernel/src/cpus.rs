@@ -168,8 +168,9 @@ const MAX_IPI_SPINS: u64 = 5_000_000;
 /// The count is the evidence the start cannot give: a CPU that stored its flag
 /// and then stopped prints "online" and nothing else, while a CPU doing work
 /// prints a number that grew.  A started CPU here counts its own timer and the
-/// interrupt the boot sent it, and does not run a task: the scheduler is one
-/// structure with one owner, and the line names the owner.
+/// interrupt the boot sent it, and the programs it ran to their exits are
+/// counted where they ended, which is the boot line that names a process
+/// having run on a CPU other than the boot's.
 #[cfg(target_os = "none")]
 pub fn report_activity() {
     arch::serial::write_str("protofire: cpus online = ");

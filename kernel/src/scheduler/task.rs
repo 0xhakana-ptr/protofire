@@ -70,10 +70,11 @@ pub struct Task {
     pub(crate) state: State,
     /// This process's identity, for the calls that ask who is running.
     ///
-    /// Nothing in this kernel creates a process yet, so every task the boot
-    /// builds is its own process: the number is the one the boot gave it, and
-    /// the parent is the boot's, which is the honest answer for a program the
-    /// kernel started rather than one another program forked.
+    /// The boot numbers the tasks it builds 1, 2, 3, with the boot itself as
+    /// their parent; a forked child is numbered by the scheduler's counter and
+    /// named by the process that forked it.  Either way the number is one the
+    /// kernel assigned rather than one the program sent, which is the honest
+    /// answer to a question about identity.
     pub(crate) pid: u32,
     /// The process that started this one.
     pub(crate) parent: u32,
@@ -166,8 +167,9 @@ impl Task {
 
     /// Name this process and its parent.
     ///
-    /// The boot does this once per task it builds: a program the kernel starts
-    /// has the boot as its parent, which is a fact rather than a placeholder.
+    /// The boot calls this once per task it builds, with the boot as the
+    /// parent; a fork calls it with the forking process's pid, which is how a
+    /// child of a program differs from a child of the boot.
     pub fn identify(&mut self, pid: u32, parent: u32) {
         self.pid = pid;
         self.parent = parent;

@@ -564,10 +564,10 @@ pub unsafe fn self_check_frame_pool() -> bool {
 
 /// One page a program has mapped, as the walk found it.
 ///
-/// The virtual address, the frame behind it, and whether it is writable, ///
-/// everything a copy needs and nothing about the page tables themselves, so a
-/// caller that only reads this list cannot corrupt a walk by holding a
-/// reference into it.
+/// The virtual address, the frame behind it, and whether the mapping allows
+/// writes — everything a fork needs to know about the page it is about to
+/// share, and nothing about the page tables themselves, so a caller that only
+/// reads this list cannot corrupt a walk by holding a reference into it.
 #[cfg(target_os = "none")]
 #[derive(Debug, Clone, Copy)]
 pub struct MappedPage {
@@ -575,7 +575,8 @@ pub struct MappedPage {
     pub virtual_address: usize,
     /// The frame behind it.
     pub physical: usize,
-    /// Whether writes are permitted, which a copy carries over.
+    /// Whether the parent's mapping allowed writes, which the fork demotes
+    /// and the resolver restores.
     pub writable: bool,
 }
 

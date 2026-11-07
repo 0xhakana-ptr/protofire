@@ -1,6 +1,7 @@
 //! kernel/src/scheduler/mod.rs
 //!
-//! Two programs, taking turns.
+//! A boot's programs, taking turns — and the fork and exec that change what a
+//! task is.
 //!
 //! A task here is a saved `Context`, the whole trap frame, and the address
 //! space it runs in.  There is no kernel stack per task, because a task never
@@ -495,21 +496,24 @@ pub(crate) fn with_current_space<R>(
     })
 }
 
-/// Fork the running process: copy its space and context into a new task.
+/// Fork the running process: share its pages with a new task and hand the
+/// context down.
 ///
-/// The child inherits its parent's pages (copied, so a write in one does not
-/// reach the other), its parent's context (so it resumes at the instruction
-/// after the `fork`), and a pid of its own.  What it does **not** inherit is
-/// the parent's return value: the fork returns the child's pid to the parent
-/// and zero to the child, which is the one difference the two copies of the
-/// same instruction see.
+/// The child inherits its parent's pages — the same frames, writable ones
+/// demoted read-only for the copy-on-write fault that copies them if either
+/// side writes — its parent's context (so it resumes at the instruction after
+/// the `fork`), and a pid of its own.  What it does **not** inherit is the
+/// parent's return value: the fork returns the child's pid to the parent and
+/// zero to the child, which is the one difference the two processes running
+/// the same instruction see.
 ///
 /// A forked child resumes exactly where its parent asked, with the parent's
-/// registers, including the stack pointer, which points into the copy.  A
-/// context built from scratch would start the child at the beginning of its
-/// program, which is `exec`, not `fork`.
+/// registers, including the stack pointer, which points into the page the two
+/// now share.  A context built from scratch instead starts a task at the
+/// beginning of a program of its own; that is a different call, `exec`, which
+/// the kernel serves separately.
 ///
-/// Answers the child's pid, or `None` when the copy could not be made.
+/// Answers the child's pid, or `None` when the share could not be made.
 #[cfg(target_os = "none")]
 pub fn fork_current(frame: &arch::Context) -> Option<u32> {
     let cpu = this_cpu();
@@ -559,8 +563,8 @@ pub fn current_parent() -> Option<u32> {
 /// The status of the first process that has exited, if any has.
 ///
 /// A wait in this boot has one process tree, so "the first exit" is the only
-/// answer it can give; a caller that needs a particular child needs a parent
-/// that exists, which is a later change.
+/// answer it can give; a caller that needs a particular child needs a wait
+/// that names a pid, which is a later change.
 pub fn first_exit_status() -> Option<usize> {
     with_scheduler(|scheduler| {
         scheduler

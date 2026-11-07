@@ -1087,11 +1087,12 @@ the one the driver used.
 
     protofire: exit statuses 1 -> 1, 2 -> 0, 3 -> 0
 
-The process layer this tree has is the part that can be honest without
-`fork`.  A task carries a pid, the parent that started it, and the status it
-exited with; `GetPid`, `GetPpid` and `WaitProcess` are served; and the boot's
-three programs are three processes, each a child of the boot because nothing
-here creates a process.
+The process layer this tree has is the part that was honest before `fork`
+arrived, and it is what `fork` built on.  A task carries a pid, the parent
+that started it, and the status it exited with; `GetPid`, `GetPpid` and
+`WaitProcess` are served; the boot's three programs are three processes, each
+a child of the boot, and a forked child is a fourth whose parent is the
+program that forked it.
 
 The evidence is a status that is the program's own number: the announcing
 program asks `GetPid` and then exits with the answer, so `1 -> 1` says the
@@ -1119,10 +1120,12 @@ this file keeps warning about.
     protofire: forked a process, child pid 4
     protofire: exit statuses 1 -> 4, 2 -> 0, 3 -> 0, 4 -> 0
 
-`Fork` copies the running process, every page it maps, and the context it is
-in, into a task of its own.  Both resume at the instruction after the call;
-what tells them apart is the answer, and it is the only difference: the parent
-learns the child's pid, the child learns zero.
+`Fork` gave the running process a child: the pages it mapped, and the
+context it was in, in a task of its own.  Both resume at the instruction
+after the call; what tells them apart is the answer, and it is the only
+difference: the parent learns the child's pid, the child learns zero.
+(When this section was written the pages were copied whole; the write-fault
+section below is where they started being shared.)
 
 **The first version forked once and produced seven children, because it copied
 the wrong frame.**  A task's saved context is the one its last switch wrote, from *before* the call that is running.  A child resuming there re-executes its
@@ -1140,10 +1143,9 @@ the `Write` between the fork and the exit had overwritten the answer.  Both
 programs now keep the answer in a register no call in this program writes, and
 the status the boot reports is the fork's own answer.
 
-What is not here: copy-on-write.  Every page a fork copies is copied whole,
-which is correct and slower than it needs to be; a COW fork needs a write fault
-this kernel does not handle.  And `exec`: a child that wants a different program
-than its parent has no call for it.
+What was not here when this section was written: copy-on-write, and `exec`.
+Both are below — the write-fault section is the fork's second version, and
+exec's section is the one after it.
 
 ### Two CPUs running programs
 

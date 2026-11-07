@@ -170,9 +170,10 @@ pub unsafe extern "C" fn aarch64_exception_dispatch(frame: *mut ExceptionFrame) 
 
     if !handled {
         // A supervisor call is the one exception that is not a fault: the
-        // kernel raises it deliberately.  Without a process layer there is
-        // nothing to serve it, so it is reported as unhandled rather than
-        // mistaken for one.
+        // kernel raises it deliberately.  An `svc` from EL0 is a program's
+        // call and is served above; one from EL1 is the kernel's own, and
+        // nothing in the kernel serves one, so it is reported as unhandled
+        // rather than mistaken for a program's.
         crate::serial::write_str("protofire: unhandled exception ");
         crate::serial::write_u32(frame.vector as u32);
         crate::serial::write_str(" on cpu ");

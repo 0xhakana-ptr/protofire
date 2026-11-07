@@ -32,12 +32,6 @@ fn call_numbers(words: &[u32]) -> alloc::vec::Vec<usize> {
 
 /// The immediate the `li reg, imm` before a call's `ecall` carries.
 ///
-/// Found by role: the last `addi reg, x0, imm` before the call's `ecall` whose
-/// destination is `register`.  A program that sets the register earlier and
-/// leaves it alone is one this helper reads correctly, because the last write
-/// wins, which is what the machine does too.
-/// The immediate the `li reg, imm` before a call's `ecall` carries.
-///
 /// A linear scan: remember the last `addi reg, x0, imm` that wrote `register`,
 /// and answer it when the matching `ecall` arrives.  The last write wins, which
 /// is what the machine does too, so a program that sets the register once and
@@ -139,11 +133,11 @@ fn the_busy_loop_branches_back_to_itself() {
 ///
 /// The calls this program makes, in order.
 ///
-/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, and two `Exit`s — one per path,
-/// because the fork leaves two processes and each ends on its own.  A program
-/// compiled against a number this build does not serve would print its first
-/// line and then fail silently, which is the one failure a sleep program could
-/// have and still look healthy.
+/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and one `Exit`
+/// — the parent's path ends in the exec, so the child's is the only path that
+/// exits itself.  A program compiled against a number this build does not
+/// serve would print its first line and then fail silently, which is the one
+/// failure a sleep program could have and still look healthy.
 #[test]
 fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
     let words = program_words(1);

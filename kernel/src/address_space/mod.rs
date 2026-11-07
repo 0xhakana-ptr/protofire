@@ -8,7 +8,7 @@
 //! | File | What it holds |
 //! |---|---|
 //! | [`table`] | the kernel's tables, the identity map, and the walk that re-maps one |
-//! | [`space`] | a program's root, its pages, and the frame an image lives in |
+//! | [`space`] | a program's root, its pages, the frames a fork shares, and the image an exec builds into the window it keeps |
 //! | this file | the permission rules, the user window, the install, and the pool's counts |
 //!
 //! Where this image's sections begin and end is the linker script's answer, and
@@ -31,10 +31,10 @@ pub const USER_WINDOW: usize = 0x4000_0000;
 
 /// How many programs the window has room for.
 ///
-/// The boot runs two and the space is four; the number is a bound on the
-/// validator, not a policy about how many programs a boot may start.  A
-/// program numbered past it would map above this end, and `AddressSpace::map`
-/// would have to say so.
+/// The boot runs three, a fork adds a child, and the space is four; the number
+/// is a bound on the validator, not a policy about how many programs a boot
+/// may start.  A program numbered past it would map above this end, and
+/// `AddressSpace::map` would have to say so.
 pub const USER_WINDOWS: usize = 4;
 
 /// The first address above the user window.

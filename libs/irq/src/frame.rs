@@ -6,9 +6,10 @@
 //! ## Why this is here and not in `arch`
 //!
 //! A handler that wanted to know "which vector" would have to name three
-//! machines' frame types.  The vector is the one thing every machine reports,
-//! and a page-fault handler also wants the faulting address, which every
-//! machine also has, and which is the *one* extra field this type carries.
+//! machines' frame types.  The vector is the one thing every machine reports;
+//! a page-fault handler also wants the faulting address, which every machine
+//! also has, and the direction the access went, which each machine reports in
+//! its own currency.  Those are the two extra fields this type carries.
 //!
 //! What is deliberately not here: the register set.  x86_64 saves fifteen
 //! registers and pushes an error code, aarch64 saves thirty-one and a syndrome,

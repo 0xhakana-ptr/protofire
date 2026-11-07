@@ -9,10 +9,10 @@
 //! | this file | what a scheduler is, construction, and "who is running" |
 //! | [`switch`] | claiming a task, and installing the next one's context |
 //! | [`wait`] | sleeping, blocking, and the wakes that end both |
-//! | [`life`] | fork, and the release of a finished program's pages |
+//! | [`life`] | fork and exec, and the release of a finished program's pages |
 //!
 //! The split follows the verb.  `switch` moves a CPU between tasks, `wait`
-//! moves a task between states, and `life` covers the two events a task has
+//! moves a task between states, and `life` covers the three events a task has
 //! that are neither.  What is left here is the type all three name, plus the
 //! read-only questions a trap asks — "who is this CPU running", "is anything
 //! runnable" — which have no state to change and belong with the state they

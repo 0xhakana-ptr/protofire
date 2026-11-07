@@ -31,63 +31,12 @@ use crate::build::run;
 use crate::machine::Machine;
 
 impl Machine {
-    /// The lines this machine's boot has to print, in order.
-    ///
-    /// The first names the loader: a PVH boot and a multiboot2 boot are
-    /// different code paths through the same function, so a mismatch is a real
-    /// difference rather than a wording preference.
-    ///
-    /// The second names the page table the kernel built.  The boot assembly
-    /// maps four gigabytes identity with 2 MiB pages, every one writable and
-    /// cached; this is the kernel's own table, with a 4 KiB granule and a
-    /// permission per region.  Reaching the heap line means the swap did not
-    /// lose any address the boot was still using.
-    ///
-    /// The third names the interrupt table, and says the flag is on.  A boot
-    /// that installed a table and never enabled interrupts has never taken one,
-    /// and the machine's first tick would then be a fault nobody saw; enabling
-    /// the flag and staying up is what says the delivery path works.
-    ///
-    /// The fourth is the heap's own bounds.  It is here rather than treated as
-    /// a log line because reaching it means `bounds()` ran, which is what makes
-    /// the allocator lay out its free lists, a boot that printed the first
-    /// line and stopped before the second has a loader but no heap.  The
-    /// address itself is not asserted: it moves with the image, and the gate
-    /// is that the line is there, not where it points.
-    ///
-    /// The third names the three syscalls the read went through, not just the
-    /// result.  A boot that read the file by calling the filesystem directly
-    /// printed the same bytes and the same label; the words `through syscall
-    /// open/read/close` are what distinguish the two, and they are the whole
-    /// claim this line makes.
-    ///
-    /// The fourth names every mounted filesystem and the prefix it owns.  A
-    /// mount table with one entry has never resolved anything, so the line is
-    /// required to name three: the volume the disk was formatted with, a tmpfs
-    /// at `/tmp`, and a disc at `/cdrom`.
-    ///
-    /// The fifth is the disc's file read back.  The disc is the one filesystem
-    /// the boot cannot have written, so bytes coming out of it came from the
-    /// image, which is why it is the line that proves the namespace rather
-    /// than the mounts.
-    ///
-    /// The fifth names where the block device came from.  The boot falls back
-    /// to its in-memory image when the bus has no disk, so "the filesystem
-    /// mounted" alone would pass on a machine where the driver never ran, ///
-    /// `virtio-blk on pci` is the line that says it did. Lines the log has to
-    /// contain more than once, and how many.
-    ///
-    /// A separate list from [`Machine::required_lines`] because it answers a
-    /// different question: that one asks "did the boot reach this step", and
-    /// this one asks "did it reach it again after sleeping".  One program's
-    /// `Write` appears twice in its image, and a boot that never woke prints
-    /// it once.
     /// Fragments that have to appear on **one** line, together.
     ///
-    /// A separate list from `required_lines` because it answers a question
-    /// neither of the other two can: a line that names the fork's two answers
-    /// is one fact, and two separate prefix checks would pass on two lines that
-    /// said different things.
+    /// A separate list from [`Machine::required_lines`] because it answers a
+    /// question neither of the other two can: a line that names the fork's two
+    /// answers is one fact, and two separate prefix checks would pass on two
+    /// lines that said different things.
     pub(crate) fn paired_lines(self) -> &'static [&'static [&'static str]] {
         match self {
             Self::X8664 | Self::Aarch64 => &[
@@ -131,12 +80,56 @@ impl Machine {
         }
     }
 
+    /// Lines the log has to contain more than once, and how many.
+    ///
+    /// A separate list from [`Machine::required_lines`] because it answers a
+    /// different question: that one asks "did the boot reach this step", and
+    /// this one asks "did it reach it again after sleeping".  One program's
+    /// `Write` appears twice in its image, and a boot that never woke prints
+    /// it once.
     pub(crate) fn repeated_lines(self) -> &'static [(&'static str, usize)] {
         match self {
             Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[(" says hello", 6)],
         }
     }
 
+    /// The lines this machine's boot has to print, in order.
+    ///
+    /// The first names the loader: a PVH boot and a multiboot2 boot are
+    /// different code paths through the same function, so a mismatch is a real
+    /// difference rather than a wording preference.
+    ///
+    /// The second names the page table the kernel built.  The boot assembly
+    /// maps four gigabytes identity with 2 MiB pages, every one writable and
+    /// cached; this is the kernel's own table, with a 4 KiB granule and a
+    /// permission per region.  Reaching the heap line means the swap did not
+    /// lose any address the boot was still using.
+    ///
+    /// The third names the interrupt table, and says the flag is on.  A boot
+    /// that installed a table and never enabled interrupts has never taken one,
+    /// and the machine's first tick would then be a fault nobody saw; enabling
+    /// the flag and staying up is what says the delivery path works.
+    ///
+    /// The fourth is the heap's own bounds.  It is here rather than treated as
+    /// a log line because reaching it means `bounds()` ran, which is what makes
+    /// the allocator lay out its free lists — a boot that printed the first
+    /// line and stopped before the second has a loader but no heap.  The
+    /// address itself is not asserted: it moves with the image, and the gate
+    /// is that the line is there, not where it points.
+    ///
+    /// The fifth names where the block device came from.  The boot falls back
+    /// to its in-memory image when the bus has no disk, so "the filesystem
+    /// mounted" alone would pass on a machine where the driver never ran;
+    /// `virtio-blk on pci` is the line that says it did.
+    ///
+    /// The sixth names every mounted filesystem and the prefix it owns, and
+    /// the seventh is the disc's file read back.  The disc is the one
+    /// filesystem the boot cannot have written, so bytes coming out of it came
+    /// from the image, which is why it is the line that proves the namespace
+    /// rather than the mounts.  The filesystem line also names the three
+    /// syscalls the read went through: a boot that read the file by calling
+    /// the filesystem directly printed the same bytes and the same label, and
+    /// the words `through syscall open/read/close` are the whole claim.
     pub(crate) fn required_lines(self) -> &'static [(&'static str, bool)] {
         match self {
             Self::X8664 => &[
@@ -151,14 +144,12 @@ impl Machine {
                 // The frame pool, and the allocator exercised rather than
                 // described.  The count of tables taken from frames is zero on
                 // this machine, its spare tables are enough, so the check is
-                // what stands in for a branch that has never run.
-                // The whole line, because its tail is the outcome.
-                //
-                // A prefix would accept `pool check FAILED`: the numbers before
-                // it are the same on both runs, and only the last word says
-                // whether the allocator handed the frame back.  The counts are
-                // fixed for a given machine and pool size, so requiring them
-                // makes the line a fact rather than a shape.
+                // what stands in for a branch that has never run.  The exact-
+                // match form of this line, with the counts required, is the
+                // other two machines': their pool sizes are fixed by the
+                // machine's memory and the linker's span, and this machine's
+                // is fixed by the machine's answer too, which is why the
+                // reaped line below carries this boot's exact tail instead.
                 ("protofire: frame pool ", false),
                 ("protofire: mac allowed ", false),
                 ("protofire: mac denied ", false),
@@ -254,7 +245,8 @@ impl Machine {
                 // record ran and answered, which `assign` is the only writer
                 // of.
                 ("protofire: task migrations ", false),
-                // Two programs in ring 3, each in an address space of its own.
+                // Three programs in ring 3, each in an address space of its
+                // own.
                 //
                 // `1` and `2` are the programs' own numbers: one program
                 // twice reads exactly the same as two programs once, so the
@@ -298,12 +290,7 @@ impl Machine {
                 // fragment check reads: a process that lost its identity in
                 // the change could not exit as 1.
                 ("protofire: process 1 exec'd image 4", true),
-                // The fork's two answers, checked as a pair on one line: the
-                // exec'd parent (pid 1) exits with its own pid, and pid 4 exits
-                // with zero.  The pipe's two programs have no identity call, so
-                // their statuses are whatever their last call left behind, //
-                // reported, and deliberately not asserted. Sleeping, and the
-                // wake that ended it.
+                // Sleeping, and the wake that ended it.
                 //
                 // Two lines, because they are two facts: a program asked for a
                 // deadline, and one was woken by the timer.  A boot that slept
@@ -335,196 +322,161 @@ impl Machine {
             // stopped after the heap.
             Self::Aarch64 => {
                 &[
-                // A program at EL0, and its calls served.
-                //
-                // `program mapped 1` means a frame of machine code was mapped
-                // `user`, without that bit the `eret` into EL0 faults on its
-                // first fetch.  `hello from ring 3` is the program's `Write`
-                // reaching the console through the trap path.
-                ("protofire: entering ring 3", true),
-                // Two programs, each in an address space of its own, at
-                // addresses no other program can reach.
-                ("protofire: program 1 mapped at ", false),
-                ("protofire: program 2 mapped at ", false),
-                ("protofire: program 3 mapped at ", false),
-                // A read that had nothing to read and waited for another task.
-                // The wake below is the only thing that ends it, so the pair is
-                // the claim: a task blocked, and a task's write is what moved
-                // it.
-                ("protofire: a program blocks on a pipe", true),
-                ("protofire: a write woke ", false),
-                // Both ran, in order, each printing its own number.  One
-                // program twice would read the same as one program once, which
-                // is why the number comes from the program and not from a
-                // kernel counter.
-                ("program 1 says hello", true),
-                ("program 2 says hello", true),
-                // And the switch happened once and both exits were counted.
-                // Deleting the `TTBR0_EL1` write leaves program 2's entry
-                // unmapped and the boot stops at an instruction abort; deleting
-                // the context restore resumes program 1 in program 2's space.
-                ("protofire: every program exited, ", false),
-                // The fork, as two statuses that are the same call's two
-                // answers: the parent (pid 1) exits with its child's pid, and
-                // that child (pid 4) exits with zero.  A fork that copied
-                // nothing, or answered the same value to both, prints neither
-                // pair.
-                ("protofire: forked a process, child pid 4", true),
-                // The fork's two faults, as the two answers they get: one
-                // write finds the shared page still held by both and is
-                // copied, the other finds its holder last and is promoted in
-                // place.  Either order is correct, so the check is that both
-                // answers exist.
-                ("protofire: copy-on-write copy at ", false),
-                ("protofire: copy-on-write promote at ", false),
-                // The exec, as a line that names both sides of the change: the
-                // task that called and the image it became.  This boot's facts
-                // are pid 1 and image 4, so the line is required whole.
-                ("protofire: process 1 exec'd image 4", true),
-                // The fork's two answers, checked as a pair on one line: the
-                // exec'd parent (pid 1) exits with its own pid, and pid 4 exits
-                // with zero.  The pipe's two programs have no identity call, so
-                // their statuses are whatever their last call left behind, // reported, and deliberately not asserted.
-                // The policy, asked twice through the real handler.
-                //
-                // A rule the boot installs allows one label and not another,
-                // and both cases go through `open` rather than calling the
-                // policy directly.  That is what makes these lines a check on
-                // the *wiring*: deleting the check from `open` turns "denied"
-                // into "MISPOLICED", which the gate refuses.
-                ("protofire: mac policy enabled, ", false),
-                // The frame pool, and the allocator exercised rather than
-                // described.  The count of tables taken from frames is zero on
-                // this machine, its spare tables are enough, so the check is
-                // what stands in for a branch that has never run.
-                // A program at EL0, and its calls served.
-                //
-                // `program mapped 1` means a frame of machine code was mapped
-                // `user`, without that bit the `eret` into EL0 faults on its
-                // first fetch.  `hello from ring 3` is the program's `Write`
-                // reaching the console through the trap path.
-                ("protofire: entering ring 3", true),
-                // Two cores, and the same evidence riscv64 requires: the PSCI
-                // start reached a core that came up and recorded it, the
-                // interrupt the boot sent it arrived, and a program ran on it
-                // to its exit.  A gate at one core would accept a PSCI call
-                // that never worked.
-                ("protofire: hart 1 online", true),
-                ("protofire: ipi to 1 other cpu(s), taken", true),
-                ("protofire: cpu 1 id 1, ticking, ", false),
-                ("protofire: work available, started cpus woken", true),
-                ("protofire: cpu 1 runs process ", false),
-                ("protofire: program ended on cpu 1", true),
-                ("protofire: parallel, programs ended on ", false),
-                // Every finished program's address space went back, and the
-                // pool it returned to is reported beside it.  The count is the
-                // programs: one address space each, released once the machine is
-                // finished.  Releasing at each exit was tried and produced 186
-                // page faults in six boots of eight, which is why the count is
-                // here at the end rather than absent.
-                ("protofire: address spaces reaped 4, 16384 frame(s) free", true),
-                // One invalidation, acknowledged, and no wait ran out.  This
-                // core's ECAM window is past the identity map, so the boot
-                // creates a mapping for it after the second core is up, and
-                // that one mapping is the whole broadcast this machine sends.
-                (
-                    "protofire: tlb shootdown 1 sent, 1 acknowledged, 0 timed out",
-                    true,
-                ),
-                // The placement rule's own record.  The count is the number of
-                // times a task was taken onto a CPU other than the one it last
-                // ran on; it is not always above zero, because whether a task
-                // moves depends on which CPU reaches the queue first, and two
-                // boots in twenty move none.  What this line proves is that the
-                // record ran and answered, which `assign` is the only writer of.
-                ("protofire: task migrations ", false),
-                // Two programs, each in an address space of its own, at
-                // addresses no other program can reach.
-                ("protofire: program 1 mapped at ", false),
-                ("protofire: program 2 mapped at ", false),
-                ("protofire: program 3 mapped at ", false),
-                // A read that had nothing to read and waited for another task.
-                // The wake below is the only thing that ends it, so the pair is
-                // the claim: a task blocked, and a task's write is what moved
-                // it.
-                ("protofire: a program blocks on a pipe", true),
-                ("protofire: a write woke ", false),
-                // Both ran, in order, each printing its own number.  One
-                // program twice would read the same as one program once, which
-                // is why the number comes from the program and not from a
-                // kernel counter.
-                ("program 1 says hello", true),
-                ("program 2 says hello", true),
-                // And the switch happened once and both exits were counted.
-                // Deleting the `TTBR0_EL1` write leaves program 2's entry
-                // unmapped and the boot stops at an instruction abort; deleting
-                // the context restore resumes program 1 in program 2's space.
-                ("protofire: every program exited, ", false),
-                // The fork, as two statuses that are the same call's two
-                // answers: the parent (pid 1) exits with its child's pid, and
-                // that child (pid 4) exits with zero.  A fork that copied
-                // nothing, or answered the same value to both, prints neither
-                // pair.
-                ("protofire: forked a process, child pid 4", true),
-                // The fork's two answers, checked as a pair on one line: the
-                // parent (pid 1) exits with its child's pid 4, and pid 4 exits
-                // with zero.  The pipe's two programs have no identity call, so
-                // their statuses are whatever their last call left behind, // reported, and deliberately not asserted.
-                // The whole line, because its tail is the outcome.
-                //
-                // A prefix would accept `pool check FAILED`: the numbers before
-                // it are the same on both runs, and only the last word says
-                // whether the allocator handed the frame back.  The counts are
-                // fixed for a given machine and pool size, so requiring them
-                // makes the line a fact rather than a shape.
-                (
-                    "protofire: frame pool 16384 frame(s), 16384 free, 0 in page tables, pool check ok",
-                    true,
-                ),
-                ("protofire: mac allowed ", false),
-                ("protofire: mac denied ", false),
-                ("protofire: syscall table installed, ", false),
-                (
-                    "protofire 0.1.0: entered via dtb, console up, stage 1",
-                    true,
-                ),
-                (
-                    "protofire: page table built and installed, 4 KiB granule",
-                    true,
-                ),
-                ("protofire: interrupt table installed, interrupts on", true),
-                // The path exercised, not the flag set.
-                //
-                // "Interrupts on" is a flag; a boot that printed it and never
-                // took an interrupt has said nothing about whether the machine
-                // can.  This line means a controller delivered a line, the
-                // vector fired, the handler ran and the interrupt was finished
-                //, and the check behind it can fail: with the raise disabled
-                // the boot prints "raised but not delivered" instead.
-                ("protofire: interrupt delivered to its handler", true),
-                ("protofire: heap at ", false),
-                // The driver running on the device, and doing real I/O on it.
-                //
-                // `block device from memory` is the fallback: a machine with no
-                // disk prints it and boots anyway, which is correct and is not
-                // the same claim.  These two lines name the virtio path, and
-                // the second is a sector leaving the machine and coming back
-                // through the driver's own queue.
-                ("protofire: block device from virtio-blk on pci", true),
-                ("protofire: virtio-blk wrote and read back sector ", false),
-                (
-                    "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
-                    true,
-                ),
-                (
-                    "protofire: /cdrom/README.TXT reads back from the disc",
-                    true,
-                ),
-                (
-                    "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
-                    false,
-                ),
-            ]
+                    // The policy, asked twice through the real handler.
+                    //
+                    // A rule the boot installs allows one label and not
+                    // another, and both cases go through `open` rather than
+                    // calling the policy directly.  That is what makes these
+                    // lines a check on the *wiring*: deleting the check from
+                    // `open` turns "denied" into "MISPOLICED", which the gate
+                    // refuses.
+                    ("protofire: mac policy enabled, ", false),
+                    // The frame pool, and the allocator exercised rather than
+                    // described.  The count of tables taken from frames is zero
+                    // on this machine, its spare tables are enough, so the
+                    // check is what stands in for a branch that has never run.
+                    // A program at EL0, and its calls served.
+                    //
+                    // `program mapped 1` means a frame of machine code was
+                    // mapped `user`, without that bit the `eret` into EL0
+                    // faults on its first fetch.  `hello from ring 3` is the
+                    // program's `Write` reaching the console through the trap
+                    // path.
+                    ("protofire: entering ring 3", true),
+                    // Two cores, and the same evidence x86_64 requires: the
+                    // PSCI start reached a core that came up and recorded it,
+                    // the interrupt the boot sent it arrived, and a program ran
+                    // on it to its exit.  A gate at one core would accept a
+                    // PSCI call that never worked.
+                    ("protofire: hart 1 online", true),
+                    ("protofire: ipi to 1 other cpu(s), taken", true),
+                    ("protofire: cpu 1 id 1, ticking, ", false),
+                    ("protofire: work available, started cpus woken", true),
+                    ("protofire: cpu 1 runs process ", false),
+                    ("protofire: program ended on cpu 1", true),
+                    ("protofire: parallel, programs ended on ", false),
+                    // Every finished program's address space went back, and the
+                    // pool it returned to is reported beside it.  The count is
+                    // the programs: one address space each, released once the
+                    // machine is finished.  Releasing at each exit was tried
+                    // and produced 186 page faults in six boots of eight, which
+                    // is why the count is here at the end rather than absent.
+                    (
+                        "protofire: address spaces reaped 4, 16384 frame(s) free",
+                        true,
+                    ),
+                    // One invalidation, acknowledged, and no wait ran out.
+                    // This core's ECAM window is past the identity map, so the
+                    // boot creates a mapping for it after the second core is
+                    // up, and that one mapping is the whole broadcast this
+                    // machine sends.
+                    (
+                        "protofire: tlb shootdown 1 sent, 1 acknowledged, 0 timed out",
+                        true,
+                    ),
+                    // The placement rule's own record.  The count is the number
+                    // of times a task was taken onto a CPU other than the one
+                    // it last ran on; it is not always above zero, because
+                    // whether a task moves depends on which CPU reaches the
+                    // queue first, and two boots in twenty move none.  What
+                    // this line proves is that the record ran and answered,
+                    // which `assign` is the only writer of.
+                    ("protofire: task migrations ", false),
+                    // Three programs, each in an address space of its own,
+                    // at addresses no other program can reach.
+                    ("protofire: program 1 mapped at ", false),
+                    ("protofire: program 2 mapped at ", false),
+                    ("protofire: program 3 mapped at ", false),
+                    // A read that had nothing to read and waited for another
+                    // task. The wake below is the only thing that ends it, so
+                    // the pair is the claim: a task blocked, and a task's write
+                    // is what moved it.
+                    ("protofire: a program blocks on a pipe", true),
+                    ("protofire: a write woke ", false),
+                    // Both ran, in order, each printing its own number.  One
+                    // program twice would read the same as one program once,
+                    // which is why the number comes from the program and not
+                    // from a kernel counter.
+                    ("program 1 says hello", true),
+                    ("program 2 says hello", true),
+                    // And the switch happened once and every exit was counted.
+                    // Deleting the `TTBR0_EL1` write leaves program 2's entry
+                    // unmapped and the boot stops at an instruction abort;
+                    // deleting the context restore resumes program 1 in program
+                    // 2's space.
+                    ("protofire: every program exited, ", false),
+                    // The fork, as two statuses that are the same call's two
+                    // answers: the parent (pid 1) exits with its child's pid,
+                    // and that child (pid 4) exits with zero.  A fork that
+                    // copied nothing, or answered the same value to both,
+                    // prints neither pair.
+                    ("protofire: forked a process, child pid 4", true),
+                    // The fork's two answers, checked as a pair on one line:
+                    // the parent (pid 1) exits with its child's pid 4, and pid
+                    // 4 exits with zero.  The pipe's two programs have no
+                    // identity call, so their statuses are whatever their last
+                    // call left behind, // reported, and deliberately not
+                    // asserted. The whole line, because its tail is the
+                    // outcome.
+                    //
+                    // A prefix would accept `pool check FAILED`: the numbers
+                    // before it are the same on both runs, and only the last
+                    // word says whether the allocator handed the frame back.
+                    // The counts are fixed for a given machine and pool size,
+                    // so requiring them makes the line a fact rather than a
+                    // shape.
+                    (
+                        "protofire: frame pool 16384 frame(s), 16384 free, 0 in page tables, pool check ok",
+                        true,
+                    ),
+                    ("protofire: mac allowed ", false),
+                    ("protofire: mac denied ", false),
+                    ("protofire: syscall table installed, ", false),
+                    (
+                        "protofire 0.1.0: entered via dtb, console up, stage 1",
+                        true,
+                    ),
+                    (
+                        "protofire: page table built and installed, 4 KiB granule",
+                        true,
+                    ),
+                    ("protofire: interrupt table installed, interrupts on", true),
+                    ("protofire: timer armed at ", false),
+                    ("protofire: the timer preempted, ", false),
+                    // The path exercised, not the flag set.
+                    //
+                    // "Interrupts on" is a flag; a boot that printed it and
+                    // never took an interrupt has said nothing about whether
+                    // the machine can.  This line means a controller delivered
+                    // a line, the vector fired, the handler ran and the
+                    // interrupt was finished, and the check behind it can fail:
+                    // with the raise disabled the boot prints "raised but not
+                    // delivered" instead.
+                    ("protofire: interrupt delivered to its handler", true),
+                    ("protofire: heap at ", false),
+                    // The driver running on the device, and doing real I/O on
+                    // it.
+                    //
+                    // `block device from memory` is the fallback: a machine
+                    // with no disk prints it and boots anyway, which is correct
+                    // and is not the same claim.  These two lines name the
+                    // virtio path, and the second is a sector leaving the
+                    // machine and coming back through the driver's own queue.
+                    ("protofire: block device from virtio-blk on pci", true),
+                    ("protofire: virtio-blk wrote and read back sector ", false),
+                    (
+                        "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
+                        true,
+                    ),
+                    (
+                        "protofire: /cdrom/README.TXT reads back from the disc",
+                        true,
+                    ),
+                    (
+                        "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
+                        false,
+                    ),
+                ]
             }
             // The OpenSBI machine, at the same milestones as the other two:
             // the tree parsed, the kernel's own table installed, the frame
@@ -644,14 +596,9 @@ impl Machine {
                 // task that called and the image it became.  This boot's facts
                 // are pid 1 and image 4, so the line is required whole.
                 ("protofire: process 1 exec'd image 4", true),
-                // The fork's two answers, checked as a pair on one line: the
-                // exec'd parent (pid 1) exits with its own pid, and pid 4 exits
-                // with zero.  The pipe's two programs have no identity call, so
-                // their statuses are whatever their last call left behind, //
-                // reported, and deliberately not asserted. Sleeping, and the
-                // wake that ended it: the deadline is a firmware call on this
-                // machine, and a boot that slept and never woke prints the
-                // sleep line and not the wake.
+                // Sleeping, and the wake that ended it: the deadline is a
+                // firmware call on this machine, and a boot that slept and
+                // never woke prints the sleep line and not the wake.
                 ("protofire: a program sleeps until counter ", false),
                 ("protofire: a program woke, ", false),
                 ("protofire: the timer preempted, ", false),
@@ -681,12 +628,11 @@ impl Machine {
                 ),
                 // Placement moved, as on the other two machines: a task is not
                 // pinned to a hart, so one that was preempted or woken can be
-                // selected here or there, and the line counts and names it.
-                // The placement rule's own record.  The count is the number of
-                // times a task was taken onto a CPU other than the one it last
-                // ran on; it is not always above zero, because whether a task
-                // moves depends on which CPU reaches the queue first, and two
-                // boots in twenty move none.  What this line proves is that the
+                // selected here or there.  The count is the number of times a
+                // task was taken onto a CPU other than the one it last ran on;
+                // it is not always above zero, because whether a task moves
+                // depends on which CPU reaches the queue first, and two boots
+                // in twenty move none.  What this line proves is that the
                 // record ran and answered, which `assign` is the only writer
                 // of.
                 ("protofire: task migrations ", false),

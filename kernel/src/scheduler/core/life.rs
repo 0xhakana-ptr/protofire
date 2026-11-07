@@ -48,9 +48,9 @@ impl Scheduler {
         let parent_pid = self.tasks.get(parent)?.pid();
         let parent_context = *frame;
 
-        // The parent's space, copied.  A task with no space is one sharing the
-        // kernel's, which a program never has: a fork of it would be a fork of
-        // nothing.
+        // The parent's space, shared frame by frame.  A task with no space is
+        // one sharing the kernel's, which a program never has: a fork of it
+        // would be a fork of nothing.
         let parent_space = self.tasks.get(parent)?.space?;
         // SAFETY: the parent's space is live and this boot is the only writer.
         let child_space = unsafe { crate::address_space::fork_from(&parent_space) }?;
@@ -61,7 +61,7 @@ impl Scheduler {
         let mut child = Task::new("child", 0, 0, child_space);
         child.identify(pid, parent_pid);
         // The context, not a fresh one: the child resumes at the instruction
-        // after its parent's `fork`, on the copied stack.
+        // after its parent's `fork`, on the stack page the two now share.
         *child.context_mut() = parent_context;
         // And the child's answer is zero, written into its own copy of the
         // frame.  The parent's register is untouched, so the same instruction

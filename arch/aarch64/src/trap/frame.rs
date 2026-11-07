@@ -52,9 +52,10 @@ pub struct ExceptionFrame {
     pub sp_el0: u64,
 }
 
-/// An `irq::Frame` needs a vector and nothing else from a machine that has no
-/// process to hand a fault to, but the syndrome is what makes a log line
-/// diagnosable, so `class_name` names it.
+/// An `irq::Frame` needs a vector, a fault address and a direction from a
+/// fault, and this frame's syndrome is where the last two come from; the
+/// class is also what makes a log line diagnosable when the resolver refuses
+/// the fault, so `class_name` names it.
 impl ExceptionFrame {
     /// The exception class, `ESR_EL1.EC`, bits 31..26.
     ///

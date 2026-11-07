@@ -16,8 +16,8 @@ use crate::scheduler::Task;
 /// The process id the boot's own work is done under.
 ///
 /// A program the kernel starts is a child of this, which is a fact rather than
-/// a placeholder: there is no `fork`, so nothing in this tree has a program for
-/// a parent.
+/// a placeholder.  A forked child gets a different answer: its parent is the
+/// program that forked it, recorded by the fork, not by the boot.
 pub const BOOT_PROCESS: u32 = 0;
 
 /// How the boot's three programs are arranged.
@@ -26,7 +26,8 @@ pub const BOOT_PROCESS: u32 = 0;
 /// switch needs something to switch to.  Three programs that each print their
 /// number exercise a second and third address space, two contexts saved and
 /// restored, a sleep that parks a task and a read that parks a task on a pipe,
-/// and three exits reaped.
+/// and the exits reaped — the boot's three, plus the fourth process its fork
+/// creates, whose space is reaped beside theirs.
 ///
 /// A log that shows the numbers interleaved is the evidence; one program twice
 /// looks the same as one program once, which is why the number is the program's
@@ -206,9 +207,9 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
         space,
     );
     // The process tree this boot has: every program the kernel starts is its
-    // own process, and the boot is the parent of each.  A framework that
-    // `fork`ed would fill these from the caller instead; nothing here does,
-    // and saying which is which is better than a zero that could mean either.
+    // own process, and the boot is the parent of each.  The one process here
+    // with a program for a parent is the one `fork` creates, and the fork
+    // fills these from the caller's own ids rather than from the boot's.
     task.identify(number as u32, BOOT_PROCESS);
     Some(task)
 }

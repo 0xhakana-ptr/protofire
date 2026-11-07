@@ -20,12 +20,12 @@
 // `arch::program_bytes` and gets whichever machine answered.
 
 /// Named so a test can find where *this* program ends in a buffer sized for the
-/// longest of the three.
+/// longest of the four.
 pub const PROGRAM_WORDS_FOR_TEST: usize = 33;
 
-/// The longest of the three images: the announcing program, the pipe writer
-/// and the pipe reader.  A program is copied into a whole page, so this
-/// matters only to the copy.
+/// The longest of the four images: the announcing program, the pipe writer,
+/// the pipe reader and the exec target.  A program is copied into a whole
+/// page, so this matters only to the copy.
 pub const PROGRAM_LEN: usize = 33 * 4;
 
 pub const PIPE_READER: u16 = 3;

@@ -72,6 +72,15 @@ run-x86_64:
 check-x86_64:
     cargo run --offline --quiet -p xtask -- check --machine x86_64
 
+# Boot the aarch64 image (through QEMU's -kernel path) and keep its serial
+# output.
+run-aarch64:
+    cargo run --offline --quiet -p xtask -- run --machine aarch64
+
+# Boot the aarch64 image and require its console lines.
+check-aarch64:
+    cargo run --offline --quiet -p xtask -- check --machine aarch64
+
 # Boot the riscv64 image (through OpenSBI) and keep its serial output.
 run-riscv64:
     cargo run --offline --quiet -p xtask -- run --machine riscv64

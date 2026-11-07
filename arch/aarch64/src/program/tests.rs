@@ -84,11 +84,11 @@ fn the_busy_loop_branches_back_to_itself() {
 
 /// Every syscall number the program uses is the ABI's own.
 ///
-/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, and two `Exit`s — one per path,
-/// because the fork leaves two processes and each ends on its own.  A program
-/// compiled against a number this build does not serve would print its first
-/// line and then fail silently, which is the one failure a sleep program could
-/// have and still look healthy.
+/// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and one `Exit`
+/// — the parent's path ends in the exec, so the child's is the only path that
+/// exits itself.  A program compiled against a number this build does not
+/// serve would print its first line and then fail silently, which is the one
+/// failure a sleep program could have and still look healthy.
 #[test]
 fn the_program_writes_sleeps_writes_forks_writes_execs_and_the_child_exits() {
     let words = program_words(1);

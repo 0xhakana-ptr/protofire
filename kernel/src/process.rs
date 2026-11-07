@@ -2,9 +2,10 @@
 //!
 //! One program, running at EL0, calling back into the kernel.
 //!
-//! What the kernel does with a program's supervisor call: three calls are
-//! served, `Write`, `Exit` and `Sleep`, and everything else answers
-//! `NotImplemented`.
+//! What the kernel does with a program's supervisor call: a handful of calls
+//! are served — `Write`, `Exit`, `Sleep`, a pipe's `Read` and `Write`, `Fork`,
+//! `ExecProcess`, `GetPid`, `GetPpid`, `WaitProcess` and `Pipe` — and
+//! everything else answers `NotImplemented`.
 //!
 //! The image a program runs is machine code, so it lives in `arch` and this
 //! file asks for it.  An array here would have to be right for three
@@ -308,12 +309,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         };
     }
 
-    // Who is asking, and who started them.
-    //
-    // The answers come from the task the scheduler is running, not from the
-    // call: a program does not send its own id, and one that could would be a
-    // program answering a question about itself.
-    // Fork: the running process copied into a child.
+    // Fork: the running process shared with a child.
     //
     // ## The one instruction that answers two ways
     //
@@ -322,7 +318,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // The **parent** learns the child's pid, and the **child** learns zero.
     // That is the whole of `fork`'s interface, and it is why the answer is not
     // put in the frame here for the child: the child's frame is its parent's,
-    // copied, and the value this writes is the value only the parent sees.
+    // taken whole, and the value this writes is the value only the parent sees.
     if number == SyscallNumber::Fork as usize {
         return match crate::scheduler::fork_current(frame) {
             Some(pid) => {
@@ -367,6 +363,11 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         };
     }
 
+    // Who is asking, and who started them.
+    //
+    // The answers come from the task the scheduler is running, not from the
+    // call: a program does not send its own id, and one that could would be a
+    // program answering a question about itself.
     if number == SyscallNumber::GetPid as usize {
         return match crate::scheduler::current_pid() {
             Some(pid) => CallOutcome::Return(pid as usize),
@@ -386,8 +387,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // This boot has one process tree, the programs the kernel started, all
     // children of the boot, so the only wait that can be answered is "has any
     // process finished, and with what".  That is a real answer, and it is the
-    // one a parent in this tree can ask for: a finer wait would need a parent
-    // that exists.
+    // one a parent in this tree can ask for: a wait for a *particular* child
+    // would need a wait that names a pid, which does not exist yet.
     //
     // A wait with nothing finished **blocks** rather than spinning: the caller
     // is parked like a pipe's reader, and a process exit is what wakes it.  A

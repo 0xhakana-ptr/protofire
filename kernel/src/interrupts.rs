@@ -8,11 +8,13 @@
 //! and calls here, `arch`'s.  This half is the *decision*: which vector means
 //! what, and who asked to be told.
 //!
-//! A vector is delivered to whoever registered for its number.  Nothing is
-//! registered yet, so every frame answers "not handled" and the dispatch stops
-//! the machine with the vector on the console, which is the honest answer to
-//! an interrupt this kernel has no business receiving, and it is what makes a
-//! boot past `sti` a proof that the path works.
+//! A vector is delivered to whoever registered for its number: the timer's,
+//! the wake between CPUs, the console's line, and — for a fault — one
+//! recoverable shape, the write a copy-on-write fork demoted.  A vector no
+//! one claims is reported rather than acted on, an unclaimed *interrupt*
+//! continuing and an unresolved *fault* stopping the machine, which is the
+//! honest answer to a line this kernel has no business receiving, and it is
+//! what makes a boot past `sti` a proof that the path works.
 //!
 //! On a machine whose controller assigns each line a number, the number *is*
 //! the identity a handler registers under.  A translation table between "the
@@ -51,9 +53,9 @@ pub unsafe fn install() {
         arch::serial::write_str("protofire: descriptor tables installed, TSS loaded\n");
     }
 
-    // SAFETY: called once, with the console up.  The sink answers "not handled"
-    // for everything, so a vector that arrives stops the machine with its
-    // number on the console rather than jumping into nothing.
+    // SAFETY: called once, with the console up.  The sink claims every vector
+    // this kernel knows and refuses the rest, so an unclaimed one is a printed
+    // line with its number on the console rather than a jump into nothing.
     unsafe { arch::set_interrupt_dispatch(handle) };
     // SAFETY: called once, after the sink exists and before any vector can be
     // raised.
