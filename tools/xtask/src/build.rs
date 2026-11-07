@@ -37,6 +37,15 @@ const GREETING_PATH: &str = "/greeting.txt";
 const GREETING_CONTENT: &[u8] = b"the quick brown pyrofox";
 const INIT_PATH: &str = "/bin/init";
 
+/// The profile every boot's `init` is built in.
+///
+/// One constant because the build and the read have to name the same
+/// directory: the first version built the default profile and read the
+/// release one, which a tree that had never built it by hand could not
+/// satisfy — the gate failed with "no such file" on a clean clone and only
+/// passed on a machine where an earlier manual build had left the file.
+const INIT_PROFILE: &str = "release";
+
 /// Build `apps/init` for `machine`'s target, answering the ELF's bytes.
 ///
 /// The program's own linker script fixes its base, and its Rust flags are
@@ -57,6 +66,7 @@ fn build_init(machine: Machine) -> Result<Vec<u8>> {
     command
         .args(["build", "--offline", "-p", "init", "--target"])
         .arg(machine.triple())
+        .args(["--profile", INIT_PROFILE])
         .env("RUSTFLAGS", &rustflags);
     if !command
         .status()
@@ -67,7 +77,7 @@ fn build_init(machine: Machine) -> Result<Vec<u8>> {
     }
     let elf = PathBuf::from("target")
         .join(machine.triple())
-        .join("release")
+        .join(INIT_PROFILE)
         .join("init");
     std::fs::read(&elf).with_context(|| format!("reading the built init at {}", elf.display()))
 }
