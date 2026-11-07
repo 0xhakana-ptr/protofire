@@ -3,9 +3,11 @@
 > **Status:** normative. Changes to this document require maintainer review.
 > **Applies to:** `abi/`, `syscall/`, `kernel/src/syscall/`.
 
-The syscall ABI is the compatibility boundary of Protofire. Ring-3 programs are
-self-contained ELF files that talk to the kernel exclusively through this
-interface; there is no dynamic linker and no shared library to absorb a change.
+The syscall ABI is the compatibility boundary of Protofire. A ring-3 program
+talks to the kernel exclusively through this interface, and carries nothing
+that could absorb a change: the boot's programs are raw machine-code images
+the kernel copies into a page, there is no dynamic linker, and no shared
+library sits between a program and these numbers.
 A number that moves, a struct that grows, or a pointer that is validated one way
 in the kernel and another way in the wrapper is a silent breakage of every
 already-built program.
@@ -65,15 +67,17 @@ are already shipped on the demo disk.
 ### 3.1 Append-only
 
 - **Never renumber** an existing syscall.
-- **Never reuse** a number whose syscall was removed. If a syscall must go, its
-  number is retired permanently, rename the constant to `SYS_RESERVED_<n>` and
-  leave the slot empty. Slots 141 and 142 (`SYS_RESERVED_141`,
-  `SYS_RESERVED_142`) are live examples: they are numbered, never reused, and
-  still classified as Experimental "until assigned".
+- **Never reuse** a number whose syscall was removed. If a syscall must go,
+  its number is retired permanently: remove the variant, leave the number
+  absent from the enum, and note the retirement beside the count. Slots 141
+  and 142 are live examples: the enum skips them, and nothing may ever take
+  them.
 - **Never insert** in the middle of the range to keep a group tidy. The file is
   ordered by number because numbering is historical, not thematic.
 - New syscalls take the **next unused number** at the end of the defined range,
-  and `SYSCALL_COUNT` is raised to `new_number + 1` in the same edit.
+  and `PUBLIC_SYSCALL_COUNT` — derived from the last variant in
+  [`abi/src/number.rs`](../../abi/src/number.rs) — moves with it in the same
+  edit.
 
 ### 3.2 Stability classes
 
@@ -88,37 +92,28 @@ redefined, and `SYSCALL_ABI_VERSION_MINOR` is what says it was.  A version in
 the frozen range never moves that way, there the table above applies as
 written, and a redefinition is a major bump.
 
-New syscalls are always assigned in the Experimental range until they have
-matured and a maintainer graduates them. The classification is computed, not
-hand-maintained: `syscall_stability(n)` returns `Stable` for `n <= 120` and
-`Experimental` otherwise, and its unit test pins both boundaries. Graduating a
-syscall means changing that boundary deliberately, never editing one entry in
-isolation.
+A number at or below 120 is stable by being frozen: assigned once, never
+renumbered, never reused. Above it, a new number is experimental in the plain
+sense that only this build's kernel and this build's programs agree on it;
+there is no stability function to call, and the boundary is the frozen-range
+rule itself, pinned by the tests at the bottom of `abi/src/number.rs`.
 
-Beyond `SYSCALL_COUNT` and up to `MAX_SYSCALLS`, slots exist but are unassigned.
-The dispatch table must leave them empty; a test asserts the first unassigned
-slot is `None`.
+Beyond `PUBLIC_SYSCALL_COUNT` no slot exists at all: the dispatch table is
+sized from the count, so an unassigned number has nothing to be empty.
 
 ---
 
 ## 4. Versioning
 
-Bump the ABI version in [`abi/src/syscall.rs`](../../abi/src/syscall.rs) as part
-of the same change that alters the ABI:
+The version of the ABI is the numbering itself: the frozen range and the
+count are what a program is compiled against, and there is no separate version
+constant to bump.  A change that alters what an existing number means is a
+change to a frozen contract, which the numbering rules above forbid; a change
+that appends is additive by construction and needs no version.
 
-| Change | Bump |
-|--------|------|
-| New syscall appended, new flag bit, new optional field at the end of a record | `SYSCALL_ABI_VERSION_MINOR` |
-| Changed semantics of an existing syscall, changed argument order, changed or reordered fields in a record, removed syscall | `SYSCALL_ABI_VERSION_MAJOR` |
-
-A major bump is a **last resort**. If the change can be expressed additively, a new syscall alongside the old one, a new flag, a field appended to a
-fixed-size record, do that instead. The existing unit test pins the current
-version constants; update it in the same commit, and make sure the commit
-message says why the bump is warranted.
-
-A program reads the version at runtime through the `abi_info` syscall, so it can
-detect which side of a change it is talking to.  The syscall is numbered and
-served as `NotImplemented` until the field that carries the version arrives.
+If a version field is ever worth carrying to a program, it arrives the way
+everything does here: as a number in this range, appended with its own
+handler, with the tests that pin the boundary updated in the same change.
 
 ---
 
@@ -135,7 +130,8 @@ follow-up.
    variant, and a test in the same file pins that.  A variant appended without
    it is a syscall the dispatch table never reaches.
 
-3. **Write the handler** in [`kernel/src/syscall/mod.rs`](../../kernel/src/syscall/mod.rs).
+3. **Write the handler** in
+   [`kernel/src/syscall/handlers.rs`](../../kernel/src/syscall/handlers.rs).
    The kernel's table is where the handlers live because every slot names a
    subsystem and the `syscall` crate must not.
 
@@ -194,16 +190,16 @@ Rules the shape encodes:
 
 ## 7. Pointer validation
 
-There are no user pointers in this tree yet, and this section says what that
-means rather than what it would mean if there were.
+A pointer from ring 3 is a number, and this section is the rule for it.
 
-A syscall's arguments are six words, and today the caller is the kernel: the
-two address-shaped arguments arrive as borrows through `Arguments`, built by
-the code that owns the buffer.  There is no address to validate because there
-is no privilege boundary to validate across.
+The registry's own handlers still take borrows — `Arguments::path` and
+`Arguments::buffer`, built by the kernel code that owns the buffer — and a
+borrow needs no validation.  The boundary exists where programs call:
+`Read` and `Write` to a pipe take a ring-3 buffer, and the handler validates
+the range with `is_user_range` before it touches a byte, because an address
+that arrives in a register is a number until something checks it.
 
-When a program can call, the boundary appears and so does this section.  What
-is already decided, and is worth writing down before there is code to break:
+What is already decided, and is what a new call with an address argument does too:
 
 - **A caller's bytes are copied, never borrowed across a wait.**  A handler
   whose operation can block must stage the caller's bytes in kernel memory
@@ -257,10 +253,11 @@ tested.
 Before requesting review of a syscall change, confirm each line:
 
 - [ ] The number is appended, never renumbered, never reused.
-- [ ] `SYSCALL_COUNT` and `syscall_name` are updated.
-- [ ] `SyscallNumber` derives from the manifest constant, not a literal.
-- [ ] `SYSCALL_POINTER_SPECS` has an entry at the right index.
-- [ ] The handler is registered in `SYSCALL_REGISTRY`.
+- [ ] `SyscallNumber` carries the variant, and `PUBLIC_SYSCALL_COUNT` moves
+      with it.
+- [ ] The handler is registered in the table
+      [`kernel/src/syscall/mod.rs`](../../kernel/src/syscall/mod.rs)
+      installs.
 - [ ] The handler returns `Result<SyscallDispatch>`, has no `panic!`/`unwrap`
       on user-controlled input, and validates unused arguments.
 - [ ] User memory is reached only through the `user_memory` helpers.

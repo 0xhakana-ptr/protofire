@@ -222,14 +222,16 @@
 6 sound
 7 virt
 
-# `fs` and `net` are empty crates.  Their rank is the one their contents will
-# need — both will name `abi`, and `fs` will name `sync` — and it is low on
-# purpose so that filling them is a change to the manifest and this file
-# together rather than a crate that quietly arrived at a layer nothing chose.
+# `net` is an empty crate.  Its rank is the one its contents will need — it
+# will name `abi`, and probably `sync` — and it is low on purpose so that
+# filling it is a change to the manifest and this file together rather than a
+# crate that quietly arrived at a layer nothing chose.  `fs` was in the same
+# state and has since been filled: PyroFS, tmpfs and ISO 9660 live there, and
+# its row describes the dependencies it actually names.
 7 fs
 7 net
 
-# ── Layer 6: the core ───────────────────────────────────────────────────────
+# ── Layer 9: the core ───────────────────────────────────────────────────────
 #
 # The boot sequence, the scheduler, and whatever else only the kernel organises.
 # It may name everything below.
@@ -243,13 +245,13 @@
 # rather than by pulling the crate up here.
 9 kernel
 
-# ── Layer 8: the image ──────────────────────────────────────────────────────
+# ── Layer 10: the image ─────────────────────────────────────────────────────
 #
 # The only crate that links an image.  It names the kernel and the machine's arch
 # crate, which is what puts it at the top of the shipped tree.
 10 bootloader
 
-# ── Layer 9: not shipped ────────────────────────────────────────────────────
+# ── Layer 10: not shipped ───────────────────────────────────────────────────
 #
 # Nothing depends on these.  The build tool may name anything, which is
 # expressible as the top layer rather than as an exception.
@@ -264,7 +266,7 @@
 # `xtask` is the build tool: `clap` and `anyhow`, no crate of this tree.
 10 xtask
 
-# ── Layer 9: programs ───────────────────────────────────────────────────────
+# ── Layer 10: programs ──────────────────────────────────────────────────────
 #
 # A program is not a crate of the kernel: it compiles against `abi` and reaches
 # everything else through syscalls, so it names nothing below it and nothing

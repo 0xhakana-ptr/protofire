@@ -16,8 +16,10 @@ assembly, pointer-level context-switch mechanics, and the boundary where the
 kernel reads or writes memory a user program owns. Every one of those sites
 carries an argument, `clippy::undocumented_unsafe_blocks` reports zero in
 every configuration the tree builds for, and the manifests deny it, so
-`cargo clippy --workspace --all-targets -- -D warnings`, `cargo clippy --workspace --all-targets -- -D warnings-targets` and `cargo check --workspace-fuzz-targets` all refuse a
-new one that has none.
+`cargo clippy --workspace --all-targets -- -D warnings` — the host half of
+the gate, with the per-target halves beside it in `scripts/verify.sh p3` —
+refuses a new one that has none.  There are no fuzz targets in this tree, so
+there is no fuzz configuration to refuse anything.
 The tree reached that state by writing the argument for each block rather than
 a comment-shaped placeholder, and the work found real defects along the way,
 because an argument that has to name the bound a read relies on is an argument

@@ -13,14 +13,12 @@
 # whose boot path has not been exercised since the last change to it, and every
 # defect this project has found in its own boot path was found by a boot.
 #
-# p2 is where the ratchets will go as they arrive: the architecture census (a
-# `cfg(target_arch)` outside `arch/` is a question the arch layer should be
-# answering), the unsafe-comment census, the dependency census.  None of them
-# exists yet, and this tier says so rather than pretending an empty list is a
-# gate that passed.
+# p2 is the ratchets: the architecture census (a `cfg(target_arch)` outside
+# `arch/` is a question the arch layer should be answering), the dependency
+# census, the per-crate test census, and the repository's own integrity.
 #
-# p3 is the release floor.  Today it is p2 plus clippy in both configurations;
-# the QEMU matrix grows here as the other two machines get their images.
+# p3 is the release floor.  It is p2 plus clippy in every configuration the
+# tree builds, host and target alike, and it boots all three machines.
 #
 # The previous tree learned this the expensive way: a gate nobody runs is a gate
 # that rots, and one that runs everything is a gate people learn to skip.  The

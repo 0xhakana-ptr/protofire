@@ -40,7 +40,7 @@ machine will check.
 | Every item a doc comment links to | `cargo doc` with `RUSTDOCFLAGS=-D warnings` | `p0` |
 | The workspace builds, and every crate's tests pass | `cargo build --workspace`, `cargo test --workspace` | `p0` |
 | The kernel builds for all three machines | `cargo build -p kernel --target <machine>` | `p0` |
-| The image boots and prints what it must | `cargo xtask check --machine x86_64` | `p1` |
+| The image boots and prints what it must | `cargo xtask check --machine <each machine>` | `p1` |
 | A dependency that points downward | [`scripts/check-layering.sh`](../../scripts/check-layering.sh) | `p2` |
 | No architecture gate outside `arch/` | [`scripts/check-arch-fanout.sh`](../../scripts/check-arch-fanout.sh) | `p2` |
 | Every crate with code has tests, and none lost any | [`scripts/check-crate-tests.sh`](../../scripts/check-crate-tests.sh) | `p2` |

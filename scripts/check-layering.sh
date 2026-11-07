@@ -20,8 +20,8 @@
 # has to close the interrupt window, and the interrupt flag is the machine's;
 # putting that behind a trait would add an indirect call on the hottest path in
 # the kernel.  That is a decision, so it is written in `scripts/layering.txt`
-# beside the layer it breaks, with the argument.  An exception nobody argued for
-# is what the gate is for; an exception with a reason is what it records.
+# beside the edge it carries, with the argument.  An edge nobody argued for is
+# what the gate is for; one with a reason is what it records.
 #
 # ## The checks
 #

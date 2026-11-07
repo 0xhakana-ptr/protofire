@@ -18,13 +18,16 @@ That is the gate, and it is the whole of what "green" means.  It runs, in order:
 | Step | What it refuses |
 |---|---|
 | `cargo fmt --check` | formatting drift |
+| `scripts/check-docs.sh` | a document that cites a file the tree does not have |
+| `cargo doc --workspace` | a doc comment that links to an item the crate does not have |
 | `cargo build --workspace` | a crate that does not build for the host |
 | `cargo build -p kernel --target <machine>` ×3 | a machine the kernel does not build for |
 | `cargo test --workspace` | a failing test |
-| `cargo xtask check --machine x86_64` | a boot that does not reach its console, its heap, and a file read through `open`/`read`/`close` |
+| `cargo xtask check --machine <machine>`, each machine that has an image | a boot that does not print what its gate requires |
 | `scripts/check-arch-fanout.sh` | a `target_arch` gate outside `arch/` that nothing argued for |
 | `scripts/check-layering.sh` | a dependency that points at its own layer or above |
 | `scripts/check-crate-tests.sh` | a crate with code and no tests, or one that lost tests |
+| `scripts/check-repo-integrity.sh` | a tracked file that is ignored, or a build product that is tracked |
 | `cargo clippy` ×4 | a lint, in every configuration the tree builds |
 
 The tiers below `p3` exist so the common case is fast: `p0` is formatting, builds

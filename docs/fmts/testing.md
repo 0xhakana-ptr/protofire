@@ -184,8 +184,8 @@ have passed one.
 | Tier | Tests |
 |---|---|
 | `p0` | every crate, on the host; the three kernels build |
-| `p1` | + the boot on x86_64 |
-| `p2` | + the three censuses |
+| `p1` | + the boot on each machine that has an image, all three |
+| `p2` | + the censuses: architecture, dependencies, per-crate tests, repository integrity |
 | `p3` | + clippy in every configuration |
 
 ---

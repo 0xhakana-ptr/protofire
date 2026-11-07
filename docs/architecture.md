@@ -22,15 +22,19 @@ extracted yet.
 ## The layers
 
 ```
-  9-10   xtask                                          not shipped
-     8   bootloader                                    the image
-     7   kernel                                        the core
-  5-7   syscall, pci, e1000, sound, virt, fs, net,
+    10   xtask, bootloader, init, shell,
+         service_manager                                not shipped, or linked alone
+     9   kernel                                        the core
+  5-8   syscall, pci, e1000, sound, virt, fs, net,
          security, allocator, virtio_core, virtio_block
-     4   arch, block                                   the route, and the disk interface
+     4-5  arch, block, memory, sync                     the route, the disk
+                                                         interface, the frames,
+                                                         the lock
      3   arch_x86_64, arch_aarch64, arch_riscv64       the machines
-     2   crypto, async_io, power, ipc, paging, irq      tools: algorithms, rings,
-                                                       page tables, a handler table
+     2   crypto, async_io, power, ipc, paging, irq,
+         fdt                                           tools: algorithms, rings,
+                                                         page tables, a handler
+                                                         table, the tree
      1   abi                                           the wire format
      0   cell, profiler, unicode, rights, audit        core and alloc only
 ```
@@ -167,9 +171,9 @@ That last sentence is a link-time reference in one direction, not a crate edge:
 symbol is what the two sides agree on.  An upward `use` would have been the one
 thing the layer gate forbids; a symbol with no type attached is not a dependency.
 
-### The quiet exception: `sync` above `arch`
+### The lock, one layer above the machine
 
-`sync` names `arch`, and that upward edge is a decision with a cost.
+`sync` sits a layer above `arch`, and that edge is a decision with a cost.
 
 A spinlock that only spins is safe between CPUs and unsafe against itself: an
 interrupt taken while the lock is held, whose handler takes the same lock, spins

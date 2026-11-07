@@ -491,9 +491,11 @@ dependency graph, and the graph is checked.
 points at the same layer or upward.  A crate may name a crate in a lower layer
 and nothing else.
 
-The layers are argued in that file rather than assumed, and the one exception, `sync` names `arch`, because closing a spinlock's interrupt window needs the
-machine's flag, is written there with its cost.  A new edge has to be argued
-for in the change that adds it, not discovered later.
+The layers are argued in that file rather than assumed, and the one edge that
+is a decision rather than a consequence — `sync` names `arch`, because closing
+a spinlock's interrupt window needs the machine's flag — is written there with
+its cost.  A new edge has to be argued for in the change that adds it, not
+discovered later.
 
 Two directions are wrong by definition:
 

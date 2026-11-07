@@ -110,9 +110,10 @@ docs(fmts): Describe the trailer exemption in the body-wrap check
 ```
 
 Use the module or subsystem name, the same vocabulary as
-the crate the change is in. Scope is permitted but not required, and
-no commit in the current history uses it; introduce it deliberately rather than
-by habit.
+the crate the change is in. Scope is permitted but not required, and the
+history uses it where the change is one part of a crate — `fix(scripts)`,
+`refactor(kernel)`, `feat(x86_64)` — rather than everywhere; introduce it
+deliberately rather than by habit.
 
 ### Release markers
 

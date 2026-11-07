@@ -102,9 +102,9 @@ outran its ring becomes visible instead of being a dropped completion.
 
 The capacity is the caller's, not the crate's.  A const-generic queue would have
 had to name a maximum here, which is a policy about how many devices a kernel
-runs, and only the kernel knows that.  The kernel's queue is 64
-(`COMPLETION_QUEUE_CAPACITY` in `kernel/src/lib.rs`), and the number is stated
-there with its reason.
+runs, and only the kernel knows that.  No producer is wired to this queue
+today, so no constant states a length for it; when one arrives, its capacity
+and its reason arrive with it.
 
 ## What is not here
 
