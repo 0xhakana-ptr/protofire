@@ -127,11 +127,13 @@ fn the_number_is_the_only_word_that_differs() {
     assert_eq!((two[6] >> 5) & 0xFFFF, 2);
 }
 
-/// The image `exec` hands a process to proves whose it became: it announces,
-/// asks the kernel who it is, and exits with the answer — which is already in
-/// `x0`, `Exit`'s argument register, so no move is needed between the two.
+/// The image `exec` hands a process to reads a file with the block the kernel
+/// left below its stack top: it announces, opens the path, reads into its own
+/// stack, closes, and exits with the first byte it read — the file's content
+/// reported through the exit status, which nothing that skipped the read
+/// could produce.
 #[test]
-fn the_exec_target_proves_its_identity() {
+fn the_exec_target_reads_a_file_and_exits_with_its_content() {
     let bytes = program_bytes(crate::program::EXEC_IMAGE);
     let words: alloc::vec::Vec<u32> = bytes
         .as_chunks::<4>()
@@ -144,9 +146,22 @@ fn the_exec_target_proves_its_identity() {
         call_numbers(&words),
         alloc::vec![
             abi::SyscallNumber::Write as usize,
-            abi::SyscallNumber::GetPid as usize,
+            abi::SyscallNumber::Open as usize,
+            abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::Close as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the target announces, asks, and exits with the answer"
+        "the target announces, opens, reads, closes, and exits with a byte"
+    );
+
+    // The descriptor is kept in `x19` and the buffer sits below the block:
+    // a buffer inside the block would overwrite the very path the open read.
+    assert!(
+        words.contains(&0xAA00_03F3),
+        "the descriptor is kept in x19"
+    );
+    assert!(
+        words.contains(&0xD102_03E2),
+        "the buffer is at sp-128, below the block"
     );
 }

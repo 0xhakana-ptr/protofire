@@ -101,6 +101,16 @@ const fn beq_against_zero(rs: u32, offset: i32) -> u32 {
         | 0x63
 }
 
+/// `lb rd, 0(rs)`, as the word the machine reads.
+///
+/// The read's first byte, into the register `Exit` takes its status from: an
+/// I-type load, whose function bits name the byte-width sign-extending form.
+/// The immediate is zero and so is not a parameter; the source register is,
+/// because the buffer is wherever the program put it.
+const fn load_byte(rd: u32, rs: u32) -> u32 {
+    rs << 15 | rd << 7 | 0x03
+}
+
 /// `sd rs2, 0(sp)`, as the word the machine reads.
 ///
 /// The stack write, at offset zero off the stack pointer: an S-type store,
@@ -207,23 +217,41 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
     ]
 }
 
-/// The image `exec` hands a process over to: announce, then prove whose it is.
+/// The image `exec` hands a process over to: announce, then read a file.
 ///
-/// The process that execs into this keeps its pid, which is the one thing
-/// `exec` must not change, and this image is built to show it: it announces
-/// the image's own number, then asks the kernel who it is and exits with the
-/// answer — which is already where `GetPid` leaves it, `a0` being both the
-/// answer register and `Exit`'s argument on this machine, so the two calls
-/// need no move between them.
-const EXEC_TARGET_PROGRAM: [u32; 8] = [
+/// `exec` leaves one word of inheritance below the stack top — a pointer to a
+/// NUL-terminated path, the bytes themselves just above it — and this image
+/// is the one that uses it: it opens the path, reads thirty-two bytes into
+/// its own stack below the block, closes the descriptor, and exits with the
+/// **first byte it read**, `a0` being `Exit`'s argument register.  A boot
+/// line that reports `process 1 opened /greeting.txt` and an exit status of
+/// `116` — the `t` of "the quick brown pyrofox" — are the pair that proves a
+/// task the exec rebuilt, with its own pid and its own window, read the
+/// boot's own file from ring 3.
+///
+/// The descriptor is kept in `a6`, which no call here writes, for the same
+/// reason the announcing program keeps its fork answer there.
+const EXEC_TARGET_PROGRAM: [u32; 20] = [
     addi(REGISTER_A1 as u32, 0, 4), // li a1, #4      (announce the image)
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
-    0x0000_0073, // ecall
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::GetPid as i32),
-    0x0000_0073, // ecall
+    0x0000_0073,                    // ecall
+    0x0001_3503,                    // ld a0, 0(sp)   (the path, [sp])
+    addi(REGISTER_A1 as u32, 0, 1), // li a1, #1      (OPEN_FLAG_READ)
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Open as i32),
+    0x0000_0073,                                     // ecall
+    addi(REGISTER_A6 as u32, REGISTER_A0 as u32, 0), // mv a6, a0 (the descriptor)
+    addi(REGISTER_A0 as u32, REGISTER_A6 as u32, 0), // mv a0, a6
+    addi(REGISTER_A1 as u32, 0, -1),                 // li a1, #-1    (READ_OFFSET_CURRENT)
+    addi(REGISTER_A0 as u32 + 2, 2, -128),           // addi a2, sp, -128 (the buffer)
+    addi(REGISTER_A0 as u32 + 3, 0, 32),             // li a3, #32  (the length)
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Read as i32),
+    0x0000_0073,                                     // ecall
+    addi(REGISTER_A0 as u32, REGISTER_A6 as u32, 0), // mv a0, a6 (the descriptor again)
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Close as i32),
+    0x0000_0073,                                           // ecall
+    load_byte(REGISTER_A0 as u32, REGISTER_A0 as u32 + 2), // lb a0, 0(a2) (the first byte)
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
     0x0000_0073, // ecall
-    0x0000_006F, // j .
 ];
 
 /// The writer: announce, sleep, announce again, then put bytes in the pipe.

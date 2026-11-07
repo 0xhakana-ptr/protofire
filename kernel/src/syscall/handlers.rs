@@ -62,7 +62,7 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     // handler changing.
     let node = table.namespace().ok_or(Error::NotFound)?.lookup(path)?;
 
-    let descriptor = table.insert(Descriptor {
+    let descriptor = table.insert(Descriptor::File {
         node,
         readable: flags & fs_abi::OPEN_FLAG_READ != 0 || flags == fs_abi::OPEN_FLAG_NONE,
         offset: 0,
@@ -73,9 +73,13 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
 
 /// Read from a descriptor into the buffer the caller supplied.
 ///
-/// Arguments: the descriptor, the offset, then four reserved slots that must be
-/// zero.  The offset is the descriptor's own when the caller passes
-/// [`crate::syscall::READ_OFFSET_CURRENT`].
+/// Arguments: the descriptor, the offset, the buffer, its length, then two
+/// reserved slots that must be zero.  The offset is the descriptor's own when
+/// the caller passes [`crate::syscall::READ_OFFSET_CURRENT`].  The buffer and
+/// its length travel in slots because a ring-3 caller has no borrow to hand
+/// over — the borrow is built where the call arrives, from the two words —
+/// and the kernel's own callers leave both zero, which is why the reserved
+/// check starts past them rather than at them.
 ///
 /// Returns the number of bytes read, which is short at end of file and zero
 /// past it, the reading that lets a caller tell "no more data" from "the call
@@ -83,7 +87,7 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
 pub fn read(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let descriptor_index = arguments.context.arg(0);
     let offset = arguments.context.arg(1);
-    validate_zeroed_args(arguments.context, 2)?;
+    validate_zeroed_args(arguments.context, 4)?;
 
     let buffer = arguments
         .buffer

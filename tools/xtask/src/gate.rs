@@ -285,11 +285,13 @@ impl Machine {
                 // and the image are this boot's facts — pid 1 calls, image 4
                 // is what it becomes — so the line is required whole.
                 //
-                // The exec'd task's exit status is its own pid, reported by
-                // the image it became through `GetPid`, which is the pair the
-                // fragment check reads: a process that lost its identity in
-                // the change could not exit as 1.
+                // And the opened line under it is the identity claim's new
+                // home: the exec'd image opens the boot's file, and the
+                // kernel prints **which process** opened it, read from the
+                // scheduler's own record.  A process that lost its identity
+                // in the change would open it under some other number.
                 ("protofire: process 1 exec'd image 4", true),
+                ("protofire: process 1 opened /greeting.txt", true),
                 // Sleeping, and the wake that ended it.
                 //
                 // Two lines, because they are two facts: a program asked for a
@@ -411,20 +413,29 @@ impl Machine {
                     // copied nothing, or answered the same value to both,
                     // prints neither pair.
                     ("protofire: forked a process, child pid 4", true),
-                    // The fork's two answers, checked as a pair on one line:
-                    // the parent (pid 1) exits with its child's pid 4, and pid
-                    // 4 exits with zero.  The pipe's two programs have no
-                    // identity call, so their statuses are whatever their last
-                    // call left behind, // reported, and deliberately not
-                    // asserted. The whole line, because its tail is the
-                    // outcome.
-                    //
-                    // A prefix would accept `pool check FAILED`: the numbers
-                    // before it are the same on both runs, and only the last
-                    // word says whether the allocator handed the frame back.
-                    // The counts are fixed for a given machine and pool size,
-                    // so requiring them makes the line a fact rather than a
-                    // shape.
+                    // The fork's two faults, as the two answers they get.  The
+                    // fork shares the stack page read-only, so each process's
+                    // first write faults, and the count decides: one write
+                    // finds the page still shared and is **copied**, the other
+                    // finds itself the last holder and is handed the frame
+                    // outright.  Either order is correct, so the check is that
+                    // both answers exist.
+                    ("protofire: copy-on-write copy at ", false),
+                    ("protofire: copy-on-write promote at ", false),
+                    // The exec, as a line that names both sides of the change:
+                    // the task that called and the image it became.  This
+                    // boot's facts are pid 1 and image 4, so the line is
+                    // required whole.  The opened line under it is the
+                    // identity claim: the kernel names the process that opened
+                    // the boot's file, read from the scheduler's own record.
+                    ("protofire: process 1 exec'd image 4", true),
+                    ("protofire: process 1 opened /greeting.txt", true),
+                    // The frame pool, and the allocator exercised rather than
+                    // described.  The whole line, because its tail is the
+                    // outcome: a prefix would accept `pool check FAILED`, the
+                    // numbers before it being the same on both runs, and only
+                    // the last word says whether the allocator handed the
+                    // frame back.
                     (
                         "protofire: frame pool 16384 frame(s), 16384 free, 0 in page tables, pool check ok",
                         true,
@@ -594,8 +605,12 @@ impl Machine {
                 ("protofire: copy-on-write promote at ", false),
                 // The exec, as a line that names both sides of the change: the
                 // task that called and the image it became.  This boot's facts
-                // are pid 1 and image 4, so the line is required whole.
+                // are pid 1 and image 4, so the line is required whole.  The
+                // opened line under it is the identity claim: the kernel names
+                // the process that opened the boot's file, read from the
+                // scheduler's own record.
                 ("protofire: process 1 exec'd image 4", true),
+                ("protofire: process 1 opened /greeting.txt", true),
                 // Sleeping, and the wake that ended it: the deadline is a
                 // firmware call on this machine, and a boot that slept and
                 // never woke prints the sleep line and not the wake.

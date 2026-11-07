@@ -58,8 +58,9 @@ const BOOT_DISK_PROBE: &[u8] = b"protofire writes this sector";
 /// constant against itself would pass on a volume that was never written.
 const BOOT_VOLUME_CONTENT: &[u8] = b"the quick brown pyrofox";
 
-/// The path the boot opens and reads.
-const BOOT_VOLUME_PATH: &str = "/greeting.txt";
+/// The path the boot opens and reads, and the one `exec` hands the image it
+/// starts.
+pub(crate) const BOOT_VOLUME_PATH: &str = "/greeting.txt";
 
 /// Build the boot's volume, attach it to a device, and assemble the namespace.
 ///

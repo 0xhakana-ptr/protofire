@@ -68,6 +68,19 @@ pub const fn program_stack_page(number: u16) -> usize {
     program_base(number) + 0x1000
 }
 
+/// How far below the stack top `exec` starts the image it hands over.
+///
+/// The stack's top is a boundary, not storage — the same rule the boot's
+/// hand-over keeps — so `exec` writes its words below it and starts the image
+/// with the pointer moved down to them.  The block is the one inheritance an
+/// `exec` has: `[sp]` is a user pointer to a NUL-terminated path the kernel
+/// placed at [`EXEC_PATH_OFFSET`], and an image that wants no path simply
+/// never reads it.
+pub const EXEC_BLOCK_BYTES: usize = 64;
+
+/// Where in the `exec` block the path's bytes begin.
+pub const EXEC_PATH_OFFSET: usize = 16;
+
 /// What the kernel does with a program's supervisor call.
 ///
 /// `Write` prints a fixed line, the program's arguments are not read, because
@@ -81,6 +94,21 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     use syscall::SyscallNumber;
 
     let number = call.number;
+    {
+        arch::serial::write_str("TEMP call n=");
+        arch::serial::write_u32(number as u32);
+        arch::serial::write_str(" resume=");
+        arch::serial::write_hex(call.resume as u64);
+        arch::serial::write_str(" a0=");
+        arch::serial::write_hex(call.arguments[0] as u64);
+        arch::serial::write_str(" a1=");
+        arch::serial::write_hex(call.arguments[1] as u64);
+        arch::serial::write_str(" pid=");
+        arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(9999));
+        arch::serial::write_str(" slot=");
+        arch::serial::write_u32(crate::per_cpu::current_slot() as u32);
+        arch::serial::write_str("\n");
+    }
 
     if number == SyscallNumber::Exit as usize {
         // The scheduler decides what runs next and puts that task's context in
@@ -451,10 +479,145 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return CallOutcome::Return(read | (write << 16));
     }
 
+    // The registry's calls, from a program that has no borrow to hand anyone.
+    //
+    // The registry's handlers take `Arguments`, whose address-shaped fields are
+    // *borrows* — a shape that exists precisely so no handler ever turns a
+    // word into a pointer.  A program cannot hand over a borrow: it hands over
+    // words, and this is the one place that turns them back, behind the check
+    // that makes the turn sound.  `is_user_range` says the range is one a
+    // program of this kernel could have mapped; the pages behind it are the
+    // calling task's own, installed on this CPU, and a write into one that
+    // copy-on-write demoted faults into the resolver, which is why that path
+    // exists.
+    if number == SyscallNumber::Open as usize {
+        // `Open(path, flags)`: the path is a NUL-terminated string in the
+        // caller's memory, the flags are the ABI's own open flags, and the two
+        // reserved slots stay zero.  A NUL-terminated path needs no length
+        // slot, which is what keeps the kernel-side shape — path as a borrow,
+        // flags in the first argument — and the ring-3 shape one shape.
+        let path_ptr = call.arguments[0];
+        let flags = call.arguments[1];
+        let mut bytes = [0u8; OPEN_PATH_MAX];
+        let mut length = 0;
+        loop {
+            if length == OPEN_PATH_MAX {
+                return CallOutcome::Return(abi::syscall::encode_error(
+                    abi::Error::InvalidArgument,
+                ));
+            }
+            if !crate::address_space::is_user_range(path_ptr + length, 1) {
+                return CallOutcome::Return(abi::syscall::encode_error(
+                    abi::Error::InvalidArgument,
+                ));
+            }
+            // SAFETY: the byte is inside the user window, which `is_user_range`
+            // just checked, and the pages behind it are the calling task's own
+            // mappings, installed on this CPU.
+            let byte = unsafe { *((path_ptr + length) as *const u8) };
+            bytes[length] = byte;
+            if byte == 0 {
+                break;
+            }
+            length += 1;
+        }
+        let Ok(path) = core::str::from_utf8(&bytes[..length]) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+
+        // The caller's identity is the boot's own label.  A program this boot
+        // started speaks with the boot's voice; there is no per-process label
+        // yet, and the change that introduces one is the change that decides
+        // what a program is allowed to be.
+        let mut context = syscall::SyscallContext::new(number, [0, flags, 0, 0, 0, 0])
+            .with_identity(security::mac::MAC_TYPE_SYSTEM);
+        let outcome = through_registry(&mut context, Some(path), None);
+        if let CallOutcome::Return(descriptor) = outcome {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" opened ");
+            arch::serial::write_str(path);
+            arch::serial::write_str("\n");
+            return CallOutcome::Return(descriptor);
+        }
+        return outcome;
+    }
+
+    if number == SyscallNumber::Read as usize && !crate::pipe::lookup(call.arguments[0]).is_some() {
+        // `Read(descriptor, offset, buffer, length)`: a file descriptor in the
+        // registry's table, the buffer a range of the caller's own memory.  A
+        // pipe descriptor never reaches here — the branch above answered it —
+        // and the registry answers `InvalidArgument` for one anyway, because a
+        // pipe's read is the pipe's to block on.
+        let buffer = call.arguments[2];
+        let length = call.arguments[3];
+        if length == 0 {
+            return CallOutcome::Return(0);
+        }
+        if !crate::address_space::is_user_range(buffer, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(
+            number,
+            [call.arguments[0], call.arguments[1], buffer, length, 0, 0],
+        )
+        .with_identity(security::mac::MAC_TYPE_SYSTEM);
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handler writes only
+        // what the filesystem read.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        return through_registry(&mut context, None, Some(destination));
+    }
+
+    if number == SyscallNumber::Close as usize {
+        // `Close(descriptor)`: the registry returns the slot, whether it named
+        // a file or a pipe's end.  A pipe's end dropped is the pipe's own
+        // accounting moving, which is what makes a reader's end-of-file real.
+        let mut context = syscall::SyscallContext::new(number, [call.arguments[0], 0, 0, 0, 0, 0])
+            .with_identity(security::mac::MAC_TYPE_SYSTEM);
+        return through_registry(&mut context, None, None);
+    }
+
     // Everything else is a call this boot does not serve.  `encode_error` is
     // the ABI's own encoding, so the program reads the same word it would from
     // a handler that answered through the registry.
     CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented))
+}
+
+#[cfg(target_os = "none")]
+/// The longest path a ring-3 `Open` may name.
+///
+/// The registry's [`PATH_MAX`](crate::syscall::PATH_MAX) is the format's bound;
+/// this is the copy's, because the copy happens on a trap stack that one page
+/// of memory has to hold, frame and all.  A path this kernel mounts is a few
+/// dozen bytes, and a caller that needs more is a caller a later change can
+/// serve from the heap.
+const OPEN_PATH_MAX: usize = 128;
+
+#[cfg(target_os = "none")]
+/// Hand a built context to the installed registry, and turn its answer into
+/// the outcome a program reads.
+///
+/// One spelling of the registry round-trip: the success value goes back as the
+/// call's answer, a registry error goes back encoded the ABI's own way, and no
+/// registry at all answers `NotImplemented`, which is the same word the
+/// fallthrough below answers for a number no handler serves.
+fn through_registry(
+    context: &mut syscall::SyscallContext,
+    path: Option<&str>,
+    buffer: Option<&mut [u8]>,
+) -> arch::CallOutcome {
+    let mut arguments = crate::syscall::Arguments {
+        context,
+        path,
+        buffer,
+    };
+    match crate::syscall::serve(&mut arguments) {
+        Some(Ok(dispatch)) => arch::CallOutcome::Return(dispatch.value),
+        Some(Err(error)) => arch::CallOutcome::Return(abi::syscall::encode_error(error)),
+        None => arch::CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented)),
+    }
 }
 
 /// What the program's `Write` prints.

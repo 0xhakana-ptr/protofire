@@ -28,7 +28,6 @@
 //! would be a lookup with one entry.
 
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 
 use abi::Error;
 use abi::Result;
@@ -247,73 +246,39 @@ impl End {
     }
 }
 
-/// The pipes this boot has made, by descriptor.
-///
-/// A `Vec` of `Option<Arc<Pipe>>` indexed the way the descriptor table is, so a
-/// descriptor that names a pipe is found the same way one that names a file is.
-/// The table lives here rather than in `syscall` because a pipe outlives one
-/// call and belongs to the kernel's state, not to a handler.
-///
-/// This table was reached only from a syscall handler, and one CPU served one
-/// call at a time, so it needed none.  A second CPU serving a call makes
-/// `attach` and `lookup` concurrent, and `lookup` clones an `Arc` out of a
-/// `Vec` that `attach` may reallocate: a grow between the two is a read of a
-/// buffer that has moved.  The lock is what makes the table one object again.
-///
-/// It is held for the length of one lookup or one attach and never across a
-/// blocking operation.  A caller that is about to block clones the `End` first
-/// and releases the lock before it does.
-static PIPES: sync::Mutex<Option<Vec<Option<End>>>> = sync::Mutex::new(None);
+// The pipes this boot has made are descriptors like any other: they live in
+// the registry's table, beside the open files, under **one** numbering.  The
+// first version had a table here, indexed from zero exactly as the
+// registry's was, and the two tables answering the same descriptor number
+// with two different things was an ambiguity a caller could not resolve — a
+// `Read` of descriptor 0 was a pipe read if a pipe had been made first and a
+// file read otherwise, which is not a rule, it is an accident of ordering.
+// The table is `syscall`'s now, and this module keeps the pipe half: the
+// ring, the ends, and the blocking semantics.
+//
+// The registry's own lock is what makes `attach` and `lookup` one object
+// across CPUs, and it is never held across a blocking operation: a caller
+// that is about to block clones the `End` first — the `Arc` inside is what
+// keeps the pipe alive while the borrow is out — and releases the lock
+// before it does.
 
-/// Install the pipe table.
+/// Register one end of a pipe and answer its descriptor.
 ///
-/// # Safety
-///
-/// Called once, before any program can make a pipe.
-pub unsafe fn install() {
-    // SAFETY: the caller promises this is the only write, and it happens before
-    // any call can reach the table.
-    *PIPES.lock() = Some(Vec::new());
-}
-
-pub fn is_installed() -> bool {
-    PIPES.lock().is_some()
-}
-
-/// Register `pipe` and answer its descriptor.
-///
-/// The descriptor is an index into this table, and a descriptor is only
-/// meaningful together with the table it indexes, which is why the answer is
-/// not a bare number a caller could invent.
+/// The descriptor is an index into the registry's table, and a descriptor is
+/// only meaningful together with the table it indexes, which is why the
+/// answer is not a bare number a caller could invent.
 pub fn attach(end: End) -> Option<usize> {
-    let mut guard = PIPES.lock();
-    let pipes = guard.as_mut()?;
-    if let Some(free) = pipes.iter().position(Option::is_none) {
-        pipes[free] = Some(end);
-        return Some(free);
-    }
-    pipes.push(Some(end));
-    Some(pipes.len() - 1)
+    crate::syscall::attach_pipe(end)
 }
 
 /// The end a descriptor names, if it names one.
 ///
 /// A clone, because the table owns its entries and a caller that borrowed one
-/// would hold the borrow across a call that may block.  The `Arc` inside is
-/// what makes the clone cheap, and what keeps the pipe alive while the borrow
-/// is out.
+/// would hold the registry's lock across a call that may block.  The `Arc`
+/// inside is what makes the clone cheap, and what keeps the pipe alive while
+/// the borrow is out.
 pub fn lookup(descriptor: usize) -> Option<End> {
-    let guard = PIPES.lock();
-    let pipes = guard.as_ref()?;
-    pipes.get(descriptor).and_then(Option::as_ref).cloned()
-}
-
-/// How many pipes this boot has made.
-pub fn attached() -> usize {
-    let guard = PIPES.lock();
-    guard.as_ref().map_or(0, |pipes| {
-        pipes.iter().filter(|slot| slot.is_some()).count()
-    })
+    crate::syscall::pipe_end(descriptor)
 }
 
 #[cfg(test)]

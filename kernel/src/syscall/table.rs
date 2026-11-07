@@ -1,7 +1,7 @@
 //! kernel/src/syscall/table.rs
 //!
-//! The registry: a number in, a handler out, and the descriptor table the
-//! handlers work through.
+//! The registry: a number in, a handler out, and the one descriptor table
+//! the handlers and the pipes both work through.
 //!
 //! Every number the ABI defines has a slot.  A number this kernel does not
 //! serve answers [`Error::NotImplemented`] rather than being absent: an absent
@@ -14,6 +14,8 @@
 //! after.
 
 use alloc::sync::Arc;
+
+use crate::pipe;
 
 use abi::Error;
 use abi::Result;
@@ -87,15 +89,28 @@ pub enum Handler {
     Unimplemented,
 }
 
-/// One open node and the rights it was opened with.
-pub(crate) struct Descriptor {
-    pub(crate) node: Arc<dyn VNode>,
-    pub(crate) readable: bool,
-    /// The offset the next `read` starts at.
-    ///
-    /// Per descriptor rather than per node: two descriptors on one file are two
-    /// positions, which is what a program that seeks one of them expects.
-    pub(crate) offset: u64,
+/// What a descriptor number names.
+///
+/// One table, one numbering: a pipe end and an open file are both "a thing a
+/// descriptor holds", and two tables numbering from zero would make a file's
+/// descriptor 0 and a pipe's descriptor 0 the same word meaning two things —
+/// which is exactly the ambiguity a caller cannot be asked to resolve.  A
+/// descriptor is a descriptor, and this is the one table that numbers them.
+pub(crate) enum Descriptor {
+    /// An open node and the rights it was opened with.
+    File {
+        node: Arc<dyn VNode>,
+        readable: bool,
+        /// The offset the next `read` starts at.
+        ///
+        /// Per descriptor rather than per node: two descriptors on one file are
+        /// two positions, which is what a program that seeks one of them
+        /// expects.
+        offset: u64,
+    },
+    /// One end of a pipe.  Dropping it closes that end, which is what turns a
+    /// reader's "no bytes yet" into end-of-file when the last writer goes.
+    Pipe(pipe::End),
 }
 
 /// The registry, and the descriptor table the handlers use.
@@ -191,11 +206,34 @@ impl SyscallTable {
         Err(Error::OutOfMemory)
     }
 
+    /// Register one end of a pipe and answer its descriptor.
+    ///
+    /// The same table, the same first-free-slot rule, one numbering: a pipe
+    /// end a caller holds by descriptor 3 and a file a caller holds by
+    /// descriptor 3 cannot both exist, which is the whole property two tables
+    /// could not give.
+    pub(crate) fn insert_pipe(&mut self, end: pipe::End) -> Result<usize> {
+        self.insert(Descriptor::Pipe(end))
+    }
+
+    /// The pipe end a descriptor names, cloned, if it names one.
+    ///
+    /// A clone, because the table owns its entries and a caller that borrowed
+    /// one would hold the registry's lock across a call that may block.  The
+    /// `Arc` inside is what makes the clone cheap and what keeps the pipe
+    /// alive while the caller works.
+    pub(crate) fn pipe_end(&self, descriptor: usize) -> Option<pipe::End> {
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::Pipe(end)) => Some(end.clone()),
+            _ => None,
+        }
+    }
+
     /// Read from a descriptor, at `offset` or at its own position.
     pub(crate) fn read_at(
         &mut self,
         descriptor_index: usize,
-        offset: usize,
+        offset_arg: usize,
         buffer: &mut [u8],
     ) -> Result<usize> {
         let descriptor = self
@@ -205,24 +243,37 @@ impl SyscallTable {
             .as_mut()
             .ok_or(Error::InvalidArgument)?;
 
-        if !descriptor.readable {
+        // A pipe is read through the pipe path, whose blocking semantics are
+        // the pipe's: a read that may park the caller is not this handler's
+        // shape.  A descriptor that names a pipe end answers "wrong kind"
+        // rather than pretending to be a file.
+        let Descriptor::File {
+            node,
+            readable,
+            offset,
+        } = descriptor
+        else {
+            return Err(Error::InvalidArgument);
+        };
+
+        if !*readable {
             return Err(Error::PermissionDenied);
         }
 
-        let at_current = offset == READ_OFFSET_CURRENT;
+        let at_current = offset_arg == READ_OFFSET_CURRENT;
         let start = if at_current {
-            descriptor.offset
+            *offset
         } else {
-            offset as u64
+            offset_arg as u64
         };
 
-        let count = descriptor.node.read(start, buffer)?;
+        let count = node.read(start, buffer)?;
         // An explicit offset is a peek, not a step: the descriptor's own
         // position moves only when the caller asked to read from it.  A
         // position that moved on every probe would make "read a header, then
         // continue from where I was" impossible to express.
         if at_current {
-            descriptor.offset = start + count as u64;
+            *offset = start + count as u64;
         }
         Ok(count)
     }
@@ -281,6 +332,20 @@ pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
         .lock()
         .as_mut()
         .map(|table| table.dispatch(arguments))
+}
+
+/// Register one end of a pipe with the installed registry, answering its
+/// descriptor.
+///
+/// The pipe facade's way in.  `None` when no registry is installed, which is
+/// the state before the boot has mounted its namespace.
+pub fn attach_pipe(end: pipe::End) -> Option<usize> {
+    REGISTRY.lock().as_mut()?.insert_pipe(end).ok()
+}
+
+/// The pipe end a descriptor names, if it names one and the registry is up.
+pub fn pipe_end(descriptor: usize) -> Option<pipe::End> {
+    REGISTRY.lock().as_ref()?.pipe_end(descriptor)
 }
 
 pub fn has_registry() -> bool {

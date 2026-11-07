@@ -639,26 +639,43 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
     0xEB, 0xFE, // jmp $
 ];
 
-/// The image `exec` hands a process over to: announce, then prove whose it is.
+/// The image `exec` hands a process over to: announce, then read a file.
 ///
-/// The process that execs into this keeps its pid, which is the one thing
-/// `exec` must not change, and this image is built to show it: it announces
-/// the image's own number, then asks the kernel who it is and exits with the
-/// answer.  A boot line that reports `process 1 exec'd image 4` and an exit
-/// status of `1 -> 1` are the pair that proves the task survived the change
-/// — a rebuilt process with a new identity would have exited with 4's window
-/// number and no way to say 1.
+/// `exec` leaves one word of inheritance below the stack top — a pointer to a
+/// NUL-terminated path, the bytes themselves just above it — and this image
+/// is the one that uses it: it opens the path, reads thirty-two bytes into
+/// its own stack below the block, closes the descriptor, and exits with the
+/// **first byte it read**.  A boot line that reports `process 1 opened
+/// /greeting.txt` and an exit status of `116` — the `t` of "the quick brown
+/// pyrofox" — are the pair that proves a task the exec rebuilt, with its own
+/// pid and its own window, read the boot's own file from ring 3.  Nothing
+/// that merely kept running could print either: the status is the file's
+/// content, arrived through `Open`/`Read`/`Close` and nothing else.
 ///
-/// Its exit travels in `edi`, moved from `eax` where `GetPid` answers, for the
-/// same reason the announcing program moves its own.
-const EXEC_TARGET_PROGRAM: [u8; 30] = [
-    0xBE, 0x04, 0x00, 0x00, 0x00, // mov esi, 4          (announce the image)
-    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6          (Write)
+/// The descriptor travels in `r8d`, which no call here writes, for the same
+/// reason the announcing program keeps its fork answer there: the `Read`
+/// between `Open` and `Close` answers into `eax`, and a descriptor left in
+/// `eax` would be the count by the time `Close` read it.
+const EXEC_TARGET_PROGRAM: [u8; 82] = [
+    0xBE, 0x04, 0x00, 0x00, 0x00, // mov esi, 4             (announce the image)
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6             (Write)
     0xCD, 0x80, // int 0x80
-    0xB8, 0x51, 0x00, 0x00, 0x00, // mov eax, 81         (GetPid)
+    0x48, 0x8B, 0x3C, 0x24, // mov rdi, [rsp]         (the path, [sp])
+    0xBE, 0x01, 0x00, 0x00, 0x00, // mov esi, 1             (OPEN_FLAG_READ)
+    0xB8, 0x02, 0x00, 0x00, 0x00, // mov eax, 2             (Open)
     0xCD, 0x80, // int 0x80
-    0x89, 0xC7, // mov edi, eax        (the pid becomes Exit's argument)
-    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
+    0x41, 0x89, 0xC0, // mov r8d, eax           (keep the descriptor)
+    0x44, 0x89, 0xC7, // mov edi, r8d           (the descriptor)
+    0x48, 0xC7, 0xC6, 0xFF, 0xFF, 0xFF, 0xFF, // mov rsi, -1    (READ_OFFSET_CURRENT)
+    0x48, 0x8D, 0x54, 0x24, 0x80, // lea rdx, [rsp-128]     (the buffer)
+    0xB9, 0x20, 0x00, 0x00, 0x00, // mov ecx, 32            (the length)
+    0xB8, 0x05, 0x00, 0x00, 0x00, // mov eax, 5             (Read)
+    0xCD, 0x80, // int 0x80
+    0x44, 0x89, 0xC7, // mov edi, r8d           (the descriptor again)
+    0xB8, 0x07, 0x00, 0x00, 0x00, // mov eax, 7             (Close)
+    0xCD, 0x80, // int 0x80
+    0x0F, 0xB6, 0x7C, 0x24, 0x80, // movzx edi, byte [rsp-128]  (the first byte read)
+    0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3             (Exit, whose status is that byte)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $
 ];
@@ -851,29 +868,38 @@ mod program_tests {
         );
     }
 
-    /// The image `exec` hands a process to proves whose it became: it
-    /// announces, asks the kernel who it is, and exits with the answer, so a
-    /// task that kept its pid through the change exits with it and one that
-    /// did not cannot fake the pair.
+    /// The image `exec` hands a process to reads a file with the block the
+    /// kernel left below its stack top: it announces, opens the path, reads
+    /// into its own stack, closes, and exits with the first byte it read —
+    /// the file's content reported through the exit status, which nothing
+    /// that skipped the read could produce.
     #[test]
-    fn the_exec_target_proves_its_identity() {
+    fn the_exec_target_reads_a_file_and_exits_with_its_content() {
         let bytes = program_bytes(super::EXEC_IMAGE);
         assert_eq!(
             super::call_numbers(&bytes),
             alloc::vec![
                 abi::SyscallNumber::Write as u32,
-                abi::SyscallNumber::GetPid as u32,
+                abi::SyscallNumber::Open as u32,
+                abi::SyscallNumber::Read as u32,
+                abi::SyscallNumber::Close as u32,
                 abi::SyscallNumber::Exit as u32,
             ],
-            "the target announces, asks, and exits with the answer"
+            "the target announces, opens, reads, closes, and exits with a byte"
         );
 
-        // And the answer travels in `edi`: `mov edi, eax` sits between the
-        // identity answer and the exit, which is the one instruction this
-        // machine's image needs that the other two do not.
+        // The descriptor travels in `r8d`, which no call here writes, and the
+        // buffer sits below the exec block: a buffer inside the block would
+        // overwrite the very path the open read.
         assert!(
-            bytes.windows(2).any(|pair| pair == [0x89, 0xC7]),
-            "the pid is moved into Exit's argument register"
+            bytes.windows(3).any(|window| window == [0x41, 0x89, 0xC0]),
+            "the descriptor is kept in r8d"
+        );
+        assert!(
+            bytes
+                .windows(5)
+                .any(|window| window == [0x48, 0x8D, 0x54, 0x24, 0x80]),
+            "the buffer is at [rsp-128], below the block"
         );
     }
 

@@ -107,21 +107,42 @@ const PIPE_READER_PROGRAM: [u32; 21] = [
     0xD400_0001, // svc #0
 ];
 
-/// The image `exec` hands a process over to: announce, then prove whose it is.
+/// The image `exec` hands a process over to: announce, then read a file.
 ///
-/// The process that execs into this keeps its pid, which is the one thing
-/// `exec` must not change, and this image is built to show it: it announces
-/// the image's own number, then asks the kernel who it is and exits with the
-/// answer — which is already where `GetPid` leaves it, `x0` being both the
-/// answer register and `Exit`'s argument on this machine, so the two calls
-/// need no move between them.
-const EXEC_TARGET_PROGRAM: [u32; 8] = [
+/// `exec` leaves one word of inheritance below the stack top — a pointer to a
+/// NUL-terminated path, the bytes themselves just above it — and this image
+/// is the one that uses it: it opens the path, reads thirty-two bytes into
+/// its own stack below the block, closes the descriptor, and exits with the
+/// **first byte it read**, `x0` being `Exit`'s argument register.  A boot
+/// line that reports `process 1 opened /greeting.txt` and an exit status of
+/// `116` — the `t` of "the quick brown pyrofox" — are the pair that proves a
+/// task the exec rebuilt, with its own pid and its own window, read the
+/// boot's own file from ring 3.
+///
+/// The descriptor is kept in `x19`, which no call here writes, for the same
+/// reason the announcing program keeps its fork answer there.
+const EXEC_TARGET_PROGRAM: [u32; 21] = [
     0xD280_0081, // movz x1, #4      (announce the image)
     0xD280_00C8, // movz x8, #6      (Write)
     0xD400_0001, // svc #0
-    0xD280_0A28, // movz x8, #81     (GetPid)
+    0xF940_03E0, // ldr x0, [sp]     (the path, [sp])
+    0xD280_0021, // movz x1, #1      (OPEN_FLAG_READ)
+    0xD280_0048, // movz x8, #2      (Open)
     0xD400_0001, // svc #0
-    0xD280_0068, // movz x8, #3      (Exit, whose status is x0)
+    0xAA00_03F3, // mov x19, x0      (keep the descriptor)
+    0xAA13_03E0, // mov x0, x19      (the descriptor)
+    0x9280_0001, // mov x1, #-1      (READ_OFFSET_CURRENT)
+    0xD102_03E2, // sub x2, sp, #128 (the buffer, below the block)
+    0xD280_0443, // movz x3, #32     (the length)
+    0xD280_00A8, // movz x8, #5      (Read)
+    0xD400_0001, // svc #0
+    0xAA13_03E0, // mov x0, x19      (the descriptor again)
+    0xD280_00E8, // movz x8, #7      (Close)
+    0xD400_0001, // svc #0
+    // And the read's first byte is the status: ldrb from the buffer, then the
+    // exit that carries it.
+    0x3940_0040, // ldrb w0, [x2]    (the first byte read)
+    0xD280_0068, // movz x8, #3      (Exit)
     0xD400_0001, // svc #0
     0x1400_0000, // b .
 ];

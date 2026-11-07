@@ -42,11 +42,6 @@ pub fn run() {
         arch::set_preempt_sink(crate::scheduler::preempt);
     }
 
-    // The pipe table, before any program can make one.
-    //
-    // SAFETY: called once, before ring 3 is entered.
-    unsafe { crate::pipe::install() };
-
     // The pipe the reader waits on, made before either program runs.  The
     // writer is program 2 and the reader is program 3, so the ordering is the
     // point: the reader reaches its `Read` first, its loop is shorter and it

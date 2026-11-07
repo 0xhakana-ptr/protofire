@@ -132,14 +132,43 @@ impl Scheduler {
         let new_space = unsafe { crate::address_space::image_space(&bytes, entry_va, stack_va) }?;
         let new_root = new_space.root();
 
+        // The exec block: the one inheritance an `exec` carries.  The words go
+        // below the stack top, the pointer starts at them, and the path's
+        // bytes sit where [`crate::process::EXEC_PATH_OFFSET`] says — written
+        // through the frame's physical address, the same place the boot writes
+        // a pipe end into a stack it has not started yet.
+        let stack_frame = new_space.owned()[1];
+        let stack_top = stack_va + paging::PAGE_SIZE;
+        let block_top = stack_top - crate::process::EXEC_BLOCK_BYTES;
+        // SAFETY: the frame is the new space's own stack, zeroed by the pool
+        // and not yet run; the block is `EXEC_BLOCK_BYTES` at its top and the
+        // path is far shorter than the block.
+        unsafe {
+            let block =
+                (stack_frame + paging::PAGE_SIZE - crate::process::EXEC_BLOCK_BYTES) as *mut u64;
+            // The word at [sp] points at the path's bytes, not at itself: a
+            // program reads [sp] and passes it straight to `Open`, so the
+            // pointer is the one value that has to name the bytes.
+            block.write((block_top + crate::process::EXEC_PATH_OFFSET) as u64);
+            block.add(1).write(0);
+            let path_at = (block.cast::<u8>()).add(crate::process::EXEC_PATH_OFFSET);
+            for (index, byte) in crate::volume::BOOT_VOLUME_PATH
+                .as_bytes()
+                .iter()
+                .enumerate()
+            {
+                path_at.add(index).write(*byte);
+            }
+            path_at.add(crate::volume::BOOT_VOLUME_PATH.len()).write(0);
+        }
+
         let pid = self.tasks.get(task_index)?.pid();
         let task = self.tasks.get_mut(task_index)?;
         let old_space = task.space.replace(new_space)?;
         // A fresh context, not a copy: the program starts at its own first
-        // instruction, on a stack that carries nothing from the program it
-        // replaced.
-        *task.context_mut() =
-            crate::scheduler::starting_context(entry_va, stack_va + paging::PAGE_SIZE);
+        // instruction, on a stack that carries the exec block and nothing from
+        // the program it replaced.
+        *task.context_mut() = crate::scheduler::starting_context(entry_va, block_top);
         // And the trap frame resumes the new image, because the caller's
         // epilogue is what returns to a program and this task is the one
         // running.

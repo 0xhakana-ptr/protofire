@@ -1575,3 +1575,40 @@ narrowness: with only the sleep-path fix reverted, six boots printed no ghost,
 because the retry in `switch_without_saving` closes the other half of the race
 — the trace above was caught on a tree that had neither fix, which is why both
 landed.
+
+### The registry a program could finally call
+
+    protofire: process 1 opened /greeting.txt
+    protofire: exit statuses 1 -> 116, 2 -> 1, 3 -> 0, 4 -> 0
+
+The filesystem had been mounted, MAC-policed, and read back by the boot since
+the namespace landed, and not one byte of it was reachable from ring 3: the
+registry's handlers take *borrows*, and a program has no borrow to hand over,
+only words.  The boundary is now one place with a rule.  `process::serve`
+validates a program's range with `is_user_range` and builds the borrow from
+the caller's own mapping — the kernel's pages for the kernel's callers, the
+program's pages for the program's — and a write into a page the copy-on-write
+fork demoted faults into the resolver, which is why that path existed before
+this one needed it.
+
+Two shapes made the calls expressible without a second ABI.  `Open`'s path is
+NUL-terminated in the caller's memory, so no length slot is needed and the
+kernel-side shape — path as a borrow, flags in the first argument — is also
+the ring-3 shape.  `Read`'s buffer and length travel in slots three and four,
+because a length the caller chose is the one argument a handler cannot
+borrow-shaped; the kernel's own callers leave both zero, and the reserved
+check starts past them.
+
+The descriptor table is one table now.  Pipes and files used to number from
+zero in two separate tables, which made a `Read` of descriptor 0 mean whatever
+had been attached first — an accident of ordering, not a rule.  A pipe end is
+a `Descriptor` variant beside the open file, one first-free-slot rule, one
+numbering, and dropping a pipe's descriptor drops that end, which is what
+makes a reader's end-of-file real.
+
+The proof is the exec'd image: it opens the boot's own file, reads it into
+its own stack, and exits with the **first byte** — `116`, the `t` of "the
+quick brown pyrofox".  A status is content, and content cannot be faked by a
+call that skipped the read.  The mutation — answering `Open` with
+`NotImplemented` before the registry is consulted — leaves the buffer zero,
+and the exit status reads `1 -> 0`, which the gate refuses.
