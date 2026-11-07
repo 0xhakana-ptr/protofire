@@ -69,6 +69,7 @@ pub unsafe fn install_descriptor_tables(interrupt_stack_top: usize) -> bool {
 /// machine's, and a kernel that read `context.elr` would be a kernel written
 /// against one machine.
 pub use context::Context;
+pub use context::ELF_MACHINE;
 pub use context::EXEC_IMAGE;
 pub use context::PIPE_READER;
 pub use context::PIPE_WRITER;

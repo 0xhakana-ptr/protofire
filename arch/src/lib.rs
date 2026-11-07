@@ -241,13 +241,19 @@ pub use arch_x86_64::program_bytes;
 // the image `exec` hands a process to.  The numbering is the image's, so it
 // lives with the image.
 #[cfg(target_arch = "aarch64")]
+pub use arch_aarch64::ELF_MACHINE;
+#[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::EXEC_IMAGE;
 #[cfg(target_arch = "aarch64")]
 pub use arch_aarch64::PIPE_READER;
 #[cfg(target_arch = "riscv64")]
+pub use arch_riscv64::ELF_MACHINE;
+#[cfg(target_arch = "riscv64")]
 pub use arch_riscv64::EXEC_IMAGE;
 #[cfg(target_arch = "riscv64")]
 pub use arch_riscv64::PIPE_READER;
+#[cfg(target_arch = "x86_64")]
+pub use arch_x86_64::ELF_MACHINE;
 #[cfg(target_arch = "x86_64")]
 pub use arch_x86_64::EXEC_IMAGE;
 #[cfg(target_arch = "x86_64")]

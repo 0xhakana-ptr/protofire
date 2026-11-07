@@ -58,12 +58,15 @@ pub const USER_BASE: usize = 0x80_0000_0000;
 
 /// The most frames one address space records as its own.
 ///
-/// An image and a stack, and the frames a `fork` shares.  Sharing does not
-/// copy, so a child records the same frames its parent does, each once: the
-/// bound is a bound on the *records* and not on the pages, and a program that
-/// forks twice is one this bound refuses rather than silently forgetting, the
-/// refusal is `own` answering `false`, which the caller reports.
-pub const MAX_OWNED_FRAMES: usize = 4;
+/// An image's segments, a stack, and the frames a `fork` shares.  Sharing
+/// does not copy, so a child records the same frames its parent does, each
+/// once.  The bound rose from four when programs stopped being one page of
+/// machine code and became loaded images: a two-segment ELF with a BSS is
+/// three frames before the stack is counted.  The bound is a bound on the
+/// *records* and not on the pages, and a program past it is one this bound
+/// refuses rather than silently forgetting, the refusal is `own` answering
+/// `false`, which the caller reports.
+pub const MAX_OWNED_FRAMES: usize = 16;
 
 /// A program's address space: a root of its own, sharing the kernel's entry 0.
 #[cfg(target_os = "none")]
@@ -144,7 +147,41 @@ impl AddressSpace {
     /// `virtual_address` must be in the program's range, page-aligned, and not
     /// already mapped; `physical` must be a live frame.
     pub unsafe fn map(&mut self, virtual_address: usize, physical: usize, writable: bool) -> bool {
+        let permissions = Permissions {
+            writable,
+            executable: true,
+            user: true,
+            cache: paging::Cache::Normal,
+        };
+        // SAFETY: the caller's contract is this one's, unchanged.
+        unsafe { self.map_page_with(virtual_address, physical, permissions) }
+    }
+
+    /// Map `physical` at `virtual_address` with the caller's permissions.
+    ///
+    /// `map` is the convenience shape the boot's two-page programs use — code
+    /// and stack, both executable, writability the only question.  A loaded
+    /// image's segments know better than that: text is read-execute, data is
+    /// read-write and *not* executable, and the permissions travel with the
+    /// segment rather than with a bool.  `user` is always set — everything an
+    /// `AddressSpace` maps is a program's — and a caller passing `user: false`
+    /// is refused rather than mapped, because the one mapping that must not
+    /// exist is a kernel page a program can reach.
+    ///
+    /// # Safety
+    ///
+    /// `virtual_address` must be in the program's range, page-aligned, and not
+    /// already mapped; `physical` must be a live frame.
+    pub unsafe fn map_page_with(
+        &mut self,
+        virtual_address: usize,
+        physical: usize,
+        permissions: Permissions,
+    ) -> bool {
         if virtual_address < USER_BASE || !virtual_address.is_multiple_of(GRANULE) {
+            return false;
+        }
+        if !permissions.user {
             return false;
         }
         let mut guard = TABLES.lock();
@@ -180,12 +217,6 @@ impl AddressSpace {
         // arithmetic rather than a second copy of it.
         let Some(leaf) = walk_or_create(tables, second, virtual_address) else {
             return false;
-        };
-        let permissions = Permissions {
-            writable,
-            executable: true,
-            user: true,
-            cache: paging::Cache::Normal,
         };
         leaf.set_entry(
             index(Level::Leaf, virtual_address),
@@ -959,9 +990,10 @@ pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usi
 
 /// The most pages one `fork` shares.
 ///
-/// The boot's programs map two each, an image and a stack, and this bound is
-/// generous relative to that.  A program with more pages than this is one whose
-/// fork is refused rather than one whose share is silently partial, which is
-/// the only other way this could go wrong.
+/// The boot's own programs map two pages each, and a loaded image maps
+/// several more — segments plus a stack.  The bound rose with the loader, and
+/// a program with more pages than this is one whose fork is refused rather
+/// than one whose share is silently partial, which is the only other way this
+/// could go wrong.
 #[cfg(target_os = "none")]
-pub const MAX_FORK_PAGES: usize = 8;
+pub const MAX_FORK_PAGES: usize = 16;

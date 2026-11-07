@@ -28,6 +28,10 @@ pub const PROGRAM_WORDS_FOR_TEST: usize = 32;
 /// page, so this matters only to the copy.
 pub const PROGRAM_LEN: usize = 32 * 4;
 
+/// The `e_machine` this machine's programs carry, which the loader checks the
+/// image against before it maps one page of it.
+pub const ELF_MACHINE: u16 = 183; // EM_AARCH64
+
 pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;

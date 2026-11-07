@@ -61,6 +61,7 @@ pub mod devices;
 pub mod heap;
 pub mod interrupts;
 pub mod iso_disc;
+pub mod loader;
 pub mod per_cpu;
 pub mod pipe;
 pub mod policy;

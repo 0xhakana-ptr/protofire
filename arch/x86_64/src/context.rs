@@ -550,6 +550,10 @@ pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
     bytes
 }
 
+/// The `e_machine` this machine's programs carry, which the loader checks the
+/// image against before it maps one page of it.
+pub const ELF_MACHINE: u16 = 62; // EM_X86_64
+
 pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;
