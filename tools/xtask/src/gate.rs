@@ -217,11 +217,22 @@ impl Machine {
                 ("protofire: parallel, programs ended on ", false),
                 // Every finished program's address space went back, and the
                 // pool it returned to is reported beside it.  The count is the
-                // programs: one address space each, released once the machine
-                // is finished.  Releasing at each exit was tried and produced
-                // 186 page faults in six boots of eight, which is why the count
-                // is here at the end rather than absent.
-                ("protofire: address spaces reaped 4, ", false),
+                // boot's four spaces — the three programs plus the forked
+                // child — released once the machine is finished.  Releasing at
+                // each exit was tried and produced 186 page faults in six
+                // boots of eight, which is why the count is here at the end
+                // rather than absent.
+                //
+                // The line is required whole because its tail is the ratchet:
+                // with the tables each mapping built reclaimed beside the
+                // frames, every frame the boot took is back, and the free
+                // count is the pool's whole size.  A release that leaks even
+                // the walk's scaffolding — three tables per space, fifteen on
+                // this boot — prints a smaller number and fails here.
+                (
+                    "protofire: address spaces reaped 4, 131072 frame(s) free",
+                    true,
+                ),
                 // The invalidation's own account, as a whole line: three sends,
                 // three acknowledgements, no wait ran out.
                 //
@@ -411,7 +422,7 @@ impl Machine {
                 // finished.  Releasing at each exit was tried and produced 186
                 // page faults in six boots of eight, which is why the count is
                 // here at the end rather than absent.
-                ("protofire: address spaces reaped 4, ", false),
+                ("protofire: address spaces reaped 4, 16384 frame(s) free", true),
                 // One invalidation, acknowledged, and no wait ran out.  This
                 // core's ECAM window is past the identity map, so the boot
                 // creates a mapping for it after the second core is up, and
@@ -652,7 +663,10 @@ impl Machine {
                 ("protofire: parallel, programs ended on ", false),
                 // Every finished program's address space went back, as on the
                 // other two machines.
-                ("protofire: address spaces reaped 4, ", false),
+                (
+                    "protofire: address spaces reaped 4, 16384 frame(s) free",
+                    true,
+                ),
                 // No invalidation, and that is this machine's fact rather than
                 // a gap.  Its ECAM window is at `0x3000_0000`, inside the four
                 // gigabyte identity map, so the boot finds it already mapped

@@ -1510,3 +1510,26 @@ a process that lost its identity in the change could not print it.  The
 mutation — installing no new frame, leaving the trap path to resume the
 program it replaced — faults the machine before it can print the line, and the
 gate goes red.
+
+### The tables a mapping built, and the count that proves they came back
+
+    protofire: address spaces reaped 4, 131072 frame(s) free
+
+Releasing a space used to return its root and its pages and to leave behind
+the tables the walk built to reach those pages — three frames per space on
+the four-level walk, recorded nowhere because the frames array records only
+what a program's pages live in.  The leak was bounded, and invisible in every
+line the boot printed: twelve frames on a three-program boot, fifteen once a
+fork and an exec each spent a space of their own, which is why the boot's
+free count moved from 131060 to 131057 when `exec` started releasing mid-run
+rather than only at the end.
+
+The release now walks the user window's own subtree and takes the tables
+back, deepest first — they are strictly per space, a fork sharing frames and
+never tables, so no count is needed — and the boot line that reports the
+reaping is required **whole** now rather than as a prefix: with the
+scaffolding reclaimed, every frame the boot took is back, and the free count
+is the pool's own size, 131072 on x86_64 and 16384 on the other two.  A
+release that leaks even one table prints a smaller number and the gate goes
+red, which makes the reclamation the kind of claim a mutation can be run
+against: unwiring the walk prints 131057 and fails.

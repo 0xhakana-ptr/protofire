@@ -234,7 +234,8 @@ impl AddressSpace {
         &self.frames[..self.used]
     }
 
-    /// Give every frame this space holds a reference to its share back.
+    /// Give every frame this space holds a reference to its share back, and
+    /// the tables its mappings built beneath the root.
     ///
     /// The frames are the program's, and a program that exited is one whose
     /// memory is available, which is the whole point of a process ending
@@ -244,6 +245,16 @@ impl AddressSpace {
     /// pool answers whether a release was the last, and the frame goes back
     /// only then — a release that freed unconditionally would hand a live
     /// frame to the next allocation while its other owner still mapped it.
+    ///
+    /// The **tables** are a second accounting the frames array never carried.
+    /// Mapping one page builds a table at each level it needs, and none of
+    /// those frames is a page's — they are the walk's scaffolding, allocated
+    /// by [`AddressSpace::map`] and [`walk_or_create`], recorded nowhere, and
+    /// the first version of this function left every one of them behind:
+    /// three frames per space on this kernel's four-level walk, measurable in
+    /// the boot's free count, and one `exec`'s worth paid at runtime rather
+    /// than only at the boot's end.  They are strictly per space — a fork
+    /// shares frames, never tables — so freeing them needs no count.
     ///
     /// # Safety
     ///
@@ -261,7 +272,75 @@ impl AddressSpace {
                 let _ = tables.frames.deallocate(*frame as *mut u8, 1);
             }
         }
+        // SAFETY: the walk frees only tables this space's own `map` calls
+        // built, and the root is a frame this space owns; the caller promises
+        // none of them is installed.
+        unsafe { free_user_walk(tables, self.root) };
         let _ = tables.frames.deallocate(self.root as *mut u8, 1);
+    }
+}
+
+/// Free every table a space's own mappings built beneath its root.
+///
+/// The kernel's entry 0 is the shared one, so the walk starts at the user
+/// window's entry and takes each table it finds, deepest first.  An entry
+/// that decodes as a leaf where a table was expected is skipped rather than
+/// freed or followed — a block mapping is not a frame this kernel's walk
+/// created, and freeing or descending into one would be a guess about memory
+/// this space does not own.
+///
+/// The data frames behind the leaf tables are *not* freed here: they went
+/// back through the co-owner counts above, and a shared frame freed a second
+/// time here would be the corruption the counts exist to prevent.
+///
+/// # Safety
+///
+/// `root` must be a live root table the caller owns and nothing may be
+/// translating through it or through any table beneath it.
+#[cfg(target_os = "none")]
+unsafe fn free_user_walk(tables: &mut Tables, root: usize) {
+    // SAFETY: `root` is a live root table frame the caller owns.
+    let root_table = unsafe { &*(root as *const PageTable) };
+    for root_index in index(Level::Root, USER_BASE)..paging::ENTRIES_PER_TABLE {
+        let word = root_table.entry(root_index);
+        if word == 0 {
+            continue;
+        }
+        let second = arch::paging::decode(word, Level::Root);
+        if second.is_leaf {
+            continue;
+        }
+        // SAFETY: an entry this kernel wrote, naming a table it allocated.
+        let second_table = unsafe { &*(second.address as *const PageTable) };
+        for second_index in 0..paging::ENTRIES_PER_TABLE {
+            let word = second_table.entry(second_index);
+            if word == 0 {
+                continue;
+            }
+            let third = arch::paging::decode(word, Level::Second);
+            if third.is_leaf {
+                continue;
+            }
+            // SAFETY: as above.
+            let third_table = unsafe { &*(third.address as *const PageTable) };
+            for third_index in 0..paging::ENTRIES_PER_TABLE {
+                let word = third_table.entry(third_index);
+                if word == 0 {
+                    continue;
+                }
+                // The deepest level names the leaf tables, which are the
+                // frames this walk is here for; a leaf *entry* at this level
+                // would be a 4 KiB page where a table was expected, and it is
+                // skipped for the reason the doc gives.
+                let leaf = arch::paging::decode(word, Level::Third);
+                if leaf.is_leaf {
+                    continue;
+                }
+                let _ = tables.frames.deallocate(leaf.address as *mut u8, 1);
+            }
+            let _ = tables.frames.deallocate(third.address as *mut u8, 1);
+        }
+        let _ = tables.frames.deallocate(second.address as *mut u8, 1);
     }
 }
 
