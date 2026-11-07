@@ -105,19 +105,46 @@ pub unsafe fn install(scheduler: Scheduler) {
     *SCHEDULER.lock() = Some(scheduler);
 }
 
-/// Install the next task's context without saving the frame it was given.
+/// Install the next task's context without saving the frame it was given,
+/// waiting through the wakes other CPUs take.
 ///
 /// For the idle path: the boot waiting for a wakeup holds a kernel frame, and
 /// saving it into a task would replace that task's saved program state with a
 /// kernel address.  See `Scheduler::schedule_from`.
 ///
-/// Answers what `advance` answers, and for the same reason: `Exit` means the
-/// frame was not replaced and the caller decides what to do about it.
+/// ## Why the wait is here and not in the caller
+///
+/// A caller reaches this having just seen "something is selectable" — the end
+/// of an idle wait, a write that woke a reader — and that check and this
+/// switch are **two lock acquisitions, not one**.  In the window between them
+/// another CPU can take the very task the check saw, and the switch then
+/// finds nothing: the slot is cleared and `Exit` comes back meaning "the
+/// frame was not replaced".  A caller that resumed its frame on that answer
+/// would run a program whose task another CPU holds or whose state is still
+/// asleep — a process with no entry in the `running` array, which is the one
+/// invariant the exclusion set is.  The boot showed the shape: an announce
+/// printed by a process the scheduler had no record of, twice from one resume
+/// address.  So the loser of the race waits here, for the wake that names
+/// work, and retries — the frame is installed exactly once, and only while
+/// this CPU owns it.
+///
+/// Answers what `advance` answers: `Return` once a task's context is in the
+/// frame, `Exit` only when the machine has no work left to wait for.
 pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
-    with_scheduler(|scheduler| match scheduler {
-        Some(scheduler) => scheduler.schedule_on(this_cpu(), frame, false, false, None),
-        None => arch::CallOutcome::Exit,
-    })
+    loop {
+        let outcome = with_scheduler(|scheduler| match scheduler {
+            Some(scheduler) => scheduler.schedule_on(this_cpu(), frame, false, false, None),
+            None => arch::CallOutcome::Exit,
+        });
+        match outcome {
+            // Work exists somewhere — a task sleeping, blocked, or runnable —
+            // so the emptiness was the race, and the wake that ends it is the
+            // timer's line or another CPU's IPI.  A machine with nothing left
+            // answers `Exit` and the caller's own finished-handling takes it.
+            arch::CallOutcome::Exit if has_runnable() => arch::wait_for_a_wakeup(),
+            other => return other,
+        }
+    }
 }
 
 /// Save the current task, install the next one's context, and answer.

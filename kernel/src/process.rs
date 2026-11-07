@@ -227,21 +227,31 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 // runnable, and `Exit` tells the trap path to resume the frame
                 // it has, a sleeping program.
                 //
-                // So the two cases are separate.  With another task runnable,
-                // `advance` installs its context and the trap path resumes it.
-                // With every task asleep, the boot waits for the tick that
-                // wakes one; the timer's handler turns a deadline into a
-                // runnable task, and `idle_until_woken` returns when it has.
-                if crate::scheduler::has_other_runnable() || !crate::scheduler::has_sleeping() {
-                    return crate::scheduler::advance(frame, false);
+                // So the two cases are not separate after all — the first
+                // version thought they were, and the difference was a ghost.
+                // `advance` can answer `Exit` with tasks still runnable: the
+                // one runnable task can be the one **another CPU is already
+                // running**, excluded by the running array, and an `Exit` here
+                // means the frame was not replaced.  Resuming it ran this
+                // program while its task was still asleep and no CPU held it —
+                // a process with no entry in the running array, the one
+                // invariant the exclusion set is.  The boot showed the shape in
+                // full: the ghost announced, forked (refused — no task to fork
+                // from), exec'd (refused the same way), and spun at its end,
+                // while the task that owned it slept on; a tick's preemption
+                // was what happened to reinstall the real context.  So an
+                // `Exit` falls into the same wait the every-task-asleep case
+                // uses, and the wake that ends the sleep is what installs
+                // whatever runs next — through the call that does *not* save,
+                // because the frame arriving here is the boot's kernel frame
+                // and the task it would be saved into is asleep with a program
+                // context that must not be clobbered.
+                match crate::scheduler::advance(frame, false) {
+                    // A next task was installed; the epilogue resumes it.
+                    arch::CallOutcome::Return(_) => return arch::CallOutcome::Exit,
+                    arch::CallOutcome::Exit => {}
                 }
-                // Nothing is selectable, so the frame is not replaced.  The
-                // wait happens here, and the task that woke is installed
-                // afterwards, through the call that does *not* save, because
-                // the frame arriving here is the boot's kernel frame and the
-                // task it would be saved into is asleep with a program context
-                // that must not be clobbered.
-                arch::serial::write_str("protofire: every program is asleep, waiting\n");
+                arch::serial::write_str("protofire: nothing runnable for this cpu, waiting\n");
                 crate::scheduler::idle_until_woken();
                 return crate::scheduler::switch_without_saving(frame);
             }

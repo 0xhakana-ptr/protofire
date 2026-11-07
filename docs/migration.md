@@ -1535,3 +1535,43 @@ is the pool's own size, 131072 on x86_64 and 16384 on the other two.  A
 release that leaks even one table prints a smaller number and the gate goes
 red, which makes the reclamation the kind of claim a mutation can be run
 against: unwiring the walk prints 131057 and fails.
+
+### The ghost a sleeping program became
+
+    TEMP call n=62 resume=0x804000003e pid=9999 slot=0
+    TEMP call n=6  resume=0x804000004b a1=0xfffffffb pid=9999 slot=0
+
+The two-CPU boots occasionally printed a "says hello" line too many, and one
+boot printed one from a process number that was an error code: `4294967291`,
+which is `encode_error(OutOfMemory)` truncated to the print width.  The trace
+above — a temporary per-call probe, since removed — caught the whole shape: a
+program announced, forked, and exec'd **while the scheduler had no record of
+it** (`pid=9999` is the probe's own no-task answer), so the fork was refused
+for having no parent (`no task to fork from` is exactly what the running array
+said), the exec was refused the same way, and the program kept the error as
+its fork answer.  The real pass ran afterwards, from the same resume address,
+because a tick's preemption happened to reinstall the true context.
+
+The ghost's birthplace is the sleep path, and it is an ordering assumption
+that two CPUs broke.  `Sleep` parks the task and then calls `advance`, which
+saves the frame and installs the next task — answering `Exit` when it installs
+**nothing**.  With one CPU, `Exit` there meant "every task is asleep, the boot
+will wait", and the path branched on `has_other_runnable()` before asking.
+With two, the one runnable task can be the one **another CPU is already
+running** — excluded by the running array, which is the exclusion set doing
+its job — so `advance` answers `Exit` with work still in the machine, and the
+caller resumed its own frame: a program running while its task was still
+asleep and no CPU held it, the one invariant the array is.
+
+Two fixes, one fact each, and neither is sufficient alone.  The sleep path no
+longer treats `Exit` as "resume": an `Exit` falls into the same wait the
+every-task-asleep case uses, and the wake that ends the sleep is what installs
+whatever runs next.  And `switch_without_saving` — the idle path's installer,
+whose "something is selectable" check and its switch are two lock
+acquisitions, not one — retries on the same race instead of returning a frame
+nobody owns.  Eight boots after the fix: nine announces, every time, and no
+line the scheduler cannot account for.  The window is honest about its own
+narrowness: with only the sleep-path fix reverted, six boots printed no ghost,
+because the retry in `switch_without_saving` closes the other half of the race
+— the trace above was caught on a tree that had neither fix, which is why both
+landed.
