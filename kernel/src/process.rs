@@ -511,11 +511,20 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             .with_identity(security::mac::MAC_TYPE_SYSTEM);
         let outcome = through_registry(&mut context, Some(path), None);
         if let CallOutcome::Return(descriptor) = outcome {
-            arch::serial::write_str("protofire: process ");
-            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
-            arch::serial::write_str(" opened ");
-            arch::serial::write_str(path);
-            arch::serial::write_str("\n");
+            // **Only a descriptor is an open.**  The registry answers an error
+            // the same way it answers a value — the ABI's error encoding is a
+            // number near `usize::MAX` — so a caller that printed the line
+            // without asking printed "opened /greeting.txt" for a path the
+            // namespace had refused.  The gate's own evidence then said the
+            // mechanism ran when what ran was the refusal, which is the failure
+            // mode this tree's rules name: a claim no gate exercises.
+            if !abi::syscall::is_error_status(descriptor) {
+                arch::serial::write_str("protofire: process ");
+                arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                arch::serial::write_str(" opened ");
+                arch::serial::write_str(path);
+                arch::serial::write_str("\n");
+            }
             return CallOutcome::Return(descriptor);
         }
         return outcome;
