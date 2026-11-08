@@ -19,6 +19,7 @@ healthy `AGENTS.md` gets shorter as the gates get stronger.
 | What does a change have to satisfy? | [`docs/contributing.md`](docs/contributing.md) |
 | How does a subsystem work? | the crate's own `//!` header |
 | What may a contributor rely on? | this file, and the gate's own header comment |
+| What does the kernel enforce, and what does it not? | [`SECURITY.md`](SECURITY.md) |
 
 The tree is the authority: where a document and the code disagree, the code is
 right and the document is the bug.  Moving the document is part of the change,

@@ -53,6 +53,8 @@ number is a change that argues for it in the baseline's own prose.
 | What does a change have to satisfy? | [`docs/contributing.md`](docs/contributing.md) |
 | What may a contributor rely on, and what is review-only? | [`AGENTS.md`](AGENTS.md) |
 | What does a gate refuse? | the gate's own header comment |
+| What does the kernel enforce, and what does it not? | [`SECURITY.md`](SECURITY.md) |
+| How is participation expected to go? | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
 
 ## Licence
 
