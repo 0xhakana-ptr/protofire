@@ -298,12 +298,24 @@ impl Scheduler {
         // shares the kernel's entry 0, which covers the code performing the
         // call.
         unsafe { arch::switch_address_space(new_root) };
-        // The switch flushed, so nothing translates through the old root any
-        // more, and the release is the safe kind: see the order above.
+        // **Retired, not released.**  The old space is garbage to this CPU the
+        // moment the switch above returns, and it is not garbage to every CPU:
+        // a task is not pinned, and the boot's own log shows migrations, so a
+        // CPU that ran this task a moment ago may still have the old root
+        // installed and be inside its trap path.  Freeing here handed live
+        // frames back to the pool — a data abort inside the heap allocator and
+        // an instruction abort at 0x0, six boots in ten on the machine whose
+        // second CPU migrates most — and the fix is the deferral every finished
+        // task already takes: hold the space until
+        // [`reap_finished`](Self::reap_finished), where every task has finished
+        // and every other CPU has been told to stop.
         //
-        // SAFETY: this CPU installed the new root above, no other CPU ever
-        // held this task, and nothing walks the old space's pages.
-        unsafe { old_space.release() };
+        // A full array leaks the space rather than dropping it: nothing here
+        // can free a frame that another CPU may still reach, and a boot that
+        // has exec'd eight times has already said what it needed to say.
+        if let Some(slot) = self.retired.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(old_space);
+        }
         Some(pid)
     }
 
@@ -328,6 +340,10 @@ impl Scheduler {
     ///
     /// A task whose space is already gone is skipped, so a second call answers
     /// zero instead of freeing a frame twice.
+    ///
+    /// The spaces an `exec` retired go back here too, and for the same reason:
+    /// they are unreachable from this CPU and not necessarily from every other
+    /// one, and this is the only moment the whole task set is quiescent.
     #[cfg(target_os = "none")]
     pub fn reap_finished(&mut self) -> usize {
         let mut reaped = 0;
@@ -343,6 +359,17 @@ impl Scheduler {
             // every other CPU has been told to stop.
             unsafe { space.release() };
             reaped += 1;
+        }
+        // The exec'd spaces, under the same promise.  They are released after
+        // the tasks' own so the count above stays the number of processes that
+        // finished, which is what the boot's line reports; these are spaces no
+        // task ever finished in, and a reader asking "how many programs ran and
+        // ended" must not see them added.
+        for slot in &mut self.retired {
+            if let Some(space) = slot.take() {
+                // SAFETY: as above — the machine is finished.
+                unsafe { space.release() };
+            }
         }
         reaped
     }

@@ -174,6 +174,7 @@ pub fn die_from_fault(frame: &mut arch::Context, vector: usize, address: usize) 
 /// Answers what `advance` answers: `Return` once a task's context is in the
 /// frame, `Exit` only when the machine has no work left to wait for.
 pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
+    let mut idle_turns = 0u32;
     loop {
         let outcome = with_scheduler(|scheduler| match scheduler {
             Some(scheduler) => scheduler.schedule_on(this_cpu(), frame, false, false, None),
@@ -184,7 +185,21 @@ pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
             // so the emptiness was the race, and the wake that ends it is the
             // timer's line or another CPU's IPI.  A machine with nothing left
             // answers `Exit` and the caller's own finished-handling takes it.
-            arch::CallOutcome::Exit if has_runnable() => arch::wait_for_a_wakeup(),
+            arch::CallOutcome::Exit if has_runnable() => {
+                idle_turns += 1;
+                if idle_turns.is_multiple_of(IDLE_PINGS_BEFORE_A_PING) {
+                    wake_the_other_cpus();
+                }
+                arch::wait_for_a_wakeup();
+            }
+            // **Nothing is left.**  This used to hand `Exit` back and rely on
+            // the caller's trap path to notice, and it did not: the epilogue
+            // restored a frame that belonged to a program which had already
+            // finished, and the machine sat there with every task `Finished`,
+            // no CPU running, and no report line.  The end of the machine is
+            // this function's to say, because this is where the last absence
+            // becomes known.
+            arch::CallOutcome::Exit => crate::programs::report_and_finish(),
             other => return other,
         }
     }
@@ -218,15 +233,58 @@ pub fn advance_with_status(
     //   programs that had not run.
     // - **Nothing anywhere is runnable.**  The machine is finished, and every
     //   CPU should stop.  That is the only case that ends a boot.
+    //
+    // ## The ping, and the hang it answers
+    //
+    // Two CPUs can reach this loop having seen each other's work and each gone
+    // to `wfi` for the interrupt that would announce it: the one that would
+    // have woken them is the one they each expected, and neither sends it.  The
+    // machine then has every task finished, `has_runnable` false, and no CPU
+    // running — a deadlock that looks exactly like a slow boot, and that
+    // reproduced on two boots in thirty with the report waiting on a CPU asleep
+    // in `wfi`.
+    //
+    // So the loop counts its own idle turns and, after enough of them to know
+    // the wait is not going to be ended by someone else, sends the inter-CPU
+    // line itself.  The ping cost is one interrupt per turn of an idle CPU
+    // while nothing is runnable, which is bounded by how long the machine takes
+    // to finish rather than by any deadline.
+    let mut idle_turns = 0u32;
     loop {
         if !has_runnable() {
             // The machine is finished: report what ran, then stop every CPU.
             crate::programs::report_and_finish()
         }
         arch::wait_for_a_wakeup();
+        idle_turns += 1;
+        if idle_turns.is_multiple_of(IDLE_PINGS_BEFORE_A_PING) {
+            wake_the_other_cpus();
+        }
         if schedule_on_this_cpu(cpu, frame, false, 0) {
             return arch::CallOutcome::Exit;
         }
+    }
+}
+
+/// How many idle turns a CPU takes before it wakes the others itself.
+///
+/// Large enough that an ordinary wait — a sleep's deadline, a pipe's write —
+/// never reaches it: those are woken by a timer that is running anyway, and a
+/// ping on every turn would turn an idle machine into a broadcast storm.  Small
+/// enough that the two-CPU deadlock above is broken within a boot's patience.
+const IDLE_PINGS_BEFORE_A_PING: u32 = 64;
+
+/// Send the inter-CPU line, or nothing on a machine that has none.
+///
+/// The kernel's own name for the arch call, so the idle loops do not have to
+/// carry a `cfg` for a fact about the machine: a host build has no CPUs to
+/// wake and no `send_ipi_to_others` to call.
+fn wake_the_other_cpus() {
+    #[cfg(target_os = "none")]
+    {
+        // SAFETY: the boot's own inter-CPU line, installed before any program
+        // ran.
+        unsafe { arch::send_ipi_to_others() };
     }
 }
 
@@ -709,8 +767,25 @@ pub fn is_exit(call: &CallFrame) -> bool {
 /// fault.  What ends the loop is `wake_expired` turning a deadline into a
 /// runnable task, and a machine that never does that is a machine that hangs,
 /// with a log that already said "every program is asleep, waiting".
+///
+/// ## The boot can end while this loops
+///
+/// The task being waited for can be the last one that is not finished, and the
+/// CPU that could have woken it can already be gone.  A debugger attached to a
+/// stalled boot caught exactly that: one CPU halted, the other here, waiting
+/// for a sleep that belonged to a machine which had already said it was over.
+///
+/// So the loop asks whether the boot is over and hands the ending to
+/// [`crate::programs::report_and_finish`] rather than stopping here.  That call
+/// knows whether this CPU is the reporting one or a loser that should stop, and
+/// it is what releases the spaces every CPU has finished with; stopping here
+/// instead would leave the report to a CPU that had already halted, which is
+/// the same deadlock wearing a different hat.
 pub fn idle_until_woken() {
     while has_sleeping() && !has_selectable() {
+        if crate::programs::boot_is_finished() {
+            crate::programs::report_and_finish()
+        }
         arch::wait_for_a_wakeup();
     }
 }

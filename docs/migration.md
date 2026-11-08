@@ -1706,3 +1706,54 @@ with the kernel's scripts because that directory is where a machine's loader
 conventions live and this file has none — a copy there would have been a
 second opinion about `USER_BASE` from a layer below the one that computes
 it.
+
+### The pages a finished CPU was still using
+
+    protofire: process 1 exec'd /bin/init
+    protofire: fault at 0x20047cd60, read, not mapped
+    protofire: unhandled exception 4 on cpu 0 (ec 37, data abort) at 0x4008f360
+    protofire: address spaces reaped 4, 16384 frame(s) free
+
+A two-CPU boot crashed here roughly one time in three, and never on one CPU.
+The address in the first line is not a program's: `0x4008f360` resolves to
+`allocator::tlsf::remove_free_block`, and the value it was reading is a
+free-list node that had stopped being a list.  The third line, when it was the
+one that fired, was worse: an instruction abort at `0x0`, a kernel that had
+jumped into nothing.
+
+The cause was a claim that no gate could check because it was written in a
+comment.  Every release of an address space says "no CPU is inside a program
+and none will enter one".  `report_and_finish` said that because it had set
+`FINISHED` — but setting a flag is a **request**, not a proof, and the other
+CPU can hold that flag and still be walking a page table, restoring a trap
+frame, or one instruction away from reading a user address.  Releasing there
+handed live frames to the pool, and the CPU still using them found them
+rewritten.
+
+The measurement that named it: a boot with `exec` removed passed 16 times in
+16, and the same boot with `exec` in place failed 14 in 16.  `exec` made the
+window wider because it releases a whole space in the middle of a run, but the
+window was there at the end of every boot.  A debugger attached to a stalled
+machine showed the other half: one CPU halted, the other still waiting for a
+sleep that belonged to a machine which had already said it was over.
+
+Three changes, each answering one of those:
+
+- **A CPU says when it has stopped.**  `per_cpu::park` records the slot, and
+  `all_parked` is what the reaping side waits for.  The recording is on the
+  path a CPU takes on its way out and never on its way in: the answer to
+  "is the boot over".
+- **The reaping side waits, and pokes.**  `FINISHED` alone does not wake a CPU
+  asleep in `wfi`, and a CPU that never wakes never says it has parked.  The
+  report sends the inter-CPU line once and again while it waits, and the idle
+  loops count their own turns and do the same — the two-CPU deadlock where
+  each waited for the interrupt the other was supposed to send.
+- **`exec` retires rather than releases.**  The space it replaces goes into the
+  scheduler's `retired` array, not back to the pool, and `reap_finished`
+  releases it under the same promise as every finished task's space.
+
+The numbers, on the same disk and the same two CPUs: **10 crashes in 30 boots
+before, 0 in 40 after**.  The retirement alone left 4 in 24, so both halves are
+needed.  What is left is not a crash: two boots in forty stop with every
+program finished and no report line, which is a separate defect and is recorded
+as one rather than called fixed.

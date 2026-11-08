@@ -40,6 +40,8 @@ use arch::Context;
 
 use super::task::State;
 use super::task::Task;
+#[cfg(target_os = "none")]
+use crate::address_space::AddressSpace;
 
 /// The tasks, and which one each CPU is running.
 pub struct Scheduler {
@@ -78,7 +80,40 @@ pub struct Scheduler {
     /// reader that placement moved; the three numbers tell them what moved and
     /// which way, which is what a line a person reads needs.
     pub(crate) last_migration: Option<(usize, usize, usize)>,
+    /// The spaces an `exec` replaced, waiting for the one moment they can be
+    /// freed.
+    ///
+    /// An `exec` swaps a task's space for a new one and the old space is
+    /// garbage at that instant — but **only from this CPU's point of view**.
+    /// The claim the release used to make, that no other CPU ever held this
+    /// task, is false on any boot where a task migrates, and the boot's own log
+    /// says tasks do (`task migrations 4, last process 2 from cpu 0 to cpu 1`).
+    /// A CPU that ran the task a moment ago can still be inside its trap path
+    /// with that root installed, or hold a translation through it; freeing the
+    /// root and its user frames there handed live memory back to the pool, and
+    /// the boot showed the result — a data abort inside the heap allocator
+    /// reading a free-list node that was no longer a list, and an instruction
+    /// abort at 0x0, both on the machine whose second CPU migrates most.
+    ///
+    /// So the space is retired rather than released.  It goes back at
+    /// [`reap_finished`](Self::reap_finished), the same point every finished
+    /// task's space goes back, where "every task has finished and every other
+    /// CPU has been told to stop" makes the release sound.
+    ///
+    /// A fixed array and not a `Vec`: `exec` runs with the scheduler's lock
+    /// held, and growing a `Vec` there allocates from the kernel heap while a
+    /// lock another CPU may be spinning on is held.  The array costs eight
+    /// words of a structure the boot already owns and cannot fail; a boot that
+    /// execs more than this many times keeps the last ones alive rather than
+    /// corrupting anything, which is the honest failure for a diagnostic bound.
+    #[cfg(target_os = "none")]
+    pub(crate) retired: [Option<AddressSpace>; RETIRED_SPACES],
 }
+
+/// How many `exec`-replaced spaces this scheduler holds before it stops
+/// recording them.
+#[cfg(target_os = "none")]
+pub const RETIRED_SPACES: usize = 8;
 
 /// What a claim answered.
 ///
@@ -115,6 +150,8 @@ impl Scheduler {
             next_pid: 1,
             migrations: 0,
             last_migration: None,
+            #[cfg(target_os = "none")]
+            retired: [None; RETIRED_SPACES],
         }
     }
 

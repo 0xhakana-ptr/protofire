@@ -356,9 +356,30 @@ pub fn claim_for_this_cpu(cpu: usize) -> Option<(usize, arch::Context)> {
 ///
 /// The kernel's answer, injected into `arch` for the reason the work source is:
 /// the flag lives here, and a machine crate that named it would be a cycle.
+///
+/// A CPU that asks this and hears "yes" is a CPU about to stop, and the answer
+/// is where it records that.  It is the one place every started CPU passes
+/// through on its way out and no CPU passes on its way in, which is what makes
+/// it the right place to say "I will not touch a user space again" — the
+/// statement the reaping side waits for.  Recording it any later would be a
+/// claim made after the CPU had stopped, which nothing could wait on.
 #[cfg(target_os = "none")]
 pub fn boot_is_finished() -> bool {
-    crate::FINISHED.load(core::sync::atomic::Ordering::Acquire)
+    let finished = crate::FINISHED.load(core::sync::atomic::Ordering::Acquire);
+    if finished {
+        crate::per_cpu::park(crate::per_cpu::current_slot());
+    }
+    finished
+}
+
+/// A host has no boot to finish, so the answer is always no.
+///
+/// Present so the scheduler's idle loop compiles and its documentation links
+/// resolve on a host build, where there is no machine to end.  A `true` here
+/// would be a claim about a machine that does not exist.
+#[cfg(not(target_os = "none"))]
+pub fn boot_is_finished() -> bool {
+    false
 }
 
 /// How many programs exited on a CPU other than the boot one.
@@ -409,8 +430,57 @@ pub fn report_and_finish() -> ! {
     // from its own wait loop, and neither can see the other's decision.  The
     // exchange is what makes "the boot is over" a claim with one owner; the CPU
     // that loses stops without printing, because the other is already printing.
+    //
+    // The loser parks **before** it stops.  It is a CPU that will never run a
+    // program again, and saying so is what lets the winner's wait below end:
+    // a loser that halted silently would leave the winner spinning for a CPU
+    // that had already gone, which is a hang on every boot with two CPUs.
     if crate::FINISHED.swap(true, core::sync::atomic::Ordering::AcqRel) {
+        crate::per_cpu::park(crate::per_cpu::current_slot());
         crate::idle_this_cpu()
+    }
+
+    // Wait until every CPU that is online has said it will not reach into a
+    // user space again, and only then release anything.
+    //
+    // `FINISHED` is a **request**, not a proof.  The other CPU can hold that
+    // flag and still be walking a page table, restoring a trap frame, or one
+    // instruction from reading a user address; it records itself parked only
+    // when its own idle loop asks whether the boot is over, and that is the
+    // last moment it can still name one of these tables.  Releasing before
+    // that produced a data abort inside the heap allocator's free-list walk and
+    // an instruction abort at 0x0 — a table the boot CPU had already handed to
+    // the pool, read by the CPU that was still using it.  It reproduced on six
+    // boots in ten with two CPUs and never with one, which is exactly the shape
+    // of a claim about "the other CPU" that was never checked.
+    //
+    // This CPU parks itself first: it is about to stop running programs, and
+    // the count would never be complete otherwise.
+    crate::per_cpu::park(crate::per_cpu::current_slot());
+    // Wake the others, once.  A CPU waiting in the scheduler's idle loop is
+    // inside `wfi` with nothing left to wake it — the timer's own line is the
+    // only thing that would, and the machine has no programs left for it to
+    // matter to.  Without this the winner would spin for a CPU that is asleep
+    // and will never ask whether the boot is over: the hang this boot showed as
+    // sixteen idle runs in twenty-four, with every program finished and no
+    // report line.
+    //
+    // SAFETY: the boot's own IPI path, installed before any program ran.
+    unsafe { arch::send_ipi_to_others() };
+    let mut spins = 0u32;
+    while !crate::per_cpu::all_parked() {
+        // One IPI is not enough: the other CPU may take it a moment before it
+        // reaches the `wfi` that this call is meant to end, and a `wfi` entered
+        // after the interrupt was handled sleeps for ever.  Re-sending is
+        // harmless — the line is idempotent and the CPU parks on the first one
+        // it sees after the flag — and it is what turns "the other CPU usually
+        // notices" into "it always does".
+        spins += 1;
+        if spins % 100_000 == 0 {
+            // SAFETY: as above.
+            unsafe { arch::send_ipi_to_others() };
+        }
+        core::hint::spin_loop();
     }
 
     // Every task is finished and every other CPU has been told the boot is

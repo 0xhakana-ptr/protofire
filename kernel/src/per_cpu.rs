@@ -170,6 +170,44 @@ pub fn on_boot_cpu() -> bool {
     cpu(current_slot()).is_boot_cpu()
 }
 
+/// The CPUs that have said they will not touch a user space again.
+///
+/// The address spaces are released once, at the end of a boot, and the argument
+/// that makes it safe is "no CPU is inside a program and none will enter one".
+/// `FINISHED` alone does not make that true: a CPU that has the flag in its
+/// hand may still be walking a page table, restoring a frame, or one
+/// instruction away from reading a user address.  Releasing then is a race, and
+/// it is the race that produced a data abort inside the heap allocator's
+/// free-list walk and an instruction abort at 0x0 — both on the started CPU's
+/// behalf, in a table the boot CPU had already handed back to the pool.
+///
+/// So the claim is counted rather than assumed.  Each CPU records itself here
+/// on the path where it stops running programs, and the reaping side waits
+/// until every CPU that is online has recorded itself.  A single CPU's boot
+/// satisfies this at once, which is why the one-CPU boots never showed the
+/// defect.
+static PARKED: [AtomicBool; MAX_CPUS] = [const { AtomicBool::new(false) }; MAX_CPUS];
+
+/// Record that `slot` will not reach into a user space again.
+pub fn park(slot: usize) {
+    if slot < MAX_CPUS {
+        PARKED[slot].store(true, Ordering::Release);
+    }
+}
+
+/// Whether `slot` has parked.
+pub fn is_parked(slot: usize) -> bool {
+    slot < MAX_CPUS && PARKED[slot].load(Ordering::Acquire)
+}
+
+/// Every online CPU has parked, so no CPU can name a user address again.
+pub fn all_parked() -> bool {
+    CPUS.iter()
+        .enumerate()
+        .filter(|(_, cpu)| cpu.online())
+        .all(|(index, _)| is_parked(index))
+}
+
 /// The CPUs the boot started, including its own.
 pub fn online_count() -> usize {
     CPUS.iter().filter(|cpu| cpu.online()).count()
