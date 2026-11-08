@@ -130,8 +130,18 @@ impl Scheduler {
         // needed execute.  A page already mapped takes the new segment's
         // bytes into the frame it has and the union of the two permissions,
         // which is the only answer both segments can run under.
+        // The image, parsed **before** any frame is taken.  The order is the
+        // leak: `AddressSpace::new` allocates the root table, so a caller that
+        // parsed afterwards and answered `None` on a malformed file left a
+        // frame behind for every attempt — and any ring-3 program can attempt
+        // it as often as it likes, which makes a local mistake into a way to
+        // exhaust the pool.  `load` takes nothing but the bytes, so it goes
+        // first and a refused image costs nothing.
+        let image = match crate::loader::load(&bytes, arch::ELF_MACHINE) {
+            Ok(image) => image,
+            Err(_) => return None,
+        };
         let mut space = unsafe { crate::address_space::AddressSpace::new() }?;
-        let image = crate::loader::load(&bytes, arch::ELF_MACHINE).ok()?;
         // The loader's own line: the file was read and parsed into segments,
         // which is the one fact the exec'd and opened lines cannot carry —
         // they say a program ran, this one says the *loader* ran.
@@ -224,7 +234,15 @@ impl Scheduler {
 
         // The stack, one page past the image's own end: the loader's layout is
         // the program's, and the stack is the kernel's addition to it.
-        let image_top = image.image_top()?;
+        //
+        // Answered rather than propagated with `?`: the space exists by now and
+        // has frames in it, so every way out of this function has to release it
+        // or the frames stay taken.  A `?` here would be the same leak the
+        // parse order above was moved to avoid.
+        let Some(image_top) = image.image_top() else {
+            unsafe { space.release() };
+            return None;
+        };
         let stack_page = (image_top + paging::PAGE_SIZE) & !(paging::PAGE_SIZE - 1);
         // SAFETY: the frame comes from the pool.
         let Some(stack_frame) = crate::address_space::allocate_image_frame() else {
@@ -282,9 +300,25 @@ impl Scheduler {
         }
 
         let new_root = space.root();
-        let pid = self.tasks.get(task_index)?.pid();
-        let task = self.tasks.get_mut(task_index)?;
-        let old_space = task.space.replace(space)?;
+        // Every exit from here releases the space it built.  The task index
+        // came from `running[cpu]` and the space was built around it, so the
+        // lookups cannot fail today — but "cannot fail" and "leaks a whole
+        // address space if it does" are not a pair worth keeping, and the
+        // checked form costs one branch on a path that already parsed a file.
+        let Some(pid) = self.tasks.get(task_index).map(|task| task.pid()) else {
+            unsafe { space.release() };
+            return None;
+        };
+        let Some(task) = self.tasks.get_mut(task_index) else {
+            unsafe { space.release() };
+            return None;
+        };
+        // The space the task ran in before this call, if it had one of its own.
+        // `None` means it ran on the kernel's table, which no ring-3 task does;
+        // the arm exists so the possibility is stated, and it carries on rather
+        // than returning, because the new space is already installed in the
+        // task and it is the one the epilogue will run on.
+        let old_space = task.space.replace(space);
         // A fresh context, not a copy: the program starts at its own first
         // instruction, on a stack that carries the exec block and nothing from
         // the program it replaced.
@@ -313,7 +347,9 @@ impl Scheduler {
         // A full array leaks the space rather than dropping it: nothing here
         // can free a frame that another CPU may still reach, and a boot that
         // has exec'd eight times has already said what it needed to say.
-        if let Some(slot) = self.retired.iter_mut().find(|slot| slot.is_none()) {
+        if let Some(old_space) = old_space
+            && let Some(slot) = self.retired.iter_mut().find(|slot| slot.is_none())
+        {
             *slot = Some(old_space);
         }
         Some(pid)
