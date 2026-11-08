@@ -243,6 +243,14 @@ impl Scheduler {
                 self.last_migration = Some((task, entry.last_cpu, cpu));
             }
             entry.last_cpu = cpu;
+            // The other question this placement answers: has this task ever
+            // run anywhere but the boot CPU?  Recorded once and kept, because
+            // a task taken back by the boot CPU afterwards still ran beside it,
+            // and a boot that reported only where a task *finished* said the
+            // opposite of what happened.
+            if cpu != crate::per_cpu::BOOT_SLOT {
+                entry.ran_off_boot_cpu = cpu;
+            }
         }
     }
     /// The running task's saved context, copied.
@@ -257,6 +265,22 @@ impl Scheduler {
         self.tasks
             .get(self.running.get(cpu).copied().flatten()?)
             .map(Task::pid)
+    }
+
+    /// A CPU other than the boot one that the running task has run on, or
+    /// `usize::MAX` if it has never left the boot CPU.
+    ///
+    /// The answer a boot's evidence line needs at the moment a program exits.
+    /// The CPU it is exiting on is the wrong question there — a task can be
+    /// taken back by the boot CPU between its last work and its exit — and this
+    /// is the one that survives a migration.
+    pub fn current_ran_off_boot_cpu(&self, cpu: usize) -> usize {
+        self.running
+            .get(cpu)
+            .copied()
+            .flatten()
+            .and_then(|index| self.tasks.get(index))
+            .map_or(usize::MAX, |task| task.ran_off_boot_cpu)
     }
 
     /// The parent of the task that is running.

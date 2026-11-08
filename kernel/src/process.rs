@@ -113,13 +113,22 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // others.  Reading a return register instead would be wrong on the one
         // machine whose two registers differ.
         let status = call.arguments[0];
-        // Which CPU ran this program to its end, reported once per exit so the
-        // log says how many programs finished on a CPU other than the boot's.
-        // This is the evidence parallel execution leaves: the two CPUs' switch
-        // counts alone cannot say whether a program ran anywhere but CPU 0.
-        let cpu = crate::per_cpu::current_slot();
-        if cpu != crate::per_cpu::BOOT_SLOT {
-            crate::programs::note_program_ran_on(cpu);
+        // Which CPU ran this program beside the boot one, reported once per
+        // exit so the log says how many programs finished on a CPU other than
+        // the boot's.  This is the evidence parallel execution leaves: the two
+        // CPUs' switch counts alone cannot say whether a program ran anywhere
+        // but CPU 0.
+        //
+        // The question is **where the program has run**, not where it is
+        // exiting.  Those differ whenever a task is migrated back to the boot
+        // CPU between its last work and its exit — which this scheduler does,
+        // and `task migrations` reports — and reading the exit's own CPU said
+        // "no program ran in parallel" about a program whose tick count on the
+        // started CPU was in the hundreds.  Four boots in fifteen printed the
+        // contradiction.
+        let ran_on = crate::scheduler::current_ran_off_boot_cpu();
+        if ran_on != usize::MAX {
+            crate::programs::note_program_ran_on(ran_on);
         }
         // A CPU that gets no next task waits for work, or reports and stops
         // when the machine is finished; neither returns an uninstalled frame,

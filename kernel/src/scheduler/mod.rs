@@ -683,6 +683,23 @@ pub fn current_pid() -> Option<u32> {
     with_scheduler(|scheduler| scheduler.as_ref()?.current_pid(cpu))
 }
 
+/// A non-boot CPU the running task has run on, or `usize::MAX`.
+///
+/// The question a program's exit asks when the boot reports that programs ran
+/// in parallel.  The CPU it exits on is not that question: a task taken back by
+/// the boot CPU before its last instruction is still a task that ran beside it,
+/// and a report built from the exit's own CPU called those boots "0 non-boot
+/// CPUs" — four in fifteen, on a boot whose own `task migrations` line named
+/// the move.
+pub fn current_ran_off_boot_cpu() -> usize {
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| {
+        scheduler.as_ref().map_or(usize::MAX, |scheduler| {
+            scheduler.current_ran_off_boot_cpu(cpu)
+        })
+    })
+}
+
 /// The parent of the running task, if a scheduler is installed.
 pub fn current_parent() -> Option<u32> {
     let cpu = this_cpu();

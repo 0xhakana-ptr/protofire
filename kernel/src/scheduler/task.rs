@@ -98,6 +98,23 @@ pub struct Task {
     /// here; the scheduler is free to place it anywhere, and the record only
     /// says where it was.
     pub(crate) last_cpu: usize,
+    /// The last CPU other than the boot one this task ran on, or `usize::MAX`
+    /// if it never did.
+    ///
+    /// A separate field from [`last_cpu`](Self::last_cpu), because the two
+    /// answer different questions and only one of them survives a migration.
+    /// `last_cpu` is where the task was a moment ago; this is whether it has
+    /// **ever** run beside the boot CPU, and a task that is taken back by the
+    /// boot CPU keeps the second answer while losing the first.
+    ///
+    /// The difference is what a boot's own evidence line turns on.  A program
+    /// that ran hundreds of ticks on the started CPU and then finished on the
+    /// boot one — a migration that `task migrations` reports — was a program
+    /// that ran in parallel, and reading the CPU at the moment of its exit said
+    /// it had not.  The gate required `program ended on cpu 1` and the boot
+    /// printed `parallel, programs ended on 0`, both truthfully, because the
+    /// program's last instruction happened to run on the other CPU.
+    pub(crate) ran_off_boot_cpu: usize,
 }
 
 impl Task {
@@ -114,6 +131,7 @@ impl Task {
             parent: 0,
             status: None,
             last_cpu: usize::MAX,
+            ran_off_boot_cpu: usize::MAX,
         }
     }
 
@@ -132,6 +150,7 @@ impl Task {
             parent: 0,
             status: None,
             last_cpu: usize::MAX,
+            ran_off_boot_cpu: usize::MAX,
         }
     }
 
