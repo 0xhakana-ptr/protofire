@@ -12,10 +12,13 @@
 //! end" a state the fixture can produce rather than one the helper repairs.
 
 use crate::loader::LoadError;
+use crate::loader::MAX_IMAGE_BYTES;
 use crate::loader::MAX_SEGMENTS;
 use crate::loader::load;
+use crate::loader::pages;
 use alloc::vec;
 use alloc::vec::Vec;
+use paging::PAGE_SIZE;
 
 /// A machine the tests present as "the machine this build is for".
 const MACHINE: u16 = 62;
@@ -545,5 +548,44 @@ fn more_segments_than_the_bound_refuse_rather_than_drop() {
         load(&elf(MACHINE, 0x8040000008, &segments), MACHINE),
         Err(LoadError::TooManySegments),
         "one past the bound, refused whole rather than silently partial"
+    );
+}
+
+#[test]
+fn an_image_at_the_byte_bound_yields_a_page_for_every_frame_the_space_can_hold() {
+    // The regression this pins: the loader's byte bound and the space's
+    // frame-record bound described the same set of pages and disagreed —
+    // 256 KiB admits 64 pages, and the record array held 16, so a legal
+    // image was refused by a bound whose own documentation described a
+    // smaller thing.  No boot had a program large enough to notice.
+    //
+    // One segment spanning the whole admissible file is the worst case the
+    // bounds have to agree on: every page is the image's, and `exec` adds one
+    // more for the stack.
+    let pages_at_bound = MAX_IMAGE_BYTES / PAGE_SIZE;
+    let image = elf(
+        MACHINE,
+        0x8040000000,
+        &[SegmentSpec {
+            vaddr: 0x8040000000,
+            offset: FIRST_OFFSET,
+            filesz: MAX_IMAGE_BYTES as u64,
+            memsz: MAX_IMAGE_BYTES as u64,
+            flags: FLAG_R | FLAG_X,
+        }],
+    );
+    let loaded = load(&image, MACHINE).expect("an image at the byte bound is legal");
+    let planned = loaded
+        .segments()
+        .iter()
+        .map(|segment| pages(segment).count())
+        .sum::<usize>();
+    assert_eq!(
+        planned, pages_at_bound,
+        "every page of the largest admissible image is planned"
+    );
+    assert!(
+        crate::address_space::space::MAX_OWNED_FRAMES > planned,
+        "the space records at least the image's {planned} pages plus the stack"
     );
 }
