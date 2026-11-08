@@ -15,10 +15,10 @@ CONDITIONS OF ANY KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations under the License.
 
 The **prose** in this product — every Markdown document, including this one's
-own prose — is licensed under the Creative Commons Attribution-ShareAlike 4.0
+own prose — is licensed under the Creative Commons Attribution 4.0
 International License.  You may obtain a copy of the License at
 
-    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+    https://creativecommons.org/licenses/by/4.0/legalcode
 
 `LICENSES/README.md` says which files fall on which side and why the split
 exists.
@@ -44,4 +44,4 @@ GPL-licensed project, is present in this tree.
 Dependencies are listed in `Cargo.lock` and each carries its own licence.  The
 kernel itself — everything under `kernel/`, `arch/`, `fs/`, `memory/`,
 `libs/`, and the crates beside them — is Apache-2.0 only as code, and its
-prose is CC BY-SA 4.0.
+prose is CC BY 4.0.

@@ -56,5 +56,5 @@ number is a change that argues for it in the baseline's own prose.
 
 ## Licence
 
-Source code is Apache-2.0; prose is CC BY-SA 4.0.  [`LICENSES/README.md`](LICENSES/README.md)
+Source code is Apache-2.0; prose is CC BY 4.0.  [`LICENSES/README.md`](LICENSES/README.md)
 says which files fall on which side and why the split exists.

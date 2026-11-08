@@ -139,5 +139,5 @@ than unsupported.
 
 ## Licence
 
-Source code is Apache-2.0; prose, every Markdown document, this one included, is CC BY-SA 4.0.  [`LICENSES/README.md`](LICENSES/README.md) says which files
+Source code is Apache-2.0; prose, every Markdown document, this one included, is CC BY 4.0.  [`LICENSES/README.md`](LICENSES/README.md) says which files
 fall on which side and why the split exists.
