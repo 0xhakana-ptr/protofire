@@ -177,20 +177,26 @@ pub const fn ticks_per_millisecond(frequency: u64) -> u64 {
     frequency / 1000
 }
 
-/// How many ticks one microsecond is.
-///
-/// The counter's frequency is in Hz, which is ticks per *second*, so a
-/// microsecond is the frequency divided by a million.  At 1 GHz that is a
-/// thousand ticks, and at 62.5 MHz it is zero, a counter too slow to express a
-/// microsecond, which a caller learns here rather than by arming a slice that
-/// is one tick long whatever it asked for.
-pub const fn ticks_per_microsecond(frequency: u64) -> u64 {
-    frequency / 1_000_000
-}
-
 /// How many ticks `microseconds` is, saturating rather than wrapping.
+///
+/// **Multiply first, then divide.**  The previous version divided the frequency
+/// by a million and multiplied the quotient, which loses everything the
+/// division discards: at 62.5 MHz a microsecond is 62.5 ticks, the quotient
+/// said 62, and the error is 0.8% on every slice.  Worse, any frequency below
+/// one megahertz divided to **zero**, so every slice became one tick whatever
+/// the caller asked for — a timer firing at the counter's own rate.
+///
+/// The product is taken in `u128` because it is `frequency * microseconds` and
+/// both are large: a gigahertz counter asked for a second is 10^15, which fits
+/// in `u64`, but a caller passing an already-large slice should saturate rather
+/// than wrap.
 pub const fn ticks_for_microseconds(frequency: u64, microseconds: u64) -> u64 {
-    let ticks = ticks_per_microsecond(frequency).saturating_mul(microseconds);
+    let ticks = (frequency as u128 * microseconds as u128) / 1_000_000;
+    let ticks = if ticks > u64::MAX as u128 {
+        u64::MAX
+    } else {
+        ticks as u64
+    };
     // A zero countdown is a timer that fired before it was armed, so the
     // smallest slice this can produce is one tick.
     if ticks == 0 { 1 } else { ticks }
@@ -211,6 +217,7 @@ mod tests {
     use super::CONTROL_MASKED;
     use super::TIMER_INTERRUPT;
     use super::ticks_for;
+    use super::ticks_for_microseconds;
     use super::ticks_per_millisecond;
 
     /// The control register's three bits are the ones the architecture names.
@@ -261,5 +268,24 @@ mod tests {
         // A relation between two constants, so it is checked at compile time
         // rather than by a test that can only ever pass.
         const _: () = assert!(TIMER_INTERRUPT < 32, "private, so it has no target byte");
+    }
+    /// A microsecond is a real fraction of a tick at 62.5 MHz, and the old
+    /// conversion called it zero.
+    ///
+    /// `frequency / 1_000_000` is 62 at that rate, so a 100 µs slice came out
+    /// 6200 ticks instead of 6250 — and at any frequency below 1 MHz the
+    /// quotient was zero and the slice became one tick.  The multiply-first
+    /// form keeps the fraction.
+    #[test]
+    fn a_microsecond_keeps_the_fraction_the_division_used_to_drop() {
+        // 62.5 MHz: 62.5 ticks per microsecond.
+        assert_eq!(ticks_for_microseconds(62_500_000, 1), 62);
+        // 100 µs at that rate is 6250, not the 6200 a pre-divided 62 gives.
+        assert_eq!(ticks_for_microseconds(62_500_000, 100), 6250);
+        // A sub-megahertz counter still expresses a slice: 999 kHz for 1 ms is
+        // 999 ticks, where the old form gave one.
+        assert_eq!(ticks_for_microseconds(999_000, 1000), 999);
+        // And the floor holds.
+        assert_eq!(ticks_for_microseconds(0, 100), 1);
     }
 }

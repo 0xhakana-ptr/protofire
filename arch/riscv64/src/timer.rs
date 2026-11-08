@@ -198,19 +198,19 @@ pub const fn ticks_per_millisecond(frequency: u64) -> u64 {
     frequency / 1000
 }
 
-/// How many ticks one microsecond is.
-///
-/// At the ten megahertz this machine's tree reports, that is ten ticks, a
-/// counter fast enough to express a microsecond, which a slower one could not,
-/// and a caller learns the difference here rather than by arming a slice that
-/// is one tick long whatever it asked for.
-pub const fn ticks_per_microsecond(frequency: u64) -> u64 {
-    frequency / 1_000_000
-}
-
 /// How many ticks `microseconds` is, saturating rather than wrapping.
+///
+/// **Multiply first, then divide**, for the reason the aarch64 copy of this
+/// function states at length: dividing the frequency first throws away what
+/// the division discards, and a frequency below one megahertz divided to zero
+/// and made every slice one tick whatever the caller asked for.
 pub const fn ticks_for_microseconds(frequency: u64, microseconds: u64) -> u64 {
-    let ticks = ticks_per_microsecond(frequency).saturating_mul(microseconds);
+    let ticks = (frequency as u128 * microseconds as u128) / 1_000_000;
+    let ticks = if ticks > u64::MAX as u128 {
+        u64::MAX
+    } else {
+        ticks as u64
+    };
     // A deadline equal to the counter's current value is a fire that already
     // happened, so the smallest slice this can produce is one tick.
     if ticks == 0 { 1 } else { ticks }

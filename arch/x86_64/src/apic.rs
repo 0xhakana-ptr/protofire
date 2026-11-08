@@ -680,15 +680,20 @@ pub unsafe fn read_tsc() -> u64 {
 /// counter loaded with zero fires immediately, which reads as a timer that
 /// works and is actually a tight loop of interrupts.
 pub const fn ticks_for_microseconds(frequency: u64, microseconds: u64) -> u32 {
-    // The multiply is guarded rather than wrapped: a wrapped count is a *short*
-    // slice, which is the opposite of the failure the floor below avoids.
-    let ticks = match (frequency / 1_000_000).checked_mul(microseconds) {
-        Some(ticks) => ticks,
-        None => u32::MAX as u64,
-    };
+    // **Multiply first, then divide.**  Dividing the frequency by a million
+    // first threw away its remainder, and a frequency below one megahertz
+    // divided to zero so every slice became one tick whatever the caller asked
+    // for.  Both other machines had the same defect in their copies of this
+    // function, and the aarch64 copy records what it cost: a boot that never
+    // ended.
+    //
+    // The product is taken in `u128` so that a large frequency and a large
+    // slice cannot wrap: a wrapped count is a *short* slice, the opposite of
+    // the failure the floor below avoids.
+    let ticks = (frequency as u128 * microseconds as u128) / 1_000_000;
     if ticks == 0 {
         1
-    } else if ticks > u32::MAX as u64 {
+    } else if ticks > u32::MAX as u128 {
         u32::MAX
     } else {
         ticks as u32

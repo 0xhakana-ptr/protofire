@@ -237,14 +237,23 @@ pub unsafe extern "C" fn aarch64_secondary_main(slot: usize) -> ! {
     // it covers the code performing this call.
     unsafe { crate::paging::install(root) };
 
-    // This core's own timer.
+    // This core's own timer, through the same `ticks_for_microseconds` the boot
+    // core's arming uses.
+    //
+    // It used to divide the frequency here — `frequency / 1_000_000 * slice` —
+    // which is the same arithmetic written twice, and the two copies agreed
+    // only while the frequency was a whole multiple of a megahertz.  One
+    // conversion, one place: a slice is microseconds, and how many ticks that
+    // is belongs to the machine's timer module.
     //
     // SAFETY: the tree named the counter's rate, which is what the boot checked
     // before it armed its own, and this core is about to enable the line.
     if let Some(frequency) = unsafe { crate::timer::frequency() } {
         let slice = TIMER_SLICE_US.load(Ordering::Acquire) as u64;
         // SAFETY: as above, on this core's own clock.
-        unsafe { crate::timer::arm(frequency / 1_000_000 * slice) };
+        unsafe {
+            crate::timer::arm(crate::timer::ticks_for_microseconds(frequency, slice));
+        }
     }
 
     // This core's GIC interface, before its interrupts.
