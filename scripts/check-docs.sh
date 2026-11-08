@@ -56,7 +56,11 @@ failed=0
 # The token set is "contains a dot-extension we care about": a `.sh`, `.txt`,
 # `.md`, `.rs`, `.toml`, `.ld`, `.S`.  That is deliberately narrow: a backticked
 # `VecDeque` is not a path, and a check that guessed would refuse prose.
-for document in README.md AGENTS.md LICENSES/README.md docs/*.md docs/fmts/*.md; do
+# Every Markdown document the tree ships, found rather than listed: a
+# list is the thing that goes stale, and this one did — two documents
+# were added at the root and the gate went on reporting the same
+# citation count, which reads exactly like coverage.
+for document in *.md LICENSES/*.md docs/*.md docs/fmts/*.md; do
     [ -f "$document" ] || continue
     grep -n -oE '`[A-Za-z0-9_./{}*<>-]+\.(sh|txt|md|rs|toml|ld|S)`' "$document" \
         | sed 's/`//g' \
@@ -89,7 +93,11 @@ while IFS="$(printf '\t')" read -r document line path; do
 done <"$work/paths.txt"
 
 # Relative Markdown links resolve from the document that holds them.
-for document in README.md AGENTS.md LICENSES/README.md docs/*.md docs/fmts/*.md; do
+# Every Markdown document the tree ships, found rather than listed: a
+# list is the thing that goes stale, and this one did — two documents
+# were added at the root and the gate went on reporting the same
+# citation count, which reads exactly like coverage.
+for document in *.md LICENSES/*.md docs/*.md docs/fmts/*.md; do
     [ -f "$document" ] || continue
     directory="$(dirname "$document")"
     grep -oE '\]\([^)#]+' "$document" 2>/dev/null | sed 's/](//' | while read -r target; do
