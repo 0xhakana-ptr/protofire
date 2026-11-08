@@ -125,8 +125,7 @@ pub fn msi_frame() -> Option<usize> {
 /// "use the pool's own span", which on a machine whose RAM is smaller than that
 /// span would hand out frames that are not there.
 ///
-/// Parsing the map is the change that fills this in; it is listed in
-/// `docs/migration.md`.
+/// Parsing the map is the change that fills this in.
 pub fn managed_pool_bytes() -> Option<usize> {
     None
 }
