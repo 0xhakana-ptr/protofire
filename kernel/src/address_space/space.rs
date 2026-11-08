@@ -66,7 +66,19 @@ pub const USER_BASE: usize = 0x80_0000_0000;
 /// *records* and not on the pages, and a program past it is one this bound
 /// refuses rather than silently forgetting, the refusal is `own` answering
 /// `false`, which the caller reports.
-pub const MAX_OWNED_FRAMES: usize = 16;
+///
+/// It is **derived from the loader's image bound**, because the two have to
+/// agree and they did not.  `MAX_IMAGE_BYTES` is a quarter of the boot disk and
+/// admits a 64-page image; this was sixteen, so a legal 64 KiB program was
+/// refused by a bound whose own documentation described a smaller thing.  No
+/// boot has needed more than three, which is exactly why nobody noticed: the
+/// only boot that would is one with a program large enough to exercise a limit
+/// that no test names.
+///
+/// One slot past the pages is the stack the exec path adds, and the sum is
+/// rounded up because a fork can share the boundary page of two segments and
+/// record it once.
+pub const MAX_OWNED_FRAMES: usize = crate::loader::MAX_IMAGE_BYTES / paging::PAGE_SIZE + 1;
 
 /// A program's address space: a root of its own, sharing the kernel's entry 0.
 #[cfg(target_os = "none")]
@@ -995,5 +1007,10 @@ pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usi
 /// a program with more pages than this is one whose fork is refused rather
 /// than one whose share is silently partial, which is the only other way this
 /// could go wrong.
+///
+/// Derived from the image bound for the reason [`MAX_OWNED_FRAMES`] gives: a
+/// program the loader admits has to be one a `fork` can share, and two
+/// constants that describe the same set of pages drift apart silently.  This
+/// was sixteen while the loader admitted sixty-four.
 #[cfg(target_os = "none")]
-pub const MAX_FORK_PAGES: usize = 16;
+pub const MAX_FORK_PAGES: usize = MAX_OWNED_FRAMES;

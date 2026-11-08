@@ -152,8 +152,14 @@ impl Scheduler {
         arch::serial::write_str(" segment(s), entry ");
         arch::serial::write_hex(image.entry as u64);
         arch::serial::write_str("\n");
+        // One slot per page the image can have, not per segment: the list
+        // merges segments that share a page, so its size is the page count of
+        // the largest image the loader admits.  It was `MAX_SEGMENTS * 2` —
+        // sixteen — which is a bound on segments and was doing double duty as
+        // a bound on pages, and the two are not the same number.
         let mut mapped: [Option<(usize, usize, paging::Permissions)>;
-            crate::loader::MAX_SEGMENTS * 2] = [None; crate::loader::MAX_SEGMENTS * 2];
+            crate::address_space::MAX_OWNED_FRAMES] =
+            [None; crate::address_space::MAX_OWNED_FRAMES];
         for segment in image.segments() {
             for plan in crate::loader::pages(segment) {
                 let permissions = paging::Permissions {
