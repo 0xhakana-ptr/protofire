@@ -1662,49 +1662,6 @@ and xtask writes it into the boot's PyroFS volume beside the greeting — the
 disk file is the delivery channel, and the kernel's `format_if_empty` finds
 the volume already on it.
 
-Three facts the loader checks and the tests pin: the image is ELF64 for the
-machine the caller names (`arch::ELF_MACHINE` answers per machine, the same
-split that keeps every machine fact out of shared code), every segment is
-page-congruent and inside the user window, and the entry point is inside
-executable code.  W^X is policy — a writable-executable segment is refused by
-name — and a dynamic segment is refused **unless** a mapped segment carries
-its bytes, which is the honest shape for a file rust-lld emits: a fixed-base
-program whose dynamic header is dead data nobody reads.
-
-The loader's first real boot taught two lessons the code now carries.  The
-file-offset and virtual-address checks were written as "each page-aligned"
-and refused every real image — linkers emit offsets **congruent** to the
-addresses, not aligned, so the check became congruence and the mapping walks
-pages from the page boundary down.  And a shared page — the linker's text
-begins mid-page with rodata continuing past it — was mapped twice, the second
-mapping's read-only standing where the code needed execute; the mapping loop
-now merges a page's segments, copying each segment's bytes at their own
-offset into one frame and widening the permissions to what both segments need.
-
-The delivery had a collision of its own: the boot's exec-path block sat where
-a parent's copy-on-write push writes, and on aarch64 and riscv64 — whose push
-writes sixteen bytes below the hand-over pointer, where x86_64's writes eight —
-the push overwrote the path's tail.  The block moved thirty-two bytes down,
-past every machine's push write, and the machine-code parents read the
-pointer at the same offset the kernel's exec block uses.
-
-
-### The program that came from a file
-
-    protofire: loaded /bin/init, 3 segment(s), entry 0x804000002f
-    protofire: process 1 exec'd /bin/init
-    protofire: exit statuses 1 -> 116, 2 -> 1, 3 -> 0, 4 -> 139
-
-`ExecProcess` used to name an image **number** — a slot in an array of
-machine code the boot copied from its own binary.  It now names a **path**:
-the kernel reads the file through the registry's namespace, parses it with
-the ELF64 loader, and maps it segment by segment at the addresses the loader
-accepted.  And the program it reads is **compiled**: `apps/init` is a real
-no_std binary the workspace's own toolchain builds for all three machines,
-and xtask writes it into the boot's PyroFS volume beside the greeting — the
-disk file is the delivery channel, and the kernel's `format_if_empty` finds
-the volume already on it.
-
 Three facts the loader checks and the host tests pin: the image is ELF64 for
 the machine the caller names (`arch::ELF_MACHINE` answers per machine, the
 same split that keeps every machine fact out of shared code), every segment
