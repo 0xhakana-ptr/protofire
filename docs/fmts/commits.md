@@ -20,7 +20,7 @@ ln -s ../../scripts/hooks/commit-msg .git/hooks/commit-msg
 This document is the exact semantics of that hook, the places where it is easy
 to trip over, and the parts of the convention it cannot see at all.
 
-[`docs/contributing.md`](../contributing.md) carries the short form.  Read that
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md) carries the short form.  Read that
 first; read this when a commit is rejected, when you are writing in a language
 other than English, or when you want to know whether a rule is enforced or
 merely expected.
@@ -210,7 +210,7 @@ the editor template).
 
 Everything here is a rule of this specification and none of it is machine
 enforced. Following §3 of
-[`docs/contributing.md`](../contributing.md#what-a-change-has-to-carry), treat these as *more*
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md#what-a-change-has-to-carry), treat these as *more*
 important to get right, because nothing will remind you:
 
 - **The type prefix.** Not checked at all, `Add a thing` passes the hook.
@@ -219,13 +219,13 @@ important to get right, because nothing will remind you:
 - **Anything about the trailers except that `Signed-off-by:` exists.** The hook
   cannot tell `Signed-off-by: Claude <noreply@anthropic.com>` from a person, so
   a commit that violates the DCO policy by having a tool sign passes cleanly.
-  See [`docs/contributing.md`](../contributing.md) for the
+  See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) for the
   trailer policy and the fixed roles, people sign and co-author, tools assist.
 - **Whether `Assisted-by:` is present** when a tool was involved, or whether its
   `AGENT:MODEL [TOOLS]` shape is right.
 - **Trailer order.** `Signed-off-by:` comes first, then `Co-authored-by:` and
   `Assisted-by:`, the order the example in §6 uses, the order the trailer
-  table in [`docs/contributing.md`](../contributing.md)
+  table in [`CONTRIBUTING.md`](../../CONTRIBUTING.md)
   lists, and the order every AI-assisted commit in this history carries.  The
   Linux kernel puts its sign-off chain last; this repository does not, and the
   hook cannot see either way.
@@ -239,7 +239,7 @@ single line.
 
 The trailer policy, which trailer names what, and the rule that the roles never
 cross, is specified in
-[`docs/contributing.md`](../contributing.md) and is not
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md) and is not
 duplicated here. The complete form for an AI-assisted commit:
 
 ```
@@ -260,7 +260,7 @@ It is also the only one that must name a person.
 ## 7. Writing the message in Chinese
 
 Issues and pull requests may be written in English or Simplified Chinese
-([`docs/contributing.md`](../contributing.md)), and the same
+([`CONTRIBUTING.md`](../../CONTRIBUTING.md)), and the same
 latitude applies to commit messages. No commit in the current history uses
 Chinese, so this section is guidance rather than a description of practice.
 
@@ -332,8 +332,8 @@ request through the hook individually. Consequences:
 
 ## Related documents
 
-- [`docs/contributing.md`](../contributing.md), the short form of these rules,
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md), the short form of these rules,
   the trailer policy, and the review process
-- [`docs/contributing.md`](../contributing.md), which rules are enforced and which are not
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md), which rules are enforced and which are not
 - [`docs/fmts/comments.md`](comments.md), the same question for the comments
   inside the change

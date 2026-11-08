@@ -593,4 +593,4 @@ once and a new test cannot arrive without one.
   `unsafe` block
 - [docs/fmts/testing.md](testing.md), test layout and registration
 - [`docs/architecture.md`](../architecture.md), where each layer sits and why
-- [`docs/contributing.md`](../contributing.md), the short form of these rules
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md), the short form of these rules

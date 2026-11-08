@@ -12,7 +12,7 @@ A number that moves, a struct that grows, or a pointer that is validated one way
 in the kernel and another way in the wrapper is a silent breakage of every
 already-built program.
 
-This document is the detailed contract.  [`docs/contributing.md`](../contributing.md)
+This document is the detailed contract.  [`CONTRIBUTING.md`](../../CONTRIBUTING.md)
 carries the short version; where the two disagree, this document wins.
 
 ---
@@ -285,7 +285,7 @@ Before requesting review of a syscall change, confirm each line:
 
 ## Related documents
 
-- [`docs/contributing.md`](../contributing.md), the short-form rules
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md), the short-form rules
 - [`docs/architecture.md`](../architecture.md), the trap, the dispatch
   table, pointer validation
 - [docs/fmts/code-style.md](code-style.md), error handling and module layout

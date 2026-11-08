@@ -50,7 +50,7 @@ number is a change that argues for it in the baseline's own prose.
 | Why is the tree shaped this way, and which crate may name which? | [`docs/architecture.md`](docs/architecture.md) |
 | What has been moved in, and what has not? | [`docs/migration.md`](docs/migration.md) |
 | How does the asynchronous model work? | [`docs/async_io.md`](docs/async_io.md) |
-| What does a change have to satisfy? | [`docs/contributing.md`](docs/contributing.md) |
+| What does a change have to satisfy? | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | What may a contributor rely on, and what is review-only? | [`AGENTS.md`](AGENTS.md) |
 | What does a gate refuse? | the gate's own header comment |
 | What does the kernel enforce, and what does it not? | [`SECURITY.md`](SECURITY.md) |

@@ -6,7 +6,7 @@ used for, how tests are laid out, and what the syscall ABI contract is.
 
 They are written for anyone about to send a patch, a first-time contributor
 looking for the house style, and a returning one checking whether a rule they
-remember is real.  [`docs/contributing.md`](../contributing.md) carries the short
+remember is real.  [`CONTRIBUTING.md`](../../CONTRIBUTING.md) carries the short
 form of all of this plus the process around it.  These documents are the detail
 behind those bullets: the rationale, the exact rules, the cases that trip people
 up, and what is actually enforced versus what is merely expected.
@@ -79,6 +79,6 @@ These documents are part of the codebase and change like everything else.
 
 ## Related documents
 
-- [`docs/contributing.md`](../contributing.md), the short form and the process
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md), the short form and the process
 - [`docs/architecture.md`](../architecture.md), the layers, and why each crate is where it is
 - [`AGENTS.md`](../../AGENTS.md), the working rules

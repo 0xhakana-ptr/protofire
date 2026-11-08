@@ -354,4 +354,4 @@ accurate.
 - [docs/fmts/code-style.md](code-style.md), naming, layout, error handling
 - [docs/fmts/unsafe-and-safety.md](unsafe-and-safety.md), what belongs in an
   `unsafe` block in the first place
-- [`docs/contributing.md`](../contributing.md), the short form of these rules
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md), the short form of these rules

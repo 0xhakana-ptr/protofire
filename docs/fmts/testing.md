@@ -207,6 +207,6 @@ have passed one.
 ## Related documents
 
 - [`docs/fmts/code-style.md`](code-style.md), the global install pattern
-- [`docs/contributing.md`](../contributing.md), the gate and what a change must carry
+- [`CONTRIBUTING.md`](../../CONTRIBUTING.md), the gate and what a change must carry
 - [`docs/migration.md`](../migration.md), what each subsystem moved in as, and
   the reasons for the shape it landed in
