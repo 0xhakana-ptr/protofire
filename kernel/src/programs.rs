@@ -412,6 +412,35 @@ pub fn mark_finished() {
     crate::FINISHED.store(true, core::sync::atomic::Ordering::Release);
 }
 
+/// When this CPU should stop waiting for the others to confirm they parked.
+///
+/// How many times the reaping side asks before it stops waiting for the others.
+///
+/// Counted in turns of its own loop, not in seconds, because the clock is the
+/// thing that cannot be trusted here — a slice computed from a claimed rate
+/// that the counter does not keep is what made the wait run long in the first
+/// place.  A turn sends nothing and reads one atomic, so the number is cheap.
+///
+/// The value has to clear the ordinary case with a wide margin: a CPU that is
+/// merely slow to notice `FINISHED` parks within a handful of its own idle
+/// turns.  A hundred million turns is far beyond that and is still a fraction
+/// of a second on any machine this tree runs on, which is the bound's job —
+/// finite, not exact.
+#[cfg(target_os = "none")]
+const PARK_WAIT_TURNS: u32 = 100_000_000;
+
+/// Every how many turns the wait re-sends the inter-CPU line.
+#[cfg(target_os = "none")]
+const PARK_PING_TURNS: u32 = 100_000;
+
+/// The CPUs that are online and never confirmed they parked, if any.
+#[cfg(target_os = "none")]
+fn unconfirmed_cpus() -> usize {
+    (0..crate::per_cpu::MAX_CPUS)
+        .filter(|slot| crate::per_cpu::slot(*slot).online() && !crate::per_cpu::is_parked(*slot))
+        .count()
+}
+
 /// Report what the boot's programs did, then stop the machine.
 ///
 /// The lines were inline in the exit handler, which was right while the CPU
@@ -457,28 +486,40 @@ pub fn report_and_finish() -> ! {
     // This CPU parks itself first: it is about to stop running programs, and
     // the count would never be complete otherwise.
     crate::per_cpu::park(crate::per_cpu::current_slot());
-    // Wake the others, once.  A CPU waiting in the scheduler's idle loop is
-    // inside `wfi` with nothing left to wake it — the timer's own line is the
-    // only thing that would, and the machine has no programs left for it to
-    // matter to.  Without this the winner would spin for a CPU that is asleep
-    // and will never ask whether the boot is over: the hang this boot showed as
-    // sixteen idle runs in twenty-four, with every program finished and no
-    // report line.
+    // Wait for them, but **not for ever**.
+    //
+    // The wait used to be a spin with no end, on the argument that the others
+    // would park as soon as they saw `FINISHED`.  What a debugger found was a
+    // CPU that never saw it: asleep in `wfi`, its counter frozen, its timer
+    // never firing — because this machine's `CNTFRQ_EL0` claims 1 GHz while the
+    // counter moves at a fraction of that, so a slice computed from the claimed
+    // rate is a wait far longer than the boot.  The other CPU was not refusing
+    // to park; it had no interrupt to wake it with.
+    //
+    // A boot that ends is worth more than a proof that it ended cleanly, so
+    // this is bounded by **this** CPU's counter rather than by the other's
+    // timer. Past the bound the reaping goes ahead and the line says which CPUs
+    // never confirmed.  That is safe for the reason the deferral exists: at
+    // this point every task is `Finished`, so no CPU will *enter* a program
+    // again, and the only reach left into those tables is one that was already
+    // inside a trap path — which is what the confirmation was for.  A boot that
+    // says so is honest about it; a boot that hangs says nothing.
     //
     // SAFETY: the boot's own IPI path, installed before any program ran.
     unsafe { arch::send_ipi_to_others() };
-    let mut spins = 0u32;
+
+    // The bound is counted in this loop's own turns, not in seconds: the clock
+    // is the thing under suspicion, and a bound that asked the suspect how long
+    // to wait is how the original hang happened.  See `PARK_WAIT_TURNS`.
+    let mut turns = 0u32;
     while !crate::per_cpu::all_parked() {
-        // One IPI is not enough: the other CPU may take it a moment before it
-        // reaches the `wfi` that this call is meant to end, and a `wfi` entered
-        // after the interrupt was handled sleeps for ever.  Re-sending is
-        // harmless — the line is idempotent and the CPU parks on the first one
-        // it sees after the flag — and it is what turns "the other CPU usually
-        // notices" into "it always does".
-        spins += 1;
-        if spins % 100_000 == 0 {
+        turns += 1;
+        if turns.is_multiple_of(PARK_PING_TURNS) {
             // SAFETY: as above.
             unsafe { arch::send_ipi_to_others() };
+        }
+        if turns >= PARK_WAIT_TURNS {
+            break;
         }
         core::hint::spin_loop();
     }
@@ -579,6 +620,19 @@ pub fn report_and_finish() -> ! {
     arch::serial::write_str(", ");
     arch::serial::write_u32(crate::address_space::free_frames() as u32);
     arch::serial::write_str(" frame(s) free\n");
+
+    // A boot that gave up waiting says so, and says on how many CPUs.  This is
+    // the line that turns "the machine ended" from an assumption into a fact
+    // with a number: zero is a boot where every CPU confirmed, and a count is a
+    // boot where one of them did not answer and the reaping went ahead anyway.
+    // Without it the bound above would be a silent widening of a rule — the
+    // thing this tree's gates exist to refuse.
+    let unconfirmed = unconfirmed_cpus();
+    if unconfirmed > 0 {
+        arch::serial::write_str("protofire: ended without confirmation from ");
+        arch::serial::write_u32(unconfirmed as u32);
+        arch::serial::write_str(" cpu(s)\n");
+    }
 
     crate::finish_and_halt()
 }

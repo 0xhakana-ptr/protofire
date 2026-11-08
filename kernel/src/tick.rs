@@ -148,13 +148,40 @@ pub fn bring_up() {
     }
     // SAFETY: read-only.
     let second = unsafe { arch::timer_counter() };
+    let advanced = second.saturating_sub(first);
     arch::serial::write_str("protofire: timer counter ");
     // `second - first`, not the other way: this machine's counter counts up.
     // The subtraction was written for the APIC's countdown and kept its
     // direction when the clock changed, which made the line print zero on a
     // counter that was running.
-    arch::serial::write_u32(second.saturating_sub(first) as u32);
+    arch::serial::write_u32(advanced as u32);
     arch::serial::write_str(" ticks apart\n");
+
+    // The clock's **claim** and the counter's **movement**, on one line.
+    //
+    // A counter that moves slower than the rate it reports is the defect this
+    // line exists for: `CNTFRQ_EL0` said 1 GHz on the machine where a slice
+    // computed from it was a wait longer than the boot, and nothing in the log
+    // said so because nothing compared the two.  This is the comparison — not a
+    // proof, since a spin loop's duration is not known in seconds, but a number
+    // a reader can sanity-check: a gigahertz counter crosses millions of ticks
+    // while a hundred thousand instructions run, and one that crosses a handful
+    // is not running at the rate it claims.
+    //
+    // Reported as "thousands of ticks per claimed megahertz of spin", which is
+    // a ratio rather than a duration for exactly that reason: the ratio should
+    // be in the thousands on a clock telling the truth, and the line does not
+    // pretend to know how long the spin took.
+    let per_claim = if frequency >= 1_000_000 {
+        advanced.saturating_mul(1_000) / (frequency / 1_000_000).max(1)
+    } else {
+        0
+    };
+    arch::serial::write_str("protofire: timer clock claims ");
+    arch::serial::write_u32((frequency / 1_000_000) as u32);
+    arch::serial::write_str(" MHz, moved ");
+    arch::serial::write_u32(per_claim as u32);
+    arch::serial::write_str(" ticks per claimed MHz of spin\n");
 
     arch::serial::write_str("protofire: timer control ");
     // SAFETY: as above.
