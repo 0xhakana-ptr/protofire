@@ -78,6 +78,19 @@ impl Machine {
                 // so the pair is what separates a start from a failure rather
                 // than the prefix alone.
                 &["hart ", " online"],
+                // The external controller, programmed rather than named: the
+                // context this hart claims through, the tree's source count the
+                // driver used, and the hart line it reaches this hart on.  The
+                // context **number** is the consumer's position in the tree and
+                // follows the hart firmware cold-booted, so it is not asserted
+                // — see `required_lines`.  What the pair holds still is that
+                // the count is the tree's and the line is on: a boot whose PLIC
+                // was named and never programmed prints `hart line off`, and a
+                // driver that read the wrong node prints a different count.
+                &[
+                    "external controller at 0xc000000, context ",
+                    ", 95 source(s), hart line on",
+                ],
             ],
         }
     }
@@ -569,9 +582,19 @@ impl Machine {
                 // machine's source count, and the hart line the PLIC reaches
                 // it on.  A tree that named the window and a driver that did
                 // not program it would print the first three and "off".
+                //
+                // The context number is **not** asserted, for the reason the
+                // hart id above is not: it is the consumer's position in the
+                // tree's `interrupts-extended`, S-mode on hart N is context
+                // `2N+1`, and which hart firmware cold-boots is the firmware's
+                // choice.  A boot whose firmware picked hart 1 printed
+                // `context 3` and a gate requiring `context 1` failed on it —
+                // three boots in fifteen, with the controller programmed and
+                // the line taken.  What is invariant is the shape, and
+                // `paired_lines` carries it.
                 (
-                    "protofire: external controller at 0xc000000, context 1, 95 source(s), hart line on",
-                    true,
+                    "protofire: external controller at 0xc000000, context ",
+                    false,
                 ),
                 // A real device's interrupt, claimed and taken, not merely a
                 // controller that was programmed: the console's UART is source
