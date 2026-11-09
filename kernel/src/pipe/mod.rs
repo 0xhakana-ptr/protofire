@@ -37,6 +37,15 @@ use ipc::ByteRing;
 ///
 /// Shared by both ends, because a reader has to know whether a writer still
 /// exists, that is what turns "no bytes yet" into "no bytes ever".
+///
+/// The two counts are **live handles**, not ends baked in at creation: a
+/// handle is made by [`End::reader`], [`End::writer`], or [`End::clone`], and
+/// taken back by dropping it.  The invariant that holds everywhere is one
+/// count per live handle of that kind, which is what makes the zero real:
+/// zero writers is end-of-file, and a pipe that says one writer has one.
+/// Counting from one at creation instead — the first version — made a second
+/// `End::writer` a handle the counts never saw, and its drop a close of an
+/// end that was still held.
 pub struct Pipe {
     /// The buffer, behind a lock because both ends reach it through one `Arc`
     /// and neither owns it.  It used to be a cell with the argument that one
@@ -47,19 +56,23 @@ pub struct Pipe {
     /// The lock is per-pipe and held only for one `read_from` or `write_to`, so
     /// two pipes never wait on each other.
     ring: sync::Mutex<ByteRing>,
-    /// How many write ends are open.  Zero means a reader will see end-of-file.
+    /// How many write handles are live.  Zero means a reader will see
+    /// end-of-file.
     writers: core::sync::atomic::AtomicUsize,
-    /// How many read ends are open.  Zero means a writer's bytes go nowhere.
+    /// How many read handles are live.  Zero means a writer's bytes go nowhere.
     readers: core::sync::atomic::AtomicUsize,
 }
 
 impl Pipe {
-    /// A pipe with a buffer of `capacity` bytes and one end of each kind.
+    /// A pipe with a buffer of `capacity` bytes and, as yet, no handles.
+    ///
+    /// The handles arrive with the [`End`]s, whose constructors count
+    /// themselves.
     pub fn new(capacity: usize) -> Pipe {
         Pipe {
             ring: sync::Mutex::new(ByteRing::new(capacity)),
-            writers: core::sync::atomic::AtomicUsize::new(1),
-            readers: core::sync::atomic::AtomicUsize::new(1),
+            writers: core::sync::atomic::AtomicUsize::new(0),
+            readers: core::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -91,15 +104,23 @@ impl Pipe {
         self.ring.lock().write_to(source)
     }
 
-    /// Record that one end of a kind was closed.
-    pub fn close_reader(&self) {
-        // A saturating decrement, not a bare subtraction: a double close is a
-        // program's bug, and wrapping past zero would turn it into an
-        // end-of-file that never arrives.
-        let count = self.readers.load(core::sync::atomic::Ordering::Acquire);
-        self.readers.store(
-            count.saturating_sub(1),
-            core::sync::atomic::Ordering::Release,
+    /// Take one read handle back.
+    fn close_reader(&self) {
+        // A saturating decrement, and an atomic one: a drop runs on whichever
+        // CPU is serving the call that made the handle go, so two CPUs can
+        // take the last two handles at once, and a load-then-store would lose
+        // one of the two decrements and leave a count that names a handle
+        // nothing holds — end-of-file that never arrives, the very bug the
+        // saturation here exists to refuse.
+        //
+        // `checked_sub` answering `None` at zero is the saturation: a handle
+        // count that is already zero has nothing to take back, and wrapping
+        // past zero would turn a double drop into an end-of-file that never
+        // arrives.
+        let _ = self.readers.try_update(
+            core::sync::atomic::Ordering::AcqRel,
+            core::sync::atomic::Ordering::Acquire,
+            |count| count.checked_sub(1),
         );
     }
 
@@ -115,12 +136,13 @@ impl Pipe {
             .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
     }
 
-    /// Record that one end of a kind was closed.
-    pub fn close_writer(&self) {
-        let count = self.writers.load(core::sync::atomic::Ordering::Acquire);
-        self.writers.store(
-            count.saturating_sub(1),
-            core::sync::atomic::Ordering::Release,
+    /// Take one write handle back.
+    fn close_writer(&self) {
+        // Atomic and saturating for the same reason `close_reader` is.
+        let _ = self.writers.try_update(
+            core::sync::atomic::Ordering::AcqRel,
+            core::sync::atomic::Ordering::Acquire,
+            |count| count.checked_sub(1),
         );
     }
 }
@@ -128,9 +150,13 @@ impl Pipe {
 /// One end of a pipe, as a task holds it.
 ///
 /// Both ends carry the same [`Pipe`]; what differs is which side of it the task
-/// is on.  A task's descriptor table holds these, and dropping one closes that
-/// end, which is what makes a reader see end-of-file when the last writer's
-/// descriptor is closed.
+/// is on.  A task's descriptor table holds these, and a dropped handle is a
+/// closed end: [`Drop`] takes the pipe's count of live handles of that kind
+/// down by one, and the drop of the last write handle is what makes a reader
+/// see end-of-file.  That is the whole of what a `Close` has to do — the
+/// descriptor's slot goes and the handle inside it drops — and it is why a
+/// temporary clone, which every lookup through the table is, can borrow a
+/// handle for the length of a call without closing anything.
 pub struct End {
     pipe: Arc<Pipe>,
     kind: Kind,
@@ -164,7 +190,9 @@ impl Clone for End {
     ///
     /// The pipe's own counts are incremented, because the count is what
     /// end-of-file means: a reader sees it only when every write handle is
-    /// gone, and a clone is another handle.
+    /// gone, and a clone is another handle.  [`Drop`] takes the increment
+    /// back, so a handle that lives only for the length of one call nets to
+    /// nothing.
     fn clone(&self) -> End {
         match self.kind {
             Kind::Read => self.pipe.add_reader(),
@@ -177,15 +205,42 @@ impl Clone for End {
     }
 }
 
+impl Drop for End {
+    /// Dropping a handle is closing it.
+    ///
+    /// One increment per handle — the constructors' and the clone's — and one
+    /// decrement here is the whole accounting.  It is what the descriptor
+    /// table's `Close` has always promised: the slot goes, the handle inside
+    /// it drops, and the drop is what moves the count a reader's end-of-file
+    /// is read from.
+    fn drop(&mut self) {
+        match self.kind {
+            Kind::Read => self.pipe.close_reader(),
+            Kind::Write => self.pipe.close_writer(),
+        }
+    }
+}
+
 impl End {
+    /// One read handle on `pipe`.
+    ///
+    /// The handle counts itself: the pipe's reader count goes up by one here,
+    /// and back down when this `End` drops.
     pub fn reader(pipe: Arc<Pipe>) -> End {
+        pipe.add_reader();
         End {
             pipe,
             kind: Kind::Read,
         }
     }
 
+    /// One write handle on `pipe`.
+    ///
+    /// The handle counts itself: the pipe's writer count goes up by one here,
+    /// and back down when this `End` drops — which is the one thing that can
+    /// bring a reader's end-of-file about.
     pub fn writer(pipe: Arc<Pipe>) -> End {
+        pipe.add_writer();
         End {
             pipe,
             kind: Kind::Write,

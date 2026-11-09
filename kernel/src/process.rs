@@ -568,11 +568,35 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 
     if number == SyscallNumber::Close as usize {
         // `Close(descriptor)`: the registry returns the slot, whether it named
-        // a file or a pipe's end.  A pipe's end dropped is the pipe's own
+        // a file or a pipe's end.  Dropping the end is the pipe's own
         // accounting moving, which is what makes a reader's end-of-file real.
+        //
+        // The end is recognised **before** the close: afterwards the descriptor
+        // is gone and no answer could tell a pipe's write end from a file's.
+        // A write end going away is the fact a blocked reader is parked waiting
+        // to learn — no bytes are ever coming — so the close wakes what a
+        // write would have woken.  Waking a reader whose pipe still has
+        // another write handle is harmless: it retries its read, sees a
+        // writer, and parks again.
+        let closes_a_write_end = crate::pipe::lookup(call.arguments[0])
+            .is_some_and(|end| end.kind() == crate::pipe::Kind::Write);
         let mut context = syscall::SyscallContext::new(number, [call.arguments[0], 0, 0, 0, 0, 0])
             .with_identity(security::mac::MAC_TYPE_SYSTEM);
-        return through_registry(&mut context, None, None);
+        let outcome = through_registry(&mut context, None, None);
+        if closes_a_write_end && matches!(outcome, CallOutcome::Return(0)) {
+            let woken = crate::scheduler::wake_blocked();
+            if woken > 0 {
+                arch::serial::write_str("protofire: a close woke ");
+                arch::serial::write_u32(woken as u32);
+                arch::serial::write_str(" blocked task(s)\n");
+                // The task that woke may be held by another CPU parked in a
+                // wait, and only the IPI ends that wait.
+                // SAFETY: the boot's own IPI path, installed before any
+                // program ran.
+                unsafe { arch::send_ipi_to_others() };
+            }
+        }
+        return outcome;
     }
 
     // Everything else is a call this boot does not serve.  `encode_error` is
