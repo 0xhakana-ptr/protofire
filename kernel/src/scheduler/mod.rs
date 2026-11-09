@@ -183,9 +183,14 @@ pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
         match outcome {
             // Work exists somewhere — a task sleeping, blocked, or runnable —
             // so the emptiness was the race, and the wake that ends it is the
-            // timer's line or another CPU's IPI.  A machine with nothing left
-            // answers `Exit` and the caller's own finished-handling takes it.
-            arch::CallOutcome::Exit if has_runnable() => {
+            // timer's line or another CPU's IPI.
+            //
+            // **Unless the boot is over**, which is the same guard
+            // `advance_with_status` carries: this loop has no other branch that
+            // reaches `park`, and a CPU that never says it has stopped is what
+            // the reaping side waits on.  The wait between turns is a bounded
+            // spin now, so the guard is reachable.
+            arch::CallOutcome::Exit if has_runnable() && !crate::programs::boot_has_ended() => {
                 idle_turns += 1;
                 if idle_turns.is_multiple_of(IDLE_PINGS_BEFORE_A_PING) {
                     wake_the_other_cpus();
@@ -253,6 +258,30 @@ pub fn advance_with_status(
     loop {
         if !has_runnable() {
             // The machine is finished: report what ran, then stop every CPU.
+            crate::programs::report_and_finish()
+        }
+        // **And the boot may have been declared over by another CPU.**
+        //
+        // This is the branch whose absence kept a started core from ever
+        // recording that it had stopped.  `boot_is_finished` — the one place a
+        // CPU says "I will not touch a user space again" — is called only from
+        // the started core's `wait_for_work`, and a core that has entered a
+        // program never returns there.  So a core waiting *here* had no
+        // instruction that could satisfy the reaping side, and the boot ended
+        // `ended without confirmation from 1 cpu(s)` after a hundred million
+        // turns of a wait that could not end.
+        //
+        // The check could not simply be added earlier: the wait between the two
+        // turns was a `wfi`, and on this machine a started core's second `wfi`
+        // never returned — its timer was expired and its line enabled and the
+        // distributor never had the interrupt pending.  `wait_for_a_wakeup` is
+        // a bounded spin now for that reason, which is what makes this branch
+        // reachable at all.
+        //
+        // `boot_has_ended` and not `boot_is_finished`: this CPU is still here,
+        // deciding.  The record is made in `report_and_finish`, where the
+        // decision is taken and the halt follows.
+        if crate::programs::boot_has_ended() {
             crate::programs::report_and_finish()
         }
         arch::wait_for_a_wakeup();

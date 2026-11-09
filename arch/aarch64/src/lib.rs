@@ -108,42 +108,78 @@ pub fn halt() -> ! {
     panic!("halt() called on a host: this is the kernel's stop, not a test's")
 }
 
-/// Stop the core until an interrupt arrives, leaving interrupts enabled.
+/// Wait for something to change, without requiring an interrupt to arrive.
 ///
-/// `wfi` is the wait-for-interrupt hint.  `halt` masks interrupts first and is
-/// the machine's final stop; this one is the idle a scheduler uses when every
-/// program is asleep, so it returns as soon as the timer has something to say.
+/// `halt` masks interrupts first and is the machine's final stop.  This is the
+/// idle a scheduler uses when it has nothing to run, and it has to return
+/// **whether or not an interrupt came**, because on this machine one may not.
 ///
-/// x86_64 needs `sti` before its `hlt` because a supervisor call arrives
-/// through an interrupt gate, which clears the flag.  aarch64's exception
-/// entry restores `PSTATE` from `SPSR_EL1` on the way out and masks nothing on
-/// the way in for this path, so there is no flag to set, and `wfi` returns
-/// when an interrupt is pending whether or not one is masked at the time.
+/// ## Why this is a spin and not a `wfi`
 ///
-/// A host has no `wfi` and no interrupt to wait for, so the host arm returns
+/// It was a `wfi`, on the argument that an interrupt is the one thing an idle
+/// core waits for and the timer supplies it.  Measured on a failing boot, that
+/// argument does not hold for a started core.  Immediately before the wait its
+/// registers read:
+///
+/// - `CNTP_CTL_EL0` = 5 — enabled, and `ISTATUS` set, so the timer had expired
+/// - `GICD_ISENABLER0` = `0x4000ffff` — bit 30, the timer's line, enabled
+/// - `GICD_ISPENDR0` = `0x3` — a software interrupt and one other private line,
+///   and **not** bit 30
+///
+/// The timer was expired and its line was enabled, and the distributor did not
+/// have it pending.  The core's first `wfi` returned once; its second never
+/// did, and the boot ended `ended without confirmation from 1 cpu(s)` with that
+/// core still waiting and 398 timer ticks behind it — all of them from before
+/// it started waiting.
+///
+/// So the wait is bounded: it spins and returns regardless.  Every caller
+/// re-reads the condition it is waiting for after this returns, which is what
+/// makes the wait endable without an interrupt.  The cost is real — an idle
+/// core burns its slice — and it is the right trade for a boot whose
+/// alternative is waiting for ever on an interrupt the controller may not
+/// deliver.
+///
+/// Interrupts are still unmasked first, so one that does arrive is taken rather
+/// than held off, and a caller waiting for a device still gets its wake.
+///
+/// A host has no clock and no interrupt to wait for, so the host arm returns
 /// immediately; a test that called it in a loop would spin, which is the one
 /// thing its caller must not rely on.
 #[cfg(target_os = "none")]
 pub fn wait_for_a_wakeup() {
     // This unmasks for the same reason x86_64's `sti; hlt` does, in this
-    // machine's words.  A
-    // supervisor call arrives through an exception, and `entry.S` masks `IRQ`
-    // on the way in, so the kernel runs with interrupts off for the whole of
-    // a served call, and a wait that did not unmask them never takes the tick
-    // that would end it.  `wfi` alone then returns immediately for ever: it is
-    // a hint about the core's power state, not an enable.
+    // machine's words.  A supervisor call arrives through an exception, and
+    // `entry.S` masks `IRQ` on the way in, so the kernel runs with interrupts
+    // off for the whole of a served call, and a wait that did not unmask them
+    // never takes the tick that would end it.
     //
     // `msr daifclr, #2` clears the `I` bit.  The trap path's `eret` puts the
     // program's `PSTATE` back, so this mask does not outlive the call.
     //
-    // SAFETY: `daifclr` is unprivileged at EL1.  `wfi` is a hint that permits
-    // the core to enter a low-power state until an interrupt is pending; with
-    // `I` clear, a pending one wakes it.
+    // SAFETY: `daifclr` is unprivileged at EL1, and a spin loop has no
+    // preconditions.
     unsafe {
         core::arch::asm!("msr daifclr, #2", options(nomem, nostack));
-        core::arch::asm!("wfi", options(nomem, nostack));
-    };
+    }
+
+    // Long enough that a caller waiting for a device has given the controller
+    // time to deliver, short enough that the scheduler's own idle loop still
+    // reaches its bound quickly.  The number is how long to be patient, not a
+    // duration: the counter's rate is the thing this tree cannot trust, so the
+    // bound is in instructions.
+    for _ in 0..WAIT_SPINS {
+        core::hint::spin_loop();
+    }
 }
+
+/// How many instruction-sized pauses a wait spends before returning.
+///
+/// A `spin_loop` hint is the architecture's "I am waiting" and costs an
+/// instruction or two; on the emulator this tree boots a few thousand of them
+/// is a fraction of a millisecond, which is longer than an accepted interrupt
+/// takes to be delivered and short enough that an idle loop's own bound is
+/// still reached in well under a second.
+pub const WAIT_SPINS: usize = 4096;
 
 /// The host build: nothing to wait for.
 #[cfg(not(target_os = "none"))]

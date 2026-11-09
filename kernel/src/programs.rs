@@ -352,7 +352,32 @@ pub fn claim_for_this_cpu(cpu: usize) -> Option<(usize, arch::Context)> {
     Some((root, context))
 }
 
-/// Whether the boot has ended, for a started CPU that has to notice.
+/// Whether the boot has ended, **without recording anything**.
+///
+/// The predicate any CPU may ask anywhere.  Reading one atomic and no side
+/// effect is the whole of what separates it from [`boot_is_finished`], and the
+/// separation matters: "this CPU will not touch a user space again" is the
+/// statement the reaping side frees address spaces on, so a look that recorded
+/// itself would let a CPU still inside its trap path count as gone.  That
+/// mistake was made once here and its symptom was a fault at `0x60000000`, one
+/// byte past the top of RAM.
+///
+/// A caller asks this to decide whether it still has anything to contribute,
+/// and a "yes" means it does not: the scheduler's idle loop uses it to stop.
+/// [`boot_is_finished`] is the call that records the stop, and it belongs where
+/// a CPU has actually decided.
+#[cfg(target_os = "none")]
+pub fn boot_has_ended() -> bool {
+    crate::FINISHED.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// A host has no boot to end, so the answer is always no.
+#[cfg(not(target_os = "none"))]
+pub fn boot_has_ended() -> bool {
+    false
+}
+
+/// Whether the boot has ended, for a started CPU that has **decided to stop**.
 ///
 /// The kernel's answer, injected into `arch` for the reason the work source is:
 /// the flag lives here, and a machine crate that named it would be a cycle.
@@ -363,6 +388,10 @@ pub fn claim_for_this_cpu(cpu: usize) -> Option<(usize, arch::Context)> {
 /// it the right place to say "I will not touch a user space again" — the
 /// statement the reaping side waits for.  Recording it any later would be a
 /// claim made after the CPU had stopped, which nothing could wait on.
+///
+/// A caller that only wants to know whether the boot is over asks
+/// [`boot_has_ended`].  This one is a decision to stop, and the caller halts
+/// immediately afterwards; `wait_for_work` is the shape it is for.
 #[cfg(target_os = "none")]
 pub fn boot_is_finished() -> bool {
     let finished = crate::FINISHED.load(core::sync::atomic::Ordering::Acquire);
