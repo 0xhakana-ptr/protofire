@@ -357,14 +357,31 @@ impl Gic {
                 (current & !(0xFF << shift)) | (u32::from(DEVICE_PRIORITY) << shift),
             );
 
-            // Edge-triggered, for the same reason a message-signalled interrupt
-            // is: the timer asserts for an instant when it fires, and a
-            // level-sensitive line is pending for no time at all.
+            // **Level-triggered, which is what a PPI from the generic timer
+            // is.**  The first version asked for edge, on the argument that a
+            // timer "asserts for an instant when it fires", and that argument
+            // is wrong for this line: `CNTP_CTL_EL0.ISTATUS` stays set until
+            // the timer is reprogrammed, so the line is asserted for as long as
+            // the interrupt is outstanding.  An edge-configured PPI drops an
+            // assertion that was already high when it was enabled — which is
+            // exactly the state a core that arms its timer and then enables the
+            // line is in.
+            //
+            // Measured, on the started core: with edge, `CNTP_CTL_EL0` read 5
+            // (enabled and *expired*) while `GICD_ISPENDR0` never showed the
+            // line pending, and the core took 0 timer ticks on every boot of
+            // forty.  With level it took 218 to 319 a boot, and every one of
+            // the boot's scheduler waits got the clock it was written for.
+            //
+            // A software interrupt has no trigger configuration — `ICFGR`'s
+            // bits for 0..15 are read-only — so writing the field for one is
+            // harmless, and this function's other caller is the self-test's
+            // SGI.
             let config = self.distributor.array_address(DIST_ICFGR, number, 16);
             let current = read(config);
             write(
                 config,
-                current | (1 << (Distributor::config_shift(number) + 1)),
+                current & !(1 << (Distributor::config_shift(number) + 1)),
             );
 
             // No target: a private interrupt belongs to this CPU by definition.
@@ -543,15 +560,19 @@ impl Gic {
 /// `GICC_CTLR` bits 0 and 1: the CPU interface is enabled for **both groups**.
 ///
 /// Bit 0 is `EnableGrp0` and bit 1 is `EnableGrp1`, and they are separate
-/// switches over separate groups of interrupts.  This kernel puts every line it
-/// uses in group 1, that is the non-secure group, the only one deliverable at
-/// non-secure EL1, so a CPU interface enabled with bit 0 alone receives
-/// nothing, however well the distributor is configured.
+/// switches over separate groups of interrupts.  Both are set because this
+/// kernel's lines do not all live in one group: a device's line is group 1, the
+/// non-secure group, and a private line is group 0 — that measurement is at the
+/// group write in this file's private-interrupt enable path — so an interface
+/// enabled for one group would deliver half of what is enabled.
 ///
-/// The symptom is exact and was lived through here: `GICD_ISPENDR0` showed the
-/// timer's interrupt as **pending**, `GICD_ISENABLER0` showed it enabled, and
-/// the CPU took no interrupt, because the one register that gates delivery of
-/// that group was off.
+/// The symptom of getting it wrong is exact and was lived through here:
+/// `GICD_ISPENDR0` showed the timer's interrupt as **pending**,
+/// `GICD_ISENABLER0` showed it enabled, and the CPU took no interrupt, because
+/// the one register that gates delivery of that group was off.  That paragraph
+/// said "group 1 only" until the private-interrupt path was measured to be in
+/// group 0; the conclusion — enable both — did not change, but the reason a
+/// reader would carry away did.
 pub const CPU_CTLR_ENABLE: u32 = 0b11;
 
 #[cfg(test)]
@@ -696,5 +717,42 @@ mod tests {
         );
         assert_eq!(DIST.array_address(super::DIST_CTLR, 0, 1), 0x0800_0000);
         assert_eq!(CPU.base + super::CPU_CTLR, 0x0801_0000);
+    }
+
+    /// A private line is configured level-sensitive, which is the value the
+    /// timer's PPI needs.
+    ///
+    /// `ICFGR`'s odd bit of each pair is `1` for edge and `0` for level, so the
+    /// timer's own field — interrupt 30, the second bit of the register's
+    /// fifteenth pair — has to end up clear.  The first version set it, on the
+    /// reading that a timer "asserts for an instant"; `CNTP_CTL_EL0.ISTATUS`
+    /// holds until the timer is reprogrammed, so the line is level and an edge
+    /// configuration drops the assertion that was already high when the core
+    /// enabled the line.  The measurement is in `enable_interrupt`: zero ticks
+    /// a boot with edge, 218 to 319 with level.
+    ///
+    /// This pins the arithmetic a reader would otherwise have to trust: the
+    /// field's position, and which of its two bits is the trigger.
+    #[test]
+    fn a_private_line_is_level_configured() {
+        const TIMER: usize = 30;
+
+        let shift = Distributor::config_shift(TIMER);
+        assert_eq!(shift, 28, "interrupt 30 is the fifteenth pair of bits");
+        let field = 1u32 << (shift + 1);
+        assert_eq!(field, 1 << 29, "the pair's high bit is the trigger");
+
+        // Setting it is edge, clearing it is level: the write is `& !field`.
+        let mut config = 0u32;
+        let edge = config | field;
+        config &= !field;
+        assert_ne!(config, edge, "the two configurations differ");
+        assert_eq!(config & field, 0, "level leaves the trigger bit clear");
+
+        // Interrupt 30 lands in `ICFGR1`, not `ICFGR0`: sixteen interrupts per
+        // register, so the first sixteen's fields are in the first one.
+        assert_eq!(DIST.array_address(super::DIST_ICFGR, 30, 16), 0x0800_0C04);
+        assert_eq!(DIST.array_address(super::DIST_ICFGR, 16, 16), 0x0800_0C04);
+        assert_eq!(DIST.array_address(super::DIST_ICFGR, 15, 16), 0x0800_0C00);
     }
 }
