@@ -561,6 +561,34 @@ pub fn block(frame: &arch::Context) -> bool {
     })
 }
 
+/// Park the running task unless `recheck` answers its wait's question now.
+///
+/// `recheck` asks the waiting caller's own question again — `try_read` for a
+/// pipe's reader — **under the same lock** [`wake_blocked`] takes, which is
+/// what makes the park and the wake a two-order story instead of a race: the
+/// fact arrived before the re-check and the answer comes back for the caller
+/// to hand the program, or the task is parked before the wake looks and the
+/// wake ends it.  A park that ran its check outside this lock would be a task
+/// that can park after the wake it was waiting for has already fired, and
+/// nothing would ever wake it.
+///
+/// `Some(answer)` is that answer, and the caller responds to the program at
+/// once; `None` is a parked task, and the caller's next step is the wait it
+/// was already shaped for.
+pub fn block_unless<T>(frame: &arch::Context, recheck: impl FnOnce() -> Option<T>) -> Option<T> {
+    let cpu = this_cpu();
+    let mut answer: Option<T> = None;
+    with_scheduler(|scheduler| {
+        answer = recheck();
+        if answer.is_none()
+            && let Some(scheduler) = scheduler
+        {
+            scheduler.block(cpu, frame);
+        }
+    });
+    answer
+}
+
 /// Wake every blocked task, answering how many.
 ///
 /// Called when something a blocked task was waiting for changed, a pipe's

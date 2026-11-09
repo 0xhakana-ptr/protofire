@@ -81,6 +81,35 @@ impl Scheduler {
         }
     }
 
+    /// Park the current task unless `recheck` answers its wait's question now.
+    ///
+    /// `Some(answer)` means the fact the task was about to wait for has already
+    /// arrived: the task is left runnable and the answer comes back for the
+    /// caller to hand the program.  `None` means the wait is real, and the task
+    /// is parked here, frame and all, for a wake to end.
+    ///
+    /// The sequencing with [`Self::wake_blocked`] is the reason this exists.
+    /// A caller that checks a fact, then parks, has a gap between the two, and
+    /// on a machine with two CPUs the wake can fire inside it — the task then
+    /// parks **after** the wake it was waiting for, and nothing will ever wake
+    /// it.  The caller of this method holds the same lock [`wake_blocked`]
+    /// takes while `recheck` runs and the state is written, which leaves the
+    /// wake and the park exactly two orders: the fact arrived first and the
+    /// re-check sees it, or the task is in the blocked set before the wake
+    /// looks.  The gap is gone, not narrowed.
+    pub fn block_unless<T>(
+        &mut self,
+        cpu: usize,
+        frame: &Context,
+        recheck: impl FnOnce() -> Option<T>,
+    ) -> Option<T> {
+        let answer = recheck();
+        if answer.is_none() {
+            self.block(cpu, frame);
+        }
+        answer
+    }
+
     /// Wake every blocked task, answering how many.
     ///
     /// Every blocked task wakes, because a wait queue would record *which*

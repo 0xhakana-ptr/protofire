@@ -407,3 +407,49 @@ fn the_same_cpu_taking_it_back_is_not_a_migration() {
     scheduler.assign(0, 0);
     assert_eq!(scheduler.migrations().0, 0);
 }
+
+/// A park whose question answered itself does not park.
+///
+/// `block_unless` is the fix for the gap between "the wait is real" and "the
+/// task is in the blocked set": a wake that fires inside that gap wakes
+/// nothing, and the task parks after the fact it was waiting for has already
+/// happened.  The interleaving itself is a machine's; what a host pins is the
+/// decision — an answer comes back and the task stays runnable, `None` parks.
+#[test]
+fn a_park_whose_question_answered_itself_does_not_park() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("a"));
+    scheduler.add(Task::without_space("b"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+    let frame = starting_context(0, 0);
+
+    let answer = scheduler.block_unless(0, &frame, || Some(7));
+    assert_eq!(answer, Some(7), "the answer comes back for the caller");
+    assert_eq!(scheduler.blocked(), 0, "nothing parked");
+    assert!(scheduler.has_selectable(0), "the task is still runnable");
+}
+
+/// A park whose question is still open parks, and a wake ends it.
+///
+/// This is the other order, and the one the wake must find: the task is in
+/// the blocked set with the frame it parked from, and `wake_blocked` is what
+/// makes it selectable again.  One task, so selectable means *this* task and
+/// not merely some other one.
+#[test]
+fn a_park_whose_question_is_still_open_parks_and_a_wake_ends_it() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("a"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+    let frame = starting_context(0x80_0000_1234, 0x80_0000_2000);
+
+    assert_eq!(scheduler.block_unless(0, &frame, || None::<usize>), None);
+    assert_eq!(scheduler.blocked(), 1);
+    assert!(!scheduler.has_selectable(0), "a is parked");
+    assert_eq!(scheduler.wake_blocked(), 1);
+    assert!(scheduler.has_selectable(0), "and the wake ended it");
+    let saved = *scheduler.tasks[0].context();
+    assert!(
+        saved == frame,
+        "the parked task kept the frame it parked from"
+    );
+}

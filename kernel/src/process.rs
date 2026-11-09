@@ -329,22 +329,44 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return match progress {
             crate::pipe::Progress::Done(count) => CallOutcome::Return(count),
             crate::pipe::Progress::Block => {
-                // Park, then resume something else.  The frame is saved by
-                // `block`, so a wake returns here and the call is retried by
-                // the program, which is what makes this a short read rather
-                // than a lost one.
-                crate::scheduler::block(frame);
-                arch::serial::write_str("protofire: a program blocks on a pipe\n");
-                if !crate::scheduler::has_selectable() {
-                    // Nothing else can run: wait for a writer's wake the same
-                    // way a sleep waits, and the timer's handler is what turns
-                    // a blocked task back into a runnable one.
-                    crate::scheduler::idle_until_woken();
+                // Park — but let the park ask the question once more under
+                // the scheduler's own lock.  Between the `Block` above and
+                // the park, a writer on another CPU can put bytes in or
+                // close its write end, and the wake that fact sends can fire
+                // into the gap: a task parked after the wake it was waiting
+                // for is a task parked for ever.  The re-check and the park
+                // are one critical section, so the wake has only two orders
+                // to find — the fact first, and this call answers it here,
+                // or the task first, and the wake ends the wait.
+                match crate::scheduler::block_unless(frame, || {
+                    match end.try_read(&pipe, destination) {
+                        Ok(crate::pipe::Progress::Done(count)) => Some(count),
+                        Ok(crate::pipe::Progress::Block) => None,
+                        Err(error) => Some(abi::syscall::encode_error(error)),
+                    }
+                }) {
+                    // The wait answered itself: bytes arrived, or the write
+                    // end closed, in the deciding moment.  The answer is the
+                    // read's.
+                    Some(answer) => CallOutcome::Return(answer),
+                    None => {
+                        // Parked.  Resume something else; the frame was
+                        // saved, so a wake returns here and the call is
+                        // retried by the program, which is what makes this a
+                        // short read rather than a lost one.
+                        arch::serial::write_str("protofire: a program blocks on a pipe\n");
+                        if !crate::scheduler::has_selectable() {
+                            // Nothing else can run: wait for the wake the
+                            // same way a sleep waits for its deadline.
+                            crate::scheduler::idle_until_woken();
+                        }
+                        // Install whatever can run next; this task's frame
+                        // was saved by the park, so the wake resumes the
+                        // read.
+                        let _ = crate::scheduler::switch_without_saving(frame);
+                        CallOutcome::Exit
+                    }
                 }
-                // Install whatever can run next; this task's frame was saved
-                // by `block`, so the wake resumes the read.
-                let _ = crate::scheduler::switch_without_saving(frame);
-                CallOutcome::Exit
             }
         };
     }
