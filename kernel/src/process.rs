@@ -467,6 +467,15 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory));
         };
         let Some(write) = crate::pipe::attach(crate::pipe::End::writer(pipe)) else {
+            // The read end is already in the table, and a call that answered an
+            // error has no descriptor to give back: leaving it there is a slot
+            // a program can never name or close, and a program that retried
+            // would leak one per attempt.  `Close` is the same release the
+            // caller would have made.
+            let mut context =
+                syscall::SyscallContext::new(SyscallNumber::Close as usize, [read, 0, 0, 0, 0, 0])
+                    .with_identity(security::mac::MAC_TYPE_SYSTEM);
+            let _ = through_registry(&mut context, None, None);
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory));
         };
         arch::serial::write_str("protofire: pipe made, read ");
