@@ -592,9 +592,30 @@ pub fn block_unless<T>(frame: &arch::Context, recheck: impl FnOnce() -> Option<T
 /// Wake every blocked task, answering how many.
 ///
 /// Called when something a blocked task was waiting for changed, a pipe's
-/// writer putting bytes in, or its write end closing.
+/// writer putting bytes in, its write end closing, or a process exiting.
 pub fn wake_blocked() -> usize {
     with_scheduler(|scheduler| scheduler.as_mut().map_or(0, Scheduler::wake_blocked))
+}
+
+/// Park the running task until a process exits, unless one already has.
+///
+/// `WaitProcess`'s own park.  The exit statuses are read **under the same
+/// lock** the exit's wake takes — the discipline [`block_unless`] argues —
+/// so the exit and the park have exactly two orders: the process died first
+/// and its status comes back for the caller, or the task is parked before
+/// the exit's wake looks and the wake ends it.
+///
+/// `Some(status)` answers the call; `None` is a parked task, and the
+/// caller's next step is the wait it was already shaped for.
+pub fn block_unless_exit(frame: &arch::Context) -> Option<usize> {
+    let cpu = this_cpu();
+    let mut answer: Option<usize> = None;
+    with_scheduler(|scheduler| {
+        if let Some(scheduler) = scheduler {
+            answer = scheduler.block_unless_exit(cpu, frame);
+        }
+    });
+    answer
 }
 
 /// How many installed tasks are blocked, for a boot line that reports it.

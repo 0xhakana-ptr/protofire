@@ -464,13 +464,25 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             // process" is the truth, and blocking would be a hang.
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotFound));
         }
-        crate::scheduler::block(frame);
-        arch::serial::write_str("protofire: a program waits for a child\n");
-        if !crate::scheduler::has_selectable() {
-            crate::scheduler::idle_until_woken();
+        // Park — with the same re-check the pipe's read parks under.  The
+        // wait's question is "has a process finished?", and a child on
+        // another CPU can finish between this call's own check and the park;
+        // a task parked after the wake it was waiting for is a task parked
+        // for ever.  The re-check and the park are one critical section, so
+        // the exit has only two orders to find: its status first, and the
+        // call answers it here, or the task first, and the exit's wake ends
+        // the wait.
+        match crate::scheduler::block_unless_exit(frame) {
+            Some(status) => return CallOutcome::Return(status),
+            None => {
+                arch::serial::write_str("protofire: a program waits for a child\n");
+                if !crate::scheduler::has_selectable() {
+                    crate::scheduler::idle_until_woken();
+                }
+                let _ = crate::scheduler::switch_without_saving(frame);
+                return CallOutcome::Exit;
+            }
         }
-        let _ = crate::scheduler::switch_without_saving(frame);
-        return CallOutcome::Exit;
     }
 
     if number == SyscallNumber::Pipe as usize {

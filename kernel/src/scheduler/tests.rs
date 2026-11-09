@@ -453,3 +453,72 @@ fn a_park_whose_question_is_still_open_parks_and_a_wake_ends_it() {
         "the parked task kept the frame it parked from"
     );
 }
+
+/// A wait whose exit already happened answers it without parking.
+///
+/// The re-check exists for the deciding moment: a child that died while the
+/// call was deciding to wait answers the call at once, and a park that ran
+/// anyway would wait for an exit that will never come again.
+#[test]
+fn a_wait_whose_exit_already_happened_answers_it_without_parking() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("a"));
+    scheduler.add(Task::without_space("b"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+    let mut frame = starting_context(0, 0);
+
+    // a exits with 7; b is what this cpu runs next.
+    scheduler.schedule_on(0, &mut frame, true, true, Some(7));
+    let _ = scheduler.claim(0);
+    let waited_at = starting_context(0x80_0000_1234, 0x80_0000_2000);
+
+    let answer = scheduler.block_unless_exit(0, &waited_at);
+    assert_eq!(answer, Some(7), "the first exit's status is the answer");
+    assert_eq!(scheduler.blocked(), 0, "nothing parked");
+    assert!(scheduler.has_selectable(0), "the waiter is still runnable");
+}
+
+/// A wait whose exit has not happened parks.
+#[test]
+fn a_wait_with_no_exit_parks() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("a"));
+    scheduler.add(Task::without_space("b"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+    let frame = starting_context(0, 0);
+
+    assert_eq!(scheduler.block_unless_exit(0, &frame), None);
+    assert_eq!(scheduler.blocked(), 1);
+}
+
+/// A process finishing wakes what waited on it.
+///
+/// The wake in the exit's own recording is what makes the wait endable: a
+/// waiter parked before the child's exit would otherwise stay parked beside
+/// the very fact it was waiting for.  A host can hold one running task, so
+/// the parked waiter here is not the cpu's current one — the state is the
+/// field the park itself writes, reached directly, and the exit is the only
+/// writer that undoes it.
+#[test]
+fn a_process_finishing_wakes_what_waited_on_it() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("a"));
+    scheduler.add(Task::without_space("b"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+    let mut frame = starting_context(0, 0);
+
+    // A preemption puts b on the cpu and leaves a runnable beside it.
+    scheduler.schedule(0, &mut frame, false);
+
+    // The waiter parks — on a machine this is `block_unless_exit` parking
+    // the task that called the wait, on the cpu that serves it; a host with
+    // one cpu slot reaches the same state through the field.
+    scheduler.tasks[0].state = super::task::State::Blocked;
+    assert_eq!(scheduler.blocked(), 1);
+
+    // The cpu's own task exits: the status is recorded and the wake fires in
+    // the same critical section.
+    scheduler.schedule(0, &mut frame, true);
+    assert_eq!(scheduler.blocked(), 0, "the exit woke the waiter");
+    assert!(scheduler.has_selectable(0), "and it is selectable again");
+}

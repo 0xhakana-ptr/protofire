@@ -141,6 +141,14 @@ impl Scheduler {
                 // exactly the machine whose convention differs.
                 task.status = status;
                 self.exited += 1;
+                // A waiter's question just answered itself: a process
+                // finished, and the wait parks on exactly that.  Wake what a
+                // pipe's write wakes — every blocked task — and let the
+                // woken caller retry its own check, which is what makes a
+                // spurious wake cost a retry instead of a hang.  A wake that
+                // never fires leaves the waiter parked beside the exit it
+                // was waiting for.
+                self.wake_blocked();
             }
         }
 

@@ -111,6 +111,27 @@ impl Scheduler {
         answer
     }
 
+    /// Park the current task until a process exits, unless one already has.
+    ///
+    /// The wait `WaitProcess` makes, written with the same discipline as
+    /// [`Self::block_unless`] and for the same reason: the caller's own check
+    /// — has a process finished? — and the park have a gap, and on a machine
+    /// with two CPUs a child's exit can fire inside it, waking a blocked set
+    /// that does not hold the waiter yet.  The re-check reads the exit
+    /// statuses under the same lock, so a child that died while the call was
+    /// deciding to wait answers the call at once, and one that dies after
+    /// finds the task in the blocked set.
+    ///
+    /// `Some(status)` is the first exit's status, and the caller hands it to
+    /// the program; `None` is a parked task.
+    pub fn block_unless_exit(&mut self, cpu: usize, frame: &Context) -> Option<usize> {
+        let answer = self.first_exited().and_then(|task| task.status());
+        if answer.is_none() {
+            self.block(cpu, frame);
+        }
+        answer
+    }
+
     /// Wake every blocked task, answering how many.
     ///
     /// Every blocked task wakes, because a wait queue would record *which*
