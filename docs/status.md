@@ -142,6 +142,20 @@ through PSCI `CPU_ON`.  A started core installs its own vectors and
 inter-processor interrupt and a task from the shared scheduler, and enters EL0
 on it.  Shared-table changes are broadcast and acknowledged.
 
+Missing: about two boots in a hundred end wrong, and the tree ended wrong at
+the same rate before this session's changes.  The boot's last exit prints
+`program ended on cpu 1` and then the machine either takes a data abort
+reading one byte past the RAM's top — `fault at 0x60000000, read, mapped
+read-write, supervisor`, PC in `exception_entry`'s restore (`ldp q10, q11,
+[sp, #448]`), with the frame's `sp` inside the frame pool's last page — or it
+wedges before `every program exited`, the reaping side waiting in
+`send_ipi_to_others` for a core that halted in the unhandled path.  Measured
+2 in 100 here and 1 in 60 on the pre-session baseline; a boot frozen under
+the emulator's gdbstub held the boot core's `sp` at an address no kernel
+stack slice names, so the standing question is what writes it.  The other
+two machines never reproduce it — 80 x86_64 and 20 riscv64 boots, none —
+so the question is this machine's, not the scheduler's.
+
 ## RISC-V 64
 
 **Boot.**  OpenSBI hands the entry S-mode with the device tree in `a1`; the
