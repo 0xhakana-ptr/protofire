@@ -11,8 +11,6 @@ healthy `AGENTS.md` gets shorter as the gates get stronger.
 
 ## Where the truth lives
 
-## Where the truth lives
-
 - **Why is the tree shaped this way, and which crate may name which?** —
   [`docs/architecture.md`](docs/architecture.md) and
   [`scripts/layering.txt`](scripts/layering.txt).
