@@ -404,11 +404,25 @@ secondary_entry:
     /* The slot, handed in `x0`, is the only thing this core needs to index. */
     mov x19, x0
 
-    /* Its own stack: the top of slice `slot + 1`, because slot zero is the
-       boot core's.  `KERNEL_STACK_BYTES` is interpolated so the array's size
-       and this arithmetic stay one fact. */
+    /* Its own stack: the top of slice `slot + 2`, because slot zero is the
+       boot core's and this core's is the one after it.  `KERNEL_STACK_BYTES`
+       is interpolated so the array's size and this arithmetic stay one fact.
+
+       **`+ 2` and not `+ 1`.**  `x0` is the context `cpu_on` was given, which
+       `smp::start_secondary_harts` fills with the index of this core in the
+       list of cores to start: zero for the first one.  The kernel's slot is
+       the boot core's zero plus one plus that index, so slice `slot + 1` is
+       the boot core's own slice and a started core that took it built its trap
+       frames over the boot core's.  The two stack pointers were measured 13 KiB
+       apart inside one 64 KiB slice, and the abort that found it was an
+       instruction abort at an address inside `kernel_stacks` — one core
+       returning into a frame the other had overwritten.
+
+       The other two machines add two here for the same reason: x86_64's
+       `kernel_stack_top` is `(slot + 2) * SECONDARY_STACK_BYTES` and riscv64's
+       entry does `addi t0, a1, 2`. */
     mov x1, #{KERNEL_STACK_BYTES}
-    add x2, x19, #1
+    add x2, x19, #2
     mul x1, x2, x1
     adrp x2, kernel_stacks
     add x2, x2, :lo12:kernel_stacks

@@ -42,22 +42,22 @@ pub const SECONDARY_STACK_BYTES: usize = 65536;
 
 /// How much `.bss` the entry assembly's stack region reserves.
 ///
-/// One stack per **CPU slot**, and the boot core owns one of them: the array is
-/// indexed by slot, zero for the boot core, and a started core's is its slot
-/// plus one.  So the count is the cap plus one.
-pub const fn kernel_stack_reservation() -> usize {
-    SECONDARY_STACK_BYTES * (MAX_SECONDARY_HARTS + 1)
-}
-
-/// The core the firmware cold-booted, as the entry assembly recorded it.
+/// One stack per **CPU slot**.  The boot core owns slot zero; a started core's
+/// slot is `index + 1` for an `index` that runs from zero to
+/// `MAX_SECONDARY_HARTS - 1`, so the highest slot a core can have is
+/// `MAX_SECONDARY_HARTS` and there are `MAX_SECONDARY_HARTS + 1` slices.
 ///
-/// Zero on every machine this tree boots, and not assumed: the boot core's slot
-/// is one past this value, and a machine whose firmware cold-boots another
-/// MPIDR would otherwise index the wrong stack.
-static BOOT_CORE: AtomicUsize = AtomicUsize::new(0);
-
-pub fn set_boot_core(core: usize) {
-    BOOT_CORE.store(core, Ordering::Release);
+/// **The assembly is the other half of this number, and it adds a further
+/// one.**  `entry.S` puts a started core at `sp = base + (index + 2) * bytes`,
+/// which is the top of slice `index + 1`; the `+ 2` in the multiply is what
+/// makes that top, not the slice number.  The consequence is that the address
+/// `base + (MAX_SECONDARY_HARTS + 2) * bytes` is reached at the very top of the
+/// last slice, and reserving exactly that many bytes would put the last core's
+/// first push past the end of the array.  The reservation is therefore one
+/// slice more than the number of slices, which costs 64 KiB and makes the
+/// arithmetic safe at every index rather than at every index but the last.
+pub const fn kernel_stack_reservation() -> usize {
+    SECONDARY_STACK_BYTES * (MAX_SECONDARY_HARTS + 2)
 }
 
 pub fn boot_core() -> usize {
@@ -350,4 +350,63 @@ fn take_work() -> Option<(usize, crate::Context)> {
     // SAFETY: written once before any started core asks, read after.
     let sink = unsafe { *WORK.get() };
     sink?(crate::current_cpu_slot())
+}
+
+/// The core the firmware cold-booted, as the entry assembly recorded it.
+///
+/// Zero on every machine this tree boots, and not assumed: the boot core's slot
+/// is one past this value, and a machine whose firmware cold-boots another
+/// MPIDR would otherwise index the wrong stack.
+static BOOT_CORE: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_boot_core(core: usize) {
+    BOOT_CORE.store(core, Ordering::Release);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_SECONDARY_HARTS;
+    use super::SECONDARY_STACK_BYTES;
+
+    /// Every startable core's stack fits inside the reservation, including the
+    /// last one.
+    ///
+    /// `entry.S` gives a started core `sp = base + (index + 2) * bytes`, for an
+    /// `index` running from zero to `MAX_SECONDARY_HARTS - 1`.  The highest
+    /// stack top any core is given is therefore
+    /// `base + (MAX_SECONDARY_HARTS + 1) * bytes` — the top of the last slice —
+    /// and a core's first push lands below that top, so the reservation has to
+    /// reach one slice further than the last top it hands out.
+    ///
+    /// This test exists because the arithmetic's first version was written
+    /// `index + 1` where it meant `index + 2`, which gave the **first** started
+    /// core the boot core's slice.  Two cores on one stack overwrote each
+    /// other's trap frames, and the symptom was an instruction abort at an
+    /// address inside `kernel_stacks` — invisible on the gate's two-core
+    /// machine whenever the timer did not fire on the started core, which on
+    /// this machine was always.
+    #[test]
+    fn every_started_core_gets_a_slice_of_its_own() {
+        let reserved = super::kernel_stack_reservation() / SECONDARY_STACK_BYTES;
+
+        let highest_index = MAX_SECONDARY_HARTS - 1;
+        // The top of the last started core's slice, as `entry.S` computes it.
+        let highest_top = highest_index + 2;
+        assert!(
+            highest_top < reserved,
+            "a started core at index {highest_index} has its stack top at slice \
+             {highest_top}, and the reservation holds {reserved} slices"
+        );
+
+        // And the first started core clears the boot core's slice, which is the
+        // one whose top sits at exactly one slice.  That is the defect this
+        // test was written for: `index + 1` put index zero at slice 1, which is
+        // the boot core's own.
+        const FIRST_INDEX: usize = 0;
+        let first_top = FIRST_INDEX + 2;
+        assert!(
+            first_top > 1,
+            "index zero must start past the boot core's slice, not at its top"
+        );
+    }
 }
