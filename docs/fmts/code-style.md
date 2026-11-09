@@ -13,10 +13,9 @@ The rules below are the ones this codebase actually follows. Where a rule is
 mechanical it says so, and you should let the tool do the work; where it is a
 convention, it says that too, and it is on you and your reviewer.
 
-| Rule set | Enforced by |
-|----------|-------------|
-| Formatting (§2) | `cargo fmt` / `cargo fmt --all -- --check`, part of `sh scripts/verify.sh p0` |
-| Everything else | Review |
+Two rule sets, and only one of them is mechanical.  **Formatting** (§2) is
+`cargo fmt` / `cargo fmt --all -- --check`, part of `sh scripts/verify.sh p0`.
+**Everything else** is review.
 
 ---
 
@@ -50,15 +49,14 @@ cargo fmt --all -- --check    # what the gate runs, must be clean
 
 Settings worth knowing before you fight the formatter:
 
-| Setting | Value | Effect |
-|---------|-------|--------|
-| `max_width` | `100` | Line width; wider than the usual 80, which is why separator rules fill to ~100. |
-| `comment_width` | `80` | Comments wrap narrower than code. |
-| `wrap_comments` | `true` | The formatter reflows your comment text, write comments as prose and let it wrap. |
-| `imports_granularity` | `Item` | One `use` per item; it will not merge them. |
-| `binop_separator` | `Front` | A wrapped expression breaks *before* the operator. |
-| `trailing_comma` | `Vertical` | Multi-line lists get a trailing comma. |
-| `merge_derives` | `true` | Multiple `#[derive]` attributes are merged. |
+`max_width = 100` — line width, wider than the usual 80, which is why separator
+rules fill to ~100.  `comment_width = 80` — comments wrap narrower than code.
+`wrap_comments = true` — the formatter reflows your comment text, so write
+comments as prose and let it wrap.  `imports_granularity = Item` — one `use` per
+item; it will not merge them.  `binop_separator = Front` — a wrapped expression
+breaks *before* the operator.  `trailing_comma = Vertical` — multi-line lists
+get a trailing comma.  `merge_derives = true` — multiple `#[derive]` attributes
+are merged.
 
 Two things the formatter does **not** do, and which are therefore yours to get
 right: it does not reorder `use` groups (§5), and it does not format the contents
@@ -68,13 +66,13 @@ of string literals (`format_strings = false`).
 
 ## 3. Naming
 
-| Item | Convention | Example |
-|------|-----------|---------|
-| Types, structs, enums, traits | `UpperCamelCase` | `MemoryManager`, `SyscallDispatch` |
-| Enum variants | `UpperCamelCase` | `InvalidArgument`, `ReturnFromException` |
-| Functions, methods, locals | `snake_case` | `install_global_unchecked`, `try_read_byte` |
-| Constants, statics | `SCREAMING_SNAKE_CASE` | `SYSCALL_COUNT`, `GLOBAL_TABLE`, `PERCPU_OFFSET_SCHEDULER` |
-| Modules and files | `snake_case` | `block_cache.rs`, `pci_transport.rs` |
+**Types, structs, enums and traits** are `UpperCamelCase` —
+`MemoryManager`, `SyscallDispatch`.  **Enum variants** are `UpperCamelCase` —
+`InvalidArgument`, `ReturnFromException`.  **Functions, methods and locals** are
+`snake_case` — `install_global_unchecked`, `try_read_byte`.  **Constants and
+statics** are `SCREAMING_SNAKE_CASE` — `SYSCALL_COUNT`, `GLOBAL_TABLE`,
+`PERCPU_OFFSET_SCHEDULER`.  **Modules and files** are `snake_case` —
+`block_cache.rs`, `pci_transport.rs`.
 
 Files are named after what they contain, in `snake_case`, with no camel case
 anywhere in the tree. A module directory with no `mod.rs` of its own uses
@@ -84,13 +82,20 @@ anywhere in the tree. A module directory with no `mod.rs` of its own uses
 
 These suffixes carry meaning, and a reader will assume them:
 
-| Suffix / shape | Means |
-|----------------|-------|
-| `install_global` / `install_global_unchecked` / `global()` | The global-singleton pattern, see §8. `_unchecked` marks the variant that skips the lifetime requirement and is therefore `unsafe`. |
-| `_locked` | Requires the caller to already hold the relevant lock. Almost always `pub(crate)`, and always documented as such. Examples: `resolve_path_locked`, `allocate_locked`. |
-| `try_*` | A non-blocking or fallible attempt. Returns `Option<T>`, `Result<T>`, or `bool`, never a bare value. Examples: `try_read_byte`, `try_consume_send_nonce`. |
-| `raw_*` | Hands back an underlying handle or un-wrapped object rather than a safe abstraction. Examples: `raw_sockets`, `raw_socket_object`. |
-| `*_count`, `*_initialized`, `*_probed` | Counter and status-flag statics. |
+These suffixes carry meaning, and a reader will assume them.
+
+- **`install_global` / `install_global_unchecked` / `global()`** — the
+  global-singleton pattern, see §8.  `_unchecked` marks the variant that skips
+  the lifetime requirement and is therefore `unsafe`.
+- **`_locked`** — requires the caller to already hold the relevant lock.
+  Almost always `pub(crate)`, and always documented as such.  Examples:
+  `resolve_path_locked`, `allocate_locked`.
+- **`try_*`** — a non-blocking or fallible attempt.  Returns `Option<T>`,
+  `Result<T>`, or `bool`, never a bare value.  Examples: `try_read_byte`,
+  `try_consume_send_nonce`.
+- **`raw_*`** — hands back an underlying handle or un-wrapped object rather than
+  a safe abstraction.  Examples: `raw_sockets`, `raw_socket_object`.
+- **`*_count`, `*_initialized`, `*_probed`** — counter and status-flag statics.
 
 ### The `GLOBAL_*` singleton convention
 

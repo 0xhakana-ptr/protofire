@@ -13,11 +13,11 @@ wrong.
 
 ## 1. Where tests live
 
-| Kind | Location |
-|---|---|
-| **Unit** | `#[cfg(test)] mod tests` at the end of the module under test |
-| **A second module, when the first is large** | `#[cfg(test)] mod tests_<thing>` in the same file, or a `tests.rs` sibling declared `#[cfg(test)] mod tests;` |
-| **Test-only helpers** | inside the `tests` module, or a `test_util.rs` declared `#[cfg(test)]` |
+A **unit** test is a `#[cfg(test)] mod tests` at the end of the module under
+test.  When that module grows large, a second one is a `#[cfg(test)] mod
+tests_<thing>` in the same file, or a `tests.rs` sibling declared `#[cfg(test)]
+mod tests;`.  **Test-only helpers** live inside the `tests` module, or in a
+`test_util.rs` declared `#[cfg(test)]`.
 
 There is no `tests/` directory of integration binaries.  A "test that needs the
 whole crate" is a test in the crate, and it can call anything the crate can, the crate *is* the boundary the split drew.
@@ -97,16 +97,19 @@ tests the contract.
 
 ## 4. What to test
 
-The right-hand column is a floor, not a ceiling.
+What follows is a floor, not a ceiling.
 
-| You changed | Add or extend |
-|---|---|
-| A syscall (new or modified) | The numbering in `abi`, and the handler through the table.  See [syscall-abi.md §9](syscall-abi.md#9-tests). |
-| A parser or wire format | Valid, truncated and oversized input; the layout offsets pinned against the specification |
-| A filesystem | Its own suite in the crate; for a writable one, a recovery or fault-matrix case |
-| The allocator or a frame pool | Arithmetic under pressure, and a mutation test that the free lists actually fuse |
-| A driver | A host test through the trait it implements; a QEMU boot for the parts the trait cannot reach |
-| A gate or a census | A test of the decision function, so the gate's own logic is not checked only by running it |
+Changing **a syscall**, new or modified, wants the numbering in `abi` and the
+handler exercised through the table.  See
+[syscall-abi.md §9](syscall-abi.md#9-tests).  Changing **a parser or wire
+format** wants valid, truncated and oversized input, and the layout offsets
+pinned against the specification.  Changing **a filesystem** wants its own suite
+in the crate, and for a writable one, a recovery or fault-matrix case.  Changing
+**the allocator or a frame pool** wants arithmetic under pressure and a mutation
+test that the free lists actually fuse.  Changing **a driver** wants a host test
+through the trait it implements, and a QEMU boot for the parts the trait cannot
+reach.  Changing **a gate or a census** wants a test of the decision function,
+so the gate's own logic is not checked only by running it.
 
 ---
 
@@ -181,12 +184,10 @@ have passed one.
 
 ### What the gate runs
 
-| Tier | Tests |
-|---|---|
-| `p0` | every crate, on the host; the three kernels build |
-| `p1` | + the boot on each machine that has an image, all three |
-| `p2` | + the censuses: architecture, dependencies, per-crate tests, repository integrity |
-| `p3` | + clippy in every configuration |
+The tiers accumulate.  **`p0`** runs every crate on the host and builds the
+three kernels.  **`p1`** adds the boot on each machine that has an image, all
+three.  **`p2`** adds the censuses: architecture, dependencies, per-crate tests,
+repository integrity.  **`p3`** adds clippy in every configuration.
 
 ---
 

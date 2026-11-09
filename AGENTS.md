@@ -11,15 +11,21 @@ healthy `AGENTS.md` gets shorter as the gates get stronger.
 
 ## Where the truth lives
 
-| Question | Document |
-| --- | --- |
-| Why is the tree shaped this way, and which crate may name which? | [`docs/architecture.md`](docs/architecture.md), [`scripts/layering.txt`](scripts/layering.txt) |
-| What has moved in, and what has not? | [`docs/migration.md`](docs/migration.md) |
-| What exists, and what is missing, on each machine? | [`docs/status.md`](docs/status.md) |
-| What does a change have to satisfy? | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| How does a subsystem work? | the crate's own `//!` header |
-| What may a contributor rely on? | this file, and the gate's own header comment |
-| What does the kernel enforce, and what does it not? | [`SECURITY.md`](SECURITY.md) |
+## Where the truth lives
+
+- **Why is the tree shaped this way, and which crate may name which?** —
+  [`docs/architecture.md`](docs/architecture.md) and
+  [`scripts/layering.txt`](scripts/layering.txt).
+- **What is here, and why does it have the shape it has?** —
+  [`docs/migration.md`](docs/migration.md).
+- **What exists, and what is missing, on each machine?** —
+  [`docs/status.md`](docs/status.md).
+- **What does a change have to satisfy?** — [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **How does a subsystem work?** — the crate's own `//!` header.
+- **What may a contributor rely on?** — this file, and the gate's own header
+  comment.
+- **What does the kernel enforce, and what does it not?** —
+  [`SECURITY.md`](SECURITY.md).
 
 The tree is the authority: where a document and the code disagree, the code is
 right and the document is the bug.  Moving the document is part of the change,
@@ -31,12 +37,14 @@ not a follow-up.
 sh scripts/verify.sh p3
 ```
 
-| Tier | Adds |
-|---|---|
-| `p0` | formatting, every crate's tests, the three kernels |
-| `p1` | the boot: `cargo xtask check --machine <each machine with an image>` |
-| `p2` | the three censuses, architecture fan-out, layering, per-crate test counts |
-| `p3` | clippy in every configuration the tree builds |
+The tiers accumulate: each one runs everything below it and adds its own.
+
+- **`p0`** — formatting, every crate's tests, the three kernels.
+- **`p1`** — the boot: `cargo xtask check --machine <each machine with an
+  image>`.
+- **`p2`** — the three censuses, architecture fan-out, layering, per-crate test
+  counts.
+- **`p3`** — clippy in every configuration the tree builds.
 
 The gate requires the boot for a reason no other tier can cover: every runtime
 defect this tree has had would have passed a gate that never ran an image.  It
@@ -56,13 +64,13 @@ longer describes the tree.  Meeting one by recording a new number is a change
 that argues for it in the baseline's own prose, which is why
 `scripts/layering.txt` is longer than the list of crates it describes.
 
-| Gate | Holds still |
-|---|---|
-| `scripts/check-layering.sh` | every dependency points downward |
-| `scripts/check-arch-fanout.sh` | nothing outside `arch/` names a machine |
-| `scripts/check-crate-tests.sh` | every crate with code has tests, and none lost any |
-| `scripts/check-repo-integrity.sh` | nothing ignored is tracked, and no build product is |
-| `scripts/check-docs.sh` | every path a document cites exists |
+- **`scripts/check-layering.sh`** — every dependency points downward.
+- **`scripts/check-arch-fanout.sh`** — nothing outside `arch/` names a machine.
+- **`scripts/check-crate-tests.sh`** — every crate with code has tests, and
+  none lost any.
+- **`scripts/check-repo-integrity.sh`** — nothing ignored is tracked, and no
+  build product is.
+- **`scripts/check-docs.sh`** — every path a document cites exists.
 
 The architecture census is at **zero** and stays there.  Its one historical row
 was `bootloader/src/main.rs`, and the row was wrong in a way worth remembering:

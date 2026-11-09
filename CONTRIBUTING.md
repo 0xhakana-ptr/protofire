@@ -13,22 +13,30 @@ what a change has to satisfy.
 sh scripts/verify.sh p3
 ```
 
-That is the gate, and it is the whole of what "green" means.  It runs, in order:
+That is the gate, and it is the whole of what "green" means.  It runs, in
+order:
 
-| Step | What it refuses |
-|---|---|
-| `cargo fmt --check` | formatting drift |
-| `scripts/check-docs.sh` | a document that cites a file the tree does not have |
-| `cargo doc --workspace` | a doc comment that links to an item the crate does not have |
-| `cargo build --workspace` | a crate that does not build for the host |
-| `cargo build -p kernel --target <machine>` ×3 | a machine the kernel does not build for |
-| `cargo test --workspace` | a failing test |
-| `cargo xtask check --machine <machine>`, each machine that has an image | a boot that does not print what its gate requires |
-| `scripts/check-arch-fanout.sh` | a `target_arch` gate outside `arch/` that nothing argued for |
-| `scripts/check-layering.sh` | a dependency that points at its own layer or above |
-| `scripts/check-crate-tests.sh` | a crate with code and no tests, or one that lost tests |
-| `scripts/check-repo-integrity.sh` | a tracked file that is ignored, or a build product that is tracked |
-| `cargo clippy` ×4 | a lint, in every configuration the tree builds |
+- `cargo fmt --check` — refuses formatting drift.
+- `scripts/check-docs.sh` — refuses a document that cites a file the tree does
+  not have.
+- `cargo doc --workspace` — refuses a doc comment that links to an item the
+  crate does not have.
+- `cargo build --workspace` — refuses a crate that does not build for the host.
+- `cargo build -p kernel --target <machine>`, three times — refuses a machine
+  the kernel does not build for.
+- `cargo test --workspace` — refuses a failing test.
+- `cargo xtask check --machine <machine>`, for each machine that has an image —
+  refuses a boot that does not print what its gate requires.
+- `scripts/check-arch-fanout.sh` — refuses a `target_arch` gate outside `arch/`
+  that nothing argued for.
+- `scripts/check-layering.sh` — refuses a dependency that points at its own
+  layer or above.
+- `scripts/check-crate-tests.sh` — refuses a crate with code and no tests, or
+  one that lost tests.
+- `scripts/check-repo-integrity.sh` — refuses a tracked file that is ignored,
+  or a build product that is tracked.
+- `cargo clippy`, four times — refuses a lint, in every configuration the tree
+  builds.
 
 The tiers below `p3` exist so the common case is fast: `p0` is formatting, builds
 and tests; `p1` adds the boot; `p2` adds the three censuses; `p3` adds clippy.
@@ -100,9 +108,9 @@ A test that cannot fail is worse than no test, because it is counted.
 
 ## Where the rest lives
 
-| Question | Document |
-|---|---|
-| Why is this crate here, and what may it name? | `docs/architecture.md`, `scripts/layering.txt` |
-| How does the asynchronous model work? | `docs/async_io.md` |
-| What exists and what is missing? | each crate's `//!` header |
-| What does a gate refuse? | the gate's own header comment |
+- **Why is this crate here, and what may it name?** — `docs/architecture.md` and
+  `scripts/layering.txt`.
+- **How does the asynchronous model work?** — `docs/async_io.md`.
+- **What exists and what is missing?** — each crate's `//!` header, and
+  `docs/status.md` for the per-machine census.
+- **What does a gate refuse?** — the gate's own header comment.

@@ -41,12 +41,9 @@ it is in `abi` rather than in `syscall/` because of what it is: a program is
 compiled against these numbers, so an implementation crate that owned them would
 be one a program had to depend on to be written.
 
-It defines:
-
-| Item | Meaning |
-|------|---------|
-| `SyscallNumber` | The number of each syscall, a `#[repr(usize)]` enum |
-| `PUBLIC_SYSCALL_COUNT` | How many numbers this build serves; the dispatch table is sized from it |
+It defines two things.  `SyscallNumber` is the number of each syscall, a
+`#[repr(usize)]` enum.  `PUBLIC_SYSCALL_COUNT` is how many numbers this build
+serves, and the dispatch table is sized from it.
 
 The dispatch table is `kernel/src/syscall/mod.rs`, and it is sized from
 `PUBLIC_SYSCALL_COUNT` rather than from a number of its own, a variant appended
@@ -81,15 +78,15 @@ are already shipped on the demo disk.
 
 ### 3.2 Stability classes
 
-| Range | Class | Contract |
-|-------|-------|----------|
-| `0..=120` | **Stable** | Frozen. Semantics, argument order, and record layouts do not change. Additive *optional* behaviour is the only permitted change. |
-| `121..=SYSCALL_COUNT - 1` | **Experimental** | May still be adjusted. Behaviour, arguments, and record layouts may change on a **minor** version bump. |
+`0..=120` is **Stable**, and frozen: semantics, argument order, and record
+layouts do not change, and additive *optional* behaviour is the only permitted
+change.  `121..=SYSCALL_COUNT - 1` is **Experimental**: behaviour, arguments,
+and record layouts may still be adjusted on a **minor** version bump.
 
 The **Experimental** line is the one that lets an argument change without a
 major bump: a slot no program outside this tree is built against can be
 redefined, and `SYSCALL_ABI_VERSION_MINOR` is what says it was.  A version in
-the frozen range never moves that way, there the table above applies as
+the frozen range never moves that way, there the paragraph above applies as
 written, and a redefinition is a major bump.
 
 A number at or below 120 is stable by being frozen: assigned once, never
@@ -201,12 +198,15 @@ that arrives in a register is a number until something checks it.
 
 The calls a ring-3 program can make today, and the slots each carries:
 
-| Call | Slots |
-|------|-------|
-| `Open` | `a0` the path, a NUL-terminated string in the caller's memory; `a1` the flags; `a2`-`a3` reserved zero |
-| `Read` | `a0` the descriptor; `a1` the offset, or `READ_OFFSET_CURRENT`; `a2` the buffer; `a3` its length; `a4`-`a5` reserved zero |
-| `Close` | `a0` the descriptor; `a1`-`a5` reserved zero |
-| `ExecProcess` | `a0` the path, a NUL-terminated string in the caller's memory naming the file the process becomes; `a1`-`a5` reserved zero |
+The calls a ring-3 program can make today, and the slots each carries.
+
+- **`Open`** — `a0` the path, a NUL-terminated string in the caller's memory;
+  `a1` the flags; `a2`-`a3` reserved zero.
+- **`Read`** — `a0` the descriptor; `a1` the offset, or `READ_OFFSET_CURRENT`;
+  `a2` the buffer; `a3` its length; `a4`-`a5` reserved zero.
+- **`Close`** — `a0` the descriptor; `a1`-`a5` reserved zero.
+- **`ExecProcess`** — `a0` the path, a NUL-terminated string in the caller's
+  memory naming the file the process becomes; `a1`-`a5` reserved zero.
 
 `Read`'s buffer and length travel in slots because a ring-3 caller has no
 borrow to hand over; the kernel's own callers leave both zero and pass the
@@ -249,12 +249,11 @@ recorded here for the change that adds one:
 
 ## 9. Tests
 
-A syscall change is not complete without both, to the extent they apply:
-
-| Layer | Location | What it pins |
-|-------|----------|--------------|
-| Numbering | `mod tests` in `abi/src/number.rs` | The number, the count, and the frozen boundary |
-| Handler | `mod tests` in `kernel/src/syscall/mod.rs` | Argument validation, error cases, the descriptor's state |
+A syscall change is not complete without both, to the extent they apply.  The
+**numbering** test is a `mod tests` in `abi/src/number.rs`, pinning the number,
+the count, and the frozen boundary.  The **handler** test is a `mod tests` in
+`kernel/src/syscall/mod.rs`, pinning argument validation, error cases, and the
+descriptor's state.
 
 The handler tests drive the table the way a program does, a number, six argument
 words, a value or an error back, rather than calling the handler directly.  A

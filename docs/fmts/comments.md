@@ -9,12 +9,11 @@ that must be held across a call is not self-explanatory from the code alone, and
 other documentation open. Write for that reader.
 
 This document defines what comments look like and what they must say. The
-enforcement status of each rule differs, and the difference matters:
-
-| Rule | Enforced by |
-|------|-------------|
-| File header shape (§2) | `check_source_headers` in [`scripts/verify.sh`](../../scripts/verify.sh), part of `sh scripts/verify.sh p0` |
-| Everything else | Review. There is no lint for `// SAFETY:` or for header prose. |
+enforcement status of each rule differs, and the difference matters: the file
+header's shape (§2) is checked by `check_source_headers` in
+[`scripts/verify.sh`](../../scripts/verify.sh), part of `sh scripts/verify.sh
+p0`.  Everything else is review — there is no lint for `// SAFETY:` or for
+header prose.
 
 ---
 
@@ -153,14 +152,16 @@ reader's attention. What earns a line is:
 
 ### Section tags
 
-These tags are in use and are the accepted set:
+These tags are in use and are the accepted set.
 
-| Tag | Use | Notes |
-|-----|-----|-------|
-| `# Safety` | `unsafe fn` and other caller-obligation APIs | The most common tag by far. State the invariant the caller must uphold, this is the contract that makes the `unsafe` callable at all. |
-| `# Errors` | Functions returning `Result` | Name the conditions that produce an `Err`. |
-| `# Panics` | Functions that can panic | Say exactly what triggers it. |
-| `# Examples` | Where a usage example earns its space | Should compile as a doc test where the host target allows. |
+- **`# Safety`** — for `unsafe fn` and other caller-obligation APIs.  The most
+  common tag by far.  State the invariant the caller must uphold; this is the
+  contract that makes the `unsafe` callable at all.
+- **`# Errors`** — for functions returning `Result`.  Name the conditions that
+  produce an `Err`.
+- **`# Panics`** — for functions that can panic.  Say exactly what triggers it.
+- **`# Examples`** — where a usage example earns its space.  Should compile as
+  a doc test where the host target allows.
 
 `# Returns` and `# Arguments` are **not** used in this codebase. Do not
 introduce them: prose in the first line of the doc comment covers the same

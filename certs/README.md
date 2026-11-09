@@ -28,10 +28,9 @@ key.
 
 ## Two kinds of anchor
 
-| | |
-|---|---|
-| **built-in** | a file in `trusted_keys/`, read at build time and embedded into the image |
-| **added at run time** | the `TrustAnchorAdd` syscall (#194), withdrawn by `TrustAnchorRemove` (#195) |
+An anchor is **built-in** when it is a file in `trusted_keys/`, read at build
+time and embedded into the image.  It is **added at run time** by the
+`TrustAnchorAdd` syscall (#194), and withdrawn by `TrustAnchorRemove` (#195).
 
 A run-time anchor is the caller's own trust decision and is not inherited by
 another program: what it grants is the ability to verify a chain against one

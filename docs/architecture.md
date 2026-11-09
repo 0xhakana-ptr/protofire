@@ -153,12 +153,10 @@ and it was not the question: the *symbol* is a binary's, but the *instruction* i
 reaches for is the machine's.  Five `target_arch` gates meant five places
 `bootloader` named a machine, in the crate that is not the machine.
 
-The distinction the row was missing is the one this tree now states explicitly:
-
-| | |
-|---|---|
-| **`bootloader` is a protocol** | a loader put us here, so record what it said, take over the console, start the kernel |
-| **`arch` is the machine** | the state arrived in `%eax`, the stack is at this symbol, an image links at this address |
+The distinction the row was missing is the one this tree now states explicitly.
+**`bootloader` is a protocol**: a loader put us here, so record what it said,
+take over the console, start the kernel.  **`arch` is the machine**: the state
+arrived in `%eax`, the stack is at this symbol, an image links at this address.
 
 A new loader changes the first; a new machine changes the second.  So the
 machine's entry assembly, its linker script and its stop instruction all live in
@@ -230,13 +228,11 @@ things it did was wrong.
 ### The root and `libs/`: a role or a tool
 
 Two directories, and the difference is what a crate *is* rather than what it
-depends on:
-
-| | Root | `libs/` |
-|---|---|---|
-| What it holds | a **role** or a **subsystem** | a **tool** |
-| What a caller does with it | implements it, or asks it for its subsystem | calls it |
-| Examples | `abi`, `block`, `fs`, `net`, `memory`, `arch` | `cell`, `unicode`, `sync`, `irq`, `paging`, `crypto` |
+depends on.  A crate at the **root** holds a **role** or a **subsystem**: a
+caller implements it, or asks it for its subsystem.  Examples are `abi`,
+`block`, `fs`, `net`, `memory`, `arch`.  A crate under **`libs/`** is a
+**tool**: a caller calls it.  Examples are `cell`, `unicode`, `sync`, `irq`,
+`paging`, `crypto`.
 
 A role is a thing several crates must *be* or *answer through*: `BlockDevice`
 is what a disk driver implements, `FileSystem` is what a filesystem implements.
@@ -319,12 +315,13 @@ A test run is `cargo test -p crypto`: seconds, and no machine.
 
 ## What the gates hold
 
-| Gate | Question |
-|---|---|
-| `check-layering.sh` | does every dependency point downward? |
-| `check-arch-fanout.sh` | does anything outside `arch/` know which machine it is? |
-| `check-crate-tests.sh` | does every crate with code have tests, and has none lost any? |
-| `xtask check` | does the image reach its console, its heap, and a file read through the syscalls? |
+- **`check-layering.sh`** — does every dependency point downward?
+- **`check-arch-fanout.sh`** — does anything outside `arch/` know which machine
+  it is?
+- **`check-crate-tests.sh`** — does every crate with code have tests, and has
+  none lost any?
+- **`xtask check`** — does the image reach its console, its heap, and a file
+  read through the syscalls?
 
 The first three are censuses: each records a number, refuses growth, and refuses a
 stale row.  A ratchet moves in the change that moves it, with its argument in the

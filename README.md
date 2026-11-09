@@ -45,16 +45,21 @@ number is a change that argues for it in the baseline's own prose.
 
 ## Where to read next
 
-| Question | Document |
-|---|---|
-| Why is the tree shaped this way, and which crate may name which? | [`docs/architecture.md`](docs/architecture.md) |
-| What has been moved in, and what has not? | [`docs/migration.md`](docs/migration.md) |
-| How does the asynchronous model work? | [`docs/async_io.md`](docs/async_io.md) |
-| What does a change have to satisfy? | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| What may a contributor rely on, and what is review-only? | [`AGENTS.md`](AGENTS.md) |
-| What does a gate refuse? | the gate's own header comment |
-| What does the kernel enforce, and what does it not? | [`SECURITY.md`](SECURITY.md) |
-| How is participation expected to go? | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
+- **Why is the tree shaped this way, and which crate may name which?** —
+  [`docs/architecture.md`](docs/architecture.md).
+- **What is here, and why does it have the shape it has?** —
+  [`docs/migration.md`](docs/migration.md).
+- **Which subsystems are in, which are not, and where is the code?** —
+  [`docs/status.md`](docs/status.md).
+- **How does the asynchronous model work?** — [`docs/async_io.md`](docs/async_io.md).
+- **What does a change have to satisfy?** — [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **What may a contributor rely on, and what is review-only?** —
+  [`AGENTS.md`](AGENTS.md).
+- **What does a gate refuse?** — the gate's own header comment.
+- **What does the kernel enforce, and what does it not?** —
+  [`SECURITY.md`](SECURITY.md).
+- **How is participation expected to go?** —
+  [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## Licence
 

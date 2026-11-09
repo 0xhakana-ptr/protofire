@@ -33,14 +33,17 @@ convention.
 
 `unsafe` is justified when the operation is something the Rust type system
 cannot express at all. In this codebase that means four categories, and very
-little else:
+little else.
 
-| Category | Examples | Where |
-|----------|----------|-------|
-| **MMIO and port I/O** | `read_volatile` / `write_volatile` on a device BAR, `in`/`out` instructions | `drivers/`, `arch/*/` |
-| **Inline assembly** | Context switch, trap entry/exit, `stac`/`clac`, cache and TLB maintenance | `arch/*/`, `abi/src/` |
-| **Raw pointer structures** | Page-table walks, the frame bitmap, linked free lists, per-CPU areas | `memory/src/`, `kernel/src/devices.rs` |
-| **Global singleton slots** | The `install_global_unchecked` pattern (see [code-style.md §8](code-style.md#8-globals-the-install-pattern)) | Throughout |
+- **MMIO and port I/O** — `read_volatile` / `write_volatile` on a device BAR,
+  `in`/`out` instructions.  Found in `drivers/` and `arch/*/`.
+- **Inline assembly** — context switch, trap entry/exit, `stac`/`clac`, cache
+  and TLB maintenance.  Found in `arch/*/` and `abi/src/`.
+- **Raw pointer structures** — page-table walks, the frame bitmap, linked free
+  lists, per-CPU areas.  Found in `memory/src/` and `kernel/src/devices.rs`.
+- **Global singleton slots** — the `install_global_unchecked` pattern (see
+  [code-style.md §8](code-style.md#8-globals-the-install-pattern)).  Found
+  throughout.
 
 Plus `unsafe impl` for `Send`/`Sync` on types that are shared across CPUs and
 are safe to share **by an argument you have to write down**, see §5.

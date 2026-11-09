@@ -13,13 +13,23 @@ This list is short on purpose.  A security document that describes a kernel
 some other version of the tree was is worse than no document, because a reader
 plans around it.
 
-| Property | Where it is |
-| --- | --- |
-| Ring-3 isolation: a program reaches the kernel only through the syscall gate, and a fault it takes kills the process rather than the machine | `kernel/src/process.rs`, the per-machine trap paths |
-| A user address from ring 3 is validated before the kernel touches it, and a program's pages are `user: true` while the kernel's are not | `kernel/src/address_space/` |
-| W^X in the loader: an image segment that is both writable and executable is refused rather than mapped | `kernel/src/loader.rs` |
-| A MAC policy that labels subjects and objects, asked before a file is opened or read, and refusing by default | `security/src/mac/` |
-| Every capability a program is given is a descriptor it can be made to close | `kernel/src/syscall/table.rs` |
+- **Ring-3 isolation.**  A program reaches the kernel only through the syscall
+  gate, and a fault it takes kills the process rather than the machine.  In
+  `kernel/src/process.rs` and the per-machine trap paths.
+
+- **User addresses are validated.**  A user address from ring 3 is validated
+  before the kernel touches it, and a program's pages are `user: true` while the
+  kernel's are not.  In `kernel/src/address_space/`.
+
+- **W^X in the loader.**  An image segment that is both writable and executable
+  is refused rather than mapped.  In `kernel/src/loader.rs`.
+
+- **A default-refusing MAC policy.**  It labels subjects and objects, is asked
+  before a file is opened or read, and refuses by default.  In
+  `security/src/mac/`.
+
+- **Capabilities are descriptors.**  Every capability a program is given is a
+  descriptor it can be made to close.  In `kernel/src/syscall/table.rs`.
 
 ## What it does not have
 

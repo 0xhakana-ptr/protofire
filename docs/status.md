@@ -12,70 +12,179 @@ Two words are used strictly below:
 - **implemented** means the code path exists and is reachable.
 - **verified** means a gate boots it or a test pins it.
 
-In the tables, a dash in the *Missing* column means no gap is known and
-recorded here, not that the machine has none.  Where this document and the
-tree disagree, the tree is right and this document is the bug;
+Where a machine's entry says nothing about a gap, no gap is known and recorded
+here — which is not the same as the machine having none.  Where this document
+and the tree disagree, the tree is right and this document is the bug;
 `scripts/check-docs.sh` enforces the part of that a machine can check: every
 path named here has to exist.
 
-Targets: **x86_64**, **AArch64** and **RISC-V 64** all build for their own
-target, boot through the same gate (`scripts/verify.sh`, tier p1, one image
-per machine), and run programs at ring 3 under a preempting timer.
+## What every machine does
 
-What the machines share is one kernel and one boot narrative: the frame pool,
-the heap, PyroFS with tmpfs and an ISO 9660 disc mounted by prefix, the syscall
-table, the MAC policy asked both ways, and three programs, one asleep, one
-blocked on a pipe, one writing to it, whose lines every machine's check
-requires.  The rows below are the machine's own half.
+The three machines are one kernel.  A boot installs the same frame pool and
+heap, mounts PyroFS at `/`, tmpfs at `/tmp` and an ISO 9660 disc at `/cdrom`,
+installs the syscall table, asks the MAC policy both ways, and runs three
+ring-3 programs — one asleep, one blocked on a pipe, one writing to it — whose
+lines every machine's check requires.  The four parts below are the same on all
+three machines, so they are stated once.  A machine's own section carries only
+what differs.
 
----
+**Scheduler.**  Preemption, sleeping with a deadline, and a read blocked on a
+pipe and woken by a write.  Each task carries a pid, a parent, and the status
+it exited with.  `Fork` shares the running process's pages with its child and
+hands its context down, writable pages demoted read-only and copied only when a
+write faults, once per page that is actually written.  `ExecProcess` rebuilds
+the running task around the **file its argument names** — a NUL-terminated path
+read through the registry's namespace, parsed by the kernel's ELF64 loader, and
+mapped segment by segment at the addresses the loader accepted, with a
+writable-executable segment refused by name.  The task keeps its pid, and the
+exec'd program opens the boot's own file through `Open`/`Read`/`Close` and
+exits with the first byte it read, `116`, the `t` of "the quick brown pyrofox".
+Pipes and files share one descriptor numbering.  The boot's own programs remain
+machine code, and `/bin/init` is the workspace's first compiled ring-3 program.
+
+Verified by `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
+
+**Faults.**  A fault reaches the kernel with its direction and with the
+faulting CPU's own table asked what the address is mapped as.  A write to a
+page a fork demoted is the copy-on-write event the resolver answers.  A fault
+no resolver answers is reported, the task goes `Finished` with the kernel's
+status 139, and the next task runs.
+
+Verified by `fault at `, `process 4 died from a fault at `, and `exit statuses ... 4 -> 139`.  Missing: a per-program fault handler — the frozen `InstallExceptionHandler` numbers — does not exist.
+
+**Devices.**  The PCI scan, BARs assigned by the boot, and virtio-blk
+attached.  Verified by `block device from virtio-blk on pci` and `virtio-blk wrote and read back sector `.
+
+**The second CPU.**  A task is not pinned, so one that is preempted or woken
+is placed again, and the boot counts and names the placement.
+
+Verified by `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `, `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `, `address spaces reaped 4, `, and `tlb shootdown `.
+
+Missing: no load balancing — placement is whatever the lock decides, so a CPU
+with an empty queue does not take work from one that is busy.  Exited programs'
+spaces are released at the boot's end rather than at each exit, because
+releasing one while the other CPU was still installed on its root faulted 186
+times in six boots of eight.  `docs/migration.md` has the per-step cost of more
+CPUs.
 
 ## x86_64
 
-| What | Now | Verified by | Missing |
-|------|-----|-------------|---------|
-| Boot | Multiboot2 or PVH handoff; the entry assembly's 2 MiB identity map | the gate's `entered via pvh` line | |
-| Console | COM1, reached through the port pair | every line the gate reads | |
-| Page table | the kernel's own 4 KiB-granule table replacing the boot's; text read-execute, read-only data read, device windows uncached | `page table built and installed, 4 KiB granule` | |
-| Interrupts | the local APIC; the 8259 masked, not remapped; the self-test raises the inter-processor interrupt's vector, one the controller delivers and the kernel counts | `interrupt delivered to its handler` | |
-| Timer and clock | the APIC timer, calibrated once against the PIT; the TSC as the monotonic clock, calibrated separately, the two rates differ and the boot proves both | `timer armed at `, `timer counter  ticks apart` | |
-| Ring 3 | a GDT with DPL-3 code and data segments, a TSS whose `RSP0` names the stack every ring-3 interrupt lands on, a call gate at DPL 3, `iretq` out | `descriptor tables installed, TSS loaded`, `entering ring 3` | |
-| Scheduler | preemption, sleeping with a deadline, a read blocked on a pipe and woken by a write; each task carries a pid, a parent and the status it exited with; `Fork` shares the running process's pages with its child and hands its context down, writable pages demoted read-only and copied only when a write faults, once per page that is actually written; the fault handler answers a shared page with a private copy and a page whose last holder wrote with the frame outright; `ExecProcess` rebuilds the running task around the **file its argument names** — a NUL-terminated path read through the registry's namespace, parsed by the kernel's ELF64 loader, and mapped segment by segment at the addresses the loader accepted (W^X: a writable-executable segment is refused by name); the task keeps its pid, and the exec'd program opens the boot's own file through `Open`/`Read`/`Close` and exits with the first byte it read, `116`, the `t` of "the quick brown pyrofox"; pipes and files share one descriptor numbering; the boot's own programs remain machine code, and `/bin/init` is the workspace's first compiled ring-3 program | `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, `exit statuses 1 -> 116` | |
-| Faults | a fault reaches the kernel with its direction (x86_64 from the page-fault error code's `W/R` bit on vector 14 alone; aarch64 from `ESR_EL1`'s WnR on the two data-abort classes; riscv64 from `scause`, where store and load page faults are two numbers) and the faulting CPU's own table is asked what the address is mapped as; a write to a page a fork demoted is the copy-on-write event the resolver answers, and a fault from a program that no resolver answered is reported, the task goes `Finished` with the kernel's status 139, and the next task runs | `fault at `, `process 4 died from a fault at `, `exit statuses ... 4 -> 139` | a per-program handler for faults (the frozen `InstallExceptionHandler` numbers) does not exist |
-| Devices | the PCI scan over the configuration port pair, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci`, `virtio-blk wrote and read back sector ` | |
-| Second CPU | the machine's CPU count read from `fw_cfg`, each started through INIT-SIPI into a copied-down real-mode-to-long-mode page; a started CPU loads its own GDT and TSS, its own `IDTR`, its own local APIC and its own timer, records that it is online, takes its clock, an inter-processor interrupt and a task from the shared scheduler, and enters ring 3 on it; a task is not pinned, so one preempted or woken is placed again and the boot counts and names the placement | `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `, `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `, `address spaces reaped 4, `, `tlb shootdown ` | no load balancing: placement is whatever the lock decides, so a CPU with an empty queue does not take work from one that is busy. Exited programs' spaces are released at the boot's end rather than at each exit, because releasing one while the other CPU was still installed on its root faulted 186 times in six boots of eight. Shared-table changes are broadcast and acknowledged; `docs/migration.md` has the per-step cost of more CPUs |
+**Boot.**  Multiboot2 or PVH handoff; the entry assembly's 2 MiB identity map.
+Verified by the gate's `entered via pvh` line.
 
----
+**Console.**  COM1, reached through the port pair.  Every line the gate reads
+comes through it.
+
+**Page table.**  The kernel's own 4 KiB-granule table replacing the boot's;
+text read-execute, read-only data read, device windows uncached.  Verified by
+`page table built and installed, 4 KiB granule`.
+
+**Interrupts.**  The local APIC; the 8259 masked rather than remapped; the
+self-test raises the inter-processor interrupt's vector, which the controller
+delivers and the kernel counts.  Verified by `interrupt delivered to its handler`.
+
+**Timer and clock.**  The APIC timer, calibrated once against the PIT, and the
+TSC as the monotonic clock, calibrated separately.  The two rates differ and
+the boot proves both.  Verified by `timer armed at ` and `timer counter  ticks apart`.
+
+**Ring 3.**  A GDT with DPL-3 code and data segments, a TSS whose `RSP0` names
+the stack every ring-3 interrupt lands on, a call gate at DPL 3, and an `iretq`
+out.  Verified by `descriptor tables installed, TSS loaded` and `entering ring 3`.
+
+**Fault direction.**  From the page-fault error code's `W/R` bit, on vector 14
+alone.
+
+**Second CPU.**  The machine's CPU count read from `fw_cfg`, each started
+through INIT-SIPI into a copied-down real-mode-to-long-mode page.  A started
+CPU loads its own GDT and TSS, its own `IDTR`, its own local APIC and its own
+timer, records that it is online, takes its clock, an inter-processor
+interrupt and a task from the shared scheduler, and enters ring 3 on it.
+Shared-table changes are broadcast and acknowledged.
 
 ## AArch64
 
-| What | Now | Verified by | Missing |
-|------|-----|-------------|---------|
-| Boot | QEMU's `-kernel` raw image at EL1; the device-tree pointer recorded by the entry | the gate's `entered via dtb` line | |
-| Console | the PL011, at the address the tree names | every line the gate reads | |
-| Page table | the kernel's own 4 KiB table; `TCR_EL1` sized for the full 48-bit walk; the tree's device windows uncached | `page table built and installed, 4 KiB granule` | |
-| Interrupts | the GIC; the self-test raises a software interrupt the controller delivers | `interrupt delivered to its handler` | |
-| Timer and clock | the generic timer, one clock for both the deadline and the counter; its private interrupt is configured **level**-triggered, which is what `CNTP_CTL_EL0.ISTATUS` staying set until reprogramming makes it, and the started core's own clock fires from it | `timer armed at `, `cpu 1 id 1, ticking, ` | |
-| Idle | a CPU with nothing to run waits by spinning a bounded number of turns and re-reading its condition, not by `wfi`. A started core's timer expires without its PPI ever reaching the distributor while it idles — measured: `CNTP_CTL_EL0` 5 with `GICD_ISPENDR0` `0x3`, bit 30 absent — so a `wfi` there never returns, and the boot ended `ended without confirmation` on one in ten runs. The cost is that an idle core burns its slice | `cpu 1 id 1, ticking, `, and no `ended without confirmation` line across 240 boots | an idle core is not parked: this machine cannot make `wfi` wakeable on a started core, so the power that a real idle would save is not saved. The mask is not the cause: clearing every bit (`DAIFClr, #0xf`) and halting still left that core's second `wfi` never returning, 3 failures in 40 |
-| Ring 3 | `eret` to EL0t, `SP_EL0` carried in the trap frame, FP/SIMD saved because the compiler provably emits them | `entering ring 3` | |
-| Scheduler | preemption, sleeping with a deadline, a read blocked on a pipe and woken by a write; each task carries a pid, a parent and the status it exited with; `Fork` shares the running process's pages with its child and hands its context down, writable pages demoted read-only and copied only when a write faults, once per page that is actually written; the fault handler answers a shared page with a private copy and a page whose last holder wrote with the frame outright; `ExecProcess` rebuilds the running task around the **file its argument names** — a NUL-terminated path read through the registry's namespace, parsed by the kernel's ELF64 loader, and mapped segment by segment at the addresses the loader accepted (W^X: a writable-executable segment is refused by name); the task keeps its pid, and the exec'd program opens the boot's own file through `Open`/`Read`/`Close` and exits with the first byte it read, `116`, the `t` of "the quick brown pyrofox"; pipes and files share one descriptor numbering; the boot's own programs remain machine code, and `/bin/init` is the workspace's first compiled ring-3 program | `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, `exit statuses 1 -> 116` | |
-| Faults | a fault reaches the kernel with its direction (x86_64 from the page-fault error code's `W/R` bit on vector 14 alone; aarch64 from `ESR_EL1`'s WnR on the two data-abort classes; riscv64 from `scause`, where store and load page faults are two numbers) and the faulting CPU's own table is asked what the address is mapped as; a write to a page a fork demoted is the copy-on-write event the resolver answers, and a fault from a program that no resolver answered is reported, the task goes `Finished` with the kernel's status 139, and the next task runs | `fault at `, `process 4 died from a fault at `, `exit statuses ... 4 -> 139` | a per-program handler for faults (the frozen `InstallExceptionHandler` numbers) does not exist |
-| Devices | the PCIe ECAM window discovered from the tree, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci` | |
-| Second CPU | the tree's cores minus the one firmware cold-booted, started through PSCI `CPU_ON`; a started core installs its own vectors and `TTBR0_EL1`, arms its own timer, records that it is online, takes its clock, an inter-processor interrupt and a task from the shared scheduler, and enters EL0 on it; a task is not pinned, so one preempted or woken is placed again | `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `, `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `, `address spaces reaped 4, `, `tlb shootdown ` | no load balancing: placement is whatever the lock decides. Exited programs' spaces are released at the boot's end rather than at each exit, because releasing one while the other core was still installed on its root faulted 186 times in six boots of eight. Shared-table changes are broadcast and acknowledged; `docs/migration.md` has the per-step cost of more cores |
+**Boot.**  QEMU's `-kernel` raw image at EL1; the device-tree pointer recorded
+by the entry.  Verified by the gate's `entered via dtb` line.
 
----
+**Console.**  The PL011, at the address the tree names.
+
+**Page table.**  The kernel's own 4 KiB table; `TCR_EL1` sized for the full
+48-bit walk; the tree's device windows uncached.  Verified by `page table built and installed, 4 KiB granule`.
+
+**Interrupts.**  The GIC; the self-test raises a software interrupt the
+controller delivers.  Verified by `interrupt delivered to its handler`.
+
+**Timer and clock.**  The generic timer, one clock for both the deadline and
+the counter.  Its private interrupt is configured **level**-triggered, which is
+what `CNTP_CTL_EL0.ISTATUS` staying set until reprogramming makes it, and the
+started core's own clock fires from it.  Verified by `timer armed at ` and `cpu 1 id 1, ticking, `.
+
+**Idle.**  A CPU with nothing to run spins a bounded number of turns and
+re-reads its condition, rather than waiting in `wfi`.  A started core's timer
+expires without its PPI ever reaching the distributor while it idles —
+measured: `CNTP_CTL_EL0` 5 with `GICD_ISPENDR0` `0x3`, bit 30 absent — so a
+`wfi` there never returns, and the boot ended `ended without confirmation` on
+one run in ten.  Verified by the absence of that line across 240 boots.
+
+Missing: an idle core is not parked.  This machine cannot make `wfi` wakeable
+on a started core, so the power a real idle would save is not saved.  The mask
+is not the cause: clearing every bit (`DAIFClr, #0xf`) and halting still left
+that core's second `wfi` never returning, three failures in forty.
+
+**Ring 3.**  `eret` to EL0t, `SP_EL0` carried in the trap frame, FP/SIMD saved
+because the compiler provably emits them.  Verified by `entering ring 3`.
+
+**Fault direction.**  From `ESR_EL1`'s WnR bit, on the two data-abort classes.
+
+**Second CPU.**  The tree's cores minus the one firmware cold-booted, started
+through PSCI `CPU_ON`.  A started core installs its own vectors and
+`TTBR0_EL1`, arms its own timer, records that it is online, takes its clock, an
+inter-processor interrupt and a task from the shared scheduler, and enters EL0
+on it.  Shared-table changes are broadcast and acknowledged.
 
 ## RISC-V 64
 
-| What | Now | Verified by | Missing |
-|------|-----|-------------|---------|
-| Boot | OpenSBI hands the entry S-mode with the device tree in `a1`; the image is an ELF at the loader's conventional address | the gate's `entered via dtb` line | |
-| Console | the NS16550A, at the emulated platform's address | every line the gate reads | |
-| Page table | Sv48, the mode whose four-level walk is the shape the kernel's shared arithmetic defines; `satp`'s page number at the register's own bits | `page table built and installed, 4 KiB granule` | |
-| Interrupts | four lines, all bits in `sie`: the timer's, the software one the machine raises on itself, and the external one a PLIC source arrives on. The PLIC is programmed, and the console's UART is claimed as a real source: enabled at the controller, asked for one transmitter interrupt, acknowledged at the device before the source is completed | `interrupt delivered to its handler`, `external controller at `, `console interrupt(s) taken = 1` | no AIA/IMSIC; one source is claimed, so a second device's interrupt has no handler |
-| Timer and clock | the SBI's legacy set_timer, arming is a trap into M-mode, with every clobbered register declared; the counter's rate comes from the tree, there being no register that states it | `timer armed at 10000 ticks/ms` | |
-| Ring 3 | `sret` to U-mode, `sscratch` holding the kernel stack for the trap back, `sepc` advanced before a handler can park the frame, `SUM` granted once at the entry | `entering ring 3` | |
-| Scheduler | preemption, sleeping with a deadline, the largest duration one `addi` immediate can express, a read blocked on a pipe and woken by a write; each task carries a pid, a parent and the status it exited with; `Fork` shares the running process's pages with its child and hands its context down, writable pages demoted read-only and copied only when a write faults, once per page that is actually written; the fault handler answers a shared page with a private copy and a page whose last holder wrote with the frame outright; `ExecProcess` rebuilds the running task around the **file its argument names** — a NUL-terminated path read through the registry's namespace, parsed by the kernel's ELF64 loader, and mapped segment by segment at the addresses the loader accepted (W^X: a writable-executable segment is refused by name); the task keeps its pid, and the exec'd program opens the boot's own file through `Open`/`Read`/`Close` and exits with the first byte it read, `116`, the `t` of "the quick brown pyrofox"; pipes and files share one descriptor numbering; the boot's own programs remain machine code, and `/bin/init` is the workspace's first compiled ring-3 program | `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, `exit statuses 1 -> 116` | |
-| Faults | a fault reaches the kernel with its direction (x86_64 from the page-fault error code's `W/R` bit on vector 14 alone; aarch64 from `ESR_EL1`'s WnR on the two data-abort classes; riscv64 from `scause`, where store and load page faults are two numbers) and the faulting CPU's own table is asked what the address is mapped as; a write to a page a fork demoted is the copy-on-write event the resolver answers, and a fault from a program that no resolver answered is reported, the task goes `Finished` with the kernel's status 139, and the next task runs | `fault at `, `process 4 died from a fault at `, `exit statuses ... 4 -> 139` | a per-program handler for faults (the frozen `InstallExceptionHandler` numbers) does not exist |
-| Devices | the PCIe ECAM window discovered from the tree, BARs assigned by the boot, virtio-blk attached | `block device from virtio-blk on pci` | |
-| Second CPU | the tree's hart list minus the hart the firmware cold-booted, started through the HSM call; a started hart takes its own stack, its own `satp`, its own timer and the trap vector, records that it is online, takes its clock, an inter-processor interrupt and a task from the shared scheduler, and enters U-mode on it; a task is not pinned, so one preempted or woken is placed again and the boot counts and names the placement. Which hart firmware cold-boots is the firmware's choice, so the census names the slot the kernel numbered rather than a hart id | `hart ` … ` online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `, `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `, `address spaces reaped 4, `, `tlb shootdown ` | no load balancing: placement is whatever the lock decides. Exited programs' spaces are released at the boot's end rather than at each exit, because releasing one while the other hart was still installed on its root faulted 186 times in six boots of eight. This machine broadcasts no shared-table change, and that is a fact rather than a gap: its ECAM window is inside the identity map, so nothing is remapped after the second hart is up. `docs/migration.md` has the per-step cost of more harts |
+**Boot.**  OpenSBI hands the entry S-mode with the device tree in `a1`; the
+image is an ELF at the loader's conventional address.  Verified by the gate's
+`entered via dtb` line.
+
+**Console.**  The NS16550A, at the emulated platform's address.
+
+**Page table.**  Sv48, the mode whose four-level walk is the shape the kernel's
+shared arithmetic defines; `satp`'s page number at the register's own bits.
+Verified by `page table built and installed, 4 KiB granule`.
+
+**Interrupts.**  Four lines, all bits in `sie`: the timer's, the software one
+the machine raises on itself, and the external one a PLIC source arrives on.
+The PLIC is programmed and the console's UART is claimed as a real source —
+enabled at the controller, asked for one transmitter interrupt, acknowledged at
+the device before the source is completed.  Verified by `interrupt delivered to its handler`, `external controller at `, and `console interrupt(s) taken = 1`.
+
+Missing: no AIA/IMSIC.  One source is claimed, so a second device's interrupt
+has no handler.
+
+**Timer and clock.**  The SBI's legacy `set_timer`; arming is a trap into
+M-mode, with every clobbered register declared.  The counter's rate comes from
+the tree, there being no register that states it.  Verified by `timer armed at 10000 ticks/ms`.
+
+**Scheduler, in addition.**  A sleep is bounded by the largest duration one
+`addi` immediate can express, which is the machine's own limit rather than the
+scheduler's.
+
+**Ring 3.**  `sret` to U-mode, `sscratch` holding the kernel stack for the trap
+back, `sepc` advanced before a handler can park the frame, `SUM` granted once at
+the entry.  Verified by `entering ring 3`.
+
+**Fault direction.**  From `scause`, where store and load page faults are two
+different numbers.
+
+**Second CPU.**  The tree's hart list minus the hart the firmware cold-booted,
+started through the HSM call.  A started hart takes its own stack, its own
+`satp`, its own timer and the trap vector, records that it is online, takes its
+clock, an inter-processor interrupt and a task from the shared scheduler, and
+enters U-mode on it.  Which hart the firmware cold-boots is the firmware's
+choice, so the census names the slot the kernel numbered rather than a hart id.
+
+This machine broadcasts no shared-table change, and that is a fact rather than
+a gap: its ECAM window is inside the identity map, so nothing is remapped after
+the second hart is up.

@@ -44,15 +44,11 @@ fix: Drop the extra ELR advance in aarch64 svc dispatch
 
 The two halves of that summary, **imperative mood** and **capitalised first
 word**, are both required, and together they produce a specific form that is
-not the same as either habit people arrive with:
-
-| Subject | Verdict |
-|---------|---------|
-| `fix: Drop the extra ELR advance …` | Correct: imperative and capitalised. |
-| `fix: Dropped the extra ELR advance …` | Wrong: past tense. |
-| `fix: drop the extra ELR advance …` | Wrong: not capitalised. |
-| `fix: Drops the extra ELR advance …` | Wrong: third person. |
-| `fix: Fixing the ELR advance …` | Wrong: gerund. |
+not the same as either habit people arrive with.  `fix: Drop the extra ELR
+advance …` is correct: imperative and capitalised.  Each of these is wrong on
+the grounds named: `fix: Dropped the extra ELR advance …` (past tense),
+`fix: drop the extra ELR advance …` (not capitalised), `fix: Drops the extra ELR
+advance …` (third person), and `fix: Fixing the ELR advance …` (gerund).
 
 Read the subject as the completion of the sentence *"This commit will…"*. It
 will *drop* the ELR advance; it did not *drop* it, and it is not *dropping* it.
@@ -66,16 +62,11 @@ Only the last two columns of the table are machine-checked; see §5.
 
 ### Subject rules
 
-| Rule | Enforced by |
-|------|-------------|
-| A `<type>:` prefix | Review, see §2 |
-| Imperative mood | Review |
-| Capitalised first word | Review |
-| At most 72 characters | The hook, for ASCII subjects only |
-| No trailing period | The hook |
-| No leading or trailing whitespace | The hook |
-| Not a bare generic word | The hook |
-| `Merge …` / `Revert …` are exempt from all of the above | The hook |
+The hook enforces four of these: at most 72 characters (for ASCII subjects
+only), no trailing period, no leading or trailing whitespace, and not a bare
+generic word.  Review enforces the other three: a `<type>:` prefix (see §2),
+imperative mood, and a capitalised first word.  `Merge …` and `Revert …` are
+exempt from all seven.
 
 ---
 
@@ -86,15 +77,12 @@ predates the hook stays as it is, but every commit the hook sees has to comply,
 and a specification that described reality more loosely than the code would be
 the wrong way round.
 
-| Type | Use for |
-|------|---------|
-| `feat:` | New user-visible behaviour or capability |
-| `fix:` | A defect fix, a change that makes something broken work |
-| `refactor:` | Restructuring with no intended change in behaviour |
-| `chore:` | Build, tooling, dependencies, housekeeping; no behaviour change |
-| `docs:` | Documentation only |
-| `test:` | Tests only |
-| `style:` | Formatting and whitespace only; no semantic change |
+**`feat:`** is new user-visible behaviour or capability.  **`fix:`** is a defect
+fix, a change that makes something broken work.  **`refactor:`** is
+restructuring with no intended change in behaviour.  **`chore:`** is build,
+tooling, dependencies, housekeeping — no behaviour change.  **`docs:`** is
+documentation only.  **`test:`** is tests only.  **`style:`** is formatting and
+whitespace only — no semantic change.
 
 **Choose by what the change does, not by which file it touches.** A new test
 that also fixes the bug it was written for is a `fix:`; a `Cargo.toml` edit that
@@ -163,16 +151,23 @@ Before any check runs, every line whose first non-whitespace character is `#` is
 **deleted** from the message (this strips the comment block `git commit` puts in
 the editor template).
 
-| # | Check | Failure message |
-|---|-------|-----------------|
-| 1 | A subject line exists | `empty subject line` |
-| 2 | No leading/trailing whitespace on the subject | `subject must not have leading/trailing whitespace` |
-| 3 | `Merge …` and `Revert …` subjects exit **0 here**, skipping every check below | |
-| 4 | The subject does not end in `.` | `subject must not end with a period` |
-| 5 | The subject is not a bare generic word | `subject '<word>' carries no information` |
-| 6 | The subject is at most 72 **bytes**, only if it is pure ASCII | `subject too long (N > 72 chars)` |
-| 7 | Every body line is at most 72 characters | `body has lines over 72 chars` |
-| 8 | `Signed-off-by:` appears somewhere in the message | `missing Signed-off-by trailer` |
+The hook checks, in order:
+
+1. A subject line exists — otherwise `empty subject line`.
+2. No leading or trailing whitespace on the subject — otherwise `subject must
+   not have leading/trailing whitespace`.
+3. A `Merge …` or `Revert …` subject exits **0 here**, skipping every check
+   below.
+4. The subject does not end in `.` — otherwise `subject must not end with a
+   period`.
+5. The subject is not a bare generic word — otherwise `subject '<word>' carries
+   no information`.
+6. The subject is at most 72 **bytes**, only if it is pure ASCII — otherwise
+   `subject too long (N > 72 chars)`.
+7. Every body line is at most 72 characters — otherwise `body has lines over 72
+   chars`.
+8. `Signed-off-by:` appears somewhere in the message — otherwise `missing
+   Signed-off-by trailer`.
 
 ### The traps
 

@@ -13,39 +13,60 @@ up, and what is actually enforced versus what is merely expected.
 
 ## The documents
 
-| Document | Read it when | Covers |
-|---|---|---|
-| [`code-style.md`](code-style.md) | Writing any Rust in this repository | Formatting, naming, module and file layout, imports, visibility, error handling, globals, feature gating, layering |
-| [`comments.md`](comments.md) | Opening a file to edit it | The file header, module and item docs, `# Safety`/`# Errors`/`# Panics`, section separators, `TODO`/`NOTE` |
-| [`unsafe-and-safety.md`](unsafe-and-safety.md) | Writing or reviewing an `unsafe` block | What `unsafe` is for, the `// SAFETY:` contract, MMIO, locking and panic rules |
-| [`testing.md`](testing.md) | Adding behaviour you want to keep | Where tests live, driving a trait with a fake, what makes a test able to fail |
-| [`syscall-abi.md`](syscall-abi.md) | Touching `abi/`, `syscall/`, or `kernel/src/syscall/` | Append-only numbering, the frozen boundary, adding a syscall, handler conventions |
-| [`commits.md`](commits.md) | Writing a commit message | Subject and body rules, the type prefixes, the hook's exact semantics, the trailers |
+Read [`code-style.md`](code-style.md) when writing any Rust in this repository.
+It covers formatting, naming, module and file layout, imports, visibility,
+error handling, globals, feature gating, and layering.
+
+Read [`comments.md`](comments.md) when opening a file to edit it.  It covers the
+file header, module and item docs, `# Safety`/`# Errors`/`# Panics`, section
+separators, and `TODO`/`NOTE`.
+
+Read [`unsafe-and-safety.md`](unsafe-and-safety.md) when writing or reviewing an
+`unsafe` block.  It covers what `unsafe` is for, the `// SAFETY:` contract, MMIO,
+and the locking and panic rules.
+
+Read [`testing.md`](testing.md) when adding behaviour you want to keep.  It
+covers where tests live, driving a trait with a fake, and what makes a test able
+to fail.
+
+Read [`syscall-abi.md`](syscall-abi.md) when touching `abi/`, `syscall/`, or
+`kernel/src/syscall/`.  It covers append-only numbering, the frozen boundary,
+adding a syscall, and handler conventions.
+
+Read [`commits.md`](commits.md) when writing a commit message.  It covers
+subject and body rules, the type prefixes, the hook's exact semantics, and the
+trailers.
 
 Supporting context, if you have not read it yet:
 
 - [`docs/architecture.md`](../architecture.md), why the tree is shaped this way
-- [`docs/migration.md`](../migration.md), what has moved in, and what has not
+- [`docs/migration.md`](../migration.md), what is here and why it has the shape
+  it has
 - [`AGENTS.md`](../../AGENTS.md), the rules no gate can check
 
 ## What is enforced, and what is not
 
 The single most useful thing to know before a first change is which rules a
-machine will check.
+machine will check.  At `p0`: formatting (`cargo fmt --all -- --check`), every
+path a document cites ([`scripts/check-docs.sh`](../../scripts/check-docs.sh)),
+every item a doc comment links to (`cargo doc` with `RUSTDOCFLAGS=-D warnings`),
+that the workspace builds and every crate's tests pass (`cargo build
+--workspace`, `cargo test --workspace`), and that the kernel builds for all
+three machines (`cargo build -p kernel --target <machine>`).
 
-| Rule | Enforced by | Where it runs |
-|---|---|---|
-| Formatting | `cargo fmt --all -- --check` | `p0` |
-| Every path a document cites | [`scripts/check-docs.sh`](../../scripts/check-docs.sh) | `p0` |
-| Every item a doc comment links to | `cargo doc` with `RUSTDOCFLAGS=-D warnings` | `p0` |
-| The workspace builds, and every crate's tests pass | `cargo build --workspace`, `cargo test --workspace` | `p0` |
-| The kernel builds for all three machines | `cargo build -p kernel --target <machine>` | `p0` |
-| The image boots and prints what it must | `cargo xtask check --machine <each machine>` | `p1` |
-| A dependency that points downward | [`scripts/check-layering.sh`](../../scripts/check-layering.sh) | `p2` |
-| No architecture gate outside `arch/` | [`scripts/check-arch-fanout.sh`](../../scripts/check-arch-fanout.sh) | `p2` |
-| Every crate with code has tests, and none lost any | [`scripts/check-crate-tests.sh`](../../scripts/check-crate-tests.sh) | `p2` |
-| Lints, and every undocumented `unsafe` | `cargo clippy -- -D warnings` | `p3` |
-| **Everything else in this directory** | **Review** | |
+At `p1`: that the image boots and prints what it must (`cargo xtask check
+--machine <each machine>`).
+
+At `p2`: that a dependency points downward
+([`scripts/check-layering.sh`](../../scripts/check-layering.sh)), that no
+architecture gate sits outside `arch/`
+([`scripts/check-arch-fanout.sh`](../../scripts/check-arch-fanout.sh)), and that
+every crate with code has tests and none lost any
+([`scripts/check-crate-tests.sh`](../../scripts/check-crate-tests.sh)).
+
+At `p3`: lints, and every undocumented `unsafe` (`cargo clippy -- -D warnings`).
+
+**Everything else in this directory is review.**
 
 The rules a machine does not check are the naming conventions, doc-comment
 coverage, panic discipline, and the parts of the syscall contract that are not a
