@@ -92,7 +92,8 @@ impl Scheduler {
     /// A caller that checks a fact, then parks, has a gap between the two, and
     /// on a machine with two CPUs the wake can fire inside it — the task then
     /// parks **after** the wake it was waiting for, and nothing will ever wake
-    /// it.  The caller of this method holds the same lock [`wake_blocked`]
+    /// it.  The caller of this method holds the same lock
+    /// [`Self::wake_blocked`]
     /// takes while `recheck` runs and the state is written, which leaves the
     /// wake and the park exactly two orders: the fact arrived first and the
     /// re-check sees it, or the task is in the blocked set before the wake
