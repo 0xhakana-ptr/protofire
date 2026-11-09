@@ -224,6 +224,36 @@ fn the_writer_reads_its_descriptor_from_the_stack() {
     );
 }
 
+/// The writer's calls, in order, and the close that ends the pipe.
+///
+/// The `Close` is the boot's proof of end-of-file: the reader's second read
+/// can only return because the write end went away, and a boot whose close
+/// moved nothing would leave the reader parked and the boot unfinished.
+#[test]
+fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
+    let words = crate::program::PIPE_WRITER_PROGRAM;
+    assert_eq!(
+        call_numbers(&words),
+        alloc::vec![
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Sleep as usize,
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Close as usize,
+            abi::SyscallNumber::Exit as usize,
+        ],
+        "the writer writes, sleeps, writes, writes the pipe, closes, exits"
+    );
+    // The descriptor the `Close` takes is loaded from the stack again, not
+    // carried in `a0`: the pipe write's answer is what `a0` holds by then,
+    // and a close that read its descriptor from there would close whatever
+    // descriptor numbered four.
+    assert_eq!(
+        words[20], 0x0001_3503,
+        "the close's descriptor is `ld a0, 0(sp)`, not the write's answer"
+    );
+}
+
 /// The reader clears the length before its second announcement: a write
 /// that still carried the read's four would be a pipe write, and the
 /// announcement would vanish into the pipe.
@@ -243,6 +273,37 @@ fn the_reader_clears_the_length_before_it_announces_again() {
     assert_eq!(
         addi_immediate(words[16]) as usize,
         abi::SyscallNumber::Write as usize,
+    );
+}
+
+/// The reader reads twice, and the second read is the one end-of-file ends.
+///
+/// The first read's wake is the writer's write; the second's only possible
+/// answer is "the write end is gone".  A program compiled without it would
+/// exit without ever asking the question the close answers, and the exit
+/// takes its status from that read's answer, not from a constant.
+#[test]
+fn the_reader_reads_again_after_its_second_announcement() {
+    let words = crate::program::PIPE_READER_PROGRAM;
+    assert_eq!(
+        call_numbers(&words),
+        alloc::vec![
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::Exit as usize,
+        ],
+        "the reader writes, reads, writes, reads to end-of-file, exits"
+    );
+    assert_eq!(
+        words[18], 0x0001_3503,
+        "the second read's descriptor is loaded from the stack again"
+    );
+    assert_eq!(
+        addi_immediate(words[21]) as usize,
+        abi::SyscallNumber::Read as usize,
+        "and the second call is a Read"
     );
 }
 

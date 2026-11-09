@@ -553,16 +553,24 @@ pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;
 
-/// The writer: announce, sleep, announce again, then put bytes in the pipe.
+/// The writer: announce, sleep, announce again, put bytes in the pipe, close
+/// the write end.
 ///
 /// The reader has to reach its `Read` first and block, or there is nothing to
 /// prove, a write into a pipe nobody has read yet is an ordinary copy.  The
 /// reader's loop is shorter and it makes no earlier call, so it blocks; this
 /// program's sleep then guarantees the order rather than relying on it.
 ///
+/// The `Close` is the boot's own proof of end-of-file: the reader's second
+/// read can only return because the write end went away, and a close that
+/// did not move the pipe's count would leave the reader parked and the boot
+/// unfinished.  The end is still in `edi` — the pipe write answers in `eax`
+/// and touches nothing else — so the close needs its number and nothing
+/// more.
+///
 /// `[rsp]` holds the write end's descriptor and `[rsp + 16]` is the four bytes
 /// it sends.
-const PIPE_WRITER_PROGRAM: [u8; 89] = [
+const PIPE_WRITER_PROGRAM: [u8; 96] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -583,12 +591,15 @@ const PIPE_WRITER_PROGRAM: [u8; 89] = [
     0xBA, 0x04, 0x00, 0x00, 0x00, // mov edx, 4
     0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6          (Write to the pipe)
     0xCD, 0x80, // int 0x80
+    0xB8, 0x07, 0x00, 0x00, 0x00, // mov eax, 7          (Close — the end is in edi)
+    0xCD, 0x80, // int 0x80
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $
 ];
 
-/// The pipe reader: wait on a descriptor the boot left on its stack.
+/// The pipe reader: wait on a descriptor the boot left on its stack, and read
+/// again after the wake.
 ///
 /// ## The interface, and why it is the stack
 ///
@@ -598,12 +609,18 @@ const PIPE_WRITER_PROGRAM: [u8; 89] = [
 /// sides already agree on, the boot writes it before the program runs, and the
 /// program's first instruction can reach it without a call.
 ///
-/// The read blocks: the pipe is empty when this program runs, its writer is
-/// alive, and `try_read` answers `Block`.  The line `a program blocks on a
+/// The first read blocks: the pipe is empty when this program runs, its writer
+/// is alive, and `try_read` answers `Block`.  The line `a program blocks on a
 /// pipe` is that event.  The `Write` after it says the read returned, which can
 /// only happen because the writer's syscall woke it, nothing else wakes a
 /// blocked task.
-const PIPE_READER_PROGRAM: [u8; 79] = [
+///
+/// The **second** read is the boot's own proof of end-of-file.  The pipe is
+/// drained by then and the writer's end is closed, so nothing but "no bytes
+/// ever" can answer it: a read that returned would have to be end-of-file,
+/// and a close that never moved the pipe's count would leave this program
+/// parked with the boot unfinished.
+const PIPE_READER_PROGRAM: [u8; 99] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -626,6 +643,11 @@ const PIPE_READER_PROGRAM: [u8; 79] = [
     0x31, 0xD2, // xor edx, edx        (announce has no length)
     0xBE, 0x03, 0x00, 0x00, 0x00, // mov esi, 3          (Write, after the wait)
     0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6
+    0xCD, 0x80, // int 0x80
+    0x8B, 0x3C, 0x24, // mov edi, [rsp]      (the read end, again)
+    0x48, 0x8D, 0x74, 0x24, 0x08, // lea rsi, [rsp + 8]  (the buffer)
+    0xBA, 0x04, 0x00, 0x00, 0x00, // mov edx, 4
+    0xB8, 0x05, 0x00, 0x00, 0x00, // mov eax, 5          (Read, the one end-of-file ends)
     0xCD, 0x80, // int 0x80
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
     0xCD, 0x80, // int 0x80
@@ -732,7 +754,9 @@ fn call_numbers(bytes: &[u8]) -> alloc::vec::Vec<u32> {
 #[cfg(test)]
 mod program_tests {
     use super::PIPE_READER;
+    use super::PIPE_READER_PROGRAM;
     use super::PIPE_WRITER;
+    use super::PIPE_WRITER_PROGRAM;
     use super::PROGRAM_LEN;
     use super::program_bytes;
 
@@ -847,5 +871,84 @@ mod program_tests {
         // Signed: `-18` is a displacement, and casting it to `usize` first
         // would be a number near 2^64 rather than a step backwards.
         assert_eq!((24i64 + outer as i64) as usize, 6, "the inner reload");
+    }
+
+    /// The writer's calls, in order, and the close that ends the pipe.
+    ///
+    /// The `Close` is the boot's proof of end-of-file: the reader's second
+    /// read can only return because the write end went away, and a boot whose
+    /// close moved nothing would leave the reader parked and the boot
+    /// unfinished.
+    #[test]
+    fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
+        assert_eq!(
+            super::call_numbers(&PIPE_WRITER_PROGRAM),
+            alloc::vec![
+                abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::Sleep as u32,
+                abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::Close as u32,
+                abi::SyscallNumber::Exit as u32,
+            ],
+            "the writer writes, sleeps, writes, writes the pipe, closes, exits"
+        );
+
+        // The close takes the end the one `mov edi, [rsp]` put there: the
+        // pipe write answers in `eax` and touches nothing else, so the
+        // descriptor the load wrote is what the close reads.
+        let load = PIPE_WRITER_PROGRAM
+            .windows(3)
+            .position(|window| *window == [0x8B, 0x3C, 0x24])
+            .expect("the writer loads its write end from the stack");
+        let close = PIPE_WRITER_PROGRAM
+            .windows(5)
+            .position(|window| *window == [0xB8, 0x07, 0x00, 0x00, 0x00])
+            .expect("the writer closes its write end");
+        assert_eq!(
+            PIPE_WRITER_PROGRAM
+                .windows(3)
+                .filter(|window| *window == [0x8B, 0x3C, 0x24])
+                .count(),
+            1,
+            "one load, so what the close reads is what the write used"
+        );
+        assert!(load < close, "the load is the close's descriptor");
+    }
+
+    /// The reader reads twice, and the second read is the one end-of-file
+    /// ends.
+    ///
+    /// The first read's wake is the writer's write; the second's only
+    /// possible answer is "the write end is gone".  A program compiled
+    /// without it would exit without ever asking the question the close
+    /// answers.
+    #[test]
+    fn the_reader_reads_again_after_its_second_announcement() {
+        assert_eq!(
+            super::call_numbers(&PIPE_READER_PROGRAM),
+            alloc::vec![
+                abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::Read as u32,
+                abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::Read as u32,
+                abi::SyscallNumber::Exit as u32,
+            ],
+            "the reader writes, reads, writes, reads to end-of-file, exits"
+        );
+
+        // The second read asks for the same four bytes into the same buffer:
+        // the descriptor and the buffer are loaded again, because the first
+        // read's answer is in `eax` and the announce wrote `esi`.
+        let loads = PIPE_READER_PROGRAM
+            .windows(3)
+            .filter(|window| *window == [0x8B, 0x3C, 0x24])
+            .count();
+        assert_eq!(loads, 2, "one load per read");
+        let reads = PIPE_READER_PROGRAM
+            .windows(5)
+            .filter(|window| *window == [0xB8, 0x05, 0x00, 0x00, 0x00])
+            .count();
+        assert_eq!(reads, 2, "and one Read per load");
     }
 }

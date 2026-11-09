@@ -126,3 +126,83 @@ fn the_number_is_the_only_word_that_differs() {
     assert_eq!((one[6] >> 5) & 0xFFFF, 1);
     assert_eq!((two[6] >> 5) & 0xFFFF, 2);
 }
+
+/// The writer's calls, in order, and the close that ends the pipe.
+///
+/// The `Close` is the boot's proof of end-of-file: the reader's second read
+/// can only return because the write end went away, and a boot whose close
+/// moved nothing would leave the reader parked and the boot unfinished.
+#[test]
+fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
+    let words = crate::program::PIPE_WRITER_PROGRAM;
+    assert_eq!(
+        call_numbers(&words),
+        alloc::vec![
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Sleep as usize,
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Close as usize,
+            abi::SyscallNumber::Exit as usize,
+        ],
+        "the writer writes, sleeps, writes, writes the pipe, closes, exits"
+    );
+
+    // The descriptor the `Close` takes is loaded from the stack again, not
+    // carried in `x0`: the pipe write's answer is what `x0` holds by then,
+    // and a close that read its descriptor from there would close whatever
+    // descriptor numbered four.  The load is the word before the `movz x8`.
+    let close = words
+        .windows(2)
+        .position(|pair| {
+            (pair[0] >> 5) & 0xFFFF == abi::SyscallNumber::Close as u32
+                && (pair[0] >> 23) & 0x3F == 0b100101
+                && (pair[0] >> 31) & 1 == 1
+                && pair[0] & 0x1F == 8
+                && pair[1] == 0xD400_0001
+        })
+        .expect("the writer closes its write end");
+    assert_eq!(
+        words[close - 1],
+        0xF940_03E0,
+        "the close's descriptor is `ldr x0, [sp]`, not the write's answer"
+    );
+}
+
+/// The reader reads twice, and the second read is the one end-of-file ends.
+///
+/// The first read's wake is the writer's write; the second's only possible
+/// answer is "the write end is gone".  A program compiled without it would
+/// exit without ever asking the question the close answers.
+#[test]
+fn the_reader_reads_again_after_its_second_announcement() {
+    let words = crate::program::PIPE_READER_PROGRAM;
+    assert_eq!(
+        call_numbers(&words),
+        alloc::vec![
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::Exit as usize,
+        ],
+        "the reader writes, reads, writes, reads to end-of-file, exits"
+    );
+    // And the exit takes its status from the read's answer: the word before
+    // the Exit's `movz x8` is the `svc` itself, with no `movz x0` between.
+    let exit = words
+        .windows(2)
+        .position(|pair| {
+            (pair[0] >> 5) & 0xFFFF == abi::SyscallNumber::Exit as u32
+                && (pair[0] >> 23) & 0x3F == 0b100101
+                && (pair[0] >> 31) & 1 == 1
+                && pair[0] & 0x1F == 8
+                && pair[1] == 0xD400_0001
+        })
+        .expect("the reader exits");
+    assert_eq!(
+        words[exit - 1],
+        0xD400_0001,
+        "nothing overwrote the read's answer before `Exit` took it"
+    );
+}

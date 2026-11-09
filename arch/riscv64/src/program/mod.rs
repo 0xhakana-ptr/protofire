@@ -264,16 +264,26 @@ const EXEC_TARGET_PROGRAM: [u32; 20] = [
     0x0000_0073, // ecall
 ];
 
-/// The writer: announce, sleep, announce again, then put bytes in the pipe.
+/// The writer: announce, sleep, announce again, put bytes in the pipe, close
+/// the write end.
 ///
 /// The reader must reach its `Read` first and block, or a write into a pipe
 /// nobody has read yet is an ordinary copy.  The reader's loop is shorter and
 /// it makes no earlier call; this sleep then makes the order a fact rather
 /// than a hope.
 ///
+/// The `Close` is the boot's own proof of end-of-file: the reader's second
+/// read can only return because the write end went away, and a close that
+/// did not move the pipe's count would leave the reader parked and the boot
+/// unfinished.
+///
+/// The descriptor is loaded from the stack **again** for the close: the pipe
+/// write's answer is in `a0` by then, and a close that took its descriptor
+/// from there would close whatever descriptor numbered four.
+///
 /// `x2`, the stack pointer, points at the write end's descriptor, and the
 /// four bytes it sends are the word above it.
-const PIPE_WRITER_PROGRAM: [u32; 24] = [
+const PIPE_WRITER_PROGRAM: [u32; 27] = [
     BUSY_LOOP[0],
     BUSY_LOOP[1],
     BUSY_LOOP[2],
@@ -294,18 +304,30 @@ const PIPE_WRITER_PROGRAM: [u32; 24] = [
     addi(REGISTER_A0 as u32 + 2, 0, 4), // li a2, #4
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
     0x0000_0073, // ecall
+    0x0001_3503, // ld a0, 0(sp)  (the write end, again)
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Close as i32),
+    0x0000_0073, // ecall
     addi(REGISTER_A0 as u32, 0, 0),
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
     0x0000_0073, // ecall
     0x0000_006F, // j .
 ];
 
-/// The reader: wait on a descriptor the boot left on its stack.
+/// The reader: wait on a descriptor the boot left on its stack, and read
+/// again after the wake.
 ///
 /// `x2` points at the read end's descriptor and the four-byte buffer is the
-/// word above it.  The read blocks, the pipe is empty and its writer is
+/// word above it.  The first read blocks, the pipe is empty and its writer is
 /// alive, and the writer's syscall is the only thing that ends the wait.
-const PIPE_READER_PROGRAM: [u32; 21] = [
+///
+/// The **second** read is the boot's own proof of end-of-file.  The pipe is
+/// drained by then and the writer's end is closed, so nothing but "no bytes
+/// ever" can answer it: a read that returned would have to be end-of-file,
+/// and a close that never moved the pipe's count would leave this program
+/// parked with the boot unfinished.  The exit takes its status from that
+/// read's answer rather than a constant, so the number the boot reports is
+/// the one end-of-file gave.
+const PIPE_READER_PROGRAM: [u32; 25] = [
     BUSY_LOOP[0],
     BUSY_LOOP[1],
     BUSY_LOOP[2],
@@ -327,8 +349,12 @@ const PIPE_READER_PROGRAM: [u32; 21] = [
     addi(REGISTER_A0 as u32 + 2, 0, 0), // li a2, #0     (announce has no length)
     addi(REGISTER_A1 as u32, 0, 3),     // li a1, #3     (Write, after the wait)
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
+    0x0000_0073,                        // ecall
+    0x0001_3503,                        // ld a0, 0(sp)  (the read end, again)
+    addi(REGISTER_A1 as u32, 2, 8),     // addi a1, sp, #8 (the buffer)
+    addi(REGISTER_A0 as u32 + 2, 0, 4), // li a2, #4
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Read as i32),
     0x0000_0073, // ecall
-    addi(REGISTER_A0 as u32, 0, 0),
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
     0x0000_0073, // ecall
 ];

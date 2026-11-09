@@ -36,16 +36,26 @@ pub const PIPE_READER: u16 = 3;
 
 pub const PIPE_WRITER: u16 = 2;
 
-/// The writer: announce, sleep, announce again, then put bytes in the pipe.
+/// The writer: announce, sleep, announce again, put bytes in the pipe, close
+/// the write end.
 ///
 /// The reader must reach its `Read` first and block, or a write into a pipe
 /// nobody has read yet is an ordinary copy.  The reader's loop is shorter and
 /// it makes no earlier call; this sleep then makes the order a fact rather
 /// than a hope.
 ///
+/// The `Close` is the boot's own proof of end-of-file: the reader's second
+/// read can only return because the write end went away, and a close that
+/// did not move the pipe's count would leave the reader parked and the boot
+/// unfinished.
+///
+/// The descriptor is loaded from the stack **again** for the close: the pipe
+/// write's answer is in `x0` by then, and a close that took its descriptor
+/// from there would close whatever descriptor numbered four.
+///
 /// `[sp]` holds the write end's descriptor and `[sp + 8]` is the four bytes it
 /// sends.
-const PIPE_WRITER_PROGRAM: [u32; 25] = [
+const PIPE_WRITER_PROGRAM: [u32; 28] = [
     0xD280_0803, // movz x3, #64
     0xD280_2002, // movz x2, #256
     0xF100_0442, // subs x2, x2, #1
@@ -66,6 +76,9 @@ const PIPE_WRITER_PROGRAM: [u32; 25] = [
     0xD280_0082, // movz x2, #4
     0xD280_00C8, // movz x8, #6   (Write to the pipe)
     0xD400_0001, // svc #0
+    0xF940_03E0, // ldr x0, [sp]  (the write end, again)
+    0xD280_00E8, // movz x8, #7   (Close)
+    0xD400_0001, // svc #0
     0xD280_0000, // movz x0, #0
     0xD280_0068, // movz x8, #3   (Exit)
     0xD400_0001, // svc #0
@@ -73,12 +86,21 @@ const PIPE_WRITER_PROGRAM: [u32; 25] = [
     0x1400_0000, // b .
 ];
 
-/// The reader: wait on a descriptor the boot left on its stack.
+/// The reader: wait on a descriptor the boot left on its stack, and read
+/// again after the wake.
 ///
 /// `[sp]` is the read end's descriptor and `[sp + 8]` the four-byte buffer.
-/// The read blocks, the pipe is empty and its writer is alive, and the
+/// The first read blocks, the pipe is empty and its writer is alive, and the
 /// writer's syscall is the only thing that ends the wait.
-const PIPE_READER_PROGRAM: [u32; 21] = [
+///
+/// The **second** read is the boot's own proof of end-of-file.  The pipe is
+/// drained by then and the writer's end is closed, so nothing but "no bytes
+/// ever" can answer it: a read that returned would have to be end-of-file,
+/// and a close that never moved the pipe's count would leave this program
+/// parked with the boot unfinished.  The exit takes its status from that
+/// read's answer rather than a constant, so the number the boot reports is
+/// the one end-of-file gave.
+const PIPE_READER_PROGRAM: [u32; 25] = [
     0xD280_0803, // movz x3, #64
     0xD280_2002, // movz x2, #256
     0xF100_0442, // subs x2, x2, #1
@@ -100,8 +122,12 @@ const PIPE_READER_PROGRAM: [u32; 21] = [
     0xD280_0061, // movz x1, #3     (Write, after the wait)
     0xD280_00C8, // movz x8, #6
     0xD400_0001, // svc #0
-    0xD280_0000, // movz x0, #0
-    0xD280_0068, // movz x8, #3     (Exit)
+    0xF940_03E0, // ldr x0, [sp]    (the read end, again)
+    0x9100_23E1, // add x1, sp, #8  (the buffer)
+    0xD280_0082, // movz x2, #4
+    0xD280_00A8, // movz x8, #5     (Read, the one end-of-file ends)
+    0xD400_0001, // svc #0
+    0xD280_0068, // movz x8, #3     (Exit — the status is the read's answer)
     0xD400_0001, // svc #0
 ];
 
