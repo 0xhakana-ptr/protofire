@@ -156,6 +156,16 @@ pub fn wait_for_a_wakeup() {
     // `msr daifclr, #2` clears the `I` bit.  The trap path's `eret` puts the
     // program's `PSTATE` back, so this mask does not outlive the call.
     //
+    // **The mask is not what stops the wake, and it was worth proving.**
+    // Clearing every bit — `msr daifclr, #0xf; wfi; msr daifset, #0xd`, which
+    // is how the previous tree wrote it — still left a started core's second
+    // `wfi` never returning: in a probe over thirty boots, the failing ones
+    // showed that core's `wfi` returning exactly once and then never again, and
+    // the boot ended `ended without confirmation` three times in forty.  So the
+    // interrupt is not being held off by a mask; the controller is not
+    // delivering it, which the register readings in this function's own
+    // documentation show directly.
+    //
     // SAFETY: `daifclr` is unprivileged at EL1, and a spin loop has no
     // preconditions.
     unsafe {
