@@ -92,10 +92,16 @@ the task rather than the frame, because entering the handler replaces the
 frame that described the fault.
 
 Verified by `fault at `, `process 4 died from a fault at `,
-`exit statuses ... 4 -> 139`, and — on aarch64 — `process 3 installed a fault
-handler at ` and `process 3 handled its own fault at `.  The other two machines
-have the mechanism but their program images do not yet take a deliberate
-fault, so nothing on their boots exercises it.
+`exit statuses ... 4 -> 139`, and on every machine `process 3 installed a
+fault handler at ` and `process 3 handled its own fault at `: the pipe's reader
+stores into its own read-execute code page and the kernel resumes it at the
+handler rather than killing it.
+
+The handler receives the faulting instruction's address in the **fifth**
+argument register, not the fourth: x86_64's fourth is `rcx`, which `int 0x80`
+uses for its return address.  It answers `ReturnFromException(resume, value)`
+with the address to continue at, because an instruction's length is the
+program's fact and not the kernel's — x86_64's vary.
 
 **Devices.**  The PCI scan, BARs assigned by the boot, and virtio-blk
 attached.  Verified by `block device from virtio-blk on pci` and `virtio-blk wrote and read back sector `.
