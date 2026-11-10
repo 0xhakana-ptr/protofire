@@ -65,7 +65,12 @@ pub const SECTOR_SIZE: usize = 512;
 /// A block device has one virtqueue for everything: reads, writes and flushes
 /// are all requests on queue 0.  A device with more than one queue is a device
 /// with more than one *channel*, not with a queue per operation.
-const REQUEST_QUEUE: u16 = 0;
+/// The one queue this driver keeps, and the one a boot's vector wiring names.
+///
+/// `pub` because the boot programs the device's MSI-X vector for **this**
+/// queue, and a queue index the boot guessed at would be a second fact about
+/// the driver kept in a second place.
+pub const REQUEST_QUEUE: u16 = 0;
 
 /// A block request as the device holds it while it is outstanding.
 ///
@@ -341,6 +346,25 @@ impl VirtioBlock {
             }
             taken += 1;
         }
+
+        // **Tell the device where the driver's interest now ends.**
+        //
+        // The queue's event index must advance with the completions this driver
+        // processes: the device interrupts when `used.idx` passes
+        // `used_event`, and an index left behind is one the device stops
+        // interrupting for until the counter wraps.  Measured when a
+        // completion vector was wired to an IMSIC with this write missing: the
+        // boot's own probe took no interrupt at all, and the mount that
+        // followed took one per completion — the device's suppression was
+        // reading a slot the driver had never allocated.  The slot's
+        // allocation is the queue's fix; this is the driver's half.
+        //
+        // Written every drain, taken or not: the value is the index the driver
+        // has processed through, so a drain that took nothing writes what the
+        // previous one already did.
+        let mut queue = self.queue.lock();
+        let processed_through = queue.last_used_index();
+        queue.set_used_event(processed_through);
         taken
     }
 

@@ -216,6 +216,33 @@ mod registers {
             unsafe { self.read(enable_offset(self.context()) + bank * 4) & (1 << bit) != 0 }
         }
 
+        /// Stop source `number` from reaching this context.
+        ///
+        /// The same shape the APLIC's silencing takes, and for the same reason:
+        /// a level source nobody serves re-delivers for as long as its wire is
+        /// high, and the controller's enable bit is the one stop this kernel
+        /// owns.  The PLIC's enables are per **context**, so this silences the
+        /// source for the context that claimed it.
+        ///
+        /// # Safety
+        ///
+        /// Called after [`Plic::enable`], for a source the trap path has
+        /// claimed and nobody has claimed a handler for.
+        pub unsafe fn disable_source(&self, number: usize) -> bool {
+            if number == 0 || number >= self.sources().min(MAX_SOURCES) {
+                return false;
+            }
+            let bank = number / 32;
+            let bit = number % 32;
+            // SAFETY: the caller's contract is this function's.
+            unsafe {
+                let offset = enable_offset(self.context()) + bank * 4;
+                let current = self.read(offset);
+                self.write(offset, current & !(1 << bit));
+            }
+            true
+        }
+
         /// Claim the highest-priority pending source, or `None` when nothing is
         /// pending.
         ///

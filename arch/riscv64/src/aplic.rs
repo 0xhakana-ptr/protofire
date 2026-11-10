@@ -84,10 +84,14 @@ pub const SOURCE_DELEGATED: u32 = 1 << 10;
 pub const TARGET_BASE: usize = 0x3004;
 pub const TARGET_HART_SHIFT: u32 = 18;
 pub const TARGET_HART_MASK: u32 = 0x3FFF;
-pub const TARGET_PRIORITY: u32 = 1;
+/// The low eleven bits of a target word: the delivery priority in direct mode
+/// and the message's identity in MSI mode.
+pub const TARGET_EIID_MASK: u32 = 0x7FF;
 
 /// The interrupt-enable registers: one bit per source, 32 per register.
 pub const SETIE_BASE: usize = 0x1E00;
+/// The write-one-to-disable registers, beside `setie`.
+pub const CLRIE_BASE: usize = 0x1F00;
 
 /// The per-hart interrupt delivery control block's base and stride.
 pub const IDC_BASE: usize = 0x4000;
@@ -173,13 +177,30 @@ impl Aplic {
         DOMAIN_ENABLE
     }
 
-    /// The word a source's target register needs: this hart, and a priority the
-    /// controller will actually deliver.
+    /// The word source `source`'s target register needs: this hart, and the
+    /// **identity the source's message carries**.
     ///
-    /// Priority zero is the APLIC's "never deliver", so it is never what this
-    /// writes.  The guest field stays zero: there is no hypervisor.
-    pub const fn target_word(hart: usize) -> u32 {
-        ((hart as u32 & TARGET_HART_MASK) << TARGET_HART_SHIFT) | TARGET_PRIORITY
+    /// The low eleven bits of a target word mean different things by mode —
+    /// the delivery priority in direct mode, the message's **EIID** in MSI
+    /// mode — and this writes the **source's own number** there for both.  In
+    /// direct mode a priority of zero is "never deliver", so a source number
+    /// (which starts at one) is a priority that delivers; in MSI mode it makes
+    /// the identity a device's message carries **the same number the trap
+    /// claims**, which is what lets the trap path recognise which device sent
+    /// it.
+    ///
+    /// That second property is not cosmetic, it is what ended a storm: the
+    /// first version wrote a constant here, so **every** wired source's
+    /// message landed on identity 1 — the console's and anything else's alike —
+    /// and a trap that claimed identity 1 could not tell the console's wire
+    /// from anything else, so it never acknowledged the 16550, whose level
+    /// wire stayed high, and the APLIC re-sent the message forever.  Measured:
+    /// 16,052 claims of identity 1 in six seconds, each with the IMSIC's own
+    /// pending bit clear after the claim, none resolving.
+    ///
+    /// The guest field stays zero: there is no hypervisor.
+    pub const fn target_word(hart: usize, source: usize) -> u32 {
+        ((hart as u32 & TARGET_HART_MASK) << TARGET_HART_SHIFT) | (source as u32 & TARGET_EIID_MASK)
     }
 
     /// The source-configuration word a wired, level-high source needs.
@@ -271,11 +292,13 @@ mod registers {
                 for source in 1..self.sources().min(MAX_SOURCES) {
                     self.write(Aplic::source_offset(source), Aplic::source_config());
                     // The target is what makes a source deliver at all: a
-                    // source with no target — or one at priority zero — is
-                    // enabled and never delivered.
+                    // source with no target — or one whose identity is zero —
+                    // is enabled and never delivered.  And the identity being
+                    // the source's own number is what lets the trap path name
+                    // the device, see [`Aplic::target_word`].
                     self.write(
                         Aplic::target_offset(source),
-                        Aplic::target_word(self.hart()),
+                        Aplic::target_word(self.hart(), source),
                     );
                 }
 
@@ -308,6 +331,36 @@ mod registers {
                 // read-modify-write of it would also write the bits this code
                 // read, which for a write-one register is every source that was
                 // already enabled.
+                self.write(offset, 1 << bit);
+            }
+            true
+        }
+
+        /// Stop source `number` from reaching this hart.
+        ///
+        /// A **level** source whose wire stays high re-sends its message for as
+        /// long as the wire is asserted, and a source with no driver is one
+        /// nobody will ever deassert: claimed, reported, and immediately
+        /// delivered again, for ever.  Silencing it at the controller is the
+        /// only stop that is this kernel's to make, and it is what turns a
+        /// device nobody serves into one printed line instead of a storm of
+        /// them.  Measured with a completion vector wired to an IMSIC on this
+        /// machine: an unhandled APLIC source took 41,201 deliveries in ten
+        /// seconds before this existed, and one after.
+        ///
+        /// # Safety
+        ///
+        /// Called after [`Aplic::enable`], for a source the trap path has
+        /// claimed and nobody has claimed a handler for.
+        pub unsafe fn disable_source(&self, number: usize) -> bool {
+            if number == 0 || number >= self.sources().min(super::MAX_SOURCES) {
+                return false;
+            }
+            let bit = number % 32;
+            let offset = super::CLRIE_BASE + (number / 32) * 4;
+            // SAFETY: the caller's contract is this function's.  Like `setie`,
+            // `clrie` is write-one-to-disable and needs no read.
+            unsafe {
                 self.write(offset, 1 << bit);
             }
             true
@@ -417,7 +470,7 @@ mod tests {
     use super::MAX_SOURCES;
     use super::SETIE_BASE;
     use super::TARGET_BASE;
-    use super::TARGET_PRIORITY;
+    use super::TARGET_EIID_MASK;
 
     /// The register offsets are the AIA's, written out so a reader can compare
     /// them against the specification instead of trusting the arithmetic.
@@ -478,25 +531,31 @@ mod tests {
         assert_eq!(config & super::SOURCE_DELEGATED, 0, "not delegated");
     }
 
-    /// A source's target names the hart and a priority that is not zero.
+    /// A source's target names the hart and **its own number**.
     ///
-    /// This is the register a PLIC does not have, and the one whose absence
-    /// makes an enabled source deliver nowhere: priority zero is the
-    /// controller's "never deliver".
+    /// The low eleven bits are the delivery priority in direct mode and the
+    /// message's identity in MSI mode; a source's own number works for both —
+    /// nonzero, so a direct-mode priority always delivers, and distinct per
+    /// source, so a claimed identity names the device.  The storm a constant
+    /// here produced is the measurement in [`Aplic::target_word`]'s own
+    /// comment.
     #[test]
-    fn every_source_names_a_hart_and_a_live_priority() {
-        assert_eq!(Aplic::target_word(0), TARGET_PRIORITY);
+    fn every_source_names_a_hart_and_its_own_identity() {
         assert_eq!(
-            Aplic::target_word(1),
-            (1 << 18) | TARGET_PRIORITY,
-            "hart one, and a priority above zero"
+            Aplic::target_word(0, 10),
+            10,
+            "the console's source, as an identity"
         );
-        assert_eq!(Aplic::target_word(3) >> 18, 3);
+        assert_eq!(Aplic::target_word(1, 10), (1 << 18) | 10);
+        assert_eq!(Aplic::target_word(0, 3) & TARGET_EIID_MASK, 3);
         assert_ne!(
-            Aplic::target_word(0) & 0xff,
-            0,
-            "priority zero never delivers"
+            Aplic::target_word(0, 3),
+            Aplic::target_word(0, 4),
+            "two sources must not share an identity"
         );
+        // A source number survives the eleven-bit field: the machines this
+        // tree boots declare 96 sources, and the field holds 2048.
+        assert_eq!(Aplic::target_word(0, 96) & TARGET_EIID_MASK, 96);
     }
 
     /// A source's enable register moves every thirty-two sources, and does not

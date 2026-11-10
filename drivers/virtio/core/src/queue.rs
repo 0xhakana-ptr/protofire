@@ -140,10 +140,28 @@ pub struct Rings {
 const AVAIL_HEADER_LEN: usize = 4;
 /// One available-ring entry.
 const AVAIL_ENTRY_LEN: usize = 2;
+/// The available ring's trailing `used_event` slot: the used-ring index at
+/// which the driver wants the device to interrupt it.
+///
+/// The slot exists only when `VIRTIO_F_RING_EVENT_IDX` is negotiated, and this
+/// driver negotiates it — but the first version **allocated no slot**, so the
+/// device read the event index from whatever memory followed the ring.  A
+/// driver that does not maintain the slot therefore gets a device whose
+/// suppression is decided by garbage: notifications that arrive late, or a
+/// notification per completion.  Measured once a completion vector was wired
+/// to an IMSIC: the boot's own probe took **no** interrupt (the garbage said
+/// "do not notify"), and the mount that followed took one per completion —
+/// hundreds — because the adjacent bytes had changed.
+const AVAIL_EVENT_LEN: usize = 2;
 /// The used ring's header: `flags` then `idx`.
 const USED_HEADER_LEN: usize = 4;
 /// One used-ring entry: `id` then `length`, both `u32`.
 const USED_ENTRY_LEN: usize = 8;
+/// The used ring's trailing `avail_event` slot, which the device writes to say
+/// where it is reading.  The driver never sets the used-ring flags the device
+/// would suppress on, so the slot is allocated for the layout's sake and left
+/// alone.
+const USED_EVENT_LEN: usize = 2;
 
 impl Rings {
     /// Allocate the three rings for a queue of `queue_size` entries.
@@ -155,8 +173,8 @@ impl Rings {
     pub fn new(queue_size: usize) -> Self {
         Self {
             descriptors: vec![Descriptor::default(); queue_size],
-            available: vec![0; AVAIL_HEADER_LEN + queue_size * AVAIL_ENTRY_LEN],
-            used: vec![0; USED_HEADER_LEN + queue_size * USED_ENTRY_LEN],
+            available: vec![0; AVAIL_HEADER_LEN + queue_size * AVAIL_ENTRY_LEN + AVAIL_EVENT_LEN],
+            used: vec![0; USED_HEADER_LEN + queue_size * USED_ENTRY_LEN + USED_EVENT_LEN],
             queue_size,
         }
     }
@@ -297,6 +315,22 @@ pub struct DeviceAddresses {
     pub descriptors: u64,
     pub available: u64,
     pub used: u64,
+}
+
+impl Rings {
+    /// Write the available ring's trailing `used_event` slot.
+    ///
+    /// The offset is the header plus the ring: the slot is the allocation's
+    /// last two bytes, which is why the allocation grew for it.
+    fn set_used_event(&mut self, index: u16) {
+        let at = AVAIL_HEADER_LEN + self.queue_size * AVAIL_ENTRY_LEN;
+        // SAFETY: `at + 2` is the allocation's own length, and this is a `u16`
+        // write into that slot.
+        unsafe {
+            core::ptr::write_unaligned(self.available.as_mut_ptr().add(at) as *mut u16, index);
+        }
+        fence(Ordering::Release);
+    }
 }
 
 impl VirtQueue {
@@ -476,6 +510,28 @@ impl VirtQueue {
         Some((id as u16, length))
     }
 
+    /// Tell the device to interrupt the driver once `used.idx` passes `index`.
+    ///
+    /// This writes the available ring's trailing `used_event` slot, and it is
+    /// what a driver that has processed its completions owes the device: an
+    /// event index left at a value the device has already passed is one the
+    /// device will not interrupt for until the counter wraps, and a driver
+    /// waiting on an interrupt would wait for ever.
+    ///
+    /// The write is `Release`: the completions the driver has read from the
+    /// used ring must be seen as consumed before the device is told where the
+    /// driver's interest now ends, or the device could notify and the driver
+    /// would miss what it was notified about.
+    pub fn set_used_event(&mut self, index: u16) {
+        self.rings.set_used_event(index)
+    }
+
+    /// The used-ring index the driver has processed through, which is the value
+    /// the device should be told to interrupt past.
+    pub fn last_used_index(&self) -> u16 {
+        self.last_used_index
+    }
+
     /// Return a chain to the free list.
     ///
     /// The chain is walked through `next` until a descriptor without `NEXT`,
@@ -633,19 +689,27 @@ mod tests {
 
     /// The rings are laid out the way the device reads them.
     ///
-    /// The available ring is `flags, idx, ring[]` in one object, and the used
-    /// ring is `flags, idx, {id, len}[]`.  A driver that held the header and
-    /// the array in two allocations would hand the device an address whose
-    /// neighbours are not the array it computes, a bug that looks like it
-    /// works on a quiet machine.
+    /// The available ring is `flags, idx, ring[], used_event` in one object,
+    /// and the used ring is `flags, idx, {id, len}[], avail_event`.  A driver
+    /// that held the header and the array in two allocations would hand the
+    /// device an address whose neighbours are not the array it computes, a bug
+    /// that looks like it works on a quiet machine.
+    ///
+    /// The two trailing slots are pinned by their own lengths because the
+    /// first version allocated neither: the device then read `used_event` from
+    /// whatever followed the ring, and its suppression was decided by garbage
+    /// — measured once a completion vector reached an IMSIC, as no interrupt
+    /// during the driver's probe and one per completion afterwards.
     #[test]
     fn the_rings_are_contiguous() {
         let mut queue = ready_queue(8);
         let rings = queue.rings_mut_for_address_check();
-        // The available ring: 4 bytes of header, then 8 entries of 2 bytes.
-        assert_eq!(rings.available_length(), 4 + 8 * 2);
-        // The used ring: 4 bytes of header, then 8 entries of 8 bytes.
-        assert_eq!(rings.used_length(), 4 + 8 * 8);
+        // The available ring: 4 bytes of header, then 8 entries of 2 bytes,
+        // then the `used_event` slot.
+        assert_eq!(rings.available_length(), 4 + 8 * 2 + 2);
+        // The used ring: 4 bytes of header, then 8 entries of 8 bytes, then
+        // the `avail_event` slot.
+        assert_eq!(rings.used_length(), 4 + 8 * 8 + 2);
         // And the device is told the header's address, which is the buffer's.
         assert_eq!(rings.available_address(), rings.available_buffer_address());
         assert_eq!(rings.used_address(), rings.used_buffer_address());

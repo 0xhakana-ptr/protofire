@@ -374,9 +374,11 @@ fn hart_index() -> usize {
 
 /// The AIA's supervisor IMSIC, when the tree describes one.
 ///
-/// `(msi page base, stride, identities)`.  The base is hart index zero's file;
+/// `(group base, stride, identities)`.  The base is the first hart's file;
 /// every hart's file is `stride` past the previous, and its **first page** is
-/// where a device's message is written.
+/// where a device's message is written.  A hart's file *index* is its position
+/// in [`imsic_file_index_for_hart`], and the base plus that index times the
+/// stride is the address a device must write.
 ///
 /// ## Which node
 ///
@@ -385,90 +387,119 @@ fn hart_index() -> usize {
 /// pairs name each hart's per-hart controller and the cause it delivers on,
 /// where **11 (0x0b) is machine mode and 9 (0x09) is supervisor mode**.  This
 /// kernel runs at S-mode, so the node whose pairs carry 9 is the one it may
-/// use, and the machine-mode one is not merely useless to it: writing through
-/// those CSRs is a different privilege level's business.
+/// use.
 ///
-/// ## The stride, and why it is not the `reg` size
+/// ## The stride, from the tree's own geometry
 ///
-/// Each node's `reg` is one file — `0x2000`, the MSI page and the register page
-/// a device writes to — while consecutive harts' files are further apart than
-/// that (`0x4000` on these machines).  The tree states no stride property, so
-/// this reads it **from the tree's own geometry when it can**: the second
-/// hart's file is at `stride` past the first, and a group's nodes are one per
-/// hart.  A group with one hart has nothing to measure and the stride does not
-/// matter, because no address is ever built from it.
+/// The node's `reg` is the **group's** window, and the number of files in it is
+/// the number of `interrupts-extended` pairs — one per hart.  So the stride is
+/// the window divided by the files, and on this machine that is one 4 KiB page:
+/// the tree says `reg = 0x28000000..0x28002000` for two harts, so hart 1's file
+/// is at `0x28001000`.
 ///
-/// A wrong stride here is caught rather than trusted: the boot's self-test
-/// writes an identity into **this hart's own** file and claims it back, and a
-/// message addressed to the wrong file is one this hart never receives.
+/// The first version read the stride as the `reg` size, which is the window and
+/// not the step, and a boot whose firmware cold-booted **hart 1** — QEMU
+/// alternates — wrote its self-test message to `0x28002000`, one page past the
+/// group: a store access fault at an address no device answers.  Measured.  The
+/// division is also why a wrong answer cannot hide: a stride of the window's
+/// own size puts hart 1 past the group, and the fault names the address.
 pub fn imsic() -> Option<(usize, usize, usize)> {
-    let tree = device_tree()?;
     let node = supervisor_imsic()?;
     let region = node.region()?;
     if region.address == 0 {
         return None;
     }
     let identities = node.property("riscv,num-ids")?.as_u32()? as usize;
-
-    // The stride: how far the *next* node's `reg` starts, when the tree
-    // describes more than one.  A single-file group answers the window's own
-    // size, which is only used to build an address a second hart would need —
-    // and a group with one file has no second hart.
-    let mut others = tree.all_compatible("riscv,imsics");
-    let stride = {
-        let mut measured = region.size as usize;
-        for candidate in &mut others {
-            // By address, because two `Node`s are handles onto one blob rather
-            // than values: the node this group is *at* is the one whose `reg`
-            // says so.
-            let Some(next) = candidate.region() else {
-                continue;
-            };
-            if next.address as usize > region.address as usize {
-                measured = next.address as usize - region.address as usize;
-                break;
-            }
-        }
-        measured
-    };
-
-    Some((region.address as usize, stride, identities))
+    let files = imsic_file_pairs(node)?;
+    if files == 0 {
+        return None;
+    }
+    Some((
+        region.address as usize,
+        region.size as usize / files,
+        identities,
+    ))
 }
 
-/// The IMSIC node whose `interrupts-extended` names **supervisor** cause 9.
+/// The number of hart files the supervisor IMSIC group holds.
+///
+/// One `interrupts-extended` pair per hart, which is what makes this the
+/// group's own answer rather than a guess: a machine that listed three harts
+/// has three files, and the window divided by three is its stride.
+fn imsic_file_pairs(node: fdt::Node<'_>) -> Option<usize> {
+    let property = node.property("interrupts-extended")?;
+    let cells = property.as_cells()?;
+    // The pairs are `(phandle, cause)`; a count of cells is half a count of
+    // pairs, and an odd tail is a malformed list the caller refuses.
+    Some(cells.count() / 2)
+}
+
+/// The position of `hart`'s file within the supervisor IMSIC group.
+///
+/// The `interrupts-extended` pairs list the group's harts in order, and each
+/// pair's phandle is that hart's per-hart interrupt controller.  So the file a
+/// message to `hart` must be written to is found the same way a PLIC context
+/// is: by matching the phandle, not by assuming the list is sorted.
+///
+/// `None` when the tree names no supervisor IMSIC, or when `hart` is not one of
+/// its files — a hart with no file cannot receive a message, and a caller that
+/// guessed an index would write into some other hart's file.
+pub fn imsic_file_index_for_hart(hart: usize) -> Option<usize> {
+    let tree = device_tree()?;
+    let node = supervisor_imsic()?;
+
+    // This hart's per-hart interrupt controller's phandle, from the CPU node.
+    let root = tree.root().ok()?;
+    let cpus = root.by_path("/cpus")?;
+    let cpu = cpus.children().find(|child| {
+        child
+            .reg()
+            .next()
+            .is_some_and(|region| region.address as usize == hart)
+    })?;
+    let wanted = cpu
+        .child("interrupt-controller")?
+        .property("phandle")?
+        .as_u32()?;
+
+    // The pairs, in order; the first pair naming this hart's controller is its
+    // file, whichever position that is.
+    let property = node.property("interrupts-extended")?;
+    let mut cells = property.as_cells()?;
+    let mut index = 0;
+    while let Some(phandle) = cells.next() {
+        let Some(cause) = cells.next() else { break };
+        if phandle == wanted && cause == 9 {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// The supervisor IMSIC's node, by its `interrupts-extended` cause.
 ///
 /// A machine-mode IMSIC's pairs carry cause 11.  A node with no
 /// `interrupts-extended` at all is not one this reader can classify, so it is
 /// refused rather than guessed at: reading a machine-mode file's CSRs from
 /// S-mode is not a way to find out.
-#[cfg(target_os = "none")]
 fn supervisor_imsic() -> Option<fdt::Node<'static>> {
     let tree = device_tree()?;
     for node in tree.all_compatible("riscv,imsics") {
         let Some(property) = node.property("interrupts-extended") else {
             continue;
         };
-        // The pairs are `(phandle, cause)`, and **any** pair naming 9 is this
+        // The pairs are `(phandle, cause)`; **any** pair naming 9 is this
         // node's supervisor half: the cause is the same for every hart in one
         // group on these machines.
         let mut cells = property.as_cells()?;
-        let mut at = 0;
         while let Some(_phandle) = cells.next() {
             let Some(cause) = cells.next() else { break };
             if cause == 9 {
                 return Some(node);
             }
-            at += 2;
-            let _ = at;
         }
     }
-    None
-}
-
-/// A host build has no tree to read.
-#[cfg(not(target_os = "none"))]
-fn supervisor_imsic() -> Option<fdt::Node<'static>> {
-    let _ = device_tree()?;
     None
 }
 

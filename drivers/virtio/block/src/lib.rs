@@ -37,6 +37,7 @@ extern crate alloc;
 pub mod device;
 pub mod request;
 
+pub use device::REQUEST_QUEUE;
 pub use device::VirtioBlock;
 pub use request::RequestType;
 pub use request::Status as RequestStatus;

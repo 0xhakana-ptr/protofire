@@ -473,13 +473,6 @@ fn finish_external(frame: &mut ExceptionFrame) {
     let Some(number) = (unsafe { controller.claim() }) else {
         return;
     };
-
-    // The console's UART is the one source this tree drives, and it is
-    // acknowledged at the *device* before the controller is told the source is
-    // finished.  The order is the point: a 16550 keeps its line raised until
-    // something reads `IIR`, so a source completed at the PLIC but not at the
-    // device arrives again the moment interrupts are unmasked, which is a storm
-    // rather than a handler.
     let is_console = crate::console_source().is_some_and(|source| source == number);
     let acknowledged = if is_console {
         // SAFETY: `number` is the console's own source.
@@ -536,8 +529,21 @@ fn finish_external(frame: &mut ExceptionFrame) {
     }
 
     if !handled {
+        // **A delivery nobody claimed is silenced, not re-armed.**  The print
+        // below used to be the whole answer, and on a level source that is no
+        // answer at all: the wire stays asserted, the controller delivers
+        // again, and the print becomes one turn of a storm.  Measured with an
+        // APLIC source nobody serves: 41,201 deliveries in ten seconds.  With
+        // the source silenced at its controller: one.
+        //
+        // SAFETY: the controller is installed and `number` is what `claim`
+        // answered.
+        let silenced = unsafe { controller.silence_source(number) };
         crate::serial::write_str("protofire: unhandled external interrupt ");
         crate::serial::write_u32(number as u32);
+        if silenced {
+            crate::serial::write_str(", silenced");
+        }
         crate::serial::write_str("\n");
     }
 }

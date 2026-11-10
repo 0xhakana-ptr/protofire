@@ -45,14 +45,33 @@
 use crate::config::ConfigSpace;
 use crate::config::DeviceAddress;
 
+/// PCI command register bit 10: the function must not use its INTx pin.
+///
+/// The MSI-X message control's bit 14 is **not** this — it is the function
+/// mask, which holds the whole table down.  A driver that asked MSI-X for the
+/// pin's silence in the wrong register masked its own vectors, and the
+/// interrupt it wired never fired.
+pub const COMMAND_INTX_DISABLE: u16 = 1 << 10;
+
+/// The command register's dword index in configuration space.
+pub const COMMAND_DWORD: u8 = 1;
+
 /// The capability id an MSI-X structure carries.
 pub const CAPABILITY_ID: u8 = 0x11;
 
 /// Message control, bit 15: MSI-X is enabled.
 pub const CONTROL_ENABLE: u16 = 1 << 15;
 
-/// Message control, bit 14: the function is allowed to use MSI-X rather than
-/// its INTx pin.
+/// Message control, bit 14: the **function mask** — set means every vector
+/// the function has is masked, which is the opposite of what its name
+/// suggests.
+///
+/// The first version set this bit on the argument that it "prefers MSI-X over
+/// the INTx pin", and the device then sent nothing: the mask is per the PCI
+/// specification a mask over the whole table, and a driver that set it while
+/// believing it an enablement wired an interrupt path that could not fire.
+/// The INTx fallback is refused in the **command register** (bit 10,
+/// `INTx Disable`), which is a separate register this module does not own.
 pub const CONTROL_FUNCTION_MASK: u16 = 1 << 14;
 
 /// Message control, bits 0..10: how many table entries the function has, minus
@@ -164,13 +183,14 @@ impl Capability {
         self.control & CONTROL_ENABLE != 0
     }
 
-    /// The message control value with MSI-X enabled and the INTx pin masked.
+    /// The message control value with MSI-X enabled and **nothing masked**.
     ///
-    /// Both bits, and they are different: bit 15 is the feature's enable and
-    /// bit 14 says the function must not fall back to its pin.  A driver that
-    /// set only bit 15 would have a device raising both.
+    /// Bit 15 is the feature's enable; bit 14 is the function mask, which set
+    /// would hold every vector down.  The INTx fallback is refused in the
+    /// command register's own `INTx Disable` bit, not here — see
+    /// [`COMMAND_INTX_DISABLE`].
     pub const fn enabled_control(&self) -> u16 {
-        (self.control & CONTROL_TABLE_SIZE_MASK) | CONTROL_ENABLE | CONTROL_FUNCTION_MASK
+        (self.control & CONTROL_TABLE_SIZE_MASK) | CONTROL_ENABLE
     }
 }
 
@@ -213,6 +233,22 @@ fn read_dword(config: &dyn ConfigSpace, address: DeviceAddress, offset: u8) -> u
     config.read_dword(address, offset / 4)
 }
 
+/// The byte address of MSI-X table entry `index`, in the BAR whose window
+/// starts at `bar_base`.
+///
+/// This is the arithmetic, and the caller does the write, because a table entry
+/// is device memory and the mapping is the machine's: the same entry, reached
+/// through a different mechanism on every machine this tree boots.  A caller
+/// that wrote through a cached mapping would put the entry somewhere the device
+/// never reads, and the interrupt would be a silence that says nothing.
+///
+/// The offset is eight-byte aligned (the capability's low three bits are the
+/// BAR number, which is why they overlap it), and one entry is sixteen bytes,
+/// so entry `index` is at `table_offset + index * 16`.
+pub fn entry_address(bar_base: usize, capability: &Capability, index: usize) -> usize {
+    bar_base + capability.table_offset as usize + index * ENTRY_SIZE
+}
+
 /// Enable MSI-X for the function whose capability was decoded.
 ///
 /// Writes the message control register and reads it back: a function that does
@@ -250,9 +286,11 @@ mod tests {
 
     use crate::config::ConfigSpace;
     use crate::config::DeviceAddress;
+    use crate::msix::Capability;
     use crate::msix::Entry;
     use crate::msix::capability;
     use crate::msix::enable;
+    use crate::msix::entry_address;
     use std::sync::Mutex;
 
     struct Fake {
@@ -323,6 +361,45 @@ mod tests {
         assert_eq!(found.table_size(), 4);
     }
 
+    /// An entry's address is the BAR's base, the capability's offset, and the
+    /// entry's index, and the three are independent.
+    ///
+    /// QEMU's virtio-blk puts its table in a BAR of its own at offset zero, so
+    /// the first entry's address is the BAR's base; the arithmetic is here
+    /// because a second entry is where a driver forgets the stride, and an
+    /// entry written over the pending-bit array is a table that lies.
+    #[test]
+    fn an_entry_is_the_bar_plus_the_offset_plus_the_index() {
+        let capability = Capability {
+            offset: 0x90,
+            control: 3,
+            table_bar: 4,
+            table_offset: 0x0000,
+            pba_bar: 4,
+            pba_offset: 0x0800,
+        };
+        assert_eq!(entry_address(0xF000_0000, &capability, 0), 0xF000_0000);
+        assert_eq!(entry_address(0xF000_0000, &capability, 1), 0xF000_0010);
+        assert_eq!(entry_address(0xF000_0000, &capability, 3), 0xF000_0030);
+
+        // A table at a non-zero offset inside its BAR: the offset and the index
+        // are separate terms, and confusing them writes the wrong entry.
+        let offset_capability = Capability {
+            table_offset: 0x0040,
+            ..capability
+        };
+        assert_eq!(
+            entry_address(0xF000_0000, &offset_capability, 2),
+            0xF000_0060
+        );
+        // And the pending-bit array is not part of the table's arithmetic.
+        assert_ne!(
+            entry_address(0xF000_0000, &offset_capability, 0),
+            0xF000_0000 + 0x0800,
+            "the table and the PBA are different regions"
+        );
+    }
+
     /// A structure whose id is not MSI-X is refused, which is what a capability
     /// walk needs to ask about every entry it meets.
     #[test]
@@ -333,11 +410,14 @@ mod tests {
 
     /// Enabling sets both the feature bit and the "do not use the pin" bit.
     ///
-    /// They are different: bit 15 turns MSI-X on and bit 14 says the function
-    /// must not fall back to INTx.  A driver that set only bit 15 has a device
-    /// raising both the message and the wire.
+    /// Bit 15 turns MSI-X on and **bit 14 must stay clear**: it is the
+    /// function mask, and set it holds every vector the function has down —
+    /// the opposite of an enablement.  The first version set it on the
+    /// argument that it refused the INTx pin; the device then sent nothing,
+    /// and the interrupt a boot wired never fired.  The pin's silence is the
+    /// command register's own `INTx Disable` bit, which the caller writes.
     #[test]
-    fn enabling_turns_off_the_pin_as_well() {
+    fn enabling_does_not_set_the_function_mask() {
         let config = fake();
         let found = capability(&config, ADDRESS, 0x98).unwrap();
         assert!(!found.is_enabled());
@@ -345,7 +425,11 @@ mod tests {
         assert!(enable(&config, ADDRESS, &found), "the write was taken");
         let after = capability(&config, ADDRESS, 0x98).unwrap();
         assert!(after.is_enabled());
-        assert_ne!(after.control & crate::msix::CONTROL_FUNCTION_MASK, 0);
+        assert_eq!(
+            after.control & crate::msix::CONTROL_FUNCTION_MASK,
+            0,
+            "the function mask holds every vector down"
+        );
     }
 
     /// An entry round-trips through the sixteen bytes the device reads.

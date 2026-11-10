@@ -180,6 +180,13 @@ fn probe_device(device: &alloc::sync::Arc<dyn block::QueuedBlockDevice>) {
         arch::serial::write_hex(read_back[0] as u64);
     }
     arch::serial::write_str("\n");
+
+    // The count of the device's own completion interrupts is reported at the
+    // boot's end, beside the other machine facts, and not here: on a machine
+    // whose hart line comes up after this probe, the device's message is held
+    // pending until that line is on, so a count read here would describe the
+    // ordering of the boot rather than the mechanism.  See
+    // `programs::report_and_finish`, where the total is the boot's.
 }
 
 /// Write the image to a disk that is not a PyroFS volume.

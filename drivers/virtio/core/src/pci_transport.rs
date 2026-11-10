@@ -351,6 +351,24 @@ impl Transport for PciTransport {
     fn read_device_config_byte(&self, offset: u64) -> u8 {
         self.device_config.read8(offset)
     }
+
+    /// Map a queue's completion interrupt to an MSI-X vector.
+    ///
+    /// The write and the read-back are the specification's handshake, and the
+    /// read-back is not ceremony: the device latches the vector when it can, so
+    /// a value that does not stick is a mapping it refused.  A boot that
+    /// believed the write would later wait on a completion interrupt the device
+    /// is not sending, and the failure would look like a wedged device.
+    ///
+    /// The queue is selected around the write because `queue_msix_vector` is
+    /// per-queue state: a write to whatever queue was last selected would map
+    /// the wrong one, and the wrong one's completions would go nowhere.
+    fn set_queue_vector(&self, queue: u16, vector: u16) -> bool {
+        self.common.write16(common::QUEUE_SELECT, queue);
+        self.common.write16(common::QUEUE_MSIX_VECTOR, vector);
+        self.common.write16(common::QUEUE_SELECT, queue);
+        self.common.read16(common::QUEUE_MSIX_VECTOR) == vector
+    }
 }
 
 #[cfg(test)]

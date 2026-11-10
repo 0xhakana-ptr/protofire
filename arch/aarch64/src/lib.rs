@@ -283,6 +283,32 @@ pub unsafe fn message_frame() -> Option<gicv2m::Frame> {
     Some(unsafe { gicv2m::Frame::probe(base) })
 }
 
+/// Where a device's MSI must be written, when this boot wires one.
+///
+/// `None`, and that is a scoping statement rather than a claim that this
+/// machine cannot receive a message: the GICv2m frame is a window a device's
+/// write reaches, but its SPI range is allocated by the frame's `MSI_TYPER` and
+/// its data word carries the SPI — a different message protocol from the
+/// IMSIC's bare identity, and one no device in this tree is wired to yet.
+/// Wiring it is its own change, with its own boot evidence.
+///
+/// The kernel's block-device MSI-X path treats this answer as "complete
+/// through the driver's polling", which is what every aarch64 boot does today.
+pub fn message_page() -> Option<usize> {
+    None
+}
+
+/// Enable an identity for a device's message: nothing to enable, because
+/// [`message_page`] names no destination on this machine.
+///
+/// # Safety
+///
+/// A no-op; the caller's contract is [`message_page`] having answered, which it
+/// does not here.
+pub unsafe fn enable_message_identity(_identity: u32) -> bool {
+    false
+}
+
 /// The exception level a program runs at.
 ///
 /// Named because it appears in `SPSR_EL1`'s `M` field, and a bare `0b0000` in

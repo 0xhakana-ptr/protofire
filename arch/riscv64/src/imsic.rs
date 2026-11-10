@@ -63,6 +63,18 @@ pub const EITHRESHOLD_ACCEPT_ALL: u64 = 0;
 /// `n` is select `base + n * 2`, not `base + n`.
 pub const SELECT_STRIDE: u64 = 2;
 
+/// The identity OpenSBI's S-mode inter-processor interrupt arrives as.
+///
+/// The firmware enables this identity in every hart's supervisor file at hart
+/// start — measured: `eie` read `0x2` before this kernel enabled anything but
+/// the self-test's own identity — and delivers an IPI by writing it into the
+/// target hart's file.  A kernel that mapped a device onto identity 1 would be
+/// mapped onto the machine's IPI, and the two would be counted as each other.
+///
+/// The kernel's own IPI send goes through the firmware's call, so this is a
+/// fact about the machine's firmware and not a choice this tree made.
+pub const IPI_IDENTITY: u32 = 1;
+
 /// The shift and mask `stopei` packs an identity into.
 pub const CLAIM_IDENTITY_SHIFT: u32 = 16;
 pub const CLAIM_IDENTITY_MASK: u64 = 0x3FF;
@@ -150,6 +162,85 @@ impl Imsic {
     pub const fn holds(&self, identity: u32) -> bool {
         identity > 0 && identity < self.identities()
     }
+}
+
+/// The IMSIC the boot brought up, behind the static the trap path reads.
+///
+/// The same shape the APLIC's controller static is: written once, before any
+/// line can arrive, read from the trap path where there is no context to be
+/// handed one.  `None` on a machine whose tree names no IMSIC, which is the
+/// state the CSR pair's legality rides on — see this module's table.
+#[cfg(target_os = "none")]
+static CONTROLLER: cell::SyncUnsafeCell<Option<Imsic>> = cell::SyncUnsafeCell::new(None);
+
+/// Record the IMSIC the boot enabled.
+///
+/// # Safety
+///
+/// Called once, from the boot, before any message can arrive.
+#[cfg(target_os = "none")]
+pub unsafe fn set_controller(imsic: Imsic) {
+    // SAFETY: the caller promises this is the only write, and that it happens
+    // before any device can send a message.
+    unsafe { *CONTROLLER.get() = Some(imsic) };
+}
+
+/// The IMSIC the boot enabled, if its tree named one.
+///
+/// `None` is the answer that keeps the CSR pair untouched: a machine without an
+/// IMSIC implements no `siselect`/`sireg`, and reading one there is an illegal
+/// instruction.
+#[cfg(target_os = "none")]
+pub fn controller() -> Option<Imsic> {
+    // SAFETY: written once by the boot before any message can arrive.
+    unsafe { *CONTROLLER.get() }
+}
+
+/// Where a device's message must be written: the **boot hart's** MSI page.
+///
+/// `None` on a machine with no IMSIC, which is also the answer that keeps the
+/// CSR pair untouched.  The boot hart is the right file for this kernel's
+/// devices because the code that submits to them runs on the boot CPU, and a
+/// message addressed to another hart's file is one delivered to a hart whose
+/// trap path has no reason to expect it.
+///
+/// The identity is the caller's to choose and to enable; this answers only the
+/// address.
+#[cfg(target_os = "none")]
+pub fn message_page() -> Option<usize> {
+    let imsic = controller()?;
+    // The file index is the tree's pairing, not the hart id: see
+    // `boot::imsic_file_index_for_hart`, whose failure here is a hart with no
+    // file, which cannot receive a message at all.
+    let index = crate::boot::imsic_file_index_for_hart(crate::smp::boot_hart())?;
+    Some(imsic.msi_page(index))
+}
+
+/// Allow `identity` to be delivered to the boot hart's file.
+///
+/// An identity the file does not have enabled is one whose messages are held
+/// pending for ever — the device did its part, the file kept them — which looks
+/// exactly like a device that never sent anything.  So the enable is part of
+/// wiring a device's message path, not an optimisation.
+///
+/// `false` when there is no IMSIC, or when the identity is not one the file
+/// holds.
+///
+/// # Safety
+///
+/// The tree named an IMSIC; this is reachable only through
+/// [`message_page`](Self::message_page) having answered.
+#[cfg(target_os = "none")]
+pub unsafe fn enable_message_identity(identity: u32) -> bool {
+    let Some(imsic) = controller() else {
+        return false;
+    };
+    if !imsic.holds(identity) {
+        return false;
+    }
+    // SAFETY: the tree named an IMSIC, so the CSR pair exists.
+    unsafe { imsic.enable_identity(identity) };
+    true
 }
 
 #[cfg(target_os = "none")]
@@ -298,7 +389,7 @@ mod registers {
             unsafe { read(EIDELIVERY) & EIDELIVERY_ENABLE != 0 }
         }
 
-        /// Deliver `identity` to this hart's file exactly as a device would.
+        /// Deliver `identity` to hart `index`'s file exactly as a device would.
         ///
         /// The 4-byte store is the whole message protocol: the address selects
         /// the file and the word is the identity, bare — no bit set above it.

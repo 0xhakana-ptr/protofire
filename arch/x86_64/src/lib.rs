@@ -134,6 +134,28 @@ pub unsafe fn message_frame() -> Option<()> {
     None
 }
 
+/// Where a device's MSI must be written, when this boot wires one.
+///
+/// `None`: x86_64's destination is the local APIC itself, and an MSI capability
+/// is an address-and-data pair the device writes there — but the address this
+/// machine would name is the APIC's MSI window, which is per-device programming
+/// this boot does not do.  A device's completion is reached by the driver's
+/// polling, as it is today.
+pub fn message_page() -> Option<usize> {
+    None
+}
+
+/// Enable an identity for a device's message: nothing to enable, because
+/// [`message_page`] names no destination on this machine.
+///
+/// # Safety
+///
+/// A no-op; the caller's contract is [`message_page`] having answered, which it
+/// does not here.
+pub unsafe fn enable_message_identity(_identity: u32) -> bool {
+    false
+}
+
 /// What a supervisor call's handler answers.
 ///
 /// Re-exported from `trap` rather than defined here: the call path and the

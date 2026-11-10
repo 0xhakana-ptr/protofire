@@ -198,6 +198,24 @@ pub trait Transport: Send + Sync {
 
     /// Read one byte from the device-specific configuration.
     fn read_device_config_byte(&self, offset: u64) -> u8;
+
+    /// Map the selected queue's completion interrupt to MSI-X vector `vector`.
+    ///
+    /// Section 4.1.4.3.2: the driver writes `queue_msix_vector` and reads it
+    /// back; the device latches the mapping **asynchronously**, so an answer
+    /// that does not equal what was written is a mapping the device refused —
+    /// usually no vector left — and a driver that believed the write would wait
+    /// for an interrupt that never comes.
+    ///
+    /// `false` is the answer for a transport with no MSI-X at all, which is the
+    /// ordinary state: a device on a machine with no message-signalled
+    /// interrupt destination completes through its driver's polling, and no
+    /// vector is mapped.  The default is that answer, so a transport that has
+    /// no vector mechanism to speak of says so rather than pretending.
+    fn set_queue_vector(&self, queue: u16, vector: u16) -> bool {
+        let _ = (queue, vector);
+        false
+    }
 }
 
 /// The transport a host build presents: none.

@@ -261,7 +261,7 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     // while the scan ran over ECAM reads every capability as `0xFF`, which is
     // what a port that does not exist answers, and reports the device as
     // having none.
-    let transport = match PciTransport::new(config, device, &map_bar) {
+    let transport = match PciTransport::new(config.clone(), device, &map_bar) {
         Ok(transport) => transport,
         Err(error) => {
             arch::serial::write_str("protofire: virtio transport failed: ");
@@ -292,10 +292,14 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
             return None;
         }
     };
-    Some(FoundBlockDevice {
-        transport: Arc::new(transport),
-        device,
-    })
+    let transport = Arc::new(transport);
+
+    // The completion interrupt, when this machine can receive a message.
+    // Wired here rather than in the driver because the identity is the boot's
+    // to hand out and the machine's MSI destination is `arch`'s to name; the
+    // driver keeps completing through its own polling either way, so a machine
+    // without a destination loses nothing.
+    Some(FoundBlockDevice { transport, device })
 }
 
 /// The address the device sees, for an address this code can use.

@@ -422,6 +422,20 @@ pub unsafe fn install_interrupt_table() -> bool {
     // must be able to receive.  A machine with no IMSIC in its tree does no
     // part of this — the CSR pair an IMSIC is driven through is an **illegal
     // instruction** there, measured on `virt` and on `virt,aia=aplic`.
+    // The controller **the trap claims through**, in the order the machines
+    // deliver: an IMSIC first, because a machine that has one delivers every
+    // external interrupt as a message into a hart's file — including the ones
+    // an APLIC in message mode generates from its wired sources — and its claim
+    // is the only one that answers.  An APLIC in direct mode next; a PLIC last.
+    //
+    // A machine with an APLIC **and** an IMSIC still claims through the IMSIC,
+    // and the APLIC is enabled beside it: its domain is locked in message mode
+    // — `domaincfg` reads `0x80000104`, `DM` set and read-only — so a wired
+    // source becomes a message, and what this boot is missing is the sending
+    // half (the domain's message address and each source's identity), which
+    // nothing here would exercise because no device on these machines sends
+    // one.  The line below says so rather than implying the source works.
+    let mut controller = None;
     if let Some((msi_base, stride, identities)) = boot::imsic() {
         let imsic = imsic::Imsic::new(msi_base, stride, identities as u32);
         // SAFETY: the tree named an IMSIC, so this hart implements the CSR
@@ -429,6 +443,13 @@ pub unsafe fn install_interrupt_table() -> bool {
         unsafe {
             bring_up_imsic(&imsic);
         }
+        // The controller static is what a device's message path reads: without
+        // it, `message_page` answers `None` and a boot on this machine would
+        // wire no vector and count no completions, which looks identical to a
+        // machine without an IMSIC.
+        // SAFETY: written once, before any message can arrive.
+        unsafe { imsic::set_controller(imsic) };
+        controller = Some(external::External::Imsic(imsic));
     }
 
     if let Some((base, hart, sources)) = boot::aplic() {
@@ -437,26 +458,35 @@ pub unsafe fn install_interrupt_table() -> bool {
         // memory, and this runs once on the boot hart.
         unsafe {
             aplic.enable();
-            // A machine that pairs the APLIC with an IMSIC locks the domain in
-            // **message** mode — measured: `domaincfg` reads `0x80000104` with
-            // `DM` set and read-only — and a wired source then becomes a
-            // message this kernel has no IMSIC driver to receive.  The
-            // controller is still installed (its claim path is real and is what
-            // a driver would use), and the boot says so rather than reporting a
-            // source it cannot take.
-            if !aplic.is_direct() {
-                // The APLIC is in message mode and its `DM` bit is read-only,
-                // so its sources become MSIs.  The IMSIC is now driven (above),
-                // so the receiving half exists; what is missing is the sending
-                // half — the APLIC's per-domain message address and the
-                // identity each source is assigned — which no device here would
-                // exercise, because nothing on this machine sends an MSI.
-                crate::serial::write_str(
-                    "protofire: the aplic is in message mode; its sources are not programmed to send\n",
-                );
+            // In message mode every wired source's message carries its own
+            // source number as its identity ([`aplic::Aplic::target_word`]),
+            // and the file's enable bit is the **filter**: a message whose
+            // identity is not enabled is held pending for ever, and the device
+            // it came from looks silent.  That is the shape this kernel wants,
+            // and deliberately not the whole range: measured, enabling every
+            // identity 1..96 turned every wired line on this machine — most of
+            // them belonging to devices with no driver — into a trap per turn
+            // of a storm, because a level wire with nobody to answer it is
+            // answered by nobody.  Only the sources a driver claims get an
+            // identity, which is the same rule the PLIC path follows: a source
+            // is enabled when its device asks.
+            if !aplic.is_direct()
+                && let Some(source) = crate::console_source()
+                && imsic::enable_message_identity(source as u32)
+            {
+                crate::serial::write_str("protofire: the aplic is in message mode; wired source ");
+                crate::serial::write_u32(source as u32);
+                crate::serial::write_str(" delivers as its own imsic identity\n");
             }
-            trap::set_controller(external::External::Aplic(aplic));
         }
+        if controller.is_none() {
+            controller = Some(external::External::Aplic(aplic));
+        }
+    }
+
+    if let Some(controller) = controller {
+        // SAFETY: written once, before any line can arrive.
+        unsafe { trap::set_controller(controller) };
         return true;
     }
 
@@ -513,10 +543,17 @@ unsafe fn bring_up_imsic(imsic: &imsic::Imsic) {
     // SAFETY: the caller's contract is this function's.
     unsafe { imsic.enable_this_hart() };
 
-    // This hart's index among the machine's harts, which is the file's position
-    // in the group.  The hart list the tree gives is ordered by id on these
-    // machines, and the boot hart is the one firmware cold-booted.
-    let index = smp::boot_hart();
+    // This hart's file index in the group, from the tree's own pairing rather
+    // than from the hart id: the pairs list the group's files in order, and a
+    // machine whose list is not sorted by id would put a hart's file somewhere
+    // its hart id does not name.  `None` here is a hart with no file, which
+    // cannot receive a message and is reported rather than tested.
+    let Some(index) = boot::imsic_file_index_for_hart(smp::boot_hart()) else {
+        crate::serial::write_str("protofire: imsic has no file for hart ");
+        crate::serial::write_u32(smp::boot_hart() as u32);
+        crate::serial::write_str("\n");
+        return;
+    };
 
     // The highest identity this file holds, which no device is given.
     let Some(test_identity) = imsic.identities().checked_sub(1) else {
@@ -531,11 +568,14 @@ unsafe fn bring_up_imsic(imsic: &imsic::Imsic) {
     };
     // SAFETY: as above, the claim path.
     let pending = unsafe { imsic.is_pending(test_identity) };
-    // SAFETY: as above.
+    // SAFETY: as above, the claim path.
+    // SAFETY: as above, the claim path.
     let claimed = unsafe { imsic.claim() };
 
     crate::serial::write_str("protofire: imsic at ");
     crate::serial::write_hex(imsic.base() as u64);
+    crate::serial::write_str(", stride ");
+    crate::serial::write_u32(imsic.stride() as u32);
     crate::serial::write_str(", hart file ");
     crate::serial::write_u32(index as u32);
     crate::serial::write_str(", ");
@@ -551,6 +591,76 @@ unsafe fn bring_up_imsic(imsic: &imsic::Imsic) {
         crate::serial::write_u32(claimed.unwrap_or(0));
         crate::serial::write_str(")\n");
     }
+}
+
+/// Where a device's MSI must be written, when this machine can receive one.
+///
+/// The **boot hart's** IMSIC page, because the code that submits to the
+/// machine's devices runs on the boot CPU and the trap that answers a message
+/// arrives on the hart whose file the message named.  `None` on a machine whose
+/// tree names no IMSIC — and that answer is load-bearing, since the CSR pair an
+/// IMSIC is driven through is an illegal instruction on those machines.
+///
+/// The identity is the caller's to choose, from the range this file holds; see
+/// [`enable_message_identity`], whose enable is part of wiring a message path
+/// rather than an optimisation.
+#[cfg(target_os = "none")]
+pub fn message_page() -> Option<usize> {
+    imsic::message_page()
+}
+
+/// This hart's IMSIC bring-up, for a **started** hart.
+///
+/// Each hart's file is its own: the delivery switch, the threshold and the
+/// identity enables are per-hart state a `hart_start` does not carry over, so a
+/// started hart that skipped this would hold every message addressed to it
+/// pending for ever.  And the self-test runs here too, because the boot hart's
+/// own self-test only exercises the boot hart's file — the **stride** between
+/// files is what a second hart's self-test proves, and a wrong stride is a
+/// message delivered to a hart with no handler.
+///
+/// # Safety
+///
+/// Called on the hart itself, after its page table is installed and before it
+/// can take a message.
+#[cfg(target_os = "none")]
+pub unsafe fn bring_up_imsic_on_this_hart() {
+    let Some((msi_base, stride, identities)) = boot::imsic() else {
+        return;
+    };
+    let imsic = imsic::Imsic::new(msi_base, stride, identities as u32);
+    // SAFETY: the tree named an IMSIC, so this hart implements the CSR pair.
+    unsafe { bring_up_imsic(&imsic) };
+}
+
+/// A host has no device to give a message to.
+#[cfg(not(target_os = "none"))]
+pub fn message_page() -> Option<usize> {
+    None
+}
+
+/// Allow `identity` to be delivered to the boot hart's IMSIC file.
+///
+/// A host has nothing to enable; `false` is the answer a host build reports.
+///
+/// # Safety
+///
+/// [`message_page`] answered, so this machine has an IMSIC and the file is on.
+#[cfg(target_os = "none")]
+pub unsafe fn enable_message_identity(identity: u32) -> bool {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { imsic::enable_message_identity(identity) }
+}
+
+/// A host has no IMSIC to enable an identity in.
+///
+/// # Safety
+///
+/// A no-op; the caller's contract is [`message_page`] having answered, which it
+/// does not on a host.
+#[cfg(not(target_os = "none"))]
+pub unsafe fn enable_message_identity(_identity: u32) -> bool {
+    false
 }
 
 /// This hart's id as the entry recorded it, for a PLIC context lookup.

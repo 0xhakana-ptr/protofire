@@ -298,17 +298,36 @@ instruction**.  Measured: `virt` and `virt,aia=aplic` both stop with
 read unconditionally, and both boot to completion when the read is gated on the
 tree as it now is.
 
+**The APLIC's message mode delivers to the IMSIC, and each source's message
+carries its own number.**  On `-machine virt,aia=aplic-imsic` the APLIC is
+locked in message mode (`domaincfg` reads `0x80000104`, `DM` set and
+read-only), so a wired source becomes a message into the IMSIC.  Each source's
+target word names the hart and **the source's own number as the identity** —
+measured, a constant there put every wired source's message onto identity 1,
+which is also the firmware's inter-processor identity (`eie` reads `0x2` at hart
+start, set by the firmware), and a trap that claimed identity 1 could not tell
+the console's level wire from an IPI: the wire stayed high and the APLIC
+re-sent for ever, 16,052 claims in six seconds.  With the identity as the
+source's own, the file's enable is the **filter** — only the sources a driver
+claims get one, because enabling the whole range turned every wired line with
+nobody to answer it into a storm (41,201 deliveries in ten seconds from one
+source, silenced at its controller once the trap path stopped re-arming it).
+Those boots finish, with `console interrupt(s) taken = 0` — the console's own
+message is held pending in the file, and the trap that would take it is a later
+change.
+
 Two limits remain, both measured:
 
-- **The APLIC's message mode is not programmed.**  On
-  `-machine virt,aia=aplic-imsic` QEMU locks the APLIC in message mode —
-  `domaincfg` reads `0x80000104`, `DM` set and read-only — so a wired source
-  becomes an MSI.  The receiving half now exists (above); what is missing is
-  the sending half: the domain's message address and the identity each source is
-  assigned.  Nothing on this machine sends an MSI, so no device would exercise
-  it, and the boot says `the aplic is in message mode; its sources are not
-  programmed to send` rather than implying the source works.  Those boots still
-  finish, with `console interrupt(s) taken = 0`.
+- **A PCI device's MSI-X does not yet reach the file.**  The wiring exists —
+  the block device's queue vector mapped, its table entry written and read
+  back, MSI-X enabled — and one boot of this session saw the device's
+  completion claimed and counted; the cleanup's boots did not reproduce it
+  (0 of 4).  A claim without a reproducible measurement is not a mechanism, so
+  the wiring is not in this tree, and the block device completes through its
+  driver's polling as every other machine's does.  What the session did pin:
+  the file's identity space on this machine does not deliver identity 128
+  (written, read back enabled, never taken) while identity 20 does — QEMU's own
+  MSI write path refuses a value past a bound the tree does not name.
 - **Only one source is claimed**, so a second device's interrupt has no
   handler.  The controller can name every source the tree declares and the
   claim path completes whichever one arrives; what is missing is a driver per
