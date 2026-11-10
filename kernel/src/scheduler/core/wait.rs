@@ -150,6 +150,32 @@ impl Scheduler {
         answer
     }
 
+    /// Park the current task until the process `pid` exits, unless it has.
+    ///
+    /// `WaitProcessOf`'s park, with the same lock discipline as
+    /// [`Self::block_unless_exit`]: the lookup and the park are one critical
+    /// section, so a child's exit either happened before the lookup saw it or
+    /// finds the waiter already in the blocked set.
+    ///
+    /// Answers a [`PidWait`], because the three outcomes are genuinely
+    /// different and a caller that folded any two of them together would be
+    /// wrong:
+    ///
+    /// - the process ended, with its status;
+    /// - no task has that pid — a fact to report, not a reason to wait;
+    /// - it exists and has not ended, which is the one case that parks.
+    pub fn block_unless_pid(&mut self, cpu: usize, frame: &Context, pid: u32) -> PidWait {
+        let answer = match self.exit_status(pid) {
+            Some(Some(status)) => PidWait::Ended(status),
+            Some(None) => PidWait::NotYet,
+            None => PidWait::NoSuchProcess,
+        };
+        if matches!(answer, PidWait::NotYet) {
+            self.block(cpu, frame);
+        }
+        answer
+    }
+
     /// Wake every blocked task, answering how many.
     ///
     /// Every blocked task wakes, because a wait queue would record *which*
@@ -186,4 +212,20 @@ impl Scheduler {
             .filter(|task| matches!(task.state, State::Sleeping { .. }))
             .count()
     }
+}
+
+/// What a wait on one pid found.
+///
+/// Three outcomes rather than an `Option<Option<_>>`: the nested option has
+/// the same three cases but nothing forces a caller to name them, and the
+/// mistake it invites — treating "no such process" as "not yet" — is a wait
+/// that parks for ever on a pid nothing will ever have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PidWait {
+    /// The process ended, with the status it exited with.
+    Ended(usize),
+    /// It exists and has not ended: the caller parks, and its exit wakes.
+    NotYet,
+    /// No task has that pid.
+    NoSuchProcess,
 }

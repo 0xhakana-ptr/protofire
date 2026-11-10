@@ -358,17 +358,16 @@ const PIPE_READER_PROGRAM: [u32; 28] = [
     addi(REGISTER_A0 as u32 + 2, 0, 4), // li a2, #4
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Read as i32),
     0x0000_0073, // ecall
-    // The wait.  Its answer is **not** this program's status: `WaitProcess`
-    // promises "some process finished", and the first to exit can be the
-    // forked child.  What the wait proves is that the call ran, and the
-    // kernel says so on its own line.
+    // Wait for **the writer**, by pid, and make its status this program's.
+    // `WaitProcess` answers about whichever process finished first, and this
+    // boot's forked child dies before the writer does.
+    addi(REGISTER_A0 as u32, 0, 2), // li a0, #2      (the writer's pid)
     addi(
         REGISTER_A7 as u32,
         0,
-        abi::SyscallNumber::WaitProcess as i32,
+        abi::SyscallNumber::WaitProcessOf as i32,
     ),
-    0x0000_0073,                    // ecall
-    addi(REGISTER_A0 as u32, 0, 0), // the exit status is this program's own
+    0x0000_0073, // ecall
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
     0x0000_0073, // ecall
 ];

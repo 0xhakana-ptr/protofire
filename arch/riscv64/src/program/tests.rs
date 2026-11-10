@@ -288,7 +288,7 @@ fn the_reader_reads_to_end_of_file_and_waits_for_the_writer() {
             abi::SyscallNumber::Read as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Read as usize,
-            abi::SyscallNumber::WaitProcess as usize,
+            abi::SyscallNumber::WaitProcessOf as usize,
             abi::SyscallNumber::Exit as usize,
         ],
         "the reader writes, reads, writes, reads to end-of-file, waits, exits"

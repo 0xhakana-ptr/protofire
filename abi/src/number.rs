@@ -326,13 +326,24 @@ pub enum SyscallNumber {
     /// that outlived its program would make "trusted" a property of the
     /// machine's uptime.
     TrustAnchorRemove = 195,
+    /// wait_process_of, wait for **one named** process to end, answering its
+    /// exit status (#196).
+    ///
+    /// `WaitProcess` answers about whichever process finished first, which is
+    /// all a boot with one process tree could say when it was added.  It is
+    /// the wrong answer for a parent that wants to know how *its* child ended:
+    /// the child's status arrives only if the child happens to be the first,
+    /// and a status line built from it can report another process's death.
+    /// The argument is the pid the caller is waiting for, and a pid that has
+    /// not exited is a park the pid's exit wakes.
+    WaitProcessOf = 196,
 }
 
 /// How many syscall numbers this build serves.
 ///
 /// The dispatch table is sized by it and a program's `SYSCALL_COUNT` must not
 /// exceed it, so it is public: it is the number both sides agree on.
-pub const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::TrustAnchorRemove as u32 + 1;
+pub const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::WaitProcessOf as u32 + 1;
 
 #[cfg(test)]
 mod tests {
@@ -349,7 +360,7 @@ mod tests {
     fn the_public_range_ends_at_the_last_number() {
         assert_eq!(
             PUBLIC_SYSCALL_COUNT,
-            SyscallNumber::TrustAnchorRemove as u32 + 1
+            SyscallNumber::WaitProcessOf as u32 + 1
         );
     }
 
@@ -371,5 +382,6 @@ mod tests {
         assert_eq!(SyscallNumber::EpollWait as usize, 120);
         assert_eq!(SyscallNumber::TlsConnect as usize, 121);
         assert_eq!(SyscallNumber::TrustAnchorRemove as usize, 195);
+        assert_eq!(SyscallNumber::WaitProcessOf as usize, 196);
     }
 }

@@ -148,16 +148,16 @@ const PIPE_READER_PROGRAM: [u32; 28] = [
     0xD280_0082, // movz x2, #4
     0xD280_00A8, // movz x8, #5     (Read, the one end-of-file ends)
     0xD400_0001, // svc #0
-    // The wait.  Its answer is **not** this program's status: `WaitProcess`
-    // promises "some process finished", not "the one you meant", and the boot
-    // has four — the first to exit can be the forked child that died by its
-    // own bad write.  A status taken from the answer would therefore be a
-    // number about another process.  What the wait proves is that the call
-    // ran and returned, and the kernel says so on its own line.
-    0xD280_0308, // movz x8, #24    (WaitProcess)
+    // Wait for **the writer**, by pid, and make its status this program's.
+    // `WaitProcess` answers about whichever process finished first, and this
+    // boot's forked child dies before the writer does — so the status it
+    // hands back can be another process's.  `WaitProcessOf(2)` names the one
+    // this program is waiting for, and `2` is the writer's own number because
+    // the boot names each program after the number it was built with.
+    0xD280_0040, // movz x0, #2     (the writer's pid)
+    0xD280_1888, // movz x8, #196   (WaitProcessOf)
     0xD400_0001, // svc #0
-    0xD280_0000, // movz x0, #0     (the exit status is this program's own)
-    0xD280_0068, // movz x8, #3     (Exit)
+    0xD280_0068, // movz x8, #3     (Exit — the status is the writer's)
     0xD400_0001, // svc #0
 ];
 

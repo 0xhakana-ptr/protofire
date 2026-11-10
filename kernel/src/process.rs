@@ -546,6 +546,56 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         }
     }
 
+    // Waiting for **one named** process: `WaitProcessOf(pid)`.
+    //
+    // The other half of the wait pair.  `WaitProcess` answers about whichever
+    // process finished first, which is all a boot with one process tree could
+    // say when it was added — and it is the wrong answer for a parent asking
+    // about its own child, because the child's status arrives only if the child
+    // happened to be first.  This call names the pid, so what it answers is
+    // about the process the caller meant.
+    //
+    // Three outcomes, and the difference between them is why the answer is not
+    // a bare `Option`:
+    //
+    // - the process ended: its status;
+    // - no task has that pid: `NotFound`, which is a fact the caller can check
+    //   its own argument against;
+    // - it has not ended yet: park, and its exit is what wakes the park.
+    if number == SyscallNumber::WaitProcessOf as usize {
+        let pid = call.arguments[0] as u32;
+        match crate::scheduler::block_unless_pid(frame, pid) {
+            Some(crate::scheduler::PidWait::Ended(status)) => {
+                arch::serial::write_str("protofire: a wait answered status ");
+                arch::serial::write_u32(status as u32);
+                arch::serial::write_str(" for process ");
+                arch::serial::write_u32(pid);
+                arch::serial::write_str("\n");
+                return CallOutcome::Return(status);
+            }
+            Some(crate::scheduler::PidWait::NoSuchProcess) => {
+                arch::serial::write_str("protofire: a wait names a process that does not exist\n");
+                return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotFound));
+            }
+            Some(crate::scheduler::PidWait::NotYet) => {
+                // Parked: its exit is what wakes this, and the retry asks
+                // again with the same pid.
+                arch::serial::write_str("protofire: a program waits for process ");
+                arch::serial::write_u32(pid);
+                arch::serial::write_str("\n");
+                if !crate::scheduler::has_selectable() {
+                    crate::scheduler::idle_until_woken();
+                }
+                return crate::scheduler::switch_without_saving(frame);
+            }
+            // No scheduler: nothing can be waited for, and the honest answer
+            // is the one a host build gives for anything it cannot serve.
+            None => {
+                return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented));
+            }
+        }
+    }
+
     if number == SyscallNumber::Pipe as usize {
         // `Pipe()`: make one and answer the read end's descriptor.  The write
         // end is the next number, because a call answers one word and two

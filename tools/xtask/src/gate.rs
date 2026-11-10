@@ -48,7 +48,12 @@ impl Machine {
                 // fragment check that matched prefixes would have passed this
                 // pair on the old status unchanged.  The comma is the value's
                 // boundary.
-                &["exit statuses 1 -> 116,", "4 -> 139"],
+                // The reader waits for the writer **by pid** and exits with
+                // that process's status.  `3 -> 0` is the writer's, so a wait
+                // that answered about another process prints a different
+                // number here — which is what the unnamed `WaitProcess` could
+                // do, answering with the forked child's `139`.
+                &["exit statuses 1 -> 116,", "2 -> 0,", "3 -> 0,", "4 -> 139"],
                 // A task was placed on a CPU other than the one it last ran
                 // on.  The line names the move when there was one, and **there
                 // is not always one**: placement depends on which CPU reaches
@@ -59,7 +64,12 @@ impl Machine {
                 // twice.  `required_lines` carries the prefix.
             ],
             Self::Riscv64 => &[
-                &["exit statuses 1 -> 116,", "4 -> 139"],
+                // The reader waits for the writer **by pid** and exits with
+                // that process's status.  `3 -> 0` is the writer's, so a wait
+                // that answered about another process prints a different
+                // number here — which is what the unnamed `WaitProcess` could
+                // do, answering with the forked child's `139`.
+                &["exit statuses 1 -> 116,", "2 -> 0,", "3 -> 0,", "4 -> 139"],
                 // The second CPU, on one line: the slot the kernel numbered it
                 // with, the hart the machine named, that it takes its own
                 // interrupts, and the interrupt this boot aimed at it.

@@ -10,6 +10,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::Claim;
+use super::PidWait;
 use super::Scheduler;
 use super::Task;
 use super::starting_context;
@@ -581,7 +582,78 @@ fn a_finished_task_is_not_a_reason_to_wait() {
     assert_eq!(scheduler.exited(), 1);
 }
 
-/// A wait whose exit has not happened parks.
+/// A pid-keyed wait answers about that process and no other.
+///
+/// This is what `WaitProcess` could not do: it answered about whichever
+/// process finished first.  Two children are marked finished with different
+/// statuses here, and the wait names one of them, so a lookup keyed on "the
+/// first exit" would answer the other's number.  The statuses are written
+/// directly because a host has one CPU slot — it cannot run two tasks to their
+/// exits in turn, and the property under test is the lookup.
+#[test]
+fn a_pid_keyed_wait_answers_about_the_process_it_names() {
+    let mut scheduler = Scheduler::new();
+    for (name, pid) in [("parent", 10u32), ("first", 11), ("second", 12)] {
+        let mut task = Task::without_space(name);
+        task.identify(pid, 10);
+        scheduler.add(task);
+    }
+    scheduler.tasks[1].status = Some(11);
+    scheduler.tasks[2].status = Some(22);
+
+    let assert_at = starting_context(0x80_0000_1234, 0x80_0000_2000);
+    assert_eq!(
+        scheduler.block_unless_pid(0, &assert_at, 12),
+        PidWait::Ended(22),
+        "the process the caller named"
+    );
+    assert_eq!(
+        scheduler.block_unless_pid(0, &assert_at, 11),
+        PidWait::Ended(11),
+        "and the other one, on its own pid"
+    );
+}
+
+/// A pid no task has says so, and does not park.
+///
+/// The three-way answer's point: a caller that mistyped a pid must be told,
+/// not left waiting for a process that will never exist.  Folding this into
+/// "not yet" is a wait that hangs for ever on an argument.
+#[test]
+fn a_pid_keyed_wait_refuses_a_process_that_does_not_exist() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("only"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+    let frame = starting_context(0x80_0000_1234, 0x80_0000_2000);
+
+    assert_eq!(
+        scheduler.block_unless_pid(0, &frame, 9999),
+        PidWait::NoSuchProcess
+    );
+    assert_eq!(
+        scheduler.blocked(),
+        0,
+        "nothing parked for a pid that is not"
+    );
+}
+
+/// A pid that exists and has not ended parks.
+#[test]
+fn a_pid_keyed_wait_parks_until_the_process_ends() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("parent"));
+    let mut child = Task::without_space("child");
+    child.identify(42, 0);
+    scheduler.add(child);
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+    let frame = starting_context(0x80_0000_1234, 0x80_0000_2000);
+
+    assert_eq!(scheduler.block_unless_pid(0, &frame, 42), PidWait::NotYet);
+    assert_eq!(scheduler.blocked(), 1, "the child has not ended");
+}
+
+/// A wait whose exit has not happened parks./// A wait whose exit has not
+/// happened parks.
 #[test]
 fn a_wait_with_no_exit_parks() {
     let mut scheduler = Scheduler::new();

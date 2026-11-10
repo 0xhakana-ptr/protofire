@@ -635,7 +635,7 @@ const PIPE_WRITER_PROGRAM: [u8; 91] = [
 /// ever" can answer it: a read that returned would have to be end-of-file,
 /// and a close that never moved the pipe's count would leave this program
 /// parked with the boot unfinished.
-const PIPE_READER_PROGRAM: [u8; 106] = [
+const PIPE_READER_PROGRAM: [u8; 113] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -667,8 +667,17 @@ const PIPE_READER_PROGRAM: [u8; 106] = [
     // The wait: its answer is the status, so nothing clears `eax` between the
     // two calls.  A status already recorded answers here; one that has not
     // parks this task and the writer's exit wakes it.
-    0xB8, 0x18, 0x00, 0x00, 0x00, // mov eax, 24         (WaitProcess)
+    // Wait for **the writer**, by pid, and make its status this program's.
+    // `WaitProcess` answers about whichever process finished first, and this
+    // boot's forked child dies before the writer does.
+    0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2          (the writer's pid)
+    0xB8, 0xC4, 0x00, 0x00, 0x00, // mov eax, 196        (WaitProcessOf)
     0xCD, 0x80, // int 0x80
+    // The answer comes back in `eax` and `Exit` reads its status from `edi` on
+    // this machine, so the value has to be moved: this is the one place the
+    // two registers differ, and leaving it moves the *pid* into the status —
+    // measured as `3 -> 2` before this line existed.
+    0x89, 0xC7, // mov edi, eax        (the status is the wait's answer)
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $
@@ -934,7 +943,7 @@ mod program_tests {
                 abi::SyscallNumber::Read as u32,
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Read as u32,
-                abi::SyscallNumber::WaitProcess as u32,
+                abi::SyscallNumber::WaitProcessOf as u32,
                 abi::SyscallNumber::Exit as u32,
             ],
             "the reader writes, reads, writes, reads to end-of-file, waits, exits"

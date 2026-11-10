@@ -59,6 +59,7 @@ pub mod task;
 
 pub use core::Claim;
 pub use core::Scheduler;
+pub use core::wait::PidWait;
 pub use task::Task;
 pub use task::starting_context;
 
@@ -602,6 +603,21 @@ pub fn block_unless<T>(frame: &arch::Context, recheck: impl FnOnce() -> Option<T
         }
     });
     answer
+}
+
+/// Park the running task until the process `pid` exits, unless it has.
+///
+/// `None` when no scheduler is installed — the state before the boot installs
+/// one and the state a host test that never installs one is in.  Otherwise the
+/// answer is the scheduler's [`PidWait`], which names all three outcomes so a
+/// caller cannot fold "no such process" into "not yet".
+pub fn block_unless_pid(frame: &arch::Context, pid: u32) -> Option<PidWait> {
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_mut()
+            .map(|scheduler| scheduler.block_unless_pid(cpu, frame, pid))
+    })
 }
 
 /// Wake every blocked task, answering how many.
