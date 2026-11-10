@@ -276,6 +276,11 @@ impl Machine {
                 // never woke fails: the sleeping program's first `Write` is
                 // there, and its second never is.
                 ("program 1 says hello", true),
+                // The pipe's reader waited for a process to end, and the
+                // kernel answered — the same claim the other machines carry,
+                // and the line rather than an exit status because
+                // `WaitProcess` names no particular child.
+                ("protofire: a wait answered status ", false),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
                 // The fork, as two statuses that are the same call's two
@@ -419,6 +424,14 @@ impl Machine {
                     // is what moved it.
                     ("protofire: a program blocks on a pipe", true),
                     ("protofire: a write woke ", false),
+                    // And the reader waited for a process to end, on the
+                    // same boot.  The **line** is the assertion rather than
+                    // an exit status: `WaitProcess` promises "some process
+                    // finished", not "the one you meant", so a status a
+                    // reader reported could be another process's.  Which of
+                    // the answer's two spellings appears is the race the
+                    // program cannot control; both mean the call returned.
+                    ("protofire: a wait answered status ", false),
                     // Both ran, in order, each printing its own number.  One
                     // program twice would read the same as one program once,
                     // which is why the number comes from the program and not
@@ -633,6 +646,11 @@ impl Machine {
                 ("protofire: a program blocks on a pipe", true),
                 ("protofire: a write woke ", false),
                 ("program 1 says hello", true),
+                // The pipe's reader waited for a process to end, and the
+                // kernel answered — the same claim the other machines carry,
+                // and the line rather than an exit status because
+                // `WaitProcess` names no particular child.
+                ("protofire: a wait answered status ", false),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
                 // The fork, as two statuses that are the same call's two
