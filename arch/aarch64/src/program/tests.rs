@@ -99,11 +99,12 @@ fn the_program_writes_sleeps_writes_forks_writes_and_execs() {
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Sleep as usize,
             abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Pipe as usize,
             abi::SyscallNumber::Fork as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::ExecProcess as usize,
         ],
-        "the program writes, sleeps, writes, forks, writes, and execs"
+        "the program writes, sleeps, writes, makes a pipe, forks, writes, and execs"
     );
 
     // The sleep's duration is the immediate of the `movz x0` that precedes

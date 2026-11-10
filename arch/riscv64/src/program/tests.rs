@@ -152,17 +152,25 @@ fn the_program_writes_sleeps_writes_forks_writes_and_execs() {
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Sleep as usize,
             abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::Pipe as usize,
             abi::SyscallNumber::Fork as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::ExecProcess as usize,
         ],
-        "the program writes, sleeps, writes, forks, writes, and execs"
+        "the program writes, sleeps, writes, makes a pipe, forks, writes, and execs"
     );
     // The `Write` after the fork is the one that reports it: both processes
     // reach it, and the number each prints is the fork's answer, the child's
     // pid in the parent, zero in the child.
+    // Found by the fork rather than by an index: an index a reader counts
+    // goes stale the moment a call is inserted above it, which is what
+    // happened when the pipe arrived and pointed this at the fork itself.
+    let fork = calls
+        .iter()
+        .position(|call| *call == abi::SyscallNumber::Fork as usize)
+        .expect("the program forks");
     assert_eq!(
-        calls[4],
+        calls[fork + 1],
         abi::SyscallNumber::Write as usize,
         "the call after the fork is a write"
     );

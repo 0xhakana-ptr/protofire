@@ -349,3 +349,59 @@ fn a_caller_with_no_pid_is_allowed() {
     );
     assert_eq!(table.close_for(descriptor, None), Ok(()));
 }
+
+/// A fork's child starts with its parent's descriptors, as its own.
+///
+/// The inheritance `fork` promises.  A child that got nothing would find every
+/// inherited number refused, because the table checks the owner; a child that
+/// got the **same slots** rather than copies would close its parent's file.
+#[test]
+fn a_child_inherits_its_parents_descriptors_as_its_own() {
+    let mut table = mounted();
+    let parent = open_as(&mut table, "/greeting.txt", fs_abi::OPEN_FLAG_READ, 7).expect("open");
+
+    assert_eq!(table.inherit(7, 8), 1, "one descriptor copied");
+    assert_eq!(table.open_descriptors(), 2, "the child's slot is its own");
+
+    let child = (0..MAX_DESCRIPTORS)
+        .find(|index| *index != parent && table.owner_of(*index) == Some(8))
+        .expect("the child has one");
+    let mut buffer = [0u8; 4];
+    assert_eq!(
+        table
+            .read_at(child, READ_OFFSET_CURRENT, &mut buffer, Some(8))
+            .expect("the child reads its own"),
+        4
+    );
+    assert_eq!(
+        table.read_at(child, READ_OFFSET_CURRENT, &mut buffer, Some(7)),
+        Err(Error::InvalidArgument),
+        "and the parent cannot use the child's"
+    );
+}
+
+/// A pipe end copied by a fork keeps the pipe alive until **both** are gone.
+///
+/// The count is what end-of-file is read from, so an inheritance that copied
+/// the number without raising it would make a parent's close end the reader's
+/// file while the child still held a writer.
+#[test]
+fn a_copied_pipe_end_keeps_the_pipe_open() {
+    use crate::pipe;
+    use crate::pipe::End;
+
+    let pipe = Arc::new(pipe::Pipe::new(16));
+    let mut table = SyscallTable::new();
+    // The parent holds a write end directly, in the table.
+    let parent_end = table
+        .insert_pipe(End::writer(pipe.clone()), 7)
+        .expect("insert");
+    assert!(pipe.has_writers());
+
+    assert_eq!(table.inherit(7, 8), 1, "the child copied it");
+    assert_eq!(table.close_for(parent_end, Some(7)), Ok(()));
+    assert!(
+        pipe.has_writers(),
+        "the child still holds a write end, so the pipe is not closed"
+    );
+}

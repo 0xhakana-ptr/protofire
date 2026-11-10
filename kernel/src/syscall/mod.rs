@@ -77,6 +77,7 @@ pub use table::READ_OFFSET_CURRENT;
 pub use table::SyscallTable;
 pub use table::attach_pipe;
 pub use table::has_registry;
+pub use table::inherit;
 pub use table::install;
 pub use table::open_descriptors;
 pub use table::pipe_end;

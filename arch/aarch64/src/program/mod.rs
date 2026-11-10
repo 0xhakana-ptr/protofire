@@ -21,7 +21,7 @@
 
 /// Named so a test can find where *this* program ends in a buffer sized for the
 /// longest of the four.
-pub const PROGRAM_WORDS_FOR_TEST: usize = 32;
+pub const PROGRAM_WORDS_FOR_TEST: usize = 34;
 
 /// The longest of the four images: the announcing program, the pipe writer,
 /// the pipe reader and the exec target.  A program is copied into a whole
@@ -228,7 +228,7 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 /// `push` would have done.  The page is shared and read-only now, so the
 /// write faults, and the kernel's answer to that fault is the whole of what
 /// this image exercises.
-const fn program_words(number: u16) -> [u32; 32] {
+const fn program_words(number: u16) -> [u32; 34] {
     [
         // A busy loop, so a program outlives a time slice.
         //
@@ -253,6 +253,12 @@ const fn program_words(number: u16) -> [u32; 32] {
         0xD280_0628, // movz x8, #49      (Sleep)
         0xD400_0001, // svc #0
         0xD280_00C8, // movz x8, #6       (Write, after the wake)
+        0xD400_0001, // svc #0
+        // A pipe of this program's own, so the fork below has something to
+        // inherit: two descriptors owned by this process, copied to the child
+        // and owned by it.  Without this the inheritance runs on a boot whose
+        // programs hold nothing, which is a mechanism nothing observes.
+        0xD280_0808, // movz x8, #64      (Pipe)
         0xD400_0001, // svc #0
         // Fork: the two processes that result are told apart by what it
         // answered, and by nothing else.

@@ -69,6 +69,29 @@ impl Scheduler {
         // whole of what `fork` answers.
         arch::set_return_value(child.context_mut(), 0);
         self.tasks.push(child);
+
+        // **The child starts with its parent's descriptors**, copied and owned
+        // by the child.  A `fork` that handed the child nothing would make
+        // every inherited descriptor a number the child could not use — and
+        // because the table refuses another process's slot, the child's first
+        // read of a pipe its parent opened would answer `InvalidArgument`
+        // rather than data.  The copy raises each pipe end's count, so
+        // end-of-file waits for **both** processes to close theirs.
+        //
+        // Reported when it copied something: a boot whose programs open
+        // nothing before forking has no line here, and a line printed for
+        // every fork would say the mechanism ran on a boot that never used it.
+        #[cfg(target_os = "none")]
+        if let Some(copied) = crate::syscall::inherit(parent_pid, pid)
+            && copied > 0
+        {
+            arch::serial::write_str("protofire: forked process ");
+            arch::serial::write_u32(pid);
+            arch::serial::write_str(" inherited ");
+            arch::serial::write_u32(copied as u32);
+            arch::serial::write_str(" descriptor(s)\n");
+        }
+
         Some(pid as usize)
     }
 

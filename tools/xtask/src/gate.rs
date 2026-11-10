@@ -305,6 +305,12 @@ impl Machine {
                 // machine's page fault.
                 ("protofire: process 3 installed a fault handler at ", false),
                 ("protofire: process 3 handled its own fault at ", false),
+                // The child inherited its parent's descriptors: the announcing
+                // program makes a pipe before it forks, and both ends are
+                // copied to the child, owned by it.  Without the copy the child
+                // would find every inherited number refused, because the table
+                // checks the owner.
+                ("protofire: forked process 4 inherited ", false),
                 // The program took a fault **it answered itself**: the
                 // reader installs a handler, stores into its own code
                 // page (a write no resolver answers), and the kernel
@@ -464,6 +470,12 @@ impl Machine {
                     // can print.
                     ("protofire: process 3 installed a fault handler at ", false),
                     ("protofire: process 3 handled its own fault at ", false),
+                    // The child inherited its parent's descriptors: the
+                    // announcing program makes a pipe before it forks, and both
+                    // ends are copied to the child, owned by it.  Without the
+                    // copy the child would find every inherited number refused,
+                    // because the table checks the owner.
+                    ("protofire: forked process 4 inherited ", false),
                     // Both ran, in order, each printing its own number.  One
                     // program twice would read the same as one program once,
                     // which is why the number comes from the program and not
@@ -691,6 +703,12 @@ impl Machine {
                 // fault, which is the access the program made on purpose.
                 ("protofire: process 3 installed a fault handler at ", false),
                 ("protofire: process 3 handled its own fault at ", false),
+                // The child inherited its parent's descriptors: the announcing
+                // program makes a pipe before it forks, and both ends are
+                // copied to the child, owned by it.  Without the copy the child
+                // would find every inherited number refused, because the table
+                // checks the owner.
+                ("protofire: forked process 4 inherited ", false),
                 // The program took a fault **it answered itself**: the
                 // reader installs a handler, stores into its own code
                 // page (a write no resolver answers), and the kernel

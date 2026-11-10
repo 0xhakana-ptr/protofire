@@ -535,7 +535,7 @@ mod tests {
 /// The longer of the four images.  A program is copied into a whole page, so
 /// the exact length matters only to the copy; a shorter array would truncate
 /// the announcing program's last instruction.
-pub const PROGRAM_LEN: usize = 182;
+pub const PROGRAM_LEN: usize = 188;
 
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.
@@ -774,7 +774,7 @@ const READER_FAULT_HANDLER: [u8; 33] = [
 /// bound is real: 0x1000 × 0x10000 was too long, and under the emulator the
 /// trap cost of ten thousand ticks a second left the program unable to reach
 /// its first `int` at all.
-const PROGRAM_BASE: [u8; 110] = [
+const PROGRAM_BASE: [u8; 117] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -788,6 +788,10 @@ const PROGRAM_BASE: [u8; 110] = [
     0xB8, 0x31, 0x00, 0x00, 0x00, // mov eax, 49 (Sleep)
     0xCD, 0x80, // int 0x80
     0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6 (Write, after the wake)
+    0xCD, 0x80, // int 0x80
+    // A pipe of this program's own before the fork, so the child has
+    // something to inherit.
+    0xB8, 0x40, 0x00, 0x00, 0x00, // mov eax, 64 (Pipe)
     0xCD, 0x80, // int 0x80
     0xB8, 0x3E, 0x00, 0x00, 0x00, // mov eax, 62 (Fork)
     0xCD, 0x80, // int 0x80
@@ -940,11 +944,12 @@ mod program_tests {
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Sleep as u32,
                 abi::SyscallNumber::Write as u32,
+                abi::SyscallNumber::Pipe as u32,
                 abi::SyscallNumber::Fork as u32,
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::ExecProcess as u32,
             ],
-            "the program writes, sleeps, writes, forks, writes, and execs"
+            "the program writes, sleeps, writes, makes a pipe, forks, writes, and execs"
         );
 
         // The parent's exec loads the boot's exec-path pointer: `mov rdi,

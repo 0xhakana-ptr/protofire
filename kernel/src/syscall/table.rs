@@ -121,6 +121,45 @@ pub(crate) enum Descriptor {
     },
 }
 
+/// A descriptor copied into another process, with that process as its owner.
+///
+/// `fork`'s inheritance, written by hand rather than derived because the two
+/// variants copy in two different ways — and one of them is not a plain copy.
+/// A file descriptor is a node and an offset, both of which copy freely.  A
+/// pipe **end** raises the pipe's count as it copies, which is what makes the
+/// count mean "live handles" rather than "the two the pipe was made with": a
+/// parent and a child holding the same write end are two handles, and
+/// end-of-file arrives only after both have gone.
+///
+/// The clone is of the **handle**, not of the descriptor number: the child gets
+/// its own slot, and closing one process's end leaves the other's alone.
+impl Descriptor {
+    fn for_owner(&self, owner: u32) -> Descriptor {
+        match self {
+            Descriptor::File {
+                node,
+                readable,
+                offset,
+                ..
+            } => Descriptor::File {
+                node: Arc::clone(node),
+                readable: *readable,
+                // The offset is copied, not shared.  A shared file position
+                // would move both processes' next read, which is what one open
+                // file description means; this tree reads through explicit
+                // offsets and no boot program shares a file across a fork, so
+                // nothing observes the difference yet.
+                offset: *offset,
+                owner,
+            },
+            Descriptor::Pipe { end, .. } => Descriptor::Pipe {
+                end: end.clone(),
+                owner,
+            },
+        }
+    }
+}
+
 /// The registry, and the descriptor table the handlers use.
 pub struct SyscallTable {
     slots: [Handler; MAX_SYSCALLS],
@@ -171,7 +210,7 @@ impl SyscallTable {
     }
 
     /// The process that holds a descriptor, if one does.
-    fn owner_of(&self, descriptor: usize) -> Option<u32> {
+    pub(crate) fn owner_of(&self, descriptor: usize) -> Option<u32> {
         match self.descriptors.get(descriptor)? {
             Some(Descriptor::File { owner, .. }) | Some(Descriptor::Pipe { owner, .. }) => {
                 Some(*owner)
@@ -281,6 +320,42 @@ impl SyscallTable {
             Some(Descriptor::Pipe { end, .. }) => Some(end.clone()),
             _ => None,
         }
+    }
+
+    /// Copy every descriptor `parent` holds to `child`, answering how many.
+    ///
+    /// `fork`'s inheritance: a child starts with its parent's open
+    /// descriptors, owned by the child, so closing or reading them is the
+    /// child's own business and the parent's slots are untouched.  A pipe's
+    /// count rises with each end copied, because the child holds a handle the
+    /// pipe must wait for.
+    ///
+    /// Answers the count so the boot can report it; `0` for a parent with
+    /// nothing open.
+    pub(crate) fn inherit(&mut self, parent: u32, child: u32) -> usize {
+        // Collected first: `insert` borrows the array mutably while the
+        // sources are read from it.
+        let mut inherited = alloc::vec::Vec::new();
+        for slot in &self.descriptors {
+            if let Some(descriptor) = slot
+                && let Descriptor::File { owner, .. } | Descriptor::Pipe { owner, .. } = descriptor
+                && *owner == parent
+            {
+                inherited.push(descriptor.for_owner(child));
+            }
+        }
+        let mut copied = 0;
+        for descriptor in inherited {
+            if self.insert(descriptor).is_ok() {
+                copied += 1;
+            } else {
+                // The table is full.  What was copied stays and the count says
+                // how much: a `fork` that half-succeeded is a state a program
+                // can observe, and it is better reported than hidden.
+                break;
+            }
+        }
+        copied
     }
 
     /// Release everything `owner` still holds, answering how many were closed.
@@ -430,6 +505,17 @@ pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
 /// the state before the boot has mounted its namespace.
 pub fn attach_pipe(end: pipe::End, owner: u32) -> Option<usize> {
     REGISTRY.lock().as_mut()?.insert_pipe(end, owner).ok()
+}
+
+/// Copy every descriptor `parent` holds to `child`, answering how many.
+///
+/// `None` when no registry is installed, which is the state before the boot
+/// mounts its namespace and before any program exists.
+pub fn inherit(parent: u32, child: u32) -> Option<usize> {
+    REGISTRY
+        .lock()
+        .as_mut()
+        .map(|table| table.inherit(parent, child))
 }
 
 /// Release everything `owner` holds in the installed registry, answering how

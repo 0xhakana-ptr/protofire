@@ -130,7 +130,7 @@ const fn store_against_sp(rs2: u32) -> u32 {
 
 /// Counted once here rather than inferred: the array length and the word list
 /// have to agree, and a literal on both would be two numbers to keep in step.
-pub const PROGRAM_WORDS: usize = 32;
+pub const PROGRAM_WORDS: usize = 34;
 
 /// The busy loop: outer 64, inner 256, one decrement each.
 ///
@@ -180,6 +180,10 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Sleep as i32),
         0x0000_0073, // ecall
         addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
+        0x0000_0073, // ecall
+        // A pipe of this program's own before the fork, so the child has
+        // something to inherit.
+        addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Pipe as i32),
         0x0000_0073, // ecall
         // Fork: the two processes that result are told apart by what `fork`
         // answered, and by nothing else.
