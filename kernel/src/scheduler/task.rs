@@ -84,6 +84,29 @@ pub struct Task {
     /// number the kernel invented, and a parent waiting for that answer would
     /// read it as the program's own decision.
     pub(crate) status: Option<usize>,
+    /// Where this program's fault handler lives, or `None` for a program that
+    /// has none.
+    ///
+    /// A program installs one with `InstallExceptionHandler`, and a fault it
+    /// takes is then **its** to answer rather than the kernel's to kill it
+    /// for: the trap path resumes the program at this address with the fault's
+    /// description in its registers, and `ReturnFromException` is the program
+    /// saying it has finished with it.
+    ///
+    /// The address is a virtual one in the program's own space, so it is only
+    /// meaningful together with the `space` this task runs through — which is
+    /// why it lives here and not in the registry.
+    pub(crate) handler: Option<usize>,
+    /// Where a handled fault resumes, once its handler returns.
+    ///
+    /// The faulting instruction cannot be re-run — it faulted — so the frame
+    /// that described it is replaced when the handler is entered.  The
+    /// position it held is recorded here instead, and `ReturnFromException`
+    /// resumes it: the program continues **after** the instruction that
+    /// faulted, with the handler's value as the call's answer.
+    ///
+    /// `None` when no fault is in flight.
+    pub(crate) fault_resume: Option<usize>,
     /// The CPU slot this task last ran on, or `usize::MAX` before its first
     /// run.
     ///
@@ -130,6 +153,8 @@ impl Task {
             pid: 0,
             parent: 0,
             status: None,
+            handler: None,
+            fault_resume: None,
             last_cpu: usize::MAX,
             ran_off_boot_cpu: usize::MAX,
         }
@@ -149,6 +174,8 @@ impl Task {
             pid: 0,
             parent: 0,
             status: None,
+            handler: None,
+            fault_resume: None,
             last_cpu: usize::MAX,
             ran_off_boot_cpu: usize::MAX,
         }

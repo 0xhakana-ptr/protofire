@@ -235,6 +235,23 @@ pub fn set_return_value(context: &mut Context, value: usize) {
     context.registers[RAX] = value as u64;
 }
 
+/// Put `value` in the register argument `index` travels in.
+///
+/// The System V call convention this machine's programs are built against puts
+/// the arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` — **not** the
+/// `rax`..`rsi` run a machine-independent guess might pick, which is why the
+/// table is here and not derived from the register indices.
+///
+/// # Panics
+///
+/// Panics when `index` is past the argument registers, which the ABI says are
+/// six.
+pub fn set_argument(context: &mut Context, index: usize, value: usize) {
+    const ARGUMENTS: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
+    let register = ARGUMENTS[index];
+    context.registers[register] = value as u64;
+}
+
 pub fn is_user_context(context: &Context) -> bool {
     context.is_user()
 }

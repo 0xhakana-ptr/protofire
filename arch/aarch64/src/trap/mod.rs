@@ -42,6 +42,7 @@ pub use context::restart_the_call;
 pub use context::resume_address;
 pub use context::return_state;
 pub use context::return_value;
+pub use context::set_argument;
 pub use context::set_resume_address;
 pub use context::set_return_value;
 pub use context::stack_pointer;

@@ -133,6 +133,15 @@ pub const FAULT_STATUS: usize = 139;
 /// task finished, every other CPU told — does not hold; the space goes back
 /// with the rest at the machine's end, the same deferral an exit takes.
 pub fn die_from_fault(frame: &mut arch::Context, vector: usize, address: usize) {
+    // A program that installed a handler takes the fault itself: the handler
+    // is entered with the fault's vector, address and direction in the three
+    // argument registers, and `ReturnFromException` is how it comes back.  The
+    // frame is replaced with one that resumes at the handler, so the trap
+    // path's own restore returns **into the program's handler** rather than
+    // into the instruction that faulted.
+    if hand_the_fault_to_the_program(frame, vector, address) {
+        return;
+    }
     arch::serial::write_str("protofire: process ");
     arch::serial::write_u32(current_pid().unwrap_or(0));
     arch::serial::write_str(" died from a fault at ");
@@ -147,6 +156,138 @@ pub fn die_from_fault(frame: &mut arch::Context, vector: usize, address: usize) 
     arch::serial::write_hex(arch::stack_pointer(frame) as u64);
     arch::serial::write_str("\n");
     advance_with_status(frame, true, FAULT_STATUS);
+}
+
+/// Record the fault handler a program installed, or clear it.
+///
+/// `InstallExceptionHandler(address)` names a virtual address in the caller's
+/// own space; `0` withdraws a handler.  The address is not validated against
+/// the program's mappings here: it is the program's own pointer, and an
+/// unmapped one faults when the handler is entered, which is the program's
+/// mistake and reaches the same fault path it came from — with the handler
+/// withdrawn, so the second fault kills it instead of looping.
+///
+/// Answers whether a running task was found, which a call from ring 3 always
+/// has.
+pub fn install_exception_handler(address: usize) -> bool {
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| {
+        let Some(scheduler) = scheduler.as_mut() else {
+            return false;
+        };
+        let Some(index) = scheduler.running.get(cpu).copied().flatten() else {
+            return false;
+        };
+        let Some(task) = scheduler.tasks.get_mut(index) else {
+            return false;
+        };
+        task.handler = (address != 0).then_some(address);
+        true
+    })
+}
+
+/// Answer from a handler the program installed, resuming where it faulted.
+///
+/// `ReturnFromException`'s carrier.  The fault's frame was replaced when the
+/// handler was entered, so the position the program faulted at is no longer in
+/// the context the scheduler holds — it was overwritten by the handler's own
+/// call.  What this restores is therefore not the faulting instruction but the
+/// handler's caller: the handler returns to the instruction **after** its own
+/// `svc`, with the value the program gives as the call's answer.
+///
+/// Returns the answer for the trap path to put in the return register.
+pub fn return_from_exception(answer: usize, frame: &mut arch::Context) {
+    let cpu = this_cpu();
+    let resume = with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        let index = scheduler.running.get(cpu).copied().flatten()?;
+        let task = scheduler.tasks.get_mut(index)?;
+        let resume = task.fault_resume.take()?;
+        Some(resume)
+    });
+    // A `ReturnFromException` with no fault in flight is a program returning
+    // from a handler it never entered.  The honest answer is to leave the
+    // call's value in place and resume where the handler already would: the
+    // program's own `svc` is done and the next instruction is right either
+    // way.  Reporting an error would need a return channel this call does not
+    // have, and a program that gets here has a bug the status line will show.
+    if let Some(resume) = resume {
+        arch::set_resume_address(frame, resume);
+    }
+    arch::set_return_value(frame, answer);
+}
+
+/// Hand a fault to the program that took it, if it installed a handler.
+///
+/// Answers whether it did.  The handler is entered as a function call the
+/// program never made: its three argument registers carry the vector, the
+/// faulting address, and the direction (`1` for a write), and the frame is
+/// rewritten so the trap path's epilogue returns to the handler instead of the
+/// instruction that faulted.
+///
+/// The registers the faulting code had are **not** preserved across this: a
+/// handler that wanted them would need them passed, and three words is what
+/// the ABI's argument registers hold.  What survives is everything the handler
+/// itself touches, which is the contract `ReturnFromException` completes.
+///
+/// The handler runs on the program's own stack — `sp` is untouched — so a
+/// guard page's fault reaches it with the stack exactly as the program left it,
+/// and a handler that recurses into its own fault runs out of stack the way
+/// any runaway does.
+#[cfg(target_os = "none")]
+fn hand_the_fault_to_the_program(frame: &mut arch::Context, vector: usize, address: usize) -> bool {
+    let Some(handler) = with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_ref()?;
+        let cpu = this_cpu();
+        let index = scheduler.running.get(cpu).copied().flatten()?;
+        scheduler.tasks.get(index)?.handler
+    }) else {
+        return false;
+    };
+
+    arch::serial::write_str("protofire: process ");
+    arch::serial::write_u32(current_pid().unwrap_or(0));
+    arch::serial::write_str(" handled its own fault at ");
+    arch::serial::write_hex(address as u64);
+    arch::serial::write_str(" (vector ");
+    arch::serial::write_u32(vector as u32);
+    arch::serial::write_str(")\n");
+
+    // Three arguments, in the registers the ABI puts them in, and the handler
+    // as the resume address.  `set_return_value` writes argument 0 on every
+    // machine because it is the same register a call's answer comes back in.
+    // Where the program resumes when its handler returns: the instruction
+    // after the one that faulted, which is the only position that makes a
+    // handled fault a **recoverable** one.  Resuming the faulting instruction
+    // would fault again, and the handler would run for ever.
+    let resume_after_fault = arch::resume_address(frame) + 4;
+    with_scheduler(|scheduler| {
+        let Some(scheduler) = scheduler.as_mut() else {
+            return;
+        };
+        let cpu = this_cpu();
+        if let Some(index) = scheduler.running.get(cpu).copied().flatten()
+            && let Some(task) = scheduler.tasks.get_mut(index)
+        {
+            task.fault_resume = Some(resume_after_fault);
+        }
+    });
+
+    arch::set_return_value(frame, vector);
+    arch::set_argument(frame, 1, address);
+    arch::set_argument(frame, 2, 0);
+    arch::set_resume_address(frame, handler);
+    true
+}
+
+/// A host has no trap path to hand a fault to.
+#[cfg(not(target_os = "none"))]
+fn hand_the_fault_to_the_program(
+    _frame: &mut arch::Context,
+    _vector: usize,
+    _address: usize,
+) -> bool {
+    false
 }
 
 /// Install the next task's context without saving the frame it was given,

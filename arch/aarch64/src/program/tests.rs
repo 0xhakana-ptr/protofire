@@ -177,10 +177,28 @@ fn the_reader_reads_to_end_of_file_and_waits_for_the_writer() {
             abi::SyscallNumber::Read as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::InstallExceptionHandler as usize,
             abi::SyscallNumber::WaitProcessOf as usize,
             abi::SyscallNumber::Exit as usize,
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::ReturnFromException as usize,
         ],
-        "the reader writes, reads, writes, reads to end-of-file, waits, exits"
+        "the reader installs a handler, faults, waits by pid, exits — and the handler writes and returns"
+    );
+
+    // The handler's address and its place in the array are one fact written
+    // twice: the program names an offset into its own page, and the array has
+    // to put the handler's first word there.  A drift would install an address
+    // inside the program's own code, and the fault would be answered by
+    // whatever word happened to sit there.
+    let handler_word = crate::program::HANDLER_OFFSET as usize / 4;
+    assert!(
+        handler_word < words.len(),
+        "the handler is inside the array"
+    );
+    assert_eq!(
+        words[handler_word], 0xD280_0801,
+        "and its first word is the handler's own `movz x1, #64`"
     );
 
     // The pid is the writer's own number, in `x0` just before the call.

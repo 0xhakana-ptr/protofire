@@ -298,13 +298,11 @@ impl Machine {
                 // the boot unfinished, and the wait's line above would never
                 // print either.
                 ("protofire: process 2 released ", false),
-                ("program 2 says hello", true),
-                ("protofire: every program exited, ", false),
-                // The fork, as two statuses that are the same call's two
-                // answers: the parent (pid 1) exits with its child's pid, and
-                // that child (pid 4) exits with zero.  A fork that copied
-                // nothing, or answered the same value to both, prints neither
-                // pair.
+                // The program took a fault **it answered itself**: the
+                // reader installs a handler, stores into its own code
+                // page (a write no resolver answers), and the kernel
+                // resumes it at the handler instead of killing it.  The
+                // `program 64 says hello` line below is the handler's own
                 ("protofire: forked a process, child pid 4", true),
                 // The fork's two faults, as the two answers they get.  The
                 // fork shares the stack page read-only, so each process's
@@ -450,6 +448,15 @@ impl Machine {
                     // program cannot control; both mean the call returned.
                     ("protofire: a wait answered status ", false),
                     ("protofire: process 2 released ", false),
+                    // The program took a fault **it answered itself**: the
+                    // reader installs a handler, stores into its own code
+                    // page (a write no resolver answers), and the kernel
+                    // resumes it at the handler instead of killing it.  The
+                    // `program 64 says hello` line below is the handler's own
+                    // and the status is 0, which only a program that came back
+                    // can print.
+                    ("protofire: process 3 installed a fault handler at ", false),
+                    ("protofire: process 3 handled its own fault at ", false),
                     // Both ran, in order, each printing its own number.  One
                     // program twice would read the same as one program once,
                     // which is why the number comes from the program and not
@@ -670,13 +677,11 @@ impl Machine {
                 // `WaitProcess` names no particular child.
                 ("protofire: a wait answered status ", false),
                 ("protofire: process 2 released ", false),
-                ("program 2 says hello", true),
-                ("protofire: every program exited, ", false),
-                // The fork, as two statuses that are the same call's two
-                // answers: the parent (pid 1) exits with its child's pid, and
-                // that child (pid 4) exits with zero.  A fork that copied
-                // nothing, or answered the same value to both, prints neither
-                // pair.
+                // The program took a fault **it answered itself**: the
+                // reader installs a handler, stores into its own code
+                // page (a write no resolver answers), and the kernel
+                // resumes it at the handler instead of killing it.  The
+                // `program 64 says hello` line below is the handler's own
                 ("protofire: forked a process, child pid 4", true),
                 // The fork's two faults, as the two answers they get: one
                 // write finds the shared page still held by both and is

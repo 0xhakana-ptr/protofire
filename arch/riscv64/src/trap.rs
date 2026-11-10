@@ -776,6 +776,20 @@ pub fn set_return_value(context: &mut Context, value: usize) {
     context.registers[REGISTER_A0] = value as u64;
 }
 
+/// Put `value` in the register argument `index` travels in.
+///
+/// The call convention puts the arguments in `a0`..`a5`, so this is
+/// `registers[REGISTER_A0 + index]`.
+///
+/// # Panics
+///
+/// Panics when `index` is past the argument registers, which the ABI says are
+/// six.
+pub fn set_argument(context: &mut Context, index: usize, value: usize) {
+    assert!(index < 6, "riscv64 has six argument registers");
+    context.registers[REGISTER_A0 + index] = value as u64;
+}
+
 /// Whether a context is a program's rather than the kernel's.
 ///
 /// `sstatus`'s `SPP` bit names the privilege an `sret` returns to, and clear

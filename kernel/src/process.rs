@@ -562,6 +562,35 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // - no task has that pid: `NotFound`, which is a fact the caller can check
     //   its own argument against;
     // - it has not ended yet: park, and its exit is what wakes the park.
+    if number == SyscallNumber::InstallExceptionHandler as usize {
+        // `InstallExceptionHandler(address)`: the program takes its own faults
+        // from here on, and `0` withdraws the handler.  A fault after this is
+        // the program's to answer; the kernel reports the hand-off and resumes
+        // the program at the address it named.
+        let address = call.arguments[0];
+        if !crate::scheduler::install_exception_handler(address) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotFound));
+        }
+        arch::serial::write_str("protofire: process ");
+        arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+        if address == 0 {
+            arch::serial::write_str(" withdrew its fault handler\n");
+        } else {
+            arch::serial::write_str(" installed a fault handler at ");
+            arch::serial::write_hex(address as u64);
+            arch::serial::write_str("\n");
+        }
+        return CallOutcome::Return(0);
+    }
+
+    if number == SyscallNumber::ReturnFromException as usize {
+        // `ReturnFromException(value)`: the handler is done, and the value is
+        // the call's answer.  The trap path resumes the handler's caller,
+        // which is the program at the instruction after this `svc`.
+        crate::scheduler::return_from_exception(call.arguments[0], frame);
+        return CallOutcome::Exit;
+    }
+
     if number == SyscallNumber::WaitProcessOf as usize {
         let pid = call.arguments[0] as u32;
         match crate::scheduler::block_unless_pid(frame, pid) {

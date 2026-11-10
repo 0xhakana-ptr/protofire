@@ -92,6 +92,24 @@ pub fn set_return_value(context: &mut Context, value: usize) {
     context.registers[0] = value as u64;
 }
 
+/// Put `value` in the register argument `index` travels in.
+///
+/// The call convention puts the arguments in `x0`..`x7`, so this is
+/// `registers[index]` — the same array `set_return_value` writes.  It exists
+/// as its own function because the two are different claims: one puts a
+/// call's **answer** where its caller reads it, and this puts an **argument**
+/// where a function the kernel is about to enter reads it.
+///
+/// # Panics
+///
+/// Panics when `index` is past the argument registers.  A caller with a
+/// variable index is a caller that could write past them, and the ABI has
+/// eight.
+pub fn set_argument(context: &mut Context, index: usize, value: usize) {
+    assert!(index < 8, "AArch64 has eight argument registers");
+    context.registers[index] = value as u64;
+}
+
 /// Whether a context is a program's rather than the kernel's.
 ///
 /// `SPSR_EL1`'s `M` field names the exception level an `eret` returns to, and

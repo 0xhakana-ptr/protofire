@@ -68,6 +68,7 @@ pub use trap::restart_the_call;
 pub use trap::resume_address;
 pub use trap::return_state;
 pub use trap::return_value;
+pub use trap::set_argument;
 #[cfg(target_os = "none")]
 pub use trap::set_call_sink;
 #[cfg(target_os = "none")]
