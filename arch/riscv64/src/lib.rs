@@ -45,7 +45,9 @@ core::arch::global_asm!(
     KERNEL_STACK_RESERVATION = const smp::kernel_stack_reservation(),
 );
 
+pub mod aplic;
 pub mod boot;
+pub mod external;
 pub mod interrupts;
 pub mod paging;
 pub mod plic;
@@ -408,6 +410,35 @@ pub unsafe fn install_interrupt_table() -> bool {
     // And the external controller, which is what turns a source into an
     // interrupt.  A vector table with no controller behind it takes traps the
     // machine raises itself and nothing a device raises.
+    //
+    // **Two controllers can be described, and the machine says which.**  An AIA
+    // machine carries an APLIC instead of a PLIC; the default machine carries
+    // the PLIC.  The APLIC is tried first, because a machine that describes one
+    // is an AIA machine and the older node it may also carry is the one the
+    // firmware put there for a kernel that does not know the new one.
+    if let Some((base, hart, sources)) = boot::aplic() {
+        let aplic = aplic::Aplic::new(base, hart, sources);
+        // SAFETY: the window is the tree's `reg`, the boot mapped it as device
+        // memory, and this runs once on the boot hart.
+        unsafe {
+            aplic.enable();
+            // A machine that pairs the APLIC with an IMSIC locks the domain in
+            // **message** mode — measured: `domaincfg` reads `0x80000104` with
+            // `DM` set and read-only — and a wired source then becomes a
+            // message this kernel has no IMSIC driver to receive.  The
+            // controller is still installed (its claim path is real and is what
+            // a driver would use), and the boot says so rather than reporting a
+            // source it cannot take.
+            if !aplic.is_direct() {
+                crate::serial::write_str(
+                    "protofire: the aplic is in message mode; a wired source needs an imsic driver\n",
+                );
+            }
+            trap::set_controller(external::External::Aplic(aplic));
+        }
+        return true;
+    }
+
     let Some((base, _contexts)) = boot::interrupt_controller() else {
         return true;
     };
@@ -422,7 +453,7 @@ pub unsafe fn install_interrupt_table() -> bool {
     // device memory, and this runs once on the boot hart.
     unsafe {
         plic.enable();
-        trap::set_controller(plic);
+        trap::set_controller(external::External::Plic(plic));
     }
     true
 }
@@ -811,8 +842,12 @@ pub fn external_controller() -> Option<(usize, usize, usize)> {
     // From the controller the trap path holds, not from the device tree: a line
     // built from the tree prints the same words on a boot whose driver was
     // never installed, which is exactly what a mutation showed.
-    let plic = trap::controller()?;
-    Some((plic.base(), plic.context(), plic.sources()))
+    let controller = trap::controller()?;
+    Some((
+        controller.base(),
+        controller.consumer(),
+        controller.sources(),
+    ))
 }
 
 /// Enable one source at the controller, and answer whether it did.
@@ -828,6 +863,15 @@ pub fn external_controller() -> Option<(usize, usize, usize)> {
 /// source is told to start signalling.
 #[cfg(target_os = "none")]
 pub unsafe fn enable_external_source(number: usize) -> bool {
+    // Through the controller the trap path **holds**, not one rebuilt from the
+    // tree: two readers that each parse the tree are two answers that can
+    // disagree, and the trap path can only complete a source claimed through
+    // the one it installed.
+    if let Some((base, hart, sources)) = boot::aplic() {
+        let aplic = aplic::Aplic::new(base, hart, sources);
+        // SAFETY: the caller's contract is this function's.
+        return unsafe { aplic.enable_source(number) };
+    }
     let Some((base, _contexts)) = boot::interrupt_controller() else {
         return false;
     };
@@ -849,6 +893,11 @@ pub unsafe fn enable_external_source(number: usize) -> bool {
 /// Read-only.
 #[cfg(target_os = "none")]
 pub unsafe fn external_source_enabled(number: usize) -> bool {
+    if let Some((base, hart, sources)) = boot::aplic() {
+        let aplic = aplic::Aplic::new(base, hart, sources);
+        // SAFETY: the caller's contract is this function's.
+        return unsafe { aplic.source_enabled(number) };
+    }
     let Some((base, _contexts)) = boot::interrupt_controller() else {
         return false;
     };

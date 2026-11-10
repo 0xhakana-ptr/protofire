@@ -255,8 +255,30 @@ The PLIC is programmed and the console's UART is claimed as a real source —
 enabled at the controller, asked for one transmitter interrupt, acknowledged at
 the device before the source is completed.  Verified by `interrupt delivered to its handler`, `external controller at `, and `console interrupt(s) taken = 1`.
 
-Missing: no AIA/IMSIC.  One source is claimed, so a second device's interrupt
-has no handler.
+The AIA's APLIC is driven in **direct delivery mode**: the machine is
+described with `riscv,numsource` and `riscv,aplic`, its sources are configured
+level-high with a per-source target, and a hart's delivery block claims and
+completes.  The boot finds the APLIC before the PLIC, because a machine that
+describes one is an AIA machine and the older node beside it is the one the
+firmware left for a kernel that does not know the new one.  Measured on
+`-machine virt,aia=aplic`: `external controller at 0xd000000, context 0, 96
+source(s)` and `console interrupt(s) taken = 2`, with the boot completing in
+4 of 4 runs.
+
+Two limits, both measured rather than assumed:
+
+- **`-machine virt,aia=aplic-imsic` delivers nothing through a wired source.**
+  QEMU locks that machine's APLIC in message mode — `domaincfg` reads
+  `0x80000104`, `DM` set and read-only — so an enabled source becomes an MSI
+  an IMSIC must receive, and this kernel has no IMSIC driver.  The boot says
+  so (`the aplic is in message mode; a wired source needs an imsic driver`)
+  and finishes anyway, with `console interrupt(s) taken = 0`.
+- **Only one source is claimed**, so a second device's interrupt has no
+  handler.  The controller can name every source the tree declares and the
+  claim path completes whichever one arrives; what is missing is a driver per
+  device, not a controller.
+
+The MSI half — an IMSIC file per hart and a message table — is not implemented.
 
 **Timer and clock.**  The SBI's legacy `set_timer`; arming is a trap into
 M-mode, with every clobbered register declared.  The counter's rate comes from

@@ -528,10 +528,10 @@ fn finish_external(frame: &mut ExceptionFrame) {
 /// Called once, after [`crate::plic::Plic::enable`], before any source is
 /// enabled.  The window must stay mapped for the life of the boot.
 #[cfg(target_os = "none")]
-pub unsafe fn set_controller(plic: crate::plic::Plic) {
+pub unsafe fn set_controller(controller: crate::external::External) {
     // SAFETY: the caller promises this is the only write, and it happens before
     // any source can be enabled.
-    unsafe { *CONTROLLER.get() = Some(plic) };
+    unsafe { *CONTROLLER.get() = Some(controller) };
 }
 
 /// The controller the boot installed, if it installed one.
@@ -540,7 +540,7 @@ pub unsafe fn set_controller(plic: crate::plic::Plic) {
 /// line built from the device tree would print the same words on a boot whose
 /// driver was never installed.
 #[cfg(target_os = "none")]
-pub fn controller() -> Option<crate::plic::Plic> {
+pub fn controller() -> Option<crate::external::External> {
     // SAFETY: written once by the boot before any source is enabled, read
     // after.
     unsafe { *CONTROLLER.get() }
@@ -548,7 +548,7 @@ pub fn controller() -> Option<crate::plic::Plic> {
 
 /// The controller, once the boot has found and enabled one.
 #[cfg(target_os = "none")]
-static CONTROLLER: cell::SyncUnsafeCell<Option<crate::plic::Plic>> =
+static CONTROLLER: cell::SyncUnsafeCell<Option<crate::external::External>> =
     cell::SyncUnsafeCell::new(None);
 
 /// The dispatch the assembly calls.

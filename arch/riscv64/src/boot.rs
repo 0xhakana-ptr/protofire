@@ -298,6 +298,80 @@ pub fn plic_sources() -> Option<usize> {
     Some(node.property("riscv,ndev")?.as_u32()? as usize)
 }
 
+/// The AIA's APLIC, when the tree describes one.
+///
+/// `(base, hart index, sources)`.  The APLIC is a **different controller** from
+/// the PLIC, not a newer spelling of it: its enables are per domain, its
+/// targets are per source, and its claim is in a per-hart delivery block.  A
+/// machine built with `-machine virt,aia=aplic` or `aia=aplic-imsic` names it
+/// instead of a PLIC, and a boot that asked only for `riscv,plic0` found no
+/// controller at all — `no external interrupt controller`, which is the gap
+/// this reader closes.
+///
+/// ## Which APLIC
+///
+/// QEMU's AIA machine describes **two**: a machine-mode one at `0xc000000` and
+/// a supervisor-mode one at `0xd000000`, and the latter is the one whose
+/// `riscv,delegate` names the first as its parent.  This kernel runs at S-mode,
+/// so it wants the node the S-mode domain owns.  The tree marks that by placing
+/// the *machine* node lower and giving the supervisor node a `riscv,delegate`
+/// property holding the other's phandle; the reader below picks the node that
+/// is **not** the delegate source, i.e. the one that is not named as
+/// `msi-parent` by the other.
+///
+/// A machine with a single APLIC has no such pair, and the reader takes the
+/// only node there is.
+///
+/// The hart index is the APLIC's own numbering for the harts it delivers to,
+/// which is the delivery block's index: the machine's harts are its domain
+/// targets, and the boot hart's index among them is what its target words name.
+/// On these machines that index is the hart id, because the hart list the
+/// tree gives is the machine's order.
+pub fn aplic() -> Option<(usize, usize, usize)> {
+    let tree = device_tree()?;
+    let mut candidates = tree.all_compatible("riscv,aplic");
+    let first = candidates.next()?;
+    // A pair names the supervisor node by **not** being the other's msi-parent.
+    // With one node there is nothing to choose, so it is the answer.
+    let second = candidates.next();
+    let node = match second {
+        Some(second) => {
+            let first_is_parent = first
+                .property("msi-parent")
+                .and_then(|property| property.as_u32())
+                .zip(second.property("phandle").and_then(|p| p.as_u32()))
+                .is_some_and(|(parent, phandle)| parent == phandle);
+            if first_is_parent { second } else { first }
+        }
+        None => first,
+    };
+
+    let region = node.region()?;
+    if region.address == 0 || region.size == 0 {
+        return None;
+    }
+    let sources = node.property("riscv,num-sources")?.as_u32()? as usize;
+    Some((region.address as usize, hart_index(), sources))
+}
+
+/// This hart's index among the machine's harts, as an APLIC target names it.
+///
+/// The APLIC's delivery blocks are numbered per hart in the machine's order,
+/// and the hart the firmware cold-booted is the one this boot runs on.  On the
+/// machines this tree boots the tree's hart list is ordered by id, so the index
+/// is the hart id; a machine whose list was not ordered that way would need the
+/// listing read, which is the change this comment exists to make visible.
+#[cfg(target_os = "none")]
+fn hart_index() -> usize {
+    crate::smp::boot_hart()
+}
+
+/// A host build has no hart to index.
+#[cfg(not(target_os = "none"))]
+fn hart_index() -> usize {
+    0
+}
+
 /// The GICv2m frame's window: none, because this machine has no GIC.
 ///
 /// A riscv64 machine signals interrupts through its PLIC or, with the AIA, an
