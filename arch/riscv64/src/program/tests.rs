@@ -288,10 +288,31 @@ fn the_reader_reads_to_end_of_file_and_waits_for_the_writer() {
             abi::SyscallNumber::Read as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::InstallExceptionHandler as usize,
             abi::SyscallNumber::WaitProcessOf as usize,
             abi::SyscallNumber::Exit as usize,
+            abi::SyscallNumber::Write as usize,
+            abi::SyscallNumber::ReturnFromException as usize,
         ],
-        "the reader writes, reads, writes, reads to end-of-file, waits, exits"
+        "the reader announces, reads to end-of-file, installs a handler, waits, exits — and the handler writes and returns"
+    );
+
+    // The handler's address is the `auipc`'s own PC plus the delta the program
+    // adds, and the delta has to land on the handler's first word.  A delta
+    // that drifted is a handler entry in the middle of a call, which the
+    // machine reports as a trap at an address nobody wrote.
+    let auipc = words
+        .iter()
+        .position(|word| *word == 0x0000_0517)
+        .expect("the reader takes its own address");
+    let delta = words[auipc + 1];
+    let immediate = (delta as i32) >> 20;
+    let handler = auipc * 4 + immediate as usize;
+    assert!(handler < words.len() * 4, "the handler is inside the array");
+    assert_eq!(
+        words[handler / 4],
+        addi(REGISTER_A1 as u32, 0, 64),
+        "and its first word is the handler's own `li a1, #64`"
     );
     assert_eq!(
         words[18], 0x0001_3503,

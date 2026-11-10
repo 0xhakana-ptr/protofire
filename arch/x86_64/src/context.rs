@@ -535,7 +535,7 @@ mod tests {
 /// The longer of the four images.  A program is copied into a whole page, so
 /// the exact length matters only to the copy; a shorter array would truncate
 /// the announcing program's last instruction.
-pub const PROGRAM_LEN: usize = 126;
+pub const PROGRAM_LEN: usize = 182;
 
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.
@@ -560,6 +560,21 @@ pub fn program_bytes(number: u16) -> [u8; PROGRAM_LEN] {
     if number == PIPE_READER {
         let mut bytes = [0u8; PROGRAM_LEN];
         bytes[..PIPE_READER_PROGRAM.len()].copy_from_slice(&PIPE_READER_PROGRAM);
+        let at = PIPE_READER_PROGRAM.len();
+        bytes[at..at + READER_FAULT_HANDLER.len()].copy_from_slice(&READER_FAULT_HANDLER);
+        // The `add rdi, disp32` after `pop rdi`: the `pop` pushed the address
+        // of the byte after the `call`, which is one past the `call`'s five
+        // bytes, and the handler is `at`.  The operand is patched from those
+        // two facts rather than written down beside them.
+        let call = PIPE_READER_PROGRAM
+            .windows(5)
+            .position(|window| *window == [0xE8, 0x00, 0x00, 0x00, 0x00])
+            .expect("the reader learns its own position");
+        let after_call = call + 5;
+        let displacement = at as i64 - after_call as i64;
+        // `pop rdi` is one byte, then `48 81 C7` (three) and the operand.
+        let operand = after_call + 1 + 3;
+        bytes[operand..operand + 4].copy_from_slice(&(displacement as i32).to_le_bytes());
         return bytes;
     }
     if number == PIPE_WRITER {
@@ -652,7 +667,7 @@ const PIPE_WRITER_PROGRAM: [u8; 91] = [
 /// ever" can answer it: a read that returned would have to be end-of-file,
 /// and a close that never moved the pipe's count would leave this program
 /// parked with the boot unfinished.
-const PIPE_READER_PROGRAM: [u8; 113] = [
+const PIPE_READER_PROGRAM: [u8; 148] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -687,6 +702,27 @@ const PIPE_READER_PROGRAM: [u8; 113] = [
     // Wait for **the writer**, by pid, and make its status this program's.
     // `WaitProcess` answers about whichever process finished first, and this
     // boot's forked child dies before the writer does.
+    // Install a fault handler, then take a fault on purpose.
+    //
+    // `call +0; pop rdi` makes the image learn a position it does not know at
+    // assembly time: the `call` pushes the address of the next byte and `pop`
+    // takes it.  That address is where `READER_FAULT_HANDLER` begins, because
+    // `program_bytes` splices the handler at exactly this array's end — so the
+    // displacement is zero and cannot drift.  A hand-computed `lea rip+disp32`
+    // puts the entry one byte off the moment any instruction above it changes
+    // length, which on this machine is any edit at all.
+    0xE8, 0x00, 0x00, 0x00, 0x00, // call +0            (push the next address)
+    0x5F, // pop rdi            (that address)
+    0x48, 0x81, 0xC7, 0x00, 0x00, 0x00,
+    0x00, // add rdi, disp32 (patched to reach the handler)
+    0xB8, 0x16, 0x00, 0x00, 0x00, // mov eax, 22         (InstallExceptionHandler)
+    0xCD, 0x80, // int 0x80
+    // The fault: a write to this program's own read-execute code page.  Its
+    // address is the handler's, with the low twelve bits cleared — `and rax,
+    // ~0xFFF` — so the program never has to know where the boot mapped it.
+    0x48, 0x89, 0xF8, // mov rax, rdi        (the handler address)
+    0x48, 0x25, 0x00, 0xF0, 0xFF, 0xFF, // and rax, ~0xFFF (this code page)
+    0xC7, 0x00, 0x00, 0x00, 0x00, 0x00, // mov dword [rax], 0 (the fault)
     0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2          (the writer's pid)
     0xB8, 0xC4, 0x00, 0x00, 0x00, // mov eax, 196        (WaitProcessOf)
     0xCD, 0x80, // int 0x80
@@ -696,6 +732,31 @@ const PIPE_READER_PROGRAM: [u8; 113] = [
     // measured as `3 -> 2` before this line existed.
     0x89, 0xC7, // mov edi, eax        (the status is the wait's answer)
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
+    0xCD, 0x80, // int 0x80
+    0xEB, 0xFE, // jmp $
+];
+
+/// The reader's fault handler, spliced into its image at the program's end.
+///
+/// This is where the `pop rdi` in the program points: the install sequence
+/// ends with the `int 0x80` that installs it, and the handler follows the
+/// last byte of the program array.  The four arguments are `rdi`..`r9`, so
+/// `rcx` holds the faulting instruction — and this machine's instructions are
+/// not a fixed width, which is why the address to continue at is the
+/// handler's to supply.
+const READER_FAULT_HANDLER: [u8; 33] = [
+    0xBE, 0x40, 0x00, 0x00, 0x00, // mov esi, 64        (the line)
+    0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6         (Write)
+    0xCD, 0x80, // int 0x80
+    // The store that faulted is `C7 00 00 00 00 00` — six bytes: the opcode,
+    // the ModRM and a disp32.  Three would land in the middle of it, which is
+    // what a handler that assumed a two-byte ModRM wrote, and the machine then
+    // faulted at `0x1`.  The length is this handler's own fact about its own
+    // instruction, and it is why the kernel asks rather than computing.
+    0x49, 0x83, 0xC0, 0x06, // add r8, 6          (the store is six bytes)
+    0x4C, 0x89, 0xC7, // mov rdi, r8        (where to continue)
+    0xBE, 0x01, 0x00, 0x00, 0x00, // mov esi, 1         (the call's value)
+    0xB8, 0x17, 0x00, 0x00, 0x00, // mov eax, 23        (ReturnFromException)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $
 ];
@@ -960,10 +1021,33 @@ mod program_tests {
                 abi::SyscallNumber::Read as u32,
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Read as u32,
+                abi::SyscallNumber::InstallExceptionHandler as u32,
                 abi::SyscallNumber::WaitProcessOf as u32,
                 abi::SyscallNumber::Exit as u32,
             ],
-            "the reader writes, reads, writes, reads to end-of-file, waits, exits"
+            "the reader writes, reads, installs a fault handler, waits by pid, and exits"
+        );
+
+        // The `pop rdi` after `call +0` takes the address of the byte after the
+        // `call`, and that has to be the handler's first byte — the handler is
+        // spliced at the program array's end.  A displacement that drifted is
+        // a handler entry in the middle of an instruction, which the machine
+        // reports as a trap at an address nobody wrote.
+        let call = PIPE_READER_PROGRAM
+            .windows(5)
+            .position(|window| *window == [0xE8, 0x00, 0x00, 0x00, 0x00])
+            .expect("the reader learns its own position");
+        assert_eq!(
+            PIPE_READER_PROGRAM[call + 5],
+            0x5F,
+            "the `pop rdi` follows the call, so it takes the address after it"
+        );
+        let bytes = program_bytes(PIPE_READER);
+        let handler = PIPE_READER_PROGRAM.len();
+        assert_eq!(
+            &bytes[handler..handler + 5],
+            &[0xBE, 0x40, 0x00, 0x00, 0x00],
+            "and the handler's first instruction is there"
         );
 
         // The second read asks for the same four bytes into the same buffer:

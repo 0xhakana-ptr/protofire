@@ -298,6 +298,13 @@ impl Machine {
                 // the boot unfinished, and the wait's line above would never
                 // print either.
                 ("protofire: process 2 released ", false),
+                // The program answered its own fault, as on the other two:
+                // the reader installs a handler, stores into its own
+                // read-execute code page, and the kernel resumes it at the
+                // handler instead of killing it.  `vector 14` is this
+                // machine's page fault.
+                ("protofire: process 3 installed a fault handler at ", false),
+                ("protofire: process 3 handled its own fault at ", false),
                 // The program took a fault **it answered itself**: the
                 // reader installs a handler, stores into its own code
                 // page (a write no resolver answers), and the kernel
@@ -677,6 +684,13 @@ impl Machine {
                 // `WaitProcess` names no particular child.
                 ("protofire: a wait answered status ", false),
                 ("protofire: process 2 released ", false),
+                // The program answered its own fault, as on aarch64: the
+                // reader installs a handler, stores into its own read-execute
+                // code page, and the kernel resumes it at the handler instead
+                // of killing it.  `vector 15` is this machine's store page
+                // fault, which is the access the program made on purpose.
+                ("protofire: process 3 installed a fault handler at ", false),
+                ("protofire: process 3 handled its own fault at ", false),
                 // The program took a fault **it answered itself**: the
                 // reader installs a handler, stores into its own code
                 // page (a write no resolver answers), and the kernel

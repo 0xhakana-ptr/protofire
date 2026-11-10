@@ -189,7 +189,7 @@ const PIPE_READER_PROGRAM: [u32; 42] = [
     // instructions are four bytes, so the instruction after it is `+ 4`.  On
     // x86_64 that size is not a constant and the handler is the only thing
     // that knows it — which is why the kernel asks rather than computes.
-    0x9100_1060, // add x0, x3, #4    (the instruction after the fault)
+    0x9100_1080, // add x0, x4, #4    (the instruction after the fault)
     0xD280_0021, // movz x1, #1      (the value the call answers with)
     0xD280_02E8, // movz x8, #23     (ReturnFromException)
     0xD400_0001, // svc #0

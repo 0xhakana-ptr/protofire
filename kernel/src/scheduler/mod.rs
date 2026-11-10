@@ -249,7 +249,14 @@ fn hand_the_fault_to_the_program(frame: &mut arch::Context, vector: usize, addre
     // 2. the direction (`1` for a write),
     // 3. the address of the instruction that faulted.
     //
-    // The fourth is why the kernel does not compute a resume itself.  A
+    // The fourth is why the kernel does not compute a resume itself.
+    //
+    // It travels in the **fifth** argument register, not the fourth: on
+    // x86_64 the fourth is `rcx`, and `int 0x80` saves its return address
+    // there, so a value put in it arrives at the handler as whatever the
+    // instruction left.  Measured: the handler resumed at `0x1`, a supervisor
+    // read, because `rcx` had been overwritten.  `r8` is the first argument
+    // register the call instruction does not touch.  A
     // machine whose instructions are a fixed width can add four; **x86_64's
     // are not**, so an instruction length is not a constant the kernel can
     // name.  The program knows its own instructions, so the resume is the
@@ -259,7 +266,7 @@ fn hand_the_fault_to_the_program(frame: &mut arch::Context, vector: usize, addre
     arch::set_return_value(frame, vector);
     arch::set_argument(frame, 1, address);
     arch::set_argument(frame, 2, 0);
-    arch::set_argument(frame, 3, faulting_instruction);
+    arch::set_argument(frame, 4, faulting_instruction);
     arch::set_resume_address(frame, handler);
     true
 }

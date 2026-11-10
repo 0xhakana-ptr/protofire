@@ -26,7 +26,7 @@
 /// page, so this matters only to the copy — but it must be at least the
 /// longest, and the reader grew past thirty-two words when its reads, its wait
 /// and its status filled out.
-pub const PROGRAM_LEN: usize = 34 * 4;
+pub const PROGRAM_LEN: usize = 44 * 4;
 
 /// The `e_machine` this machine's programs carry, which the loader checks the
 /// image against before it maps one page of it.
@@ -330,7 +330,7 @@ const PIPE_WRITER_PROGRAM: [u32; 24] = [
 /// parked with the boot unfinished.  The exit takes its status from that
 /// read's answer rather than a constant, so the number the boot reports is
 /// the one end-of-file gave.
-const PIPE_READER_PROGRAM: [u32; 28] = [
+const PIPE_READER_PROGRAM: [u32; 42] = [
     BUSY_LOOP[0],
     BUSY_LOOP[1],
     BUSY_LOOP[2],
@@ -358,6 +358,23 @@ const PIPE_READER_PROGRAM: [u32; 28] = [
     addi(REGISTER_A0 as u32 + 2, 0, 4), // li a2, #4
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Read as i32),
     0x0000_0073, // ecall
+    // Install a fault handler and take a fault on purpose.
+    //
+    // The address is `auipc`'s own PC plus the distance to the handler's
+    // first word.  A delta built as "page base + offset" needs the program's
+    // load address, which a program does not know: measured, the first
+    // attempt installed a page offset and the handler entry landed outside
+    // the mapping.
+    0x0000_0517, // auipc a0, 0     (this instruction's own address)
+    addi(REGISTER_A0 as u32, REGISTER_A0 as u32, 44), // + to the handler
+    addi(
+        REGISTER_A7 as u32,
+        0,
+        abi::SyscallNumber::InstallExceptionHandler as i32,
+    ),
+    0x0000_0073, // ecall
+    0x0000_0517, // auipc a0, 0     (this array's own address)
+    0x0005_2023, // sw x0, 0(a0)    (the fault the handler answers)
     // Wait for **the writer**, by pid, and make its status this program's.
     // `WaitProcess` answers about whichever process finished first, and this
     // boot's forked child dies before the writer does.
@@ -370,6 +387,22 @@ const PIPE_READER_PROGRAM: [u32; 28] = [
     0x0000_0073, // ecall
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
     0x0000_0073, // ecall
+    // The fault handler, 56 bytes after the `auipc` that installs it.  Its
+    // arguments are a0..a3, so `a3` holds the faulting instruction; this
+    // machine's instructions are four bytes and `ReturnFromException` takes
+    // the address to continue at.
+    addi(REGISTER_A1 as u32, 0, 64), // li a1, #64 (the line)
+    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
+    0x0000_0073,                                         // ecall
+    addi(REGISTER_A0 as u32, REGISTER_A0 as u32 + 4, 4), // a0 = a4 + 4
+    addi(REGISTER_A1 as u32, 0, 1),                      // li a1, #1
+    addi(
+        REGISTER_A7 as u32,
+        0,
+        abi::SyscallNumber::ReturnFromException as i32,
+    ),
+    0x0000_0073, // ecall
+    0x0000_006F, // j .   (never reached)
 ];
 
 /// A program's bytes, for a caller that writes them into a frame.
