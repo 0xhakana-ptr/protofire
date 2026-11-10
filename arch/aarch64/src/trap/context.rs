@@ -50,6 +50,22 @@ pub fn resume_address(context: &Context) -> usize {
     context.elr as usize
 }
 
+/// Point the resume back at the call that is being served, for a retry.
+///
+/// A trap resumes at the instruction **after** the `svc`, and that is what
+/// `set_return` is for: the call has been answered, so the program continues.
+/// A call that **parked** has not been answered — its handler saved the frame
+/// and switched away — and resuming after the `svc` would skip it, leaving the
+/// program to read whatever its answer register happened to hold.  The
+/// measured symptom was a `WaitProcess` that returned its caller's previous
+/// answer, and a reader that read one time fewer than its image says.
+///
+/// So a park points the resume back at the `svc` itself, and the wake
+/// re-executes the call.  `AArch64` `svc` is one four-byte word.
+pub fn restart_the_call(context: &mut Context) {
+    context.elr = context.elr.wrapping_sub(4);
+}
+
 /// Point a context at another address, for a caller building one by hand.
 pub fn set_resume_address(context: &mut Context, address: usize) {
     context.elr = address as u64;

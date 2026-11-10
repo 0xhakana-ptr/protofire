@@ -202,6 +202,17 @@ pub fn resume_address(context: &Context) -> usize {
     context.instruction_pointer as usize
 }
 
+/// Point the resume back at the call that is being served, for a retry.
+///
+/// A trap resumes at the instruction **after** the call; a call that
+/// **parked** has not been answered, so resuming after it would skip the
+/// handler and leave the program reading whatever its answer register held.
+/// `int 0x80` is two bytes, which is why this is not the same constant the
+/// other two machines use.
+pub fn restart_the_call(context: &mut Context) {
+    context.instruction_pointer = context.instruction_pointer.wrapping_sub(2);
+}
+
 /// Point a context at another address, for a caller building one by hand.
 pub fn set_resume_address(context: &mut Context, address: usize) {
     context.instruction_pointer = address as u64;
@@ -507,7 +518,7 @@ mod tests {
 /// The longer of the four images.  A program is copied into a whole page, so
 /// the exact length matters only to the copy; a shorter array would truncate
 /// the announcing program's last instruction.
-pub const PROGRAM_LEN: usize = 110;
+pub const PROGRAM_LEN: usize = 126;
 
 /// Long enough to span several time slices, so the wake is observably later
 /// than the request rather than inside the same tick.
@@ -570,7 +581,7 @@ pub const PIPE_WRITER: u16 = 2;
 ///
 /// `[rsp]` holds the write end's descriptor and `[rsp + 16]` is the four bytes
 /// it sends.
-const PIPE_WRITER_PROGRAM: [u8; 96] = [
+const PIPE_WRITER_PROGRAM: [u8; 98] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -593,6 +604,11 @@ const PIPE_WRITER_PROGRAM: [u8; 96] = [
     0xCD, 0x80, // int 0x80
     0xB8, 0x07, 0x00, 0x00, 0x00, // mov eax, 7          (Close — the end is in edi)
     0xCD, 0x80, // int 0x80
+    // The status is zero on purpose: `edi` still holds the descriptor the
+    // close consumed, and `Exit` reads its status from `edi` on this machine.
+    // Deleting this line makes the writer exit with the close's descriptor
+    // number, which the boot's status line then reports and the gate refuses.
+    0x31, 0xFF, // xor edi, edi        (the exit status is zero)
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $
@@ -620,7 +636,7 @@ const PIPE_WRITER_PROGRAM: [u8; 96] = [
 /// ever" can answer it: a read that returned would have to be end-of-file,
 /// and a close that never moved the pipe's count would leave this program
 /// parked with the boot unfinished.
-const PIPE_READER_PROGRAM: [u8; 99] = [
+const PIPE_READER_PROGRAM: [u8; 106] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -648,6 +664,11 @@ const PIPE_READER_PROGRAM: [u8; 99] = [
     0x48, 0x8D, 0x74, 0x24, 0x08, // lea rsi, [rsp + 8]  (the buffer)
     0xBA, 0x04, 0x00, 0x00, 0x00, // mov edx, 4
     0xB8, 0x05, 0x00, 0x00, 0x00, // mov eax, 5          (Read, the one end-of-file ends)
+    0xCD, 0x80, // int 0x80
+    // The wait: its answer is the status, so nothing clears `eax` between the
+    // two calls.  A status already recorded answers here; one that has not
+    // parks this task and the writer's exit wakes it.
+    0xB8, 0x18, 0x00, 0x00, 0x00, // mov eax, 24         (WaitProcess)
     0xCD, 0x80, // int 0x80
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
     0xCD, 0x80, // int 0x80
@@ -916,15 +937,14 @@ mod program_tests {
         assert!(load < close, "the load is the close's descriptor");
     }
 
-    /// The reader reads twice, and the second read is the one end-of-file
-    /// ends.
+    /// The reader reads twice, then waits for the writer's process to end.
     ///
     /// The first read's wake is the writer's write; the second's only
-    /// possible answer is "the write end is gone".  A program compiled
-    /// without it would exit without ever asking the question the close
-    /// answers.
+    /// possible answer is "the write end is gone".  The wait after it is what
+    /// makes the boot exercise `WaitProcess`, on whichever of its two paths
+    /// the race picks, and the exit status is the wait's answer.
     #[test]
-    fn the_reader_reads_again_after_its_second_announcement() {
+    fn the_reader_reads_to_end_of_file_and_waits_for_the_writer() {
         assert_eq!(
             super::call_numbers(&PIPE_READER_PROGRAM),
             alloc::vec![
@@ -932,9 +952,10 @@ mod program_tests {
                 abi::SyscallNumber::Read as u32,
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Read as u32,
+                abi::SyscallNumber::WaitProcess as u32,
                 abi::SyscallNumber::Exit as u32,
             ],
-            "the reader writes, reads, writes, reads to end-of-file, exits"
+            "the reader writes, reads, writes, reads to end-of-file, waits, exits"
         );
 
         // The second read asks for the same four bytes into the same buffer:

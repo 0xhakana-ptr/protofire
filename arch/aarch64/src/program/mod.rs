@@ -25,8 +25,11 @@ pub const PROGRAM_WORDS_FOR_TEST: usize = 32;
 
 /// The longest of the four images: the announcing program, the pipe writer,
 /// the pipe reader and the exec target.  A program is copied into a whole
-/// page, so this matters only to the copy.
-pub const PROGRAM_LEN: usize = 32 * 4;
+/// page, so this matters only to the copy — but it must be at least the
+/// longest, and the reader grew past thirty-two words when its reads, its wait
+/// and its status filled out.  Thirty-four leaves the announcing program's own
+/// thirty-two untouched and is what every image now fits inside.
+pub const PROGRAM_LEN: usize = 34 * 4;
 
 /// The `e_machine` this machine's programs carry, which the loader checks the
 /// image against before it maps one page of it.
@@ -86,8 +89,8 @@ const PIPE_WRITER_PROGRAM: [u32; 28] = [
     0x1400_0000, // b .
 ];
 
-/// The reader: wait on a descriptor the boot left on its stack, and read
-/// again after the wake.
+/// The reader: wait on a descriptor the boot left on its stack, read again
+/// after the wake, and then wait for the writer's process to end.
 ///
 /// `[sp]` is the read end's descriptor and `[sp + 8]` the four-byte buffer.
 /// The first read blocks, the pipe is empty and its writer is alive, and the
@@ -97,10 +100,25 @@ const PIPE_WRITER_PROGRAM: [u32; 28] = [
 /// drained by then and the writer's end is closed, so nothing but "no bytes
 /// ever" can answer it: a read that returned would have to be end-of-file,
 /// and a close that never moved the pipe's count would leave this program
-/// parked with the boot unfinished.  The exit takes its status from that
-/// read's answer rather than a constant, so the number the boot reports is
-/// the one end-of-file gave.
-const PIPE_READER_PROGRAM: [u32; 25] = [
+/// parked with the boot unfinished.
+///
+/// The **third** read is what end-of-file actually answers.  The first read
+/// blocked and the writer's four bytes woke it; the second read then *consumed*
+/// those four and answered `4`, which is a short read and not a close.  Only a
+/// read after the buffer is drained can see "no writer", and a program that
+/// stopped at two would have exited with the bytes' count and proved nothing.
+/// A close that never moved the pipe's count leaves this third read parked
+/// with the boot unfinished, which is what the gate refuses.
+///
+/// `WaitProcess` after it is the boot's own proof of the wait.  Which of its
+/// two paths runs is a race the program cannot control — the writer may have
+/// exited while this read was returning, or may still be one call short — and
+/// **both are the mechanism working**: a status that has arrived answers at
+/// once, and one that has not parks this task until the writer's exit wakes
+/// it.  The exit takes its status from the wait's answer, so a wait that
+/// answered an error puts that error in the boot's status line and the gate
+/// refuses it.
+const PIPE_READER_PROGRAM: [u32; 28] = [
     0xD280_0803, // movz x3, #64
     0xD280_2002, // movz x2, #256
     0xF100_0442, // subs x2, x2, #1
@@ -127,7 +145,16 @@ const PIPE_READER_PROGRAM: [u32; 25] = [
     0xD280_0082, // movz x2, #4
     0xD280_00A8, // movz x8, #5     (Read, the one end-of-file ends)
     0xD400_0001, // svc #0
-    0xD280_0068, // movz x8, #3     (Exit — the status is the read's answer)
+    // The wait.  Its answer is **not** this program's status: `WaitProcess`
+    // promises "some process finished", not "the one you meant", and the boot
+    // has four — the first to exit can be the forked child that died by its
+    // own bad write.  A status taken from the answer would therefore be a
+    // number about another process.  What the wait proves is that the call
+    // ran and returned, and the kernel says so on its own line.
+    0xD280_0308, // movz x8, #24    (WaitProcess)
+    0xD400_0001, // svc #0
+    0xD280_0000, // movz x0, #0     (the exit status is this program's own)
+    0xD280_0068, // movz x8, #3     (Exit)
     0xD400_0001, // svc #0
 ];
 

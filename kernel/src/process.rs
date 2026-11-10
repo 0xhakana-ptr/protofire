@@ -360,11 +360,14 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                             // same way a sleep waits for its deadline.
                             crate::scheduler::idle_until_woken();
                         }
-                        // Install whatever can run next; this task's frame
-                        // was saved by the park, so the wake resumes the
-                        // read.
-                        let _ = crate::scheduler::switch_without_saving(frame);
-                        CallOutcome::Exit
+                        // Install whatever can run next and answer with it.
+                        // This task's frame was saved by the park, so the
+                        // wake resumes the read.  The answer is the switch's,
+                        // not `Exit` on a frame still describing this task:
+                        // that shape resumed the reader at the instruction
+                        // after its `svc` with the previous call's answer in
+                        // its register, which is a read that never happened.
+                        crate::scheduler::switch_without_saving(frame)
                     }
                 }
             }
@@ -457,6 +460,13 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // nothing, which is the kind of invented answer this tree refuses.
     if number == SyscallNumber::WaitProcess as usize {
         if let Some(status) = crate::scheduler::first_exit_status() {
+            // Reported, because a wait that answered silently and a wait that
+            // never ran print the same exit status two lines later.  The
+            // number is the status the wait handed the program, which is what
+            // the boot's own `exit statuses` line then repeats.
+            arch::serial::write_str("protofire: a wait answered status ");
+            arch::serial::write_u32(status as u32);
+            arch::serial::write_str("\n");
             return CallOutcome::Return(status);
         }
         if !crate::scheduler::has_other_unfinished() {
@@ -465,6 +475,11 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             // question is "unfinished" and not "runnable": a child that is
             // asleep will wake and exit, and the runnable question answered
             // this wait `NotFound` for exactly that child.
+            //
+            // Reported, for the reason the answer above is: a program that
+            // exits with an error's encoding is the one failure here whose
+            // cause is invisible in the status line alone.
+            arch::serial::write_str("protofire: a wait has nothing to wait for\n");
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotFound));
         }
         // Park — with the same re-check the pipe's read parks under.  The
@@ -476,14 +491,33 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // call answers it here, or the task first, and the exit's wake ends
         // the wait.
         match crate::scheduler::block_unless_exit(frame) {
-            Some(status) => return CallOutcome::Return(status),
+            Some(status) => {
+                // The re-check under the scheduler's lock found the exit this
+                // call's own look a moment earlier had not: a process finished
+                // in the deciding instant.  Reported for the reason the
+                // immediate answer above is — a wait that answered and a wait
+                // that never ran print the same status line otherwise.
+                arch::serial::write_str("protofire: a wait answered status ");
+                arch::serial::write_u32(status as u32);
+                arch::serial::write_str("\n");
+                return CallOutcome::Return(status);
+            }
             None => {
                 arch::serial::write_str("protofire: a program waits for a child\n");
                 if !crate::scheduler::has_selectable() {
                     crate::scheduler::idle_until_woken();
                 }
-                let _ = crate::scheduler::switch_without_saving(frame);
-                return CallOutcome::Exit;
+                // **Answer with the switch, not `Exit` after throwing it
+                // away.**  `switch_without_saving` installs the next task's
+                // context into `frame` and answers `Return`; discarding that
+                // and answering `Exit` leaves the frame describing *this*
+                // task, so the epilogue resumes the waiter at the instruction
+                // after its `svc` with `x0` still holding whatever the call
+                // before left — the wait skipped, and the program exits with
+                // a number the wait never answered.  The sleep path answers
+                // the switch this way and has always worked; this branch and
+                // the pipe's read were the two that did not.
+                return crate::scheduler::switch_without_saving(frame);
             }
         }
     }

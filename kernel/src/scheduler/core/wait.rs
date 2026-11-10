@@ -72,11 +72,29 @@ impl Scheduler {
     /// The frame is saved here for the reason `sleep_until` gives: the position
     /// to resume at exists only in the trap frame the call arrived in, and a
     /// blocked task has no later scheduling call to rely on.
+    ///
+    /// ## The saved resume points back at the call
+    ///
+    /// A trap leaves `ELR_EL1` at the instruction **after** the `svc`, which
+    /// is what an answered call wants: the handler wrote the answer and the
+    /// program continues.  A **parked** call was not answered — its handler
+    /// found the wait real and is leaving it for a wake — so resuming after
+    /// the call would skip it, and the program would continue with whatever its
+    /// answer register held from the call before.  The wake is what retries the
+    /// call, and that is only true if the saved position is the call itself.
+    ///
+    /// This lives **here**, in the park, rather than at every caller: the
+    /// rewind is part of what parking means, and a caller that had to remember
+    /// it would be a caller that could forget.  The first attempt did put it at
+    /// the callers and rewound the wrong copy — `task.context = *frame` had
+    /// already copied the frame — so the saved position kept pointing past the
+    /// call and the wait never resumed.
     pub fn block(&mut self, cpu: usize, frame: &Context) {
         if let Some(task) = self.running.get(cpu).copied().flatten()
             && let Some(task) = self.tasks.get_mut(task)
         {
             task.context = *frame;
+            arch::restart_the_call(&mut task.context);
             task.state = State::Blocked;
         }
     }

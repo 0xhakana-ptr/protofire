@@ -746,6 +746,16 @@ pub fn resume_address(context: &Context) -> usize {
     context.sepc as usize
 }
 
+/// Point the resume back at the call that is being served, for a retry.
+///
+/// A trap resumes at the instruction **after** the `ecall`; a call that
+/// **parked** has not been answered, so resuming after it would skip the
+/// handler and leave the program reading whatever its answer register held.
+/// The `ecall` is one four-byte word.
+pub fn restart_the_call(context: &mut Context) {
+    context.sepc = context.sepc.wrapping_sub(4);
+}
+
 /// Point a context at another address, for a caller building one by hand.
 pub fn set_resume_address(context: &mut Context, address: usize) {
     context.sepc = address as u64;

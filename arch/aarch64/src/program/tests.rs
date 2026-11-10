@@ -169,13 +169,16 @@ fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
     );
 }
 
-/// The reader reads twice, and the second read is the one end-of-file ends.
+/// The reader reads twice, then waits for the writer's process to end.
 ///
 /// The first read's wake is the writer's write; the second's only possible
-/// answer is "the write end is gone".  A program compiled without it would
-/// exit without ever asking the question the close answers.
+/// answer is "the write end is gone".  The wait after it is what makes the
+/// boot exercise `WaitProcess`: whichever of its two paths the race picks —
+/// a status already recorded, or a park the writer's exit wakes — the exit
+/// status is the wait's answer, so a wait that answered an error is a boot
+/// line the gate refuses.
 #[test]
-fn the_reader_reads_again_after_its_second_announcement() {
+fn the_reader_reads_to_end_of_file_and_waits_for_the_writer() {
     let words = crate::program::PIPE_READER_PROGRAM;
     assert_eq!(
         call_numbers(&words),
@@ -184,12 +187,15 @@ fn the_reader_reads_again_after_its_second_announcement() {
             abi::SyscallNumber::Read as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::WaitProcess as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the reader writes, reads, writes, reads to end-of-file, exits"
+        "the reader writes, reads, writes, reads to end-of-file, waits, exits"
     );
-    // And the exit takes its status from the read's answer: the word before
-    // the Exit's `movz x8` is the `svc` itself, with no `movz x0` between.
+    // The exit status is this program's own, not the wait's answer.  `movz x0,
+    // #0` sits between the wait's `svc` and the `Exit`'s, and a program that
+    // dropped it would report a number about whichever process the wait
+    // happened to name.
     let exit = words
         .windows(2)
         .position(|pair| {
@@ -200,9 +206,7 @@ fn the_reader_reads_again_after_its_second_announcement() {
                 && pair[1] == 0xD400_0001
         })
         .expect("the reader exits");
-    assert_eq!(
-        words[exit - 1],
-        0xD400_0001,
-        "nothing overwrote the read's answer before `Exit` took it"
-    );
+    let status = words[exit - 1];
+    assert_eq!((status >> 5) & 0xFFFF, 0, "the status is zero");
+    assert_eq!(status & 0x1F, 0, "and it is `movz x0`");
 }

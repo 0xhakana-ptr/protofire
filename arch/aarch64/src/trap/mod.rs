@@ -38,6 +38,7 @@ pub use context::Context;
 #[cfg(target_os = "none")]
 pub use context::install_context;
 pub use context::is_user_context;
+pub use context::restart_the_call;
 pub use context::resume_address;
 pub use context::return_state;
 pub use context::return_value;

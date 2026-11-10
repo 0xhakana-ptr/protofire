@@ -64,6 +64,7 @@ pub use trap::Context;
 #[cfg(target_os = "none")]
 pub use trap::install_context;
 pub use trap::is_user_context;
+pub use trap::restart_the_call;
 pub use trap::resume_address;
 pub use trap::return_state;
 pub use trap::return_value;

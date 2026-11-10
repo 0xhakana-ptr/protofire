@@ -276,14 +276,14 @@ fn the_reader_clears_the_length_before_it_announces_again() {
     );
 }
 
-/// The reader reads twice, and the second read is the one end-of-file ends.
+/// The reader reads twice, then waits for the writer's process to end.
 ///
 /// The first read's wake is the writer's write; the second's only possible
-/// answer is "the write end is gone".  A program compiled without it would
-/// exit without ever asking the question the close answers, and the exit
-/// takes its status from that read's answer, not from a constant.
+/// answer is "the write end is gone".  The wait after it is what makes the
+/// boot exercise `WaitProcess`, on whichever of its two paths the race picks,
+/// and the exit status is the wait's answer.
 #[test]
-fn the_reader_reads_again_after_its_second_announcement() {
+fn the_reader_reads_to_end_of_file_and_waits_for_the_writer() {
     let words = crate::program::PIPE_READER_PROGRAM;
     assert_eq!(
         call_numbers(&words),
@@ -292,9 +292,10 @@ fn the_reader_reads_again_after_its_second_announcement() {
             abi::SyscallNumber::Read as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Read as usize,
+            abi::SyscallNumber::WaitProcess as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the reader writes, reads, writes, reads to end-of-file, exits"
+        "the reader writes, reads, writes, reads to end-of-file, waits, exits"
     );
     assert_eq!(
         words[18], 0x0001_3503,

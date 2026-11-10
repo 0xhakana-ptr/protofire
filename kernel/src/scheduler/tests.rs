@@ -429,6 +429,42 @@ fn a_park_whose_question_answered_itself_does_not_park() {
     assert!(scheduler.has_selectable(0), "the task is still runnable");
 }
 
+/// A park saves the call's own address, so the wake retries the call.
+///
+/// A trap resumes at the instruction after the call.  That is right for an
+/// answered call and wrong for a parked one: the wake would continue past a
+/// call whose handler never answered, and the program would read whatever its
+/// answer register held from the call before.  The rewind is part of what
+/// parking means, and it has to happen **after** the frame is copied into the
+/// task — the first attempt rewound the caller's own copy and left the saved
+/// one pointing past the call, which is why the wait parked and never came
+/// back.
+#[test]
+fn a_park_saves_the_address_of_the_call_it_did_not_answer() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("only"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+
+    // A frame whose resume is the instruction after a call: this is what a
+    // trap hands a handler.
+    let after_the_call = 0x80_0000_2004;
+    let frame = starting_context(after_the_call, 0x80_0000_2000);
+    scheduler.block(0, &frame);
+
+    assert_eq!(scheduler.blocked(), 1);
+    let saved = *scheduler.tasks[0].context();
+    assert_ne!(
+        arch::resume_address(&saved),
+        after_the_call,
+        "the saved position is the call, not the instruction after it"
+    );
+    assert!(
+        arch::resume_address(&saved) < after_the_call,
+        "and it moved back, not forward: {:x}",
+        arch::resume_address(&saved)
+    );
+}
+
 /// A park whose question is still open parks, and a wake ends it.
 ///
 /// This is the other order, and the one the wake must find: the task is in
@@ -447,10 +483,19 @@ fn a_park_whose_question_is_still_open_parks_and_a_wake_ends_it() {
     assert!(!scheduler.has_selectable(0), "a is parked");
     assert_eq!(scheduler.wake_blocked(), 1);
     assert!(scheduler.has_selectable(0), "and the wake ended it");
+    // The saved frame is the one it parked from, except that its resume points
+    // at the call the park did not answer.  Everything else survives: a park
+    // that lost a register would resume the call with the wrong arguments.
     let saved = *scheduler.tasks[0].context();
-    assert!(
-        saved == frame,
-        "the parked task kept the frame it parked from"
+    assert_eq!(
+        arch::stack_pointer(&saved),
+        arch::stack_pointer(&frame),
+        "the park kept the task's stack"
+    );
+    assert_eq!(
+        arch::return_value(&saved),
+        arch::return_value(&frame),
+        "and its arguments"
     );
 }
 

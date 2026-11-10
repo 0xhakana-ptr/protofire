@@ -23,8 +23,10 @@
 
 /// The longest of the four images: the announcing program, the pipe writer,
 /// the pipe reader and the exec target.  A program is copied into a whole
-/// page, so this matters only to the copy.
-pub const PROGRAM_LEN: usize = 32 * 4;
+/// page, so this matters only to the copy — but it must be at least the
+/// longest, and the reader grew past thirty-two words when its reads, its wait
+/// and its status filled out.
+pub const PROGRAM_LEN: usize = 34 * 4;
 
 /// The `e_machine` this machine's programs carry, which the loader checks the
 /// image against before it maps one page of it.
@@ -327,7 +329,7 @@ const PIPE_WRITER_PROGRAM: [u32; 27] = [
 /// parked with the boot unfinished.  The exit takes its status from that
 /// read's answer rather than a constant, so the number the boot reports is
 /// the one end-of-file gave.
-const PIPE_READER_PROGRAM: [u32; 25] = [
+const PIPE_READER_PROGRAM: [u32; 28] = [
     BUSY_LOOP[0],
     BUSY_LOOP[1],
     BUSY_LOOP[2],
@@ -355,6 +357,17 @@ const PIPE_READER_PROGRAM: [u32; 25] = [
     addi(REGISTER_A0 as u32 + 2, 0, 4), // li a2, #4
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Read as i32),
     0x0000_0073, // ecall
+    // The wait.  Its answer is **not** this program's status: `WaitProcess`
+    // promises "some process finished", and the first to exit can be the
+    // forked child.  What the wait proves is that the call ran, and the
+    // kernel says so on its own line.
+    addi(
+        REGISTER_A7 as u32,
+        0,
+        abi::SyscallNumber::WaitProcess as i32,
+    ),
+    0x0000_0073,                    // ecall
+    addi(REGISTER_A0 as u32, 0, 0), // the exit status is this program's own
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
     0x0000_0073, // ecall
 ];
