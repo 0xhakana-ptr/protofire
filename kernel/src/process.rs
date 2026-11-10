@@ -587,7 +587,12 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // `ReturnFromException(value)`: the handler is done, and the value is
         // the call's answer.  The trap path resumes the handler's caller,
         // which is the program at the instruction after this `svc`.
-        crate::scheduler::return_from_exception(call.arguments[0], frame);
+        // `ReturnFromException(resume, value)`: where the handler wants the
+        // program to continue, and the call's answer.  The handler supplies
+        // both because the address is a fact about the program's own
+        // instructions — a fixed-width machine could add one size, x86_64
+        // cannot.
+        crate::scheduler::return_from_exception(call.arguments[0], call.arguments[1], frame);
         return CallOutcome::Exit;
     }
 

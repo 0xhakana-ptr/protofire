@@ -29,7 +29,7 @@ pub const PROGRAM_WORDS_FOR_TEST: usize = 32;
 /// longest, and the reader grew past thirty-two words when its reads, its wait
 /// and its status filled out.  Thirty-four leaves the announcing program's own
 /// thirty-two untouched and is what every image now fits inside.
-pub const PROGRAM_LEN: usize = 40 * 4;
+pub const PROGRAM_LEN: usize = 42 * 4;
 
 /// The `e_machine` this machine's programs carry, which the loader checks the
 /// image against before it maps one page of it.
@@ -121,7 +121,7 @@ const PIPE_WRITER_PROGRAM: [u32; 25] = [
 /// it.  The exit takes its status from the wait's answer, so a wait that
 /// answered an error puts that error in the boot's status line and the gate
 /// refuses it.
-const PIPE_READER_PROGRAM: [u32; 40] = [
+const PIPE_READER_PROGRAM: [u32; 42] = [
     0xD280_0803, // movz x3, #64
     0xD280_2002, // movz x2, #256
     0xF100_0442, // subs x2, x2, #1
@@ -161,7 +161,7 @@ const PIPE_READER_PROGRAM: [u32; 40] = [
     // the handler answers by faulting again.  Measured: an endless run of
     // `handled its own fault at 0x68`.
     0x9000_0000, // adrp x0, #0     (this page's base)
-    0x9102_2000, // add x0, x0, #136 (HANDLER_OFFSET)
+    0x91022000,  // add x0, x0, #136 (HANDLER_OFFSET)
     0xD280_02C8, // movz x8, #22    (InstallExceptionHandler)
     0xD400_0001, // svc #0
     0x9000_0000, // adrp x0, #0     (this code page's base)
@@ -184,11 +184,13 @@ const PIPE_READER_PROGRAM: [u32; 40] = [
     0xD280_0801, // movz x1, #64     (this program's number, the line's text)
     0xD280_00C8, // movz x8, #6      (Write)
     0xD400_0001, // svc #0
-    // Back to the program, at the instruction after the faulting store.  The
-    // handler is entered as a call and `ReturnFromException` is its return, so
-    // a handler that returned through the faulting instruction would fault
-    // again for ever; it resumes the **handler's caller**, which is this
-    // branch.
+    // `ReturnFromException(faulting_instruction + 4, value)`.  The fourth
+    // argument, in `x3`, is where the fault happened; this machine's
+    // instructions are four bytes, so the instruction after it is `+ 4`.  On
+    // x86_64 that size is not a constant and the handler is the only thing
+    // that knows it — which is why the kernel asks rather than computes.
+    0x9100_1060, // add x0, x3, #4    (the instruction after the fault)
+    0xD280_0021, // movz x1, #1      (the value the call answers with)
     0xD280_02E8, // movz x8, #23     (ReturnFromException)
     0xD400_0001, // svc #0
     0x1400_0000, // b .              (never reached: the call above returns)

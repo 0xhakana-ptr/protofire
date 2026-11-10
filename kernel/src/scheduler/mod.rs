@@ -196,24 +196,12 @@ pub fn install_exception_handler(address: usize) -> bool {
 /// `svc`, with the value the program gives as the call's answer.
 ///
 /// Returns the answer for the trap path to put in the return register.
-pub fn return_from_exception(answer: usize, frame: &mut arch::Context) {
-    let cpu = this_cpu();
-    let resume = with_scheduler(|scheduler| {
-        let scheduler = scheduler.as_mut()?;
-        let index = scheduler.running.get(cpu).copied().flatten()?;
-        let task = scheduler.tasks.get_mut(index)?;
-        let resume = task.fault_resume.take()?;
-        Some(resume)
-    });
-    // A `ReturnFromException` with no fault in flight is a program returning
-    // from a handler it never entered.  The honest answer is to leave the
-    // call's value in place and resume where the handler already would: the
-    // program's own `svc` is done and the next instruction is right either
-    // way.  Reporting an error would need a return channel this call does not
-    // have, and a program that gets here has a bug the status line will show.
-    if let Some(resume) = resume {
-        arch::set_resume_address(frame, resume);
-    }
+pub fn return_from_exception(resume: usize, answer: usize, frame: &mut arch::Context) {
+    // The handler names where to continue.  The kernel does not have an
+    // opinion: a fixed-width machine could add its instruction's size, and
+    // x86_64 could not, so the caller supplies the address and this is the one
+    // rule that works on all three.
+    arch::set_resume_address(frame, resume);
     arch::set_return_value(frame, answer);
 }
 
@@ -253,29 +241,25 @@ fn hand_the_fault_to_the_program(frame: &mut arch::Context, vector: usize, addre
     arch::serial::write_u32(vector as u32);
     arch::serial::write_str(")\n");
 
-    // Three arguments, in the registers the ABI puts them in, and the handler
-    // as the resume address.  `set_return_value` writes argument 0 on every
-    // machine because it is the same register a call's answer comes back in.
-    // Where the program resumes when its handler returns: the instruction
-    // after the one that faulted, which is the only position that makes a
-    // handled fault a **recoverable** one.  Resuming the faulting instruction
-    // would fault again, and the handler would run for ever.
-    let resume_after_fault = arch::resume_address(frame) + 4;
-    with_scheduler(|scheduler| {
-        let Some(scheduler) = scheduler.as_mut() else {
-            return;
-        };
-        let cpu = this_cpu();
-        if let Some(index) = scheduler.running.get(cpu).copied().flatten()
-            && let Some(task) = scheduler.tasks.get_mut(index)
-        {
-            task.fault_resume = Some(resume_after_fault);
-        }
-    });
-
+    // The handler is entered as a function call with four arguments in the
+    // ABI's argument registers:
+    //
+    // 0. the exception vector,
+    // 1. the faulting address,
+    // 2. the direction (`1` for a write),
+    // 3. the address of the instruction that faulted.
+    //
+    // The fourth is why the kernel does not compute a resume itself.  A
+    // machine whose instructions are a fixed width can add four; **x86_64's
+    // are not**, so an instruction length is not a constant the kernel can
+    // name.  The program knows its own instructions, so the resume is the
+    // handler's answer: `ReturnFromException(resume, value)` names where to
+    // continue and what the call answers.
+    let faulting_instruction = arch::resume_address(frame);
     arch::set_return_value(frame, vector);
     arch::set_argument(frame, 1, address);
     arch::set_argument(frame, 2, 0);
+    arch::set_argument(frame, 3, faulting_instruction);
     arch::set_resume_address(frame, handler);
     true
 }
