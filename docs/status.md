@@ -156,6 +156,20 @@ stack slice names, so the standing question is what writes it.  The other
 two machines never reproduce it — 80 x86_64 and 20 riscv64 boots, none —
 so the question is this machine's, not the scheduler's.
 
+A temporary trap-entry probe narrowed it one step: the first trap whose
+frame is not on a kernel stack names a **frame-pool page** — `0x449a7000`
+and `0x449913c0`, inside `__pool_start`..`__pool_end`, not the RAM's top —
+and both catches interrupted `serial::push` printing the final `program
+ended on cpu 1`, with `SPSR` at EL1h.  So a kernel-mode cpu was running
+ordinary kernel code on a page the pool had handed out, the scheduler's
+install path never carried a context that was not ring 3 (that probe never
+fired), and every trap returns its own stack (`add sp, sp, #816` before
+`eret`) — the write happens in ordinary kernel execution, which points at
+a saved stack slot smashed with an address that code holding frame
+addresses as locals would produce: the copy-on-write copy and the image
+allocator are the suspects with the means.  The probe is removed; the
+question is what wrote the slot.
+
 ## RISC-V 64
 
 **Boot.**  OpenSBI hands the entry S-mode with the device tree in `a1`; the
