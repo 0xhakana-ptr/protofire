@@ -39,7 +39,9 @@ mapped segment by segment at the addresses the loader accepted, with a
 writable-executable segment refused by name.  The task keeps its pid, and the
 exec'd program opens the boot's own file through `Open`/`Read`/`Close` and
 exits with the first byte it read, `116`, the `t` of "the quick brown pyrofox".
-Pipes and files share one descriptor numbering.  The boot's own programs remain
+Pipes and files share one descriptor numbering, and a descriptor belongs to
+the process that holds it: its exit releases every slot it owned, which for a
+pipe end is the close that ends a reader's wait.  The boot's own programs remain
 machine code, and `/bin/init` is the workspace's first compiled ring-3 program.
 
 Verified by `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
@@ -81,7 +83,19 @@ page a fork demoted is the copy-on-write event the resolver answers.  A fault
 no resolver answers is reported, the task goes `Finished` with the kernel's
 status 139, and the next task runs.
 
-Verified by `fault at `, `process 4 died from a fault at `, and `exit statuses ... 4 -> 139`.  Missing: a per-program fault handler — the frozen `InstallExceptionHandler` numbers — does not exist.
+A program may answer its own faults: `InstallExceptionHandler` records an
+address in the task, a fault is then resumed there with the vector, the
+address and the direction in the argument registers, and
+`ReturnFromException` resumes the **instruction after the one that faulted**
+with the handler's value as the call's answer.  The resume position is held in
+the task rather than the frame, because entering the handler replaces the
+frame that described the fault.
+
+Verified by `fault at `, `process 4 died from a fault at `,
+`exit statuses ... 4 -> 139`, and — on aarch64 — `process 3 installed a fault
+handler at ` and `process 3 handled its own fault at `.  The other two machines
+have the mechanism but their program images do not yet take a deliberate
+fault, so nothing on their boots exercises it.
 
 **Devices.**  The PCI scan, BARs assigned by the boot, and virtio-blk
 attached.  Verified by `block device from virtio-blk on pci` and `virtio-blk wrote and read back sector `.
