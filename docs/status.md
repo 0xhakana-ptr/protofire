@@ -44,6 +44,33 @@ machine code, and `/bin/init` is the workspace's first compiled ring-3 program.
 
 Verified by `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
 
+Missing: no boot program calls `WaitProcess`, and an attempt to make the pipe's
+reader call it was withdrawn.  The guard is fixed — a sleeping child counts as
+a reason to wait, host-tested, because the old guard answered `NotFound` to a
+parent whose child had only slept — but three defects surfaced once a program
+actually waited and they are not solved:
+
+- **A parked call resumes past itself.**  A trap resumes at the instruction
+  after the `svc`, which is right for an answered call and wrong for one that
+  parked: the wake re-enters the program after the syscall with the answer
+  register still holding whatever the previous call left.  The pipe's read
+  survives this because the program's own loop asks again; `WaitProcess` has no
+  such loop.  Rewinding the resume address by the call's width
+  (`restart_the_call`) fixed the read and did **not** fix the wait — with it in
+  place the waiter parked and was never seen to resume, 22 of 40 boots.
+- **`WaitProcess` answers about *some* process, not the one asked for.**  The
+  boot has four processes and the forked child exits first, so the status a
+  reader gets is `139`, the child's fault status, not the writer's `0`.  A
+  program that put that number in its exit status reported another process's
+  death.  A per-child wait needs a pid argument, which the ABI does not have.
+- **The reader's reads are not the reads the image reads.**  The first read
+  blocks and the write wakes it, so the second read *consumes* the writer's
+  four bytes and the third is the one that sees end-of-file; an image with two
+  reads proves the close only when the four bytes never arrive.
+
+None of this is a boot gate today: the reader waits but its status is its own,
+and the withdrawal keeps the gate green while the question is open.
+
 **Faults.**  A fault reaches the kernel with its direction and with the
 faulting CPU's own table asked what the address is mapped as.  A write to a
 page a fork demoted is the copy-on-write event the resolver answers.  A fault
