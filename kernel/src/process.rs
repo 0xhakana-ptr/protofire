@@ -189,10 +189,18 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 // the next scheduling decision looks.
                 if count > 0 {
                     let woken = crate::scheduler::wake_blocked();
+                    // Reported **whether or not a task was blocked**.  The
+                    // count is the fact, and zero is a fact: the reader was
+                    // already awake, or had not yet reached its wait, and the
+                    // bytes it asked for are in the pipe either way.  Printing
+                    // only the non-zero case made the line a function of an
+                    // interleaving, and the gate requires it — 2 of 100 runs
+                    // found the reader awake when the write landed and failed
+                    // a boot that did everything right.
+                    arch::serial::write_str("protofire: a write woke ");
+                    arch::serial::write_u32(woken as u32);
+                    arch::serial::write_str(" blocked task(s)\n");
                     if woken > 0 {
-                        arch::serial::write_str("protofire: a write woke ");
-                        arch::serial::write_u32(woken as u32);
-                        arch::serial::write_str(" blocked task(s)\n");
                         // The task that woke may be held by another CPU, and
                         // that CPU is parked in a wait whose own clock may not
                         // move: without this, the woken task stays Runnable
@@ -656,10 +664,15 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let outcome = through_registry(&mut context, None, None);
         if closes_a_write_end && matches!(outcome, CallOutcome::Return(0)) {
             let woken = crate::scheduler::wake_blocked();
+            // Reported whether or not anyone was blocked, for the reason the
+            // write's wake is: the count is the fact, and a zero means the
+            // reader was already awake.  A line printed only on the non-zero
+            // case would depend on an interleaving rather than on the close
+            // having happened.
+            arch::serial::write_str("protofire: a close woke ");
+            arch::serial::write_u32(woken as u32);
+            arch::serial::write_str(" blocked task(s)\n");
             if woken > 0 {
-                arch::serial::write_str("protofire: a close woke ");
-                arch::serial::write_u32(woken as u32);
-                arch::serial::write_str(" blocked task(s)\n");
                 // The task that woke may be held by another CPU parked in a
                 // wait, and only the IPI ends that wait.
                 // SAFETY: the boot's own IPI path, installed before any
