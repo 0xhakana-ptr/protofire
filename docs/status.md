@@ -41,7 +41,12 @@ exec'd program opens the boot's own file through `Open`/`Read`/`Close` and
 exits with the first byte it read, `116`, the `t` of "the quick brown pyrofox".
 Pipes and files share one descriptor numbering, and a descriptor belongs to
 the process that holds it: its exit releases every slot it owned, which for a
-pipe end is the close that ends a reader's wait.  The boot's own programs remain
+pipe end is the close that ends a reader's wait.  Every operation checks the
+owner, so another process's number is `InvalidArgument` — the same answer as a
+number that names nothing, because "denied" would tell a caller which slots
+exist.  A `fork` copies the parent's descriptors to the child, owned by the
+child; a pipe end copies as a **handle**, so the pipe's count rises and
+end-of-file waits for both processes.  The boot's own programs remain
 machine code, and `/bin/init` is the workspace's first compiled ring-3 program.
 
 Verified by `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
