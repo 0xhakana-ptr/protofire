@@ -488,6 +488,28 @@ fn finish_external(frame: &mut ExceptionFrame) {
         false
     };
 
+    // **A console delivery the device does not own is not an interrupt.**
+    //
+    // The controller can hand over this source once more after the handler has
+    // silenced the UART: the line was asserted when the source became pending,
+    // and the controller delivers what it latched even though the device has
+    // nothing to say by the time it is read.  Measured on both machines: a boot
+    // takes exactly one delivery whose `IIR` read says "mine" and exactly one
+    // whose read says "not mine", every time, six boots each.  Handing the
+    // second to the sink counted it as a console interrupt, so
+    // `console interrupt(s) taken` read 2 for a boot that took one real
+    // interrupt — a number describing deliveries rather than interrupts.
+    //
+    // So the spurious one is claimed and completed here, and the sink never
+    // sees it.  It is not an error: the controller did its job with the state
+    // it had.
+    if is_console && !acknowledged {
+        // SAFETY: `number` is what `claim` answered, and the device has said it
+        // has nothing pending.
+        unsafe { controller.complete(number) };
+        return;
+    }
+
     let handled = match sink() {
         Some(sink) => sink(irq::Frame::device(number)),
         None => false,

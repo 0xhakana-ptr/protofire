@@ -255,6 +255,17 @@ The PLIC is programmed and the console's UART is claimed as a real source —
 enabled at the controller, asked for one transmitter interrupt, acknowledged at
 the device before the source is completed.  Verified by `interrupt delivered to its handler`, `external controller at `, and `console interrupt(s) taken = 1`.
 
+**A delivery the device does not own is not counted as an interrupt.**  The
+controller can hand this source over once more after the handler silenced the
+UART: the line was asserted when the source became pending, and the controller
+delivers what it latched although the device has nothing to say by the time it
+is read.  Measured on both the PLIC and the APLIC, six boots each: exactly one
+delivery whose `IIR` read says "mine" and exactly one whose read says "not
+mine", every time.  The trap path completes the second and returns without
+handing it to the sink, so the count describes interrupts rather than
+deliveries.  A probe is what found it — without one, the same boot printed
+`taken = 1` or `taken = 2` depending on where the print landed.
+
 The AIA's APLIC is driven in **direct delivery mode**: the machine is
 described with `riscv,numsource` and `riscv,aplic`, its sources are configured
 level-high with a per-source target, and a hart's delivery block claims and
