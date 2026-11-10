@@ -322,8 +322,12 @@ impl End {
 /// The descriptor is an index into the registry's table, and a descriptor is
 /// only meaningful together with the table it indexes, which is why the
 /// answer is not a bare number a caller could invent.
-pub fn attach(end: End) -> Option<usize> {
-    crate::syscall::attach_pipe(end)
+///
+/// `owner` is the process that will hold it, and its exit releases the end the
+/// way a `Close` would.  The boot's own pipe passes the boot's process id, so
+/// it outlives every program by design.
+pub fn attach(end: End, owner: u32) -> Option<usize> {
+    crate::syscall::attach_pipe(end, owner)
 }
 
 /// The end a descriptor names, if it names one.

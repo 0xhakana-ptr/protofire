@@ -231,3 +231,53 @@ fn the_descriptor_table_is_bounded() {
     );
     assert_eq!(table.open_descriptors(), MAX_DESCRIPTORS);
 }
+
+/// An exiting process releases what it opened, and only that.
+///
+/// A descriptor belongs to the process that opened it: its exit is the release
+/// a `Close` would have made, and a process that exits without closing leaves
+/// nothing behind.  Two owners are opened here because the second half of the
+/// claim is the one a single-owner test cannot make — a release keyed on the
+/// wrong field, or on "any", would pass the first half and silently take
+/// another process's descriptors with it.
+#[test]
+fn an_exiting_process_releases_only_its_own_descriptors() {
+    let mut table = mounted();
+
+    let mine = open_as(&mut table, "/greeting.txt", fs_abi::OPEN_FLAG_READ, 7).expect("open");
+    let theirs = open_as(&mut table, "/greeting.txt", fs_abi::OPEN_FLAG_READ, 8).expect("open");
+    let also_mine = open_as(&mut table, "/greeting.txt", fs_abi::OPEN_FLAG_READ, 7).expect("open");
+    assert_eq!(table.open_descriptors(), 3);
+
+    assert_eq!(
+        table.release_owned(7),
+        2,
+        "both of that process's went back"
+    );
+    assert_eq!(table.open_descriptors(), 1, "and only that process's");
+    assert_eq!(
+        table.release_owned(8),
+        1,
+        "the other process still held its own"
+    );
+    assert_eq!(table.open_descriptors(), 0);
+
+    // The released slots are free again, and a release that already happened
+    // answers zero rather than counting something twice.
+    assert_eq!(table.release_owned(7), 0);
+    for descriptor in [mine, also_mine, theirs] {
+        assert_eq!(table.close(descriptor), Err(Error::InvalidArgument));
+    }
+}
+
+/// Opening a path as a given process, for the ownership tests.
+fn open_as(table: &mut SyscallTable, path: &str, flags: usize, pid: u32) -> Result<usize> {
+    let mut context =
+        SyscallContext::new(SyscallNumber::Open as usize, [0, flags, 0, 0, 0, 0]).with_caller(pid);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: Some(path),
+        buffer: None,
+    };
+    Ok(table.dispatch(&mut arguments)?.value)
+}

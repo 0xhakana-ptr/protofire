@@ -127,13 +127,16 @@ fn the_number_is_the_only_word_that_differs() {
     assert_eq!((two[6] >> 5) & 0xFFFF, 2);
 }
 
-/// The writer's calls, in order, and the close that ends the pipe.
+/// The writer's calls, in order, and the exit that closes the pipe's end.
 ///
-/// The `Close` is the boot's proof of end-of-file: the reader's second read
-/// can only return because the write end went away, and a boot whose close
-/// moved nothing would leave the reader parked and the boot unfinished.
+/// There is no `Close` in this image on purpose.  The writer exits with its
+/// write end still open, so the reader's end-of-file is the **exit's
+/// release**: the descriptor belongs to the process, and the process ending
+/// closes it.  A release that did not run would leave the reader parked on a
+/// writer that no longer exists — the boot would never print its report, and
+/// the gate requires that report.
 #[test]
-fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
+fn the_writer_puts_bytes_in_the_pipe_and_exits_with_its_end_open() {
     let words = crate::program::PIPE_WRITER_PROGRAM;
     assert_eq!(
         call_numbers(&words),
@@ -142,30 +145,18 @@ fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
             abi::SyscallNumber::Sleep as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Write as usize,
-            abi::SyscallNumber::Close as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the writer writes, sleeps, writes, writes the pipe, closes, exits"
+        "the writer writes, sleeps, writes, writes the pipe, and exits"
     );
-
-    // The descriptor the `Close` takes is loaded from the stack again, not
-    // carried in `x0`: the pipe write's answer is what `x0` holds by then,
-    // and a close that read its descriptor from there would close whatever
-    // descriptor numbered four.  The load is the word before the `movz x8`.
-    let close = words
-        .windows(2)
-        .position(|pair| {
-            (pair[0] >> 5) & 0xFFFF == abi::SyscallNumber::Close as u32
-                && (pair[0] >> 23) & 0x3F == 0b100101
-                && (pair[0] >> 31) & 1 == 1
-                && pair[0] & 0x1F == 8
-                && pair[1] == 0xD400_0001
-        })
-        .expect("the writer closes its write end");
+    assert!(
+        !call_numbers(&words).contains(&(abi::SyscallNumber::Close as usize)),
+        "no close: the exit is what releases the end"
+    );
     assert_eq!(
-        words[close - 1],
-        0xF940_03E0,
-        "the close's descriptor is `ldr x0, [sp]`, not the write's answer"
+        call_numbers(&words).last(),
+        Some(&(abi::SyscallNumber::Exit as usize)),
+        "and the exit is the last call it makes"
     );
 }
 

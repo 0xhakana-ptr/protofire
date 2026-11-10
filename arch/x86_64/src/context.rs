@@ -581,7 +581,7 @@ pub const PIPE_WRITER: u16 = 2;
 ///
 /// `[rsp]` holds the write end's descriptor and `[rsp + 16]` is the four bytes
 /// it sends.
-const PIPE_WRITER_PROGRAM: [u8; 98] = [
+const PIPE_WRITER_PROGRAM: [u8; 91] = [
     0x41, 0xB8, 0x40, 0x00, 0x00, 0x00, // mov r8d, 0x40
     0x41, 0xB9, 0x00, 0x10, 0x00, 0x00, // mov r9d, 0x1000
     0x41, 0x83, 0xE9, 0x01, // sub r9d, 1
@@ -602,12 +602,11 @@ const PIPE_WRITER_PROGRAM: [u8; 98] = [
     0xBA, 0x04, 0x00, 0x00, 0x00, // mov edx, 4
     0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6          (Write to the pipe)
     0xCD, 0x80, // int 0x80
-    0xB8, 0x07, 0x00, 0x00, 0x00, // mov eax, 7          (Close — the end is in edi)
-    0xCD, 0x80, // int 0x80
-    // The status is zero on purpose: `edi` still holds the descriptor the
-    // close consumed, and `Exit` reads its status from `edi` on this machine.
-    // Deleting this line makes the writer exit with the close's descriptor
-    // number, which the boot's status line then reports and the gate refuses.
+    // **No `Close`.**  The writer exits with its write end still open, so the
+    // reader's end-of-file is the exit's release: the descriptor belongs to
+    // the process, and the process ending closes it.  The status is zero on
+    // purpose: `edi` still holds the descriptor the write used, and `Exit`
+    // reads its status from `edi` on this machine.
     0x31, 0xFF, // xor edi, edi        (the exit status is zero)
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
     0xCD, 0x80, // int 0x80
@@ -894,14 +893,14 @@ mod program_tests {
         assert_eq!((24i64 + outer as i64) as usize, 6, "the inner reload");
     }
 
-    /// The writer's calls, in order, and the close that ends the pipe.
+    /// The writer's calls, in order, and the exit that closes the pipe's end.
     ///
-    /// The `Close` is the boot's proof of end-of-file: the reader's second
-    /// read can only return because the write end went away, and a boot whose
-    /// close moved nothing would leave the reader parked and the boot
-    /// unfinished.
+    /// There is no `Close` in this image on purpose.  The writer exits with its
+    /// write end still open, so the reader's end-of-file is the **exit's
+    /// release**: the descriptor belongs to the process, and the process
+    /// ending closes it.
     #[test]
-    fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
+    fn the_writer_puts_bytes_in_the_pipe_and_exits_with_its_end_open() {
         assert_eq!(
             super::call_numbers(&PIPE_WRITER_PROGRAM),
             alloc::vec![
@@ -909,32 +908,15 @@ mod program_tests {
                 abi::SyscallNumber::Sleep as u32,
                 abi::SyscallNumber::Write as u32,
                 abi::SyscallNumber::Write as u32,
-                abi::SyscallNumber::Close as u32,
                 abi::SyscallNumber::Exit as u32,
             ],
-            "the writer writes, sleeps, writes, writes the pipe, closes, exits"
+            "the writer writes, sleeps, writes, writes the pipe, and exits"
         );
-
-        // The close takes the end the one `mov edi, [rsp]` put there: the
-        // pipe write answers in `eax` and touches nothing else, so the
-        // descriptor the load wrote is what the close reads.
-        let load = PIPE_WRITER_PROGRAM
-            .windows(3)
-            .position(|window| *window == [0x8B, 0x3C, 0x24])
-            .expect("the writer loads its write end from the stack");
-        let close = PIPE_WRITER_PROGRAM
-            .windows(5)
-            .position(|window| *window == [0xB8, 0x07, 0x00, 0x00, 0x00])
-            .expect("the writer closes its write end");
-        assert_eq!(
-            PIPE_WRITER_PROGRAM
-                .windows(3)
-                .filter(|window| *window == [0x8B, 0x3C, 0x24])
-                .count(),
-            1,
-            "one load, so what the close reads is what the write used"
+        assert!(
+            !super::call_numbers(&PIPE_WRITER_PROGRAM)
+                .contains(&(abi::SyscallNumber::Close as u32)),
+            "no close: the exit is what releases the end"
         );
-        assert!(load < close, "the load is the close's descriptor");
     }
 
     /// The reader reads twice, then waits for the writer's process to end.

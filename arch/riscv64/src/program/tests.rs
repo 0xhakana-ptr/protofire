@@ -224,13 +224,14 @@ fn the_writer_reads_its_descriptor_from_the_stack() {
     );
 }
 
-/// The writer's calls, in order, and the close that ends the pipe.
+/// The writer's calls, in order, and the exit that closes the pipe's end.
 ///
-/// The `Close` is the boot's proof of end-of-file: the reader's second read
-/// can only return because the write end went away, and a boot whose close
-/// moved nothing would leave the reader parked and the boot unfinished.
+/// There is no `Close` in this image on purpose.  The writer exits with its
+/// write end still open, so the reader's end-of-file is the **exit's
+/// release**: the descriptor belongs to the process, and the process ending
+/// closes it.
 #[test]
-fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
+fn the_writer_puts_bytes_in_the_pipe_and_exits_with_its_end_open() {
     let words = crate::program::PIPE_WRITER_PROGRAM;
     assert_eq!(
         call_numbers(&words),
@@ -239,18 +240,13 @@ fn the_writer_puts_bytes_in_the_pipe_and_closes_its_end() {
             abi::SyscallNumber::Sleep as usize,
             abi::SyscallNumber::Write as usize,
             abi::SyscallNumber::Write as usize,
-            abi::SyscallNumber::Close as usize,
             abi::SyscallNumber::Exit as usize,
         ],
-        "the writer writes, sleeps, writes, writes the pipe, closes, exits"
+        "the writer writes, sleeps, writes, writes the pipe, and exits"
     );
-    // The descriptor the `Close` takes is loaded from the stack again, not
-    // carried in `a0`: the pipe write's answer is what `a0` holds by then,
-    // and a close that read its descriptor from there would close whatever
-    // descriptor numbered four.
-    assert_eq!(
-        words[20], 0x0001_3503,
-        "the close's descriptor is `ld a0, 0(sp)`, not the write's answer"
+    assert!(
+        !call_numbers(&words).contains(&(abi::SyscallNumber::Close as usize)),
+        "no close: the exit is what releases the end"
     );
 }
 

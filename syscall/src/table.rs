@@ -62,6 +62,17 @@ impl SyscallContext {
         self
     }
 
+    /// The same context with the calling process's id recorded.
+    ///
+    /// The kernel sets this for a call that came from ring 3, where the pid is
+    /// the scheduler's own answer rather than something the program supplies.
+    /// A handler uses it to give what the call creates an **owner**, which is
+    /// what lets the process's exit release them.
+    pub const fn with_caller(mut self, pid: u32) -> Self {
+        self.caller_pid = Some(pid);
+        self
+    }
+
     /// Return the syscall argument at `index` (0-based).
     ///
     /// # Panics

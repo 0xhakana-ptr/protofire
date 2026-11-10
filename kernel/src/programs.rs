@@ -131,14 +131,27 @@ pub fn run() {}
 #[cfg(target_os = "none")]
 fn make_pipe() -> Option<(usize, usize)> {
     let pipe = alloc::sync::Arc::new(crate::pipe::Pipe::new(ipc::DEFAULT_PIPE_CAPACITY));
-    let reader = match crate::pipe::attach(crate::pipe::End::reader(pipe.clone())) {
+    // The owner is the process that will **hold** the end, not the one that
+    // made the pipe: the boot makes it and hands it to a program through the
+    // program's stack, and from then on the program's exit is what must close
+    // it.  Registering both ends as the boot's own would leave them open for
+    // ever — the boot outlives every program — and a reader waiting on a
+    // writer that had exited would never see end-of-file.  Measured: with the
+    // boot as owner, the writer's exit released nothing and the boot hung.
+    let reader = match crate::pipe::attach(
+        crate::pipe::End::reader(pipe.clone()),
+        crate::process::PIPE_READER as u32,
+    ) {
         Some(descriptor) => descriptor,
         None => {
             arch::serial::write_str("protofire: no room for a pipe end\n");
             return None;
         }
     };
-    let writer = match crate::pipe::attach(crate::pipe::End::writer(pipe)) {
+    let writer = match crate::pipe::attach(
+        crate::pipe::End::writer(pipe),
+        crate::process::PIPE_WRITER as u32,
+    ) {
         Some(descriptor) => descriptor,
         None => {
             arch::serial::write_str("protofire: no room for a pipe end\n");

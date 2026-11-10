@@ -62,10 +62,19 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     // handler changing.
     let node = table.namespace().ok_or(Error::NotFound)?.lookup(path)?;
 
+    // The opener is the owner: the process that asked, as the kernel recorded
+    // it, so its exit can release the slot.  A caller the kernel made itself
+    // has no pid, and `0` is the boot's own process — the only one whose
+    // descriptor outlives every program by design.
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
     let descriptor = table.insert(Descriptor::File {
         node,
         readable: flags & fs_abi::OPEN_FLAG_READ != 0 || flags == fs_abi::OPEN_FLAG_NONE,
         offset: 0,
+        owner,
     })?;
 
     Ok(Dispatch::complete(descriptor))

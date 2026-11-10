@@ -281,6 +281,13 @@ impl Machine {
                 // and the line rather than an exit status because
                 // `WaitProcess` names no particular child.
                 ("protofire: a wait answered status ", false),
+                // And the writer's end was closed by its **exit**, not by a
+                // `Close` it never makes: the pipe's writer exits with its
+                // write end open, so this line is the release running.  A
+                // release that did not run would leave the reader parked and
+                // the boot unfinished, and the wait's line above would never
+                // print either.
+                ("protofire: process 2 released ", false),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
                 // The fork, as two statuses that are the same call's two
@@ -432,6 +439,7 @@ impl Machine {
                     // the answer's two spellings appears is the race the
                     // program cannot control; both mean the call returned.
                     ("protofire: a wait answered status ", false),
+                    ("protofire: process 2 released ", false),
                     // Both ran, in order, each printing its own number.  One
                     // program twice would read the same as one program once,
                     // which is why the number comes from the program and not
@@ -651,6 +659,7 @@ impl Machine {
                 // and the line rather than an exit status because
                 // `WaitProcess` names no particular child.
                 ("protofire: a wait answered status ", false),
+                ("protofire: process 2 released ", false),
                 ("program 2 says hello", true),
                 ("protofire: every program exited, ", false),
                 // The fork, as two statuses that are the same call's two

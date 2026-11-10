@@ -58,7 +58,7 @@ pub const PIPE_WRITER: u16 = 2;
 ///
 /// `[sp]` holds the write end's descriptor and `[sp + 8]` is the four bytes it
 /// sends.
-const PIPE_WRITER_PROGRAM: [u32; 28] = [
+const PIPE_WRITER_PROGRAM: [u32; 25] = [
     0xD280_0803, // movz x3, #64
     0xD280_2002, // movz x2, #256
     0xF100_0442, // subs x2, x2, #1
@@ -79,9 +79,12 @@ const PIPE_WRITER_PROGRAM: [u32; 28] = [
     0xD280_0082, // movz x2, #4
     0xD280_00C8, // movz x8, #6   (Write to the pipe)
     0xD400_0001, // svc #0
-    0xF940_03E0, // ldr x0, [sp]  (the write end, again)
-    0xD280_00E8, // movz x8, #7   (Close)
-    0xD400_0001, // svc #0
+    // **No `Close`.**  The program exits with its write end still open, and
+    // the reader's end-of-file is then the exit's release — the descriptor
+    // belongs to the process, so the process ending closes it.  That is the
+    // claim this image makes on the boot: a release that did not run would
+    // leave the reader parked on a writer that no longer exists, the boot
+    // would never finish, and the gate's own report would never print.
     0xD280_0000, // movz x0, #0
     0xD280_0068, // movz x8, #3   (Exit)
     0xD400_0001, // svc #0

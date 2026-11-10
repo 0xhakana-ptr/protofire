@@ -285,7 +285,7 @@ const EXEC_TARGET_PROGRAM: [u32; 20] = [
 ///
 /// `x2`, the stack pointer, points at the write end's descriptor, and the
 /// four bytes it sends are the word above it.
-const PIPE_WRITER_PROGRAM: [u32; 27] = [
+const PIPE_WRITER_PROGRAM: [u32; 24] = [
     BUSY_LOOP[0],
     BUSY_LOOP[1],
     BUSY_LOOP[2],
@@ -306,9 +306,10 @@ const PIPE_WRITER_PROGRAM: [u32; 27] = [
     addi(REGISTER_A0 as u32 + 2, 0, 4), // li a2, #4
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Write as i32),
     0x0000_0073, // ecall
-    0x0001_3503, // ld a0, 0(sp)  (the write end, again)
-    addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Close as i32),
-    0x0000_0073, // ecall
+    // **No `Close`.**  The writer exits with its write end still open, so the
+    // reader's end-of-file is the exit's release: the descriptor belongs to
+    // the process, and the process ending closes it.  A release that did not
+    // run would leave the reader parked on a writer that no longer exists.
     addi(REGISTER_A0 as u32, 0, 0),
     addi(REGISTER_A7 as u32, 0, abi::SyscallNumber::Exit as i32),
     0x0000_0073, // ecall

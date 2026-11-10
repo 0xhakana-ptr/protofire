@@ -109,10 +109,16 @@ pub(crate) enum Descriptor {
         /// two positions, which is what a program that seeks one of them
         /// expects.
         offset: u64,
+        /// The process that opened it, so its exit can release it.
+        owner: u32,
     },
     /// One end of a pipe.  Dropping it closes that end, which is what turns a
     /// reader's "no bytes yet" into end-of-file when the last writer goes.
-    Pipe(pipe::End),
+    Pipe {
+        end: pipe::End,
+        /// The process that holds it, so its exit can close it.
+        owner: u32,
+    },
 }
 
 /// The registry, and the descriptor table the handlers use.
@@ -214,8 +220,8 @@ impl SyscallTable {
     /// end a caller holds by descriptor 3 and a file a caller holds by
     /// descriptor 3 cannot both exist, which is the whole property two tables
     /// could not give.
-    pub(crate) fn insert_pipe(&mut self, end: pipe::End) -> Result<usize> {
-        self.insert(Descriptor::Pipe(end))
+    pub(crate) fn insert_pipe(&mut self, end: pipe::End, owner: u32) -> Result<usize> {
+        self.insert(Descriptor::Pipe { end, owner })
     }
 
     /// The pipe end a descriptor names, cloned, if it names one.
@@ -226,9 +232,41 @@ impl SyscallTable {
     /// alive while the caller works.
     pub(crate) fn pipe_end(&self, descriptor: usize) -> Option<pipe::End> {
         match self.descriptors.get(descriptor)? {
-            Some(Descriptor::Pipe(end)) => Some(end.clone()),
+            Some(Descriptor::Pipe { end, .. }) => Some(end.clone()),
             _ => None,
         }
+    }
+
+    /// Release everything `owner` still holds, answering how many were closed.
+    ///
+    /// The exit path's release.  A process that exits without closing what it
+    /// opened would otherwise leave its ends in the table for ever: a pipe's
+    /// write end would keep a reader waiting for a writer that had ceased to
+    /// exist, and the slot would be unreachable — a descriptor number a program
+    /// could name only after it had gone.
+    ///
+    /// Dropping a `Descriptor` is the whole close: a pipe `End`'s drop moves
+    /// the pipe's count, which is what turns a reader's "no bytes yet" into
+    /// end-of-file.  So this is the same release a `Close` makes, done for
+    /// every slot the process owned.
+    ///
+    /// Answers the count rather than nothing so the caller can report it: a
+    /// boot line saying how many a process's exit released is what makes the
+    /// release observable rather than assumed.
+    pub(crate) fn release_owned(&mut self, owner: u32) -> usize {
+        let mut released = 0;
+        for slot in &mut self.descriptors {
+            let owned = match slot {
+                Some(Descriptor::File { owner: held, .. })
+                | Some(Descriptor::Pipe { owner: held, .. }) => *held == owner,
+                None => false,
+            };
+            if owned {
+                slot.take();
+                released += 1;
+            }
+        }
+        released
     }
 
     /// Read from a descriptor, at `offset` or at its own position.
@@ -253,6 +291,7 @@ impl SyscallTable {
             node,
             readable,
             offset,
+            ..
         } = descriptor
         else {
             return Err(Error::InvalidArgument);
@@ -341,8 +380,22 @@ pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
 ///
 /// The pipe facade's way in.  `None` when no registry is installed, which is
 /// the state before the boot has mounted its namespace.
-pub fn attach_pipe(end: pipe::End) -> Option<usize> {
-    REGISTRY.lock().as_mut()?.insert_pipe(end).ok()
+pub fn attach_pipe(end: pipe::End, owner: u32) -> Option<usize> {
+    REGISTRY.lock().as_mut()?.insert_pipe(end, owner).ok()
+}
+
+/// Release everything `owner` holds in the installed registry, answering how
+/// many descriptors went back.
+///
+/// The exit path's release, and the same one a `Close` makes per call: the
+/// slot goes and the descriptor's `Drop` runs, which for a pipe end is the
+/// close a blocked reader has been waiting for.  `None` when no registry is
+/// installed, which is the state before the boot mounts its namespace.
+pub fn release_owned(owner: u32) -> Option<usize> {
+    REGISTRY
+        .lock()
+        .as_mut()
+        .map(|table| table.release_owned(owner))
 }
 
 /// The pipe end a descriptor names, if it names one and the registry is up.

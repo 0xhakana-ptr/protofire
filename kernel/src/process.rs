@@ -130,6 +130,22 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         if ran_on != usize::MAX {
             crate::programs::note_program_ran_on(ran_on);
         }
+        // **An exiting process closes what it held.**  A descriptor is not the
+        // table's, it is the process's, and a process that ends releases every
+        // slot it owned — the same `Drop` a `Close` runs, which for a pipe end
+        // is what moves the pipe's count and ends a reader's wait.  Without
+        // this an end stays in the table for ever, keeping a reader parked on
+        // a writer that no longer exists.
+        if let Some(pid) = crate::scheduler::current_pid()
+            && let Some(released) = crate::syscall::release_owned(pid)
+            && released > 0
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(pid);
+            arch::serial::write_str(" released ");
+            arch::serial::write_u32(released as u32);
+            arch::serial::write_str(" descriptor(s)\n");
+        }
         // A CPU that gets no next task waits for work, or reports and stops
         // when the machine is finished; neither returns an uninstalled frame,
         // which is what makes the `sret` that follows always a real program.
@@ -542,10 +558,14 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // Two handles on one buffer, and the pipe's own counts follow: it is
         // created with one reader and one writer, which is exactly the pair
         // this makes.
-        let Some(read) = crate::pipe::attach(crate::pipe::End::reader(pipe.clone())) else {
+        // The caller owns both ends: a program that makes a pipe and exits
+        // without closing it leaves nothing behind, and the reader of the end
+        // it wrote to sees end-of-file.
+        let owner = crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS);
+        let Some(read) = crate::pipe::attach(crate::pipe::End::reader(pipe.clone()), owner) else {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory));
         };
-        let Some(write) = crate::pipe::attach(crate::pipe::End::writer(pipe)) else {
+        let Some(write) = crate::pipe::attach(crate::pipe::End::writer(pipe), owner) else {
             // The read end is already in the table, and a call that answered an
             // error has no descriptor to give back: leaving it there is a slot
             // a program can never name or close, and a program that retried
@@ -553,7 +573,10 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             // caller would have made.
             let mut context =
                 syscall::SyscallContext::new(SyscallNumber::Close as usize, [read, 0, 0, 0, 0, 0])
-                    .with_identity(security::mac::MAC_TYPE_SYSTEM);
+                    .with_identity(security::mac::MAC_TYPE_SYSTEM)
+                    .with_caller(
+                        crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS),
+                    );
             let _ = through_registry(&mut context, None, None);
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory));
         };
@@ -596,7 +619,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // yet, and the change that introduces one is the change that decides
         // what a program is allowed to be.
         let mut context = syscall::SyscallContext::new(number, [0, flags, 0, 0, 0, 0])
-            .with_identity(security::mac::MAC_TYPE_SYSTEM);
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         let outcome = through_registry(&mut context, Some(path), None);
         if let CallOutcome::Return(descriptor) = outcome {
             // **Only a descriptor is an open.**  The registry answers an error
@@ -636,7 +660,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             number,
             [call.arguments[0], call.arguments[1], buffer, length, 0, 0],
         )
-        .with_identity(security::mac::MAC_TYPE_SYSTEM);
+        .with_identity(security::mac::MAC_TYPE_SYSTEM)
+        .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
         // `is_user_range` checked, and the pages behind it are the calling
         // task's own mappings, installed on this CPU.  The handler writes only
@@ -660,7 +685,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let closes_a_write_end = crate::pipe::lookup(call.arguments[0])
             .is_some_and(|end| end.kind() == crate::pipe::Kind::Write);
         let mut context = syscall::SyscallContext::new(number, [call.arguments[0], 0, 0, 0, 0, 0])
-            .with_identity(security::mac::MAC_TYPE_SYSTEM);
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         let outcome = through_registry(&mut context, None, None);
         if closes_a_write_end && matches!(outcome, CallOutcome::Return(0)) {
             let woken = crate::scheduler::wake_blocked();
