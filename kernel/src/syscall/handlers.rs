@@ -106,7 +106,12 @@ pub fn read(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
         return Ok(Dispatch::complete(0));
     }
 
-    let count = table.read_at(descriptor_index, offset, buffer)?;
+    let count = table.read_at(
+        descriptor_index,
+        offset,
+        buffer,
+        arguments.context.caller_pid,
+    )?;
     Ok(Dispatch::complete(count))
 }
 
@@ -120,7 +125,7 @@ pub fn read(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
 pub fn close(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let descriptor = arguments.context.arg(0);
     validate_zeroed_args(arguments.context, 1)?;
-    table.close(descriptor)?;
+    table.close_for(descriptor, arguments.context.caller_pid)?;
     Ok(Dispatch::complete(0))
 }
 

@@ -281,3 +281,71 @@ fn open_as(table: &mut SyscallTable, path: &str, flags: usize, pid: u32) -> Resu
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
+
+/// A process cannot use a descriptor another process opened.
+///
+/// The whole point of an owner on a descriptor.  A number is a number, so a
+/// process that guessed one would otherwise read another's file or close its
+/// pipe end — a reach into a process it never touched, which is exactly the
+/// power a bad pointer would give it.  The refusal is `InvalidArgument` and
+/// not `PermissionDenied`: a caller told "denied" learns the slot is in use
+/// and can probe for which numbers are.
+#[test]
+fn one_process_cannot_close_another_process_descriptor() {
+    let mut table = mounted();
+    let mine = open_as(&mut table, "/greeting.txt", fs_abi::OPEN_FLAG_READ, 7).expect("open");
+    let theirs = open_as(&mut table, "/greeting.txt", fs_abi::OPEN_FLAG_READ, 8).expect("open");
+
+    assert_eq!(
+        table.close_for(theirs, Some(7)),
+        Err(Error::InvalidArgument),
+        "another process's descriptor is not this process's to close"
+    );
+    assert_eq!(table.open_descriptors(), 2, "and the refusal left it open");
+
+    assert_eq!(table.close_for(theirs, Some(8)), Ok(()), "its own is");
+    assert_eq!(table.close_for(mine, Some(7)), Ok(()));
+    assert_eq!(table.open_descriptors(), 0);
+}
+
+/// A read of another process's descriptor is refused, and leaves it readable.
+///
+/// The same reach as the close above, one operation over: a read that went
+/// through would hand one process another's bytes.
+#[test]
+fn one_process_cannot_read_another_process_descriptor() {
+    let mut table = mounted();
+    let theirs = open_as(&mut table, "/greeting.txt", fs_abi::OPEN_FLAG_READ, 8).expect("open");
+    let mut buffer = [0u8; 8];
+
+    assert_eq!(
+        table.read_at(theirs, READ_OFFSET_CURRENT, &mut buffer, Some(7)),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(buffer, [0u8; 8], "and nothing was read into it");
+
+    let count = table
+        .read_at(theirs, READ_OFFSET_CURRENT, &mut buffer, Some(8))
+        .expect("the owner reads it");
+    assert_eq!(&buffer[..count], b"hello fr");
+}
+
+/// The kernel's own callers have no pid and are not refused.
+///
+/// The boot reads a file through the table before any program exists, and a
+/// check keyed only on "the caller matches the owner" would refuse it: there
+/// is no caller.  `None` is that caller, and it is allowed.
+#[test]
+fn a_caller_with_no_pid_is_allowed() {
+    let mut table = mounted();
+    let descriptor = open_as(&mut table, "/greeting.txt", fs_abi::OPEN_FLAG_READ, 7).expect("open");
+    let mut buffer = [0u8; 4];
+
+    assert_eq!(
+        table
+            .read_at(descriptor, READ_OFFSET_CURRENT, &mut buffer, None)
+            .expect("the kernel reads"),
+        4
+    );
+    assert_eq!(table.close_for(descriptor, None), Ok(()));
+}

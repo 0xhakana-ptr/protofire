@@ -170,13 +170,58 @@ impl SyscallTable {
         }
     }
 
+    /// The process that holds a descriptor, if one does.
+    fn owner_of(&self, descriptor: usize) -> Option<u32> {
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::File { owner, .. }) | Some(Descriptor::Pipe { owner, .. }) => {
+                Some(*owner)
+            }
+            None => None,
+        }
+    }
+
+    /// Whether `caller` may use `descriptor`, or the error to answer with.
+    ///
+    /// A descriptor belongs to the process that opened it, so another process
+    /// naming it is naming something that is not its own.  The answer is
+    /// `InvalidArgument` rather than `PermissionDenied`: the number is not a
+    /// **descriptor** to this caller at all, and the difference matters — a
+    /// caller told "denied" learns that the slot exists and can probe for
+    /// which numbers are in use.
+    ///
+    /// A caller with no pid is the kernel's own, which is allowed: the boot
+    /// reads a file through the table before any program exists.
+    fn check_owner(&self, descriptor: usize, caller: Option<u32>) -> Result<()> {
+        let Some(caller) = caller else {
+            return Ok(());
+        };
+        match self.owner_of(descriptor) {
+            Some(owner) if owner == caller => Ok(()),
+            _ => Err(Error::InvalidArgument),
+        }
+    }
+
     /// Close a descriptor, returning its slot to the table.
-    pub fn close(&mut self, descriptor: usize) -> Result<()> {
+    ///
+    /// Refused for a descriptor another process opened: a `Close` a program did
+    /// not own would end a reader's wait in a process it never touched, which
+    /// is the same cross-process reach a bad pointer would give it.
+    pub fn close_for(&mut self, descriptor: usize, caller: Option<u32>) -> Result<()> {
+        self.check_owner(descriptor, caller)?;
         let slot = self
             .descriptors
             .get_mut(descriptor)
             .ok_or(Error::InvalidArgument)?;
         slot.take().map(|_| ()).ok_or(Error::InvalidArgument)
+    }
+
+    /// Close a descriptor with no ownership check.
+    ///
+    /// The kernel's own release paths, which already know whose slot they are
+    /// taking: `release_owned` walks by owner and the pipe's error path closes
+    /// a descriptor it just made.
+    pub fn close(&mut self, descriptor: usize) -> Result<()> {
+        self.close_for(descriptor, None)
     }
 
     /// The number of descriptors in use, for a boot line that reports it.
@@ -230,7 +275,8 @@ impl SyscallTable {
     /// one would hold the registry's lock across a call that may block.  The
     /// `Arc` inside is what makes the clone cheap and what keeps the pipe
     /// alive while the caller works.
-    pub(crate) fn pipe_end(&self, descriptor: usize) -> Option<pipe::End> {
+    pub(crate) fn pipe_end(&self, descriptor: usize, caller: Option<u32>) -> Option<pipe::End> {
+        self.check_owner(descriptor, caller).ok()?;
         match self.descriptors.get(descriptor)? {
             Some(Descriptor::Pipe { end, .. }) => Some(end.clone()),
             _ => None,
@@ -275,7 +321,9 @@ impl SyscallTable {
         descriptor_index: usize,
         offset_arg: usize,
         buffer: &mut [u8],
+        caller: Option<u32>,
     ) -> Result<usize> {
+        self.check_owner(descriptor_index, caller)?;
         let descriptor = self
             .descriptors
             .get_mut(descriptor_index)
@@ -400,7 +448,16 @@ pub fn release_owned(owner: u32) -> Option<usize> {
 
 /// The pipe end a descriptor names, if it names one and the registry is up.
 pub fn pipe_end(descriptor: usize) -> Option<pipe::End> {
-    REGISTRY.lock().as_ref()?.pipe_end(descriptor)
+    REGISTRY.lock().as_ref()?.pipe_end(descriptor, None)
+}
+
+/// The pipe end a descriptor names, for a caller that must own it.
+///
+/// The ring-3 way in: a program naming another process's descriptor gets
+/// `None`, the same answer as a number that names nothing, so the error a
+/// program sees does not tell it which slots exist.
+pub fn pipe_end_for(descriptor: usize, caller: u32) -> Option<pipe::End> {
+    REGISTRY.lock().as_ref()?.pipe_end(descriptor, Some(caller))
 }
 
 pub fn has_registry() -> bool {

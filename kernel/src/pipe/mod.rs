@@ -340,5 +340,19 @@ pub fn lookup(descriptor: usize) -> Option<End> {
     crate::syscall::pipe_end(descriptor)
 }
 
+/// The end a descriptor names, if it names one **and `caller` holds it**.
+///
+/// The ring-3 way in.  A program that names another process's descriptor gets
+/// `None`, which is the same answer as a number that names nothing: the error
+/// a program sees does not tell it which slots exist.
+pub fn lookup_for(descriptor: usize, caller: Option<u32>) -> Option<End> {
+    match caller {
+        Some(pid) => crate::syscall::pipe_end_for(descriptor, pid),
+        // A caller with no pid is the kernel's own, as in the table's own
+        // check: the boot serves a call before any program exists.
+        None => crate::syscall::pipe_end(descriptor),
+    }
+}
+
 #[cfg(test)]
 mod tests;

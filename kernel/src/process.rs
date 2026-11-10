@@ -102,6 +102,10 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     use syscall::SyscallNumber;
 
     let number = call.number;
+    // Every call that reaches the descriptor table is the running process's,
+    // and the table checks that the descriptor belongs to it.  One binding, so
+    // a path that forgets it cannot pass the wrong one.
+    let caller = crate::scheduler::current_pid();
 
     if number == SyscallNumber::Exit as usize {
         // The scheduler decides what runs next and puts that task's context in
@@ -171,7 +175,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // genuinely lacks and a real write genuinely has.
     if number == SyscallNumber::Write as usize
         && call.arguments[2] != 0
-        && crate::pipe::lookup(call.arguments[0]).is_some()
+        && crate::pipe::lookup_for(call.arguments[0], caller).is_some()
     {
         // `Write(descriptor, buffer, length)`, where the descriptor names a
         // pipe's write end.
@@ -185,7 +189,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         if !crate::address_space::is_user_range(buffer, length) {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
         }
-        let Some(end) = crate::pipe::lookup(descriptor) else {
+        let Some(end) = crate::pipe::lookup_for(descriptor, caller) else {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
         };
         let pipe = end.pipe().clone();
@@ -315,7 +319,9 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         }
     }
 
-    if number == SyscallNumber::Read as usize && crate::pipe::lookup(call.arguments[0]).is_some() {
+    if number == SyscallNumber::Read as usize
+        && crate::pipe::lookup_for(call.arguments[0], caller).is_some()
+    {
         // `Read(descriptor, buffer, length)`, where the descriptor names a
         // pipe.
         //
@@ -335,7 +341,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         if !crate::address_space::is_user_range(buffer, length) {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
         }
-        let Some(end) = crate::pipe::lookup(descriptor) else {
+        let Some(end) = crate::pipe::lookup_for(descriptor, caller) else {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
         };
         let pipe = end.pipe().clone();
@@ -726,7 +732,9 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
-    if number == SyscallNumber::Read as usize && !crate::pipe::lookup(call.arguments[0]).is_some() {
+    if number == SyscallNumber::Read as usize
+        && crate::pipe::lookup_for(call.arguments[0], caller).is_none()
+    {
         // `Read(descriptor, offset, buffer, length)`: a file descriptor in the
         // registry's table, the buffer a range of the caller's own memory.  A
         // pipe descriptor never reaches here — the branch above answered it —
@@ -766,7 +774,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // write would have woken.  Waking a reader whose pipe still has
         // another write handle is harmless: it retries its read, sees a
         // writer, and parks again.
-        let closes_a_write_end = crate::pipe::lookup(call.arguments[0])
+        let closes_a_write_end = crate::pipe::lookup_for(call.arguments[0], caller)
             .is_some_and(|end| end.kind() == crate::pipe::Kind::Write);
         let mut context = syscall::SyscallContext::new(number, [call.arguments[0], 0, 0, 0, 0, 0])
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
