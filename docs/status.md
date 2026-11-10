@@ -276,20 +276,43 @@ firmware left for a kernel that does not know the new one.  Measured on
 source(s)` and `console interrupt(s) taken = 2`, with the boot completing in
 4 of 4 runs.
 
-Two limits, both measured rather than assumed:
+**The IMSIC is driven, and the boot walks its message path.**  When the tree
+names a supervisor IMSIC — the node whose `interrupts-extended` pairs carry
+cause 9; the one carrying 11 is machine mode and is not this kernel's — the boot
+reads the group's base, stride and `riscv,num-ids`, enables this hart's file
+(`eithreshold` zero, `eidelivery` on), and then proves the path with no device
+attached: it enables the file's **highest** identity — one past any a device
+could be given — writes that identity into **this hart's own MSI page** exactly
+as an MSI-X table entry would, and reads it back with the `stopei` claim.
 
-- **`-machine virt,aia=aplic-imsic` delivers nothing through a wired source.**
-  QEMU locks that machine's APLIC in message mode — `domaincfg` reads
-  `0x80000104`, `DM` set and read-only — so an enabled source becomes an MSI
-  an IMSIC must receive, and this kernel has no IMSIC driver.  The boot says
-  so (`the aplic is in message mode; a wired source needs an imsic driver`)
-  and finishes anyway, with `console interrupt(s) taken = 0`.
+    protofire: imsic at 0x28000000, hart file 0, 255 identit(ies), self-test identity 254 delivered and claimed
+
+That line is the evidence: the page's address, the bare-identity data word, the
+pending bit, the enable bit and the claim were all executed. QEMU's `virt` with
+`-machine virt,aia=aplic-imsic` is where it runs; the default machine and
+`virt,aia=aplic` print no such line because their trees name no IMSIC, and the
+code that would touch `siselect`/`sireg` is not reached — which is load-bearing
+rather than tidy, because on those machines the pair is an **illegal
+instruction**.  Measured: `virt` and `virt,aia=aplic` both stop with
+`unhandled exception 2 (illegal instruction), address 0x15051073` if the CSRs are
+read unconditionally, and both boot to completion when the read is gated on the
+tree as it now is.
+
+Two limits remain, both measured:
+
+- **The APLIC's message mode is not programmed.**  On
+  `-machine virt,aia=aplic-imsic` QEMU locks the APLIC in message mode —
+  `domaincfg` reads `0x80000104`, `DM` set and read-only — so a wired source
+  becomes an MSI.  The receiving half now exists (above); what is missing is
+  the sending half: the domain's message address and the identity each source is
+  assigned.  Nothing on this machine sends an MSI, so no device would exercise
+  it, and the boot says `the aplic is in message mode; its sources are not
+  programmed to send` rather than implying the source works.  Those boots still
+  finish, with `console interrupt(s) taken = 0`.
 - **Only one source is claimed**, so a second device's interrupt has no
   handler.  The controller can name every source the tree declares and the
   claim path completes whichever one arrives; what is missing is a driver per
   device, not a controller.
-
-The MSI half — an IMSIC file per hart and a message table — is not implemented.
 
 **Timer and clock.**  The SBI's legacy `set_timer`; arming is a trap into
 M-mode, with every clobbered register declared.  The counter's rate comes from

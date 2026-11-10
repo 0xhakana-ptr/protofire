@@ -372,6 +372,106 @@ fn hart_index() -> usize {
     0
 }
 
+/// The AIA's supervisor IMSIC, when the tree describes one.
+///
+/// `(msi page base, stride, identities)`.  The base is hart index zero's file;
+/// every hart's file is `stride` past the previous, and its **first page** is
+/// where a device's message is written.
+///
+/// ## Which node
+///
+/// QEMU's AIA machine describes **two** IMSIC groups: a machine-mode one and a
+/// supervisor-mode one.  They are told apart by `interrupts-extended`: the
+/// pairs name each hart's per-hart controller and the cause it delivers on,
+/// where **11 (0x0b) is machine mode and 9 (0x09) is supervisor mode**.  This
+/// kernel runs at S-mode, so the node whose pairs carry 9 is the one it may
+/// use, and the machine-mode one is not merely useless to it: writing through
+/// those CSRs is a different privilege level's business.
+///
+/// ## The stride, and why it is not the `reg` size
+///
+/// Each node's `reg` is one file — `0x2000`, the MSI page and the register page
+/// a device writes to — while consecutive harts' files are further apart than
+/// that (`0x4000` on these machines).  The tree states no stride property, so
+/// this reads it **from the tree's own geometry when it can**: the second
+/// hart's file is at `stride` past the first, and a group's nodes are one per
+/// hart.  A group with one hart has nothing to measure and the stride does not
+/// matter, because no address is ever built from it.
+///
+/// A wrong stride here is caught rather than trusted: the boot's self-test
+/// writes an identity into **this hart's own** file and claims it back, and a
+/// message addressed to the wrong file is one this hart never receives.
+pub fn imsic() -> Option<(usize, usize, usize)> {
+    let tree = device_tree()?;
+    let node = supervisor_imsic()?;
+    let region = node.region()?;
+    if region.address == 0 {
+        return None;
+    }
+    let identities = node.property("riscv,num-ids")?.as_u32()? as usize;
+
+    // The stride: how far the *next* node's `reg` starts, when the tree
+    // describes more than one.  A single-file group answers the window's own
+    // size, which is only used to build an address a second hart would need —
+    // and a group with one file has no second hart.
+    let mut others = tree.all_compatible("riscv,imsics");
+    let stride = {
+        let mut measured = region.size as usize;
+        for candidate in &mut others {
+            // By address, because two `Node`s are handles onto one blob rather
+            // than values: the node this group is *at* is the one whose `reg`
+            // says so.
+            let Some(next) = candidate.region() else {
+                continue;
+            };
+            if next.address as usize > region.address as usize {
+                measured = next.address as usize - region.address as usize;
+                break;
+            }
+        }
+        measured
+    };
+
+    Some((region.address as usize, stride, identities))
+}
+
+/// The IMSIC node whose `interrupts-extended` names **supervisor** cause 9.
+///
+/// A machine-mode IMSIC's pairs carry cause 11.  A node with no
+/// `interrupts-extended` at all is not one this reader can classify, so it is
+/// refused rather than guessed at: reading a machine-mode file's CSRs from
+/// S-mode is not a way to find out.
+#[cfg(target_os = "none")]
+fn supervisor_imsic() -> Option<fdt::Node<'static>> {
+    let tree = device_tree()?;
+    for node in tree.all_compatible("riscv,imsics") {
+        let Some(property) = node.property("interrupts-extended") else {
+            continue;
+        };
+        // The pairs are `(phandle, cause)`, and **any** pair naming 9 is this
+        // node's supervisor half: the cause is the same for every hart in one
+        // group on these machines.
+        let mut cells = property.as_cells()?;
+        let mut at = 0;
+        while let Some(_phandle) = cells.next() {
+            let Some(cause) = cells.next() else { break };
+            if cause == 9 {
+                return Some(node);
+            }
+            at += 2;
+            let _ = at;
+        }
+    }
+    None
+}
+
+/// A host build has no tree to read.
+#[cfg(not(target_os = "none"))]
+fn supervisor_imsic() -> Option<fdt::Node<'static>> {
+    let _ = device_tree()?;
+    None
+}
+
 /// The GICv2m frame's window: none, because this machine has no GIC.
 ///
 /// A riscv64 machine signals interrupts through its PLIC or, with the AIA, an

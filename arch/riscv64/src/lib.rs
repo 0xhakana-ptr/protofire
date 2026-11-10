@@ -48,6 +48,7 @@ core::arch::global_asm!(
 pub mod aplic;
 pub mod boot;
 pub mod external;
+pub mod imsic;
 pub mod interrupts;
 pub mod paging;
 pub mod plic;
@@ -416,6 +417,20 @@ pub unsafe fn install_interrupt_table() -> bool {
     // the PLIC.  The APLIC is tried first, because a machine that describes one
     // is an AIA machine and the older node it may also carry is the one the
     // firmware put there for a kernel that does not know the new one.
+    // **The IMSIC, before the controller**: a machine that pairs an APLIC with
+    // one locks the APLIC in message mode, so its sources become MSIs this hart
+    // must be able to receive.  A machine with no IMSIC in its tree does no
+    // part of this — the CSR pair an IMSIC is driven through is an **illegal
+    // instruction** there, measured on `virt` and on `virt,aia=aplic`.
+    if let Some((msi_base, stride, identities)) = boot::imsic() {
+        let imsic = imsic::Imsic::new(msi_base, stride, identities as u32);
+        // SAFETY: the tree named an IMSIC, so this hart implements the CSR
+        // pair, and the window it names is the machine's.
+        unsafe {
+            bring_up_imsic(&imsic);
+        }
+    }
+
     if let Some((base, hart, sources)) = boot::aplic() {
         let aplic = aplic::Aplic::new(base, hart, sources);
         // SAFETY: the window is the tree's `reg`, the boot mapped it as device
@@ -430,8 +445,14 @@ pub unsafe fn install_interrupt_table() -> bool {
             // a driver would use), and the boot says so rather than reporting a
             // source it cannot take.
             if !aplic.is_direct() {
+                // The APLIC is in message mode and its `DM` bit is read-only,
+                // so its sources become MSIs.  The IMSIC is now driven (above),
+                // so the receiving half exists; what is missing is the sending
+                // half — the APLIC's per-domain message address and the
+                // identity each source is assigned — which no device here would
+                // exercise, because nothing on this machine sends an MSI.
                 crate::serial::write_str(
-                    "protofire: the aplic is in message mode; a wired source needs an imsic driver\n",
+                    "protofire: the aplic is in message mode; its sources are not programmed to send\n",
                 );
             }
             trap::set_controller(external::External::Aplic(aplic));
@@ -456,6 +477,80 @@ pub unsafe fn install_interrupt_table() -> bool {
         trap::set_controller(external::External::Plic(plic));
     }
     true
+}
+
+/// Turn this hart's IMSIC file on, then prove the message path works.
+///
+/// ## Why the boot proves it
+///
+/// No device on these machines sends an MSI, so nothing else would ever
+/// exercise the path: a file that was enabled and never received anything looks
+/// exactly like one that was never enabled.  So the boot walks it once — enable
+/// an identity the device range does not use, write that identity into **this
+/// hart's own MSI page** exactly as a device's MSI-X table entry would, and
+/// read it back out with the claim.  That covers the page's address, the
+/// bare-identity data word, the pending bit, the enable bit and the `stopei`
+/// claim: everything between a device's table entry and the trap this kernel
+/// would take.
+///
+/// The failure a correct-looking driver would otherwise hide is an **address**:
+/// the stride between harts' files is not the tree's `reg` size, and a message
+/// sent to the wrong file is delivered to a hart with no handler.  This hart
+/// claims its own, so a wrong base or stride shows up here as a claim of
+/// nothing.
+///
+/// The identity is the **last the file holds**, one past every identity a
+/// device could be given: a message this test leaves behind can then never be
+/// mistaken for a device's.
+///
+/// # Safety
+///
+/// The caller has established that the tree named an IMSIC, which is what makes
+/// the CSR pair this uses a pair the machine implements, and this hart is
+/// running on the kernel's page table with the IMSIC window mapped.
+#[cfg(target_os = "none")]
+unsafe fn bring_up_imsic(imsic: &imsic::Imsic) {
+    // SAFETY: the caller's contract is this function's.
+    unsafe { imsic.enable_this_hart() };
+
+    // This hart's index among the machine's harts, which is the file's position
+    // in the group.  The hart list the tree gives is ordered by id on these
+    // machines, and the boot hart is the one firmware cold-booted.
+    let index = smp::boot_hart();
+
+    // The highest identity this file holds, which no device is given.
+    let Some(test_identity) = imsic.identities().checked_sub(1) else {
+        crate::serial::write_str("protofire: imsic has no identity to test\n");
+        return;
+    };
+    // SAFETY: as above — the identity is one the file holds, and the page is
+    // this group's own arithmetic, which the caller bounded.
+    let delivered = unsafe {
+        imsic.enable_identity(test_identity);
+        imsic.deliver(index, test_identity)
+    };
+    // SAFETY: as above, the claim path.
+    let pending = unsafe { imsic.is_pending(test_identity) };
+    // SAFETY: as above.
+    let claimed = unsafe { imsic.claim() };
+
+    crate::serial::write_str("protofire: imsic at ");
+    crate::serial::write_hex(imsic.base() as u64);
+    crate::serial::write_str(", hart file ");
+    crate::serial::write_u32(index as u32);
+    crate::serial::write_str(", ");
+    crate::serial::write_u32(imsic.identities());
+    crate::serial::write_str(" identit(ies), self-test identity ");
+    crate::serial::write_u32(test_identity);
+    if delivered && pending && claimed == Some(test_identity) {
+        crate::serial::write_str(" delivered and claimed\n");
+    } else {
+        crate::serial::write_str(" NOT delivered and claimed (pending ");
+        crate::serial::write_str(if pending { "set" } else { "clear" });
+        crate::serial::write_str(", claim ");
+        crate::serial::write_u32(claimed.unwrap_or(0));
+        crate::serial::write_str(")\n");
+    }
 }
 
 /// This hart's id as the entry recorded it, for a PLIC context lookup.
