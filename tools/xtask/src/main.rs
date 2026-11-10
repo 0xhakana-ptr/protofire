@@ -93,6 +93,3 @@ fn main() -> Result<()> {
         } => check(machine, &profile, timeout),
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -95,7 +95,7 @@ That is the payoff of putting the machine behind a trait, and it is worth
 building the trait for: a driver tested only by booting tells you that it failed
 and not which of forty things was wrong.
 
-**A fake is not a mock.**  The `FakeDevice` in `drivers/virtio/block/src/device/mod.rs`
+**A fake is not a mock.**  The `FakeDevice` in `drivers/virtio/block/src/device.rs`
 does what a device does, it reads the descriptor chain the driver published and
 writes the data, rather than recording that it was called.  A mock that asserts
 a call sequence tests the implementation; a fake that behaves like the thing

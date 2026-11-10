@@ -48,7 +48,7 @@ ways, because a disc cannot be written and so what comes out of it came from
 the image.
 
 `fs/src/vnode.rs` and `fs/src/filesystem.rs` carry the *contract*: what a node
-is and what a filesystem answers.  The namespace is `fs/src/mount/mod.rs` and
+is and what a filesystem answers.  The namespace is `fs/src/mount.rs` and
 `fs/src/path.rs` — a mount table, longest-prefix resolution, path
 normalization.  What is not here is the *handle table*, which belongs to the
 process layer because a handle belongs to a process.
