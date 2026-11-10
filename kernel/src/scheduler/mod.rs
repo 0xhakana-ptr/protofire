@@ -760,6 +760,24 @@ pub fn wake_blocked() -> usize {
     with_scheduler(|scheduler| scheduler.as_mut().map_or(0, Scheduler::wake_blocked))
 }
 
+/// How many tasks were placed back on the CPU they last ran on, and the most
+/// recent as `(pid, cpu)`.
+///
+/// The placement rule's own record, reported beside the migration count: the
+/// two partition the placements, and a boot whose home count is zero left
+/// nothing where it was.  The pid is the scheduler's answer, so a line names a
+/// process a reader can find elsewhere in the log.
+pub fn placings_home() -> (usize, Option<(u32, usize)>) {
+    with_scheduler(|scheduler| match scheduler {
+        Some(scheduler) => {
+            let (count, last) = scheduler.placings_home();
+            let named = last.and_then(|(task, cpu)| scheduler.pid_at(task).map(|pid| (pid, cpu)));
+            (count, named)
+        }
+        None => (0, None),
+    })
+}
+
 /// Park the running task until a process exits, unless one already has.
 ///
 /// `WaitProcess`'s own park.  The exit statuses are read **under the same

@@ -112,16 +112,26 @@ program's fact and not the kernel's — x86_64's vary.
 attached.  Verified by `block device from virtio-blk on pci` and `virtio-blk wrote and read back sector `.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
-is placed again, and the boot counts and names the placement.
+is placed again, and the boot counts and names the placement.  Placement
+follows a rule rather than the rotation: a task the asking CPU last ran is
+offered back to it first, a task no CPU has run comes next, and a task another
+CPU ran is taken only when neither exists — the **steal**, which is the one
+placement that migrates.  Measured on the same image: `task migrations` read 6,
+9, 9, 7, 7 and 16 on six boots before the rule, and 1, 1, 2, 3, 3 and 3 after
+it, against 12 to 16 `task placings home` — which is the rule's preferred arm
+running, not merely a lower number.
 
-Verified by `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `, `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `, `address spaces reaped 4, `, and `tlb shootdown `.
+Verified by `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `, `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `, `task placings home `, `address spaces reaped 4, `, and `tlb shootdown `.
 
-Missing: no load balancing — placement is whatever the lock decides, so a CPU
-with an empty queue does not take work from one that is busy.  Exited programs'
-spaces are released at the boot's end rather than at each exit, because
-releasing one while the other CPU was still installed on its root faulted 186
-times in six boots of eight.  `docs/migration.md` has the per-step cost of more
-CPUs.
+Missing: no queue per CPU, so the offer of work is still the lock's — an idle
+CPU takes a free task because every CPU scans the same list, not because a
+queue sharded work toward it.  A CPU with nothing to do and work belonging to
+another CPU steals it, which is the migration the rule prefers to avoid but
+will not refuse: leaving a core idle with work in the queue is the worse
+answer.  Exited programs' spaces are released at the boot's end rather than at
+each exit, because releasing one while the other CPU was still installed on its
+root faulted 186 times in six boots of eight.  `docs/migration.md` has the
+per-step cost of more CPUs.
 
 ## x86_64
 

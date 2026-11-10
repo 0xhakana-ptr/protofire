@@ -270,6 +270,12 @@ impl Machine {
                 // record ran and answered, which `assign` is the only writer
                 // of.
                 ("protofire: task migrations ", false),
+                // The placement rule's preferred half: a switch put a task back
+                // on the CPU it last ran on.  Required because a rule that
+                // never preferred anything still printed the migration line
+                // above — the two numbers are what a reader compares, and a
+                // boot whose home count was zero moved every task it placed.
+                ("protofire: task placings home ", false),
                 // Three programs in ring 3, each in an address space of its
                 // own.
                 //
@@ -441,6 +447,13 @@ impl Machine {
                     // this line proves is that the record ran and answered,
                     // which `assign` is the only writer of.
                     ("protofire: task migrations ", false),
+                    // The placement rule's preferred half: a switch put a task
+                    // back on the CPU it last ran on.  Required because a rule
+                    // that never preferred anything still printed the migration
+                    // line above — the two numbers are what a reader compares,
+                    // and a boot whose home count was zero moved every task it
+                    // placed.
+                    ("protofire: task placings home ", false),
                     // Three programs, each in an address space of its own,
                     // at addresses no other program can reach.
                     ("protofire: program 1 mapped at ", false),
@@ -779,6 +792,12 @@ impl Machine {
                 // record ran and answered, which `assign` is the only writer
                 // of.
                 ("protofire: task migrations ", false),
+                // The placement rule's preferred half: a switch put a task back
+                // on the CPU it last ran on.  Required because a rule that
+                // never preferred anything still printed the migration line
+                // above — the two numbers are what a reader compares, and a
+                // boot whose home count was zero moved every task it placed.
+                ("protofire: task placings home ", false),
             ],
         }
     }

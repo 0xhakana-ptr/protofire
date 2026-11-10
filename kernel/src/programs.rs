@@ -652,6 +652,22 @@ pub fn report_and_finish() -> ! {
     }
     arch::serial::write_str("\n");
 
+    // The placement rule's other half.  A migration says a task **moved**; this
+    // says a switch put one back where it last ran, which is the placement the
+    // rule prefers and the one a migration costs.  The two numbers together are
+    // what a reader compares: a boot whose home count is zero moved everything
+    // it placed, and a boot whose migration count is zero never had to.
+    let (homed, homed_last) = crate::scheduler::placings_home();
+    arch::serial::write_str("protofire: task placings home ");
+    arch::serial::write_u32(homed as u32);
+    if let Some((pid, cpu)) = homed_last {
+        arch::serial::write_str(", last process ");
+        arch::serial::write_u32(pid);
+        arch::serial::write_str(" on cpu ");
+        arch::serial::write_u32(cpu as u32);
+    }
+    arch::serial::write_str("\n");
+
     // The frames the exits gave back, and the pool they went into.  A boot that
     // reaped nothing prints the same `0` here as a boot whose release path
     // never ran, which is why the free count is beside it: the pool started

@@ -68,10 +68,12 @@ pub struct Scheduler {
     /// How many times a task was placed on a CPU other than the one it last
     /// ran on.
     ///
-    /// The scheduler does not balance load and does not decide to move a task:
-    /// a task that left its CPU is simply selectable by any other, and this
-    /// counts the times one was in fact taken elsewhere.  It is a measurement
-    /// of what the placement rule does, not a policy of its own.
+    /// The placement rule **avoids** this: a task this CPU has run is offered
+    /// back to this CPU first, and a task no CPU has run comes next, so a
+    /// migration is the rule's last resort — a CPU with nothing warm to take
+    /// and work that belongs to another CPU.  This counts the times that
+    /// happened, and a boot compares it with
+    /// [`homed`](Self::homed): the two partition the placements.
     pub(crate) migrations: usize,
     /// The most recent migration: the task index, the CPU it left, and the CPU
     /// it landed on.
@@ -80,6 +82,20 @@ pub struct Scheduler {
     /// reader that placement moved; the three numbers tell them what moved and
     /// which way, which is what a line a person reads needs.
     pub(crate) last_migration: Option<(usize, usize, usize)>,
+    /// How many times runnable work was placed on the CPU the task last ran
+    /// on, rather than on another one.
+    ///
+    /// The placement rule's own record.  A task is not pinned to a CPU, so the
+    /// choice is real: a pass with no preference takes the first runnable task
+    /// in the rotation, which is as likely to be one another CPU ran as the one
+    /// this CPU ran.  Taking the task back is what keeps it out of
+    /// [`migrations`](Self::migrations), and this is how often that happened —
+    /// zero is a boot whose every switch moved work, which is the defect this
+    /// rule was written for.
+    pub(crate) homed: usize,
+    /// The most recent task placed back on the CPU it last ran on, as
+    /// `(task, cpu)`.
+    pub(crate) last_homed: Option<(usize, usize)>,
     /// The spaces an `exec` replaced, waiting for the one moment they can be
     /// freed.
     ///
@@ -150,6 +166,8 @@ impl Scheduler {
             next_pid: 1,
             migrations: 0,
             last_migration: None,
+            homed: 0,
+            last_homed: None,
             #[cfg(target_os = "none")]
             retired: [None; RETIRED_SPACES],
         }

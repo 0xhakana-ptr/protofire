@@ -193,11 +193,13 @@ than the list.
 
 Every entry takes one global lock.  A task is not pinned to a CPU: nothing says
 where it may run, so the lock is what keeps two CPUs from being handed one
-task, and placement is whatever `claim` and `next_runnable` decide.  A per-CPU
-queue would shard the contention and would not change what a task is allowed to
-do.  What more CPUs buy before that change is the boot's own evidence line: how
-many programs ran off the boot CPU.
+task, and placement is `next_runnable`'s rule — a task the asking CPU last ran,
+then a task no CPU has run, then a steal from another CPU.  A per-CPU queue
+would shard the contention and would not change what a task is allowed to do;
+what it would change is that an idle CPU's work is *nearer* it, which the rule
+now approaches from the other side by preferring not to move a task at all.
 
-The measurement that makes it a threshold rather than a preference is in
-`docs/status.md`: placement is whatever the lock decides, so a CPU with an
-empty queue does not take work from one that is busy.
+The measurement is in `docs/status.md`: six boots of the same image read 6, 9,
+9, 7, 7 and 16 migrations before the rule and 1, 1, 2, 3, 3 and 3 after it.  A
+rule that refused the steal would take that to zero and leave a core idle with
+work in the queue, which is why the steal stays.
