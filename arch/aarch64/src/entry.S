@@ -238,6 +238,26 @@ exception_vectors:
    documented against each other rather than derived. */
 exception_entry:
     sub sp, sp, #816
+    /* Mask interrupts for the whole save, the dispatch, and the restore.
+     *
+     * Without this, an interrupt can be taken **during the restore**: the
+     * hardware enters the vector with `SP_EL1` already popped back to the
+     * byte after `sub sp, sp, #816`, so the second frame is built inside the
+     * first one's, its own save overwrites the first frame's q registers, and
+     * the first restore then loads from an address the pool had handed out.
+     * The symptom was a data abort at `0x60000000` from
+     * `exception_entry+208` — the first `ldp` of a restore that had been
+     * re-entered — about two boots in a hundred.  A kernel-mode trap is
+     * taken with the `I` bit as the interrupted code left it, and the restore
+     * runs long after the handler has enabled interrupts again, which is why
+     * only kernel-mode code could show it.
+     *
+     * It is the rule `enter_user_with_context` already argues for the `eret`
+     * out of the boot: a trap in the middle of a sequence that several
+     * system-register writes must complete is a trap that destroys the
+     * sequence.  `eret` restores `DAIF` from `SPSR_EL1`, so the mask needs no
+     * matching unmask; the interrupted code resumes with its own bits. */
+    msr daifset, #0xf
     /* The index first, because `x16` is saved with `x17` below. */
     str x16, [sp, #280]
 
@@ -324,6 +344,22 @@ exception_entry:
 
     mov x0, sp
     bl aarch64_exception_dispatch
+
+    /* Mask again before the restore.
+     *
+     * The entry's mask covers the save and the dispatch, but the dispatch
+     * **deliberately unmasks**: a handler that parks its task, or waits for a
+     * wake, clears `I` so the wait can end.  It returns with `I` however it
+     * found it, which is clear.  The restore that follows writes `ELR_EL1`,
+     * `SPSR_EL1` and `SP_EL0` and then reloads 32 SIMD registers; an interrupt
+     * taken inside that sequence enters the vector with `SP_EL1` still at the
+     * frame, builds a second frame over the first one's, and its `eret`
+     * resumes the first restore at an address the interrupted `ldp` had not
+     * finished using.  The measured symptom was a data abort at `0x60000000`
+     * from `exception_entry`'s first `ldp`, about two boots in a hundred.
+     *
+     * `eret` loads `DAIF` from `SPSR_EL1`, so neither mask needs an unmask. */
+    msr daifset, #0xf
 
     /* Restore in the reverse order, and restore `ELR_EL1`/`SPSR_EL1` before the
        general registers: the two loads that do it need somewhere to put what

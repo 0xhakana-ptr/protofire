@@ -142,33 +142,27 @@ through PSCI `CPU_ON`.  A started core installs its own vectors and
 inter-processor interrupt and a task from the shared scheduler, and enters EL0
 on it.  Shared-table changes are broadcast and acknowledged.
 
-Missing: about two boots in a hundred end wrong, and the tree ended wrong at
-the same rate before this session's changes.  The boot's last exit prints
-`program ended on cpu 1` and then the machine either takes a data abort
-reading one byte past the RAM's top — `fault at 0x60000000, read, mapped
-read-write, supervisor`, PC in `exception_entry`'s restore (`ldp q10, q11,
-[sp, #448]`), with the frame's `sp` inside the frame pool's last page — or it
-wedges before `every program exited`, the reaping side waiting in
-`send_ipi_to_others` for a core that halted in the unhandled path.  Measured
-2 in 100 here and 1 in 60 on the pre-session baseline; a boot frozen under
-the emulator's gdbstub held the boot core's `sp` at an address no kernel
-stack slice names, so the standing question is what writes it.  The other
-two machines never reproduce it — 80 x86_64 and 20 riscv64 boots, none —
-so the question is this machine's, not the scheduler's.
+Missing: about two boots in a hundred used to end wrong; fixed by masking the
+trap entry's restore.  The boot's last exit printed `program ended on cpu 1`
+and then the machine either took a data abort one byte past the RAM's top —
+`fault at 0x60000000, read, mapped read-write, supervisor`, PC in
+`exception_entry`'s first `ldp` of a restore — or wedged before `every
+program exited`, the reaping side waiting in `send_ipi_to_others` for a core
+that halted in the unhandled path.  Measured 2 in 100 and 1 in 60 on the
+pre-session baseline, never on x86_64 (80 boots) or riscv64 (20).
 
-A temporary trap-entry probe narrowed it one step: the first trap whose
-frame is not on a kernel stack names a **frame-pool page** — `0x449a7000`
-and `0x449913c0`, inside `__pool_start`..`__pool_end`, not the RAM's top —
-and both catches interrupted `serial::push` printing the final `program
-ended on cpu 1`, with `SPSR` at EL1h.  So a kernel-mode cpu was running
-ordinary kernel code on a page the pool had handed out, the scheduler's
-install path never carried a context that was not ring 3 (that probe never
-fired), and every trap returns its own stack (`add sp, sp, #816` before
-`eret`) — the write happens in ordinary kernel execution, which points at
-a saved stack slot smashed with an address that code holding frame
-addresses as locals would produce: the copy-on-write copy and the image
-allocator are the suspects with the means.  The probe is removed; the
-question is what wrote the slot.
+The cause was a trap taken during the restore.  The handler **deliberately
+unmasks** — a park or a wait clears `I` so the wake can arrive — and returned
+with `I` clear, so the restore that writes `ELR_EL1`/`SPSR_EL1`/`SP_EL0` and
+reloads 32 SIMD registers ran interruptible.  An IRQ taken there entered the
+vector with `SP_EL1` still at the frame, built a second frame over the first
+one's, and its `eret` resumed the first restore with a `sp` that a temporary
+trap-entry probe showed landing on a **frame-pool page** (`0x449a7000`,
+`0x449913c0`) rather than the RAM's top — a saved slot the second frame had
+overwritten.  Masking the entry alone was not enough and measured 3 in 200;
+masking again after the dispatch, before the restore, measured **200 of 200
+clean**.  `eret` reloads `DAIF` from `SPSR_EL1`, so neither mask needs an
+unmask.
 
 ## RISC-V 64
 
