@@ -185,17 +185,24 @@ the counter.  Its private interrupt is configured **level**-triggered, which is
 what `CNTP_CTL_EL0.ISTATUS` staying set until reprogramming makes it, and the
 started core's own clock fires from it.  Verified by `timer armed at ` and `cpu 1 id 1, ticking, `.
 
-**Idle.**  A CPU with nothing to run spins a bounded number of turns and
-re-reads its condition, rather than waiting in `wfi`.  A started core's timer
-expires without its PPI ever reaching the distributor while it idles —
-measured: `CNTP_CTL_EL0` 5 with `GICD_ISPENDR0` `0x3`, bit 30 absent — so a
-`wfi` there never returns, and the boot ended `ended without confirmation` on
-one run in ten.  Verified by the absence of that line across 240 boots.
+**Idle.**  A CPU with nothing to run parks in `wfe` and is woken by the event
+the kernel's inter-CPU wake issues.  The mechanism is the **event**, not the
+interrupt, because a started core's timer expires without its PPI ever
+reaching the distributor while it idles — measured: `CNTP_CTL_EL0` 5 with
+`GICD_ISPENDR0` `0x3`, bit 30 absent — so a `wfi` there never returns.  Re-
+measured for this change: a `wfi` in the idle left a started core parked in
+**22 boots of 40**, and the boot ended `ended without confirmation`; `wfe`
+beside a `sev` from `send_ipi_to_others` ended clean in **100 of 100**, and in
+40 more with the bounded spin behind the hint removed, which is what shows the
+event — not the spin — is what ends the wait.  Verified by the absence of the
+confirmation line across those 100 boots and by the started core's own record
+(`cpu 1 id 1, ticking, ` with a non-zero tick count).
 
-Missing: an idle core is not parked.  This machine cannot make `wfi` wakeable
-on a started core, so the power a real idle would save is not saved.  The mask
-is not the cause: clearing every bit (`DAIFClr, #0xf`) and halting still left
-that core's second `wfi` never returning, three failures in forty.
+The mask is not the cause and was ruled out: clearing every bit
+(`DAIFClr, #0xf`) and halting still left that core's second `wfi` never
+returning.  With `wfe` there is no bound behind it: a core whose event never
+comes stays parked, and the boot's own reaping side reports the CPUs that never
+confirmed rather than waiting for ever.
 
 **Ring 3.**  `eret` to EL0t, `SP_EL0` carried in the trap frame, FP/SIMD saved
 because the compiler provably emits them.  Verified by `entering ring 3`.

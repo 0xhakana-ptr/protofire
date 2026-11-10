@@ -147,6 +147,44 @@ pub fn halt() -> ! {
 /// A host has no clock and no interrupt to wait for, so the host arm returns
 /// immediately; a test that called it in a loop would spin, which is the one
 /// thing its caller must not rely on.
+/// Wait for something to change, parking the core when the machine cooperates.
+///
+/// `halt` masks interrupts first and is the machine's final stop.  This is the
+/// idle a scheduler uses when it has nothing to run, and it has to return
+/// **whether or not an interrupt came**, because on this machine one may not.
+///
+/// ## Why this waits on an event and not on an interrupt
+///
+/// It was a `wfi`, on the argument that an interrupt is the one thing an idle
+/// core waits for and the timer supplies it.  Measured on a failing boot, that
+/// argument does not hold for a started core.  A core parked in `wfi` with `I`
+/// clear was found by QEMU's monitor with `PSTATE` `0x80002345` — IRQs
+/// unmasked — and it never moved again; the boot ended `ended without
+/// confirmation from 1 cpu(s)`.  Re-measured for this change, a started core
+/// with `wfi` in this position was stuck in **22 boots of 40**, and the same
+/// image with a bounded spin in its place ended clean in 40 of 40.
+///
+/// The register evidence from the earlier session is why it is not a mask: just
+/// before the wait, `CNTP_CTL_EL0` read 5 (enabled, `ISTATUS` set, so the timer
+/// had expired) and `GICD_ISENABLER0` had bit 30 (the timer's line) set, while
+/// `GICD_ISPENDR0` read `0x3` — bit 30 absent.  The distributor was not pending
+/// the private timer line, so the interrupt that was supposed to end the wait
+/// did not exist.  Clearing every mask bit changed nothing.
+///
+/// **`wfe` is the wait that does not depend on that.**  The event register is
+/// set by a `sev` from any core in the system and is otherwise untouched by the
+/// interrupt controller, and a core that waits on it returns the moment another
+/// core says the world changed.  This kernel's inter-CPU wake is exactly that
+/// statement — [`send_ipi_to_others`] raises the SGI *and* issues `sev` — so a
+/// parked core is woken by the same call that tells it there is work, and the
+/// timer's PPI is no longer required to arrive for the park to end.
+///
+/// Interrupts are still unmasked first, so one that does arrive is taken rather
+/// than held off, and a caller waiting for a device still gets its wake.
+///
+/// A host has no clock and no interrupt to wait for, so the host arm returns
+/// immediately; a test that called it in a loop would spin, which is the one
+/// thing its caller must not rely on.
 #[cfg(target_os = "none")]
 pub fn wait_for_a_wakeup() {
     // This unmasks for the same reason x86_64's `sti; hlt` does, in this
@@ -158,40 +196,16 @@ pub fn wait_for_a_wakeup() {
     // `msr daifclr, #2` clears the `I` bit.  The trap path's `eret` puts the
     // program's `PSTATE` back, so this mask does not outlive the call.
     //
-    // **The mask is not what stops the wake, and it was worth proving.**
-    // Clearing every bit — `msr daifclr, #0xf; wfi; msr daifset, #0xd`, which
-    // is how the previous tree wrote it — still left a started core's second
-    // `wfi` never returning: in a probe over thirty boots, the failing ones
-    // showed that core's `wfi` returning exactly once and then never again, and
-    // the boot ended `ended without confirmation` three times in forty.  So the
-    // interrupt is not being held off by a mask; the controller is not
-    // delivering it, which the register readings in this function's own
-    // documentation show directly.
-    //
-    // SAFETY: `daifclr` is unprivileged at EL1, and a spin loop has no
-    // preconditions.
+    // SAFETY: `daifclr` and `isb` are EL1 operations with no memory operand,
+    // and `wfe` is a hint the core may decline.
     unsafe {
         core::arch::asm!("msr daifclr, #2", options(nomem, nostack));
-    }
-
-    // Long enough that a caller waiting for a device has given the controller
-    // time to deliver, short enough that the scheduler's own idle loop still
-    // reaches its bound quickly.  The number is how long to be patient, not a
-    // duration: the counter's rate is the thing this tree cannot trust, so the
-    // bound is in instructions.
-    for _ in 0..WAIT_SPINS {
-        core::hint::spin_loop();
+        // The unmask must be in effect when the core looks for a wake-up event,
+        // which is the next instruction only once the write has landed.
+        core::arch::asm!("isb", options(nomem, nostack));
+        core::arch::asm!("wfe", options(nomem, nostack));
     }
 }
-
-/// How many instruction-sized pauses a wait spends before returning.
-///
-/// A `spin_loop` hint is the architecture's "I am waiting" and costs an
-/// instruction or two; on the emulator this tree boots a few thousand of them
-/// is a fraction of a millisecond, which is longer than an accepted interrupt
-/// takes to be delivered and short enough that an idle loop's own bound is
-/// still reached in well under a second.
-pub const WAIT_SPINS: usize = 4096;
 
 /// The host build: nothing to wait for.
 #[cfg(not(target_os = "none"))]
@@ -760,9 +774,26 @@ pub unsafe fn send_ipi_to_others() -> bool {
     let Some(gic) = trap::controller() else {
         return false;
     };
+    // **And a `sev`, on every core but this one, through a different
+    // mechanism.**
+    //
+    // The SGI is the interrupt; `sev` is the event.  A core parked in
+    // `wait_for_a_wakeup` waits on `wfe`, because the timer's PPI was measured
+    // not to reach a started core's idle (see that function).  `wfe` returns
+    // for an event and not for an interrupt, and `sev` is what sets one on
+    // every core in the system — so this call is the *only* thing that ends a
+    // parked core's wait, and it has to do both halves.  Measured: with the SGI
+    // alone and `wfi` in the wait, a started core was left parked in 22 boots
+    // of 40.
+    //
     // SAFETY: the controller was installed before any core started, both
-    // windows are mapped uncached, and the number is an SGI.
-    unsafe { gic.raise_on_others(test_interrupt()) }
+    // windows are mapped uncached, and the number is an SGI.  `sev` is a hint
+    // with no precondition.
+    unsafe {
+        let raised = gic.raise_on_others(test_interrupt());
+        core::arch::asm!("sev", options(nomem, nostack));
+        raised
+    }
 }
 
 /// The external interrupt controller this machine drives as a window: none.

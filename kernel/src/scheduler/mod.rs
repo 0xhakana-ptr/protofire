@@ -407,9 +407,13 @@ pub fn advance_with_status(
         // The check could not simply be added earlier: the wait between the two
         // turns was a `wfi`, and on this machine a started core's second `wfi`
         // never returned — its timer was expired and its line enabled and the
-        // distributor never had the interrupt pending.  `wait_for_a_wakeup` is
-        // a bounded spin now for that reason, which is what makes this branch
-        // reachable at all.
+        // distributor never had the interrupt pending.  `wait_for_a_wakeup`
+        // waits on the **event** now, which the inter-CPU wake sets with a
+        // `sev` beside its SGI, so the park ends on a call this kernel makes
+        // rather than on an interrupt the controller may not deliver.  Measured
+        // on that change: 22 unconfirmed boots in 40 with the interrupt wait,
+        // none in 100 with the event wait, and none in 40 more with the bounded
+        // spin behind it removed — the event is what ends it.
         //
         // `boot_has_ended` and not `boot_is_finished`: this CPU is still here,
         // deciding.  The record is made in `report_and_finish`, where the
@@ -1032,9 +1036,15 @@ pub fn is_exit(call: &CallFrame) -> bool {
 /// that can never be delivered.  x86_64's `sti` is that unmask and aarch64 has
 /// no such flag to clear.  `arch::wait_for_a_wakeup` is the whole of the
 /// machine half: it unmasks where there is something to unmask and stops the
-/// core until an interrupt arrives.  The boot hung once with `every program is
-/// asleep, waiting` and no tick, because the kernel had tried to spell `sti`
-/// itself.
+/// core until something says the world changed.  The boot hung once with
+/// `every program is asleep, waiting` and no tick, because the kernel had tried
+/// to spell `sti` itself.
+///
+/// On aarch64 that "something" is an **event**, not an interrupt: the timer's
+/// PPI was measured not to reach a started core's idle, so a wait on an
+/// interrupt there parks a core for ever — 22 boots of 40 ended without
+/// confirmation.  [`arch::wait_for_a_wakeup`] waits on `wfe` and the kernel's
+/// inter-CPU wake issues a `sev` beside its SGI, which measured 0 of 100.
 ///
 /// A spin bound was here, at a million waits, on the argument that a machine
 /// whose timer does not tick should say so rather than hang.  It fired on a
