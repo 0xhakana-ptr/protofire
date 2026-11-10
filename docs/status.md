@@ -44,31 +44,36 @@ machine code, and `/bin/init` is the workspace's first compiled ring-3 program.
 
 Verified by `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
 
-Missing: `WaitProcess` has no boot gate.  The pipe's reader does call it, and
-the call is exercised on every boot — the guard, the park's retry contract and
-the exit's wake are all real — but the wait's own line is not a required line,
-because whether it appears depends on a moment the change does not control: 2
-of 100 gate runs had the reader already in its wait when the writer's bytes
-landed, so the write-woke line the gate does require never printed.
+The pipe's reader also calls `WaitProcess` after its end-of-file read, and the
+gate requires the kernel's own `a wait answered status ` line on all three
+machines: the guard, the park's retry contract and the exit's wake are on a
+path every boot runs.
 
-Two things remain open, and both are about what a wait can promise:
+A park saves its resume **at the call**, not after it: a trap leaves `ELR_EL1`
+past the instruction, which is what an answered call wants, and a parked call
+has no answer, so resuming past it would skip the handler and leave the
+program reading whatever its register held from the call before.  The rewind
+lives in `block` (each machine's `arch` answers the call's width — four bytes
+for `svc` and `ecall`, two for `int 0x80`), and a host test requires it.
 
-- **`WaitProcess` answers about *some* process, not the one asked for.**  The
-  boot has four, and the forked child exits first, so the status a reader
-  receives is `139`, that child's fault status, not the writer's `0`.  A
-  per-child wait needs a pid argument the ABI does not have, and until it has
-  one a program must not report the wait's answer as its own status.
+Two things a wait cannot promise yet:
+
+- **It answers about *some* process, not the one asked for.**  The boot has
+  four, and the forked child exits first, so the status a reader receives can
+  be `139`, that child's fault status, not the writer's `0`.  A per-child wait
+  needs a pid argument the ABI does not have, and until it has one a program
+  must not report the wait's answer as its own status — which is why the
+  boot's reader exits with a constant of its own.
 - **The reader's payload and its end-of-file are one call apart.**  The first
   read blocks and a retry returns the writer's four bytes; only the read after
-  that sees the closed end.  That is the contract working, not a defect — it
-  is what a short read is — but an image that wants both in one call needs a
-  loop, and this one has none.
+  that sees the closed end.  That is a short read working as the contract says,
+  but an image that wants both in one call needs a loop, and this one has none.
 
-The retry contract itself is solved and is why this is a short list: a park
-saves the resume at the call, so a wake re-executes the handler instead of
-continuing past a call that was never answered.  `restart_the_call` in each
-machine's `arch` answers the width, and `block` applies it after copying the
-frame.  Measured: 30 of 30 boots printed the wait's answer and reaped.
+A wake reports its count whether or not it woke anyone, because zero is a fact
+— a reader already awake is still a reader the bytes reached — and a line that
+printed only the non-zero case made the gate depend on an interleaving.
+Measured: 120 aarch64 boots with the wake line required, and 60 more with the
+wait line required as well, all clean.
 
 **Faults.**  A fault reaches the kernel with its direction and with the
 faulting CPU's own table asked what the address is mapped as.  A write to a
