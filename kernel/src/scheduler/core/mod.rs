@@ -325,6 +325,25 @@ impl Scheduler {
         })
     }
 
+    /// Whether a task other than the current one could still finish.
+    ///
+    /// The question a `WaitProcess` asks before parking itself, and
+    /// deliberately **not** [`Self::has_other_runnable`]: that one asks whether
+    /// a switch would be a switch, and a sleeping task answers no to it.  A
+    /// sleeping task is exactly what a wait is waiting for — it will wake and
+    /// exit — so a wait that used the runnable question would answer
+    /// `NotFound` to a parent whose child was asleep, which is a hang reported
+    /// as an error.
+    ///
+    /// So this counts every task that is not `Finished` and is not the
+    /// current one, whatever the reason it is not running now.
+    pub fn has_other_unfinished(&self, cpu: usize) -> bool {
+        let mine = self.running.get(cpu).copied().flatten();
+        self.tasks.iter().enumerate().any(|(index, task)| {
+            index != mine.unwrap_or(usize::MAX) && task.state != State::Finished
+        })
+    }
+
     /// Whether any task can still run, or is waiting to.
     ///
     /// A sleeping task counts: it will run again, so the boot has work left and

@@ -478,6 +478,64 @@ fn a_wait_whose_exit_already_happened_answers_it_without_parking() {
     assert!(scheduler.has_selectable(0), "the waiter is still runnable");
 }
 
+/// A sleeping task counts as a reason to wait; a finished one does not.
+///
+/// This is the difference between the two questions.  `has_other_runnable`
+/// answers "would a switch be a switch", and a sleeping child answers no — so
+/// a wait that asked it answered `NotFound` to a parent whose child had only
+/// gone to sleep, turning a wait into an error.  The wait's question is
+/// "could another task still finish", and a sleeper could.
+#[test]
+fn a_sleeping_task_is_a_reason_to_wait() {
+    // The shape a wait actually has: this CPU runs the parent, and the only
+    // other task — a child — is asleep.  Both predicates look at that child,
+    // and they must disagree about it.
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("parent"));
+    scheduler.add(Task::without_space("child"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+
+    // The child asleep, reached directly: a host has one CPU slot, so there
+    // is no second CPU to have put it to sleep through `sleep_until`.
+    scheduler.tasks[1].state = super::task::State::Sleeping { until: 1000 };
+    assert_eq!(scheduler.sleeping(), 1);
+
+    assert!(
+        !scheduler.has_other_runnable(0),
+        "a switch now would be a timer tick, not a switch"
+    );
+    assert!(
+        scheduler.has_other_unfinished(0),
+        "but the sleeper will wake and exit, which is what a wait waits for"
+    );
+}
+
+/// A task that finished is not a reason to wait, and the waiter is.
+///
+/// The other half: once the only other task is `Finished`, no exit can
+/// arrive, and a wait that parked would be a hang.  The waiter itself is
+/// excluded — it is unfinished by definition and cannot answer its own wait.
+#[test]
+fn a_finished_task_is_not_a_reason_to_wait() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("parent"));
+    assert_eq!(scheduler.claim(0), Claim::Took(0));
+
+    assert!(
+        !scheduler.has_other_unfinished(0),
+        "the only task is the one asking"
+    );
+
+    scheduler.add(Task::without_space("child"));
+    assert!(scheduler.has_other_unfinished(0), "a live child counts");
+
+    // The parent exits; the child is the only unfinished task left, and a
+    // CPU running it would not be waiting on itself.
+    let mut frame = starting_context(0, 0);
+    scheduler.schedule(0, &mut frame, true);
+    assert_eq!(scheduler.exited(), 1);
+}
+
 /// A wait whose exit has not happened parks.
 #[test]
 fn a_wait_with_no_exit_parks() {

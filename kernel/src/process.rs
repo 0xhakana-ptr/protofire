@@ -459,9 +459,12 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         if let Some(status) = crate::scheduler::first_exit_status() {
             return CallOutcome::Return(status);
         }
-        if !crate::scheduler::has_runnable_except_current() {
-            // Nothing else can run, so no exit can arrive: answering "no such
-            // process" is the truth, and blocking would be a hang.
+        if !crate::scheduler::has_other_unfinished() {
+            // No other task can finish, so no exit can arrive: answering "no
+            // such process" is the truth, and blocking would be a hang.  The
+            // question is "unfinished" and not "runnable": a child that is
+            // asleep will wake and exit, and the runnable question answered
+            // this wait `NotFound` for exactly that child.
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotFound));
         }
         // Park — with the same re-check the pipe's read parks under.  The

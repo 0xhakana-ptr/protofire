@@ -536,6 +536,21 @@ pub fn has_other_runnable() -> bool {
     })
 }
 
+/// Whether a task other than the running one could still finish.
+///
+/// The question `WaitProcess` asks before parking.  Deliberately not
+/// [`has_other_runnable`]: a task that is asleep or blocked is precisely what
+/// a wait is waiting for, and answering `NotFound` because the child was
+/// asleep would turn a wait into an error.
+pub fn has_other_unfinished() -> bool {
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_ref()
+            .is_some_and(|scheduler| scheduler.has_other_unfinished(cpu))
+    })
+}
+
 /// Whether any installed task could be selected right now.
 pub fn has_selectable() -> bool {
     let cpu = this_cpu();
