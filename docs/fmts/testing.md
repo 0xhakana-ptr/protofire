@@ -14,9 +14,17 @@ wrong.
 ## 1. Where tests live
 
 A **unit** test is a `#[cfg(test)] mod tests` at the end of the module under
-test.  When that module grows large, a second one is a `#[cfg(test)] mod
-tests_<thing>` in the same file, or a `tests.rs` sibling declared `#[cfg(test)]
-mod tests;`.  **Test-only helpers** live inside the `tests` module, or in a
+test, in that module's own file.  That is the default and it is where a test
+belongs: separating the tests from the code they check makes a reader open two
+files to see one thing, and a `tests.rs` that exists only to hold a module's
+tests is a directory created for the tests rather than for the code.
+
+A second file is worth it when the **module** is already split — `mod.rs`
+beside `space.rs`, `table.rs` and so on — and its tests have outgrown one
+`mod tests`.  Then a `tests.rs` sibling, declared `#[cfg(test)]
+mod tests;`, keeps the module's own files about the mechanism.  A module small
+enough to be one file keeps its tests in that file, however long the tests
+grow.  **Test-only helpers** live inside the `tests` module, or in a
 `test_util.rs` declared `#[cfg(test)]`.
 
 There is no `tests/` directory of integration binaries.  A "test that needs the
@@ -30,7 +38,7 @@ way to test a subsystem in isolation: the module graph was one unit, so the
 only boundary available was the process.
 
 Here the boundary is the crate.  `cargo test -p fs` builds `fs` and nothing
-else, and a test inside `fs/src/pyrofs/tests.rs` has exactly the access an
+else, and a test inside `fs/src/pyrofs/mod.rs` has exactly the access an
 integration binary had, plus the private items, which an integration binary
 could not reach and which are usually where the interesting arithmetic is.
 

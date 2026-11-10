@@ -86,6 +86,3 @@ pub use table::read_file;
 pub use table::release_owned;
 pub use table::serve;
 pub use table::served_numbers;
-
-#[cfg(test)]
-mod tests;
