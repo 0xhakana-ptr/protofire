@@ -679,6 +679,22 @@ pub fn report_and_finish() -> ! {
     arch::serial::write_u32(crate::address_space::free_frames() as u32);
     arch::serial::write_str(" frame(s) free\n");
 
+    // The device's completion messages, taken from the trap path.
+    //
+    // The count is here rather than beside the wiring because it is a total,
+    // and the wiring's line is a claim about what was armed: a boot can arm
+    // every register and still take nothing, which is exactly the state that
+    // hid this mechanism for a session.  An IMSIC file holds one pending bit
+    // per identity, so the number is how many times the **trap** ran, not how
+    // many completions the device finished — several completions that arrive
+    // before the first is claimed share a bit, which is why the count is small
+    // and its own place on the report is what makes it readable.
+    arch::serial::write_str("protofire: block completion message(s) taken = ");
+    arch::serial::write_u32(
+        crate::BLOCK_MESSAGES.load(core::sync::atomic::Ordering::Acquire) as u32,
+    );
+    arch::serial::write_str("\n");
+
     // A boot that gave up waiting says so, and says on how many CPUs.  This is
     // the line that turns "the machine ended" from an assumption into a fact
     // with a number: zero is a boot where every CPU confirmed, and a count is a

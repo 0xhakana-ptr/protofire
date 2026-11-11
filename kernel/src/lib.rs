@@ -137,6 +137,22 @@ pub fn note_console_interrupt() {
     CONSOLE_INTERRUPTS.fetch_add(1, core::sync::atomic::Ordering::Release);
 }
 
+/// How many completion messages the block device has delivered.
+///
+/// A message is not what makes a completion happen — the driver's next drain
+/// takes it from the used ring whether or not one arrived — so this count is
+/// the only record that the device's MSI reached this kernel instead of being
+/// held in the IMSIC file or dropped at the transport.  It is zero on a machine
+/// whose tree names no IMSIC, which is every machine whose device is polled.
+pub static BLOCK_MESSAGES: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Count one completion message from the block device.
+#[cfg(target_os = "none")]
+pub fn note_block_message_interrupt() {
+    BLOCK_MESSAGES.fetch_add(1, core::sync::atomic::Ordering::Release);
+}
+
 /// Stop this CPU.
 ///
 /// Delegated to the architecture crate: the instructions belong there, and this

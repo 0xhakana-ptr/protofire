@@ -171,6 +171,190 @@ const BUS_COUNT: u8 = 1;
 pub struct FoundBlockDevice {
     pub transport: Arc<virtio_core::PciTransport>,
     pub device: Device,
+    /// The bus's configuration space, for a caller that has to ask the
+    /// function a question after the driver has taken the transport — the
+    /// message wiring's MSI-X capability walk is one.
+    pub config: Arc<dyn ConfigSpace>,
+}
+
+/// The identity the block device's completion message carries.
+///
+/// One per device, chosen by the boot because a message's identity is the
+/// kernel's numbering and not the device's: an MSI-X table entry is
+/// `(address, word)` and the word is whatever the driver put there.  It is
+/// above the wired sources an APLIC owns (this machine declares 96) so it
+/// cannot be confused with one, and below the identity the IMSIC self-test
+/// takes (one past the last), so the two never share a pending bit.
+pub const BLOCK_MESSAGE_IDENTITY: u32 = 200;
+
+/// The MSI-X vector the block queue's completions are mapped to.
+///
+/// Vector zero is reserved for the device's configuration-change message,
+/// which this tree does not use; the queue gets the next one.
+pub const BLOCK_MESSAGE_VECTOR: u16 = 2;
+
+/// Wire the block device's completion interrupt to this machine's IMSIC.
+///
+/// ## Why this runs after the driver is built
+///
+/// The driver's construction begins with a device reset (`write_status(0)`),
+/// and a reset is the device forgetting every queue's interrupt state.  A
+/// wiring before it arms a table entry and a queue vector the reset then
+/// discards, and the failure is completely silent: the device finishes its
+/// requests, QEMU's `virtio_notify` trace records each one, and the transport
+/// drops every one of them because the queue's vector is `VIRTIO_NO_VECTOR`
+/// again.  Measured: the same wiring before the reset took **0 of 4** boots,
+/// and after it **8 of 8**, with every step of the wiring reading back what it
+/// wrote in both runs.
+///
+/// ## What it returns
+///
+/// The line it prints is the evidence, and every fact on it was read back from
+/// the device: the table entry's address and word, the MSI-X enable, the queue
+/// vector, and the IMSIC file's enable.  A machine whose tree names no IMSIC
+/// answers `None` and gains nothing — the driver completes through its polling
+/// as every other machine's does, so this is an extra, not a dependency.
+pub fn wire_block_message_interrupt(found: &FoundBlockDevice) -> bool {
+    wire_block_message_interrupt_inner(found)
+}
+
+/// The wiring itself, on a machine.
+#[cfg(target_os = "none")]
+fn wire_block_message_interrupt_inner(found: &FoundBlockDevice) -> bool {
+    let config = &*found.config;
+    let device = found.device;
+
+    let Some(page) = arch::message_page() else {
+        return false;
+    };
+
+    // The MSI-X capability, found by walking the list.  A virtio function that
+    // reported `STATUS_CAPABILITY_LIST` and no MSI-X is one with nothing to
+    // wire, which is not an error: the driver polls.
+    let Some(offset) = device.capabilities(config, |id, offset, _word| {
+        (id == pci::msix::CAPABILITY_ID).then_some(offset)
+    }) else {
+        return false;
+    };
+    let Some(capability) = pci::msix::capability(config, device.address, offset) else {
+        return false;
+    };
+
+    // The table's BAR, read by **register** number: that is what the
+    // capability's `bar` field counts, and it is not the slot a BAR-walk array
+    // uses, because a 64-bit BAR occupies one slot and two registers.
+    let Some(bar) = device.bar_register(config, capability.table_bar) else {
+        return false;
+    };
+    let bar_base = physical_address(bar.address);
+    // SAFETY: the region is a BAR the bus reported, so it is a device's memory
+    // and nothing else.
+    #[cfg(target_os = "none")]
+    unsafe {
+        crate::address_space::map_device(bar_base, 0x1000);
+    }
+
+    // The entry, written and read back.  The address is this hart's MSI page
+    // and the word is the bare identity: the file reads the 4-byte store as an
+    // identity and nothing else, so a word with a bit above it is dropped.
+    let entry_address =
+        pci::msix::entry_address(bar_base, &capability, BLOCK_MESSAGE_VECTOR as usize);
+    let entry = pci::msix::Entry::new(page as u64, BLOCK_MESSAGE_IDENTITY).unmasked();
+    write_table_entry(entry_address, entry);
+    let read_back = read_table_entry(entry_address);
+    if read_back != entry {
+        arch::serial::write_str("protofire: block message entry did not stick\n");
+        return false;
+    }
+
+    // MSI-X on, then the queue's vector, then the file's enable.  The order
+    // matters at the last step only: a message whose identity the file has not
+    // enabled is held pending for ever, which looks exactly like a device that
+    // never sent one.
+    let msix_enabled = pci::msix::enable(config, device.address, &capability);
+    let vector_set =
+        virtio_core::Transport::set_queue_vector(&*found.transport, 0, BLOCK_MESSAGE_VECTOR);
+    // SAFETY: `message_page` answered, so the tree named an IMSIC and the CSR
+    // pair exists on this hart.
+    let identity_enabled = unsafe { arch::enable_message_identity(BLOCK_MESSAGE_IDENTITY) };
+    if !msix_enabled || !vector_set || !identity_enabled {
+        arch::serial::write_str("protofire: block message wiring refused: msix ");
+        arch::serial::write_str(if msix_enabled { "on" } else { "off" });
+        arch::serial::write_str(", queue vector ");
+        arch::serial::write_str(if vector_set { "set" } else { "cleared" });
+        arch::serial::write_str(", identity ");
+        arch::serial::write_str(if identity_enabled {
+            "enabled"
+        } else {
+            "not enabled"
+        });
+        arch::serial::write_str("\n");
+        return false;
+    }
+
+    // The handler, registered under the identity the message carries, which is
+    // the number the trap path hands the registry for an IMSIC delivery.
+    irq::register(
+        BLOCK_MESSAGE_IDENTITY as usize,
+        note_block_message_interrupt,
+    );
+
+    arch::serial::write_str("protofire: block message wired to imsic page ");
+    arch::serial::write_hex(page as u64);
+    arch::serial::write_str(", identity ");
+    arch::serial::write_u32(BLOCK_MESSAGE_IDENTITY);
+    arch::serial::write_str(", vector ");
+    arch::serial::write_u32(BLOCK_MESSAGE_VECTOR as u32);
+    arch::serial::write_str("\n");
+    true
+}
+
+/// A host has no device and no IMSIC, so there is nothing to wire.
+///
+/// `false` rather than an invented table write: the function's caller treats
+/// the answer as "the driver polls", which is also what a boot on a machine
+/// whose tree names no IMSIC does.
+#[cfg(not(target_os = "none"))]
+fn wire_block_message_interrupt_inner(_found: &FoundBlockDevice) -> bool {
+    false
+}
+
+/// Count one completion message from the block device.
+///
+/// The handler does one thing, because there is one thing to do: the completion
+/// itself is in the queue's used ring, and the driver takes it on its next
+/// drain whether or not a message arrived.  So a message is a **notification**,
+/// and the count is what makes "the device's MSI arrived" a fact about a boot
+/// rather than about the wiring's print.
+#[cfg(target_os = "none")]
+fn note_block_message_interrupt(_identity: usize) -> bool {
+    crate::note_block_message_interrupt();
+    true
+}
+
+/// Write one MSI-X table entry, as its sixteen bytes.
+#[cfg(target_os = "none")]
+fn write_table_entry(address: usize, entry: pci::msix::Entry) {
+    for (index, word) in entry.encode().chunks(4).enumerate() {
+        let value = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+        // SAFETY: the address is inside the table's BAR, at the entry the
+        // capability's own arithmetic named, and the write is four bytes.
+        unsafe {
+            core::ptr::write_volatile((address + index * 4) as *mut u32, value);
+        }
+    }
+}
+
+/// Read one MSI-X table entry back, as its sixteen bytes.
+#[cfg(target_os = "none")]
+fn read_table_entry(address: usize) -> pci::msix::Entry {
+    let mut bytes = [0_u8; pci::msix::ENTRY_SIZE];
+    for (index, slot) in bytes.chunks_mut(4).enumerate() {
+        // SAFETY: as `write_table_entry`, reading the entry that was written.
+        let value = unsafe { core::ptr::read_volatile((address + index * 4) as *const u32) };
+        slot.copy_from_slice(&value.to_le_bytes());
+    }
+    pci::msix::Entry::decode(&bytes)
 }
 
 /// Scan the bus for a virtio block device, and bring up its transport.
@@ -299,7 +483,11 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     // to hand out and the machine's MSI destination is `arch`'s to name; the
     // driver keeps completing through its own polling either way, so a machine
     // without a destination loses nothing.
-    Some(FoundBlockDevice { transport, device })
+    Some(FoundBlockDevice {
+        transport,
+        device,
+        config,
+    })
 }
 
 /// The address the device sees, for an address this code can use.
@@ -312,3 +500,31 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
 pub fn physical_address(virtual_address: u64) -> usize {
     virtual_address as usize
 }
+
+// The block device's identity is clear of every other user of the file, and
+// these are compile-time assertions because an identity that collides is not a
+// case a test catches at run time — it is a constant the next editor can break,
+// and the break has to fail the build rather than a boot.
+//
+// An IMSIC file holds one pending bit per identity, so two users sharing one is
+// one delivery for two of them.  The firmware enables identity 1 in every
+// hart's file at hart start (OpenSBI's S-mode IPI); an APLIC in message mode
+// uses each wired source's own number, and this machine declares 96 of them;
+// identity 10 is the console's own source on that machine; and the boot's
+// IMSIC self-test takes the last identity the file holds (254 of 255), so the
+// device has to sit strictly below it or the two share the bit the self-test
+// reads back.
+const _: () = assert!(
+    BLOCK_MESSAGE_IDENTITY > 96,
+    "an APLIC source's own number is its identity, and 96 are declared"
+);
+const _: () = assert!(BLOCK_MESSAGE_IDENTITY != 1, "the firmware's IPI");
+const _: () = assert!(BLOCK_MESSAGE_IDENTITY != 10, "the console's source");
+const _: () = assert!(
+    BLOCK_MESSAGE_IDENTITY < 254,
+    "the self-test takes the last identity the file holds"
+);
+// Virtio reserves vector zero for configuration-change messages, so a queue
+// mapped onto it would have its completions counted as configuration changes
+// the kernel never asks for.
+const _: () = assert!(BLOCK_MESSAGE_VECTOR != 0);

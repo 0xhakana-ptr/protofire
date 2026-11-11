@@ -316,22 +316,48 @@ Those boots finish, with `console interrupt(s) taken = 0` — the console's own
 message is held pending in the file, and the trap that would take it is a later
 change.
 
-Two limits remain, both measured:
+**A PCI device's MSI-X reaches the IMSIC, and the reason it once did not is the
+order the wiring ran in.**  The block device's queue is mapped to a message: an
+MSI-X table entry naming this hart's file page and the bare identity 200,
+MSI-X enabled, the queue's vector set, and the identity enabled in the file —
+every step read back from the device, then the handler registered under the
+identity.  Measured on `-machine virt,aia=aplic-imsic`: **8 of 8 boots** take
+the completion message, and the census line reports it:
 
-- **A PCI device's MSI-X does not yet reach the file.**  The wiring exists —
-  the block device's queue vector mapped, its table entry written and read
-  back, MSI-X enabled — and one boot of this session saw the device's
-  completion claimed and counted; the cleanup's boots did not reproduce it
-  (0 of 4).  A claim without a reproducible measurement is not a mechanism, so
-  the wiring is not in this tree, and the block device completes through its
-  driver's polling as every other machine's does.  What the session did pin:
-  the file's identity space on this machine does not deliver identity 128
-  (written, read back enabled, never taken) while identity 20 does — QEMU's own
-  MSI write path refuses a value past a bound the tree does not name.
-- **Only one source is claimed**, so a second device's interrupt has no
-  handler.  The controller can name every source the tree declares and the
-  claim path completes whichever one arrives; what is missing is a driver per
-  device, not a controller.
+    protofire: block message wired to imsic page 0x28000000, identity 200, vector 2
+    protofire: block completion message(s) taken = 2
+
+The count is 2 and not one per completion because an IMSIC file holds **one
+pending bit per identity**: completions that arrive before the first is claimed
+share the bit, and the number is how many times the trap ran.  Twelve
+`virtio_notify` events in QEMU's own trace against two trap deliveries is that
+shape, and it is why the count is reported beside the programs rather than
+taken to be the device's request count.
+
+The wiring has to run **after** the driver is constructed, and that is the whole
+of the defect the previous session could not reproduce: the driver's first step
+is a device reset (`write_status(0)`), and a reset is the device forgetting
+every queue's interrupt state.  Armed before it, the table entry and the queue
+vector are both discarded and the transport drops every completion silently —
+QEMU's trace records the notifications, and no `virtio_pci_notify` follows
+because the queue's vector is `VIRTIO_NO_VECTOR` again.  The same code at the
+two positions, one variable apart: **0 of 4** boots before the reset, **8 of 8**
+after, with the wiring's own line reading back identically in both runs.  The
+one boot that "worked" last session was a race it won, not a mechanism.
+
+Also corrected: the previous note that this file refuses identity 128 was a
+measurement of the same defect, not of the identity range.  QEMU's
+`riscv_imsic_write` accepts any identity in `1..num_irqs` (255 on this machine),
+and writes 20, 128 and 200 all arrived once the wiring ran in the right place.
+
+One limit remains, measured:
+
+- **Only one device's message is claimed.**  The identity is the boot's to hand
+  out and the handler table is per identity, so a second device is a second
+  identity and a second handler rather than a controller change; what is
+  missing is a driver per device, not a message path.  The APLIC's wired sources
+  are claimed too — each delivers as its own identity — and the console's is
+  enabled but not taken, which the line above records as `taken = 0`.
 
 **Timer and clock.**  The SBI's legacy `set_timer`; arming is a trap into
 M-mode, with every clobbered register declared.  The counter's rate comes from

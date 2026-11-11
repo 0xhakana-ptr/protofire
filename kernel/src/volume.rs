@@ -134,13 +134,27 @@ fn attach_device(
     match crate::devices::find_virtio_block() {
         Some(found) => {
             let transport: alloc::sync::Arc<dyn virtio_core::Transport> = found.transport.clone();
-            match virtio_block::VirtioBlock::new(transport) {
-                Ok(device) => (device, SOURCE_VIRTIO),
+            let device = match virtio_block::VirtioBlock::new(transport) {
+                Ok(device) => device,
                 Err(_) => {
                     let memory = block::MemoryBlockDevice::new(BOOT_VOLUME_LABEL, image, false);
-                    (memory, "memory (the virtio driver refused the device)")
+                    return (memory, "memory (the virtio driver refused the device)");
                 }
-            }
+            };
+            // **After** the driver, and that order is the whole of it: the
+            // driver's first step is a device reset, and a reset is the device
+            // forgetting every queue's interrupt state.  Wired before it, the
+            // table entry and the queue vector are both discarded and the
+            // device's completions are dropped at the transport with nothing
+            // printed anywhere — measured, 0 of 4 boots, against 8 of 8 with
+            // the wiring here.
+            //
+            // The result is not checked because there is nothing a boot could
+            // do differently: a machine whose tree names no IMSIC answers
+            // `false`, and the driver polls either way.  The line the wiring
+            // prints is the evidence for a reader.
+            let _ = crate::devices::wire_block_message_interrupt(&found);
+            (device, SOURCE_VIRTIO)
         }
         None => {
             let memory = block::MemoryBlockDevice::new(BOOT_VOLUME_LABEL, image, false);

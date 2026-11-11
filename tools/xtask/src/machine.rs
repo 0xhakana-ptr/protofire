@@ -131,24 +131,34 @@ impl Machine {
             // the machine's second hart, the tree lists what the firmware
             // cold-booted and asks the firmware for the rest, and a gate that
             // booted one hart would never exercise the start.
-            Self::Riscv64 => vec![
-                "-machine".to_string(),
-                "virt".to_string(),
-                "-cpu".to_string(),
-                "rv64".to_string(),
-                "-smp".to_string(),
-                "2".to_string(),
-                "-m".to_string(),
-                "512M".to_string(),
-                "-drive".to_string(),
-                format!("file={},format=raw,if=none,id=blk0", disk.display()),
-                "-device".to_string(),
-                // `disable-legacy=on` asks for the modern interface only, for
-                // the same reason the other two machines ask: a transitional
-                // device's capability list is one this tree's modern parser
-                // does not read the way it expects.
-                "virtio-blk-pci,drive=blk0,disable-legacy=on".to_string(),
-            ],
+            Self::Riscv64 => {
+                // The AIA variant is a **different machine** on the same
+                // architecture, and it is the one whose tree names an IMSIC.
+                // `PROTOFIRE_MACHINE` lets it be booted through the same
+                // fresh-disk harness a gate boot uses; the alternative is a
+                // hand-written `qemu-system-riscv64` invocation that formats
+                // its own disk, and two harnesses is two things to keep right.
+                let machine =
+                    std::env::var("PROTOFIRE_MACHINE").unwrap_or_else(|_| "virt".to_string());
+                vec![
+                    "-machine".to_string(),
+                    machine,
+                    "-cpu".to_string(),
+                    "rv64".to_string(),
+                    "-smp".to_string(),
+                    "2".to_string(),
+                    "-m".to_string(),
+                    "512M".to_string(),
+                    "-drive".to_string(),
+                    format!("file={},format=raw,if=none,id=blk0", disk.display()),
+                    "-device".to_string(),
+                    // `disable-legacy=on` asks for the modern interface only,
+                    // for the same reason the other two machines ask: a
+                    // transitional device's capability list is one this tree's
+                    // modern parser does not read the way it expects.
+                    "virtio-blk-pci,drive=blk0,disable-legacy=on".to_string(),
+                ]
+            }
         }
     }
 }

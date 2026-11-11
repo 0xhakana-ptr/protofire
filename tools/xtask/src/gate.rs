@@ -680,6 +680,14 @@ impl Machine {
                 ("protofire: heap at ", false),
                 ("protofire: block device from virtio-blk on pci", true),
                 ("protofire: virtio-blk wrote and read back sector ", false),
+                // The completion-message report, which every machine prints
+                // and whose **number is the machine's**: a tree that names no
+                // IMSIC takes none, because no device can send it a message,
+                // and the boot says `= 0`.  What the line holds still is that
+                // the census ran and that the count is a number rather than
+                // absent — the AIA machine's own boot is where a non-zero
+                // count is evidence, and no gate machine has an IMSIC yet.
+                ("protofire: block completion message(s) taken = ", false),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
