@@ -89,6 +89,14 @@ run-riscv64:
 check-riscv64:
     cargo run --offline --quiet -p xtask -- check --machine riscv64
 
+# Boot the riscv64 image on the AIA machine — the same image, on a tree that
+# names an APLIC and an IMSIC — and require the lines only that machine prints.
+run-riscv64-aia:
+    cargo run --offline --quiet -p xtask -- run --machine riscv64-aia
+
+check-riscv64-aia:
+    cargo run --offline --quiet -p xtask -- check --machine riscv64-aia
+
 # The gate.  `just verify` is p0; `just verify p3` is the release floor.
 verify tier="p0":
     sh scripts/verify.sh {{tier}}

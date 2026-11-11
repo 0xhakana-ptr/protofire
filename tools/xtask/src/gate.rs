@@ -102,6 +102,162 @@ impl Machine {
                     ", 95 source(s), hart line on",
                 ],
             ],
+            // The AIA machine: the same kernel on a tree that names an APLIC
+            // and an IMSIC.  The first three pairs are the same facts as the
+            // PLIC machine's — the programs, the second CPU and the hart — and
+            // the rest is what only this machine prints.
+            Self::Riscv64Aia => &[
+                &["exit statuses 1 -> 116,", "2 -> 0,", "3 -> 0,", "4 -> 139"],
+                &["cpu 1 id ", ", ticking, "],
+                &["hart ", " online"],
+                // The controller is the **IMSIC**, because that is what claims
+                // a message: an APLIC in message mode delivers into a hart's
+                // file, and the file's claim is the one that answers.  The
+                // count is the tree's `riscv,num-ids`; the base and the hart's
+                // file index follow the firmware's cold-boot choice, for the
+                // reason the PLIC machine's context number is not asserted.
+                &[", 255 source(s), hart line on"],
+                // The IMSIC's geometry and its self-test, together: the stride
+                // is the tree's own arithmetic — the window divided by the
+                // `interrupts-extended` pairs — and the identity proves the
+                // message path with no device attached.
+                // The failure branch prints ` NOT delivered and claimed`,
+                // which **contains** `delivered and claimed` — so this pair
+                // alone cannot tell the two apart, and `absent_lines` is what
+                // refuses the failure text on this machine.
+                &[
+                    "imsic at 0x28000000, stride ",
+                    "hart file ",
+                    " identit(ies), self-test identity ",
+                    " delivered and claimed",
+                ],
+                // The APLIC's domain is locked in message mode, so the
+                // console's wired source is an identity in the file.
+                &[
+                    "the aplic is in message mode; wired source ",
+                    " delivers as its own imsic identity",
+                ],
+                // A device's queue mapped to a message, on a machine that can
+                // take one.  The page follows the cold-boot hart; the identity
+                // and the vector are the boot's choice and are read back from
+                // the device before this line is printed.
+                &[
+                    "block message wired to imsic page ",
+                    ", identity ",
+                    ", vector ",
+                ],
+            ],
+        }
+    }
+
+    /// The rows a riscv64 machine's **own tree** produces.
+    ///
+    /// Everything above this is shared: both machines hand off through the same
+    /// firmware, build the same table, start the same second hart and run the
+    /// same programs.  What differs is the controller their trees name, and
+    /// that is what these two lists hold — the PLIC machine's window and the
+    /// one console interrupt a line delivers, or the AIA machine's IMSIC, its
+    /// message-mode APLIC and the device message it takes.
+    pub(crate) fn controller_rows(self) -> &'static [(&'static str, bool)] {
+        match self {
+            Self::Riscv64Aia => &[
+                // The IMSIC, enabled and **self-tested**: the geometry the tree
+                // states, and a message written to this hart's own page and
+                // claimed back.  The hart-file index and the identity follow
+                // the firmware's choice of cold-boot hart, so neither is
+                // asserted — `paired_lines` holds the shape.
+                ("protofire: imsic at 0x28000000, stride ", false),
+                // The APLIC is locked in message mode here, so a wired source
+                // becomes an identity in the file rather than a line.  This is
+                // the line that says the kernel noticed which mode it has,
+                // instead of programming a direct-delivery domain that does not
+                // exist on this machine.
+                (
+                    "protofire: the aplic is in message mode; wired source ",
+                    false,
+                ),
+                // A real device's message, wired end to end: the page, the
+                // identity and the vector.  The page follows the hart the
+                // firmware cold-booted, so it is a prefix.
+                ("protofire: block message wired to imsic page ", false),
+                // The console's own message is held pending on this machine,
+                // because nothing acknowledges a message the way a UART's `IIR`
+                // read acknowledges a line.  Asserted as zero rather than left
+                // out: a boot that took it by accident would be visible.
+                ("protofire: console interrupt(s) taken = 0", true),
+            ],
+            Self::Riscv64 => &[
+                // The external controller, initialized rather than merely
+                // named: base, the context this hart claims through, the
+                // machine's source count, and the hart line the PLIC reaches
+                // it on.  A tree that named the window and a driver that did
+                // not program it would print the first three and "off".
+                //
+                // The context number is **not** asserted, for the reason the
+                // hart id is not: it is the consumer's position in the tree's
+                // `interrupts-extended`, S-mode on hart N is context `2N+1`,
+                // and which hart firmware cold-boots is the firmware's choice.
+                // A boot whose firmware picked hart 1 printed `context 3`, and
+                // a gate requiring `context 1` failed on it — three boots in
+                // fifteen, with the controller programmed and the line taken.
+                // What is invariant is the shape, and `paired_lines` carries
+                // it.
+                (
+                    "protofire: external controller at 0xc000000, context ",
+                    false,
+                ),
+                // A real device's interrupt, claimed and taken, not merely a
+                // controller that was programmed: the console's UART is source
+                // 10, and the count is one because the boot asks it for exactly
+                // one interrupt and then silences the device.
+                (
+                    "protofire: console source 10 enabled at the controller",
+                    true,
+                ),
+                ("protofire: console interrupt(s) taken = 1", true),
+            ],
+            _ => &[],
+        }
+    }
+
+    /// Text that must **not** appear anywhere in the log.
+    ///
+    /// The complement of a required line, and it exists because a failure text
+    /// can contain its own success text: the IMSIC self-test prints
+    /// ` delivered and claimed` when it worked and ` NOT delivered and claimed`
+    /// when it did not, so a required fragment cannot tell them apart.
+    /// Measured — deleting the claim from the success path left the required
+    /// pair matching the failure line, and the gate stayed green.
+    pub(crate) fn absent_lines(self) -> &'static [&'static str] {
+        match self {
+            Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[],
+            Self::Riscv64Aia => &[
+                "NOT delivered and claimed",
+                // A delivery nobody claimed is silenced by the trap path, and
+                // on this machine that means a wired source or a message
+                // identity the boot did not expect.  The line is not fatal, so
+                // only a check keeps it out of a green boot.
+                "unhandled external interrupt",
+            ],
+        }
+    }
+
+    /// Lines whose tail is a count that has to be **above zero**.
+    ///
+    /// A fourth question, and the one this tree's device messages needed: "the
+    /// line appeared with a number" passes on `= 0`, which is exactly what a
+    /// wiring that armed every register and took nothing prints.  The count
+    /// itself cannot be asserted — an IMSIC file holds one pending bit per
+    /// identity, so completions arriving before the first is claimed collapse
+    /// into one trap — so the claim is the one the mechanism makes: at least
+    /// one device message reached a handler.
+    pub(crate) fn nonzero_lines(self) -> &'static [&'static str] {
+        match self {
+            Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[],
+            // The block device's completion messages.  This is the line a boot
+            // whose wiring ran before the driver's reset prints as `= 0`, which
+            // is the defect this gate exists to catch.
+            Self::Riscv64Aia => &["protofire: block completion message(s) taken = "],
         }
     }
 
@@ -114,7 +270,7 @@ impl Machine {
     /// it once.
     pub(crate) fn repeated_lines(self) -> &'static [(&'static str, usize)] {
         match self {
-            Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[(" says hello", 6)],
+            Self::X8664 | Self::Aarch64 | Self::Riscv64 | Self::Riscv64Aia => &[(" says hello", 6)],
         }
     }
 
@@ -603,7 +759,12 @@ impl Machine {
             // reason aarch64's is, the numbers are fixed by the machine's
             // memory and the linker's span, so a shape-check would accept a
             // `pool check FAILED` tail.
-            Self::Riscv64 => &[
+            // Both riscv64 machines, and the list is the rows **both** print.
+            // What each machine's tree names is in `controller_rows`, which the
+            // check walks after this one: a slice cannot be appended at compile
+            // time, and a second copy of sixty rows would be two lists that
+            // have to agree.
+            Self::Riscv64 | Self::Riscv64Aia => &[
                 (
                     "protofire 0.1.0: entered via dtb, console up, stage 1",
                     true,
@@ -647,34 +808,6 @@ impl Machine {
                 // id is whichever one the firmware cold-booted, so the number
                 // after `id` is the machine's answer rather than the gate's.
                 ("protofire: cpu 0 id ", false),
-                // The external controller, initialized rather than merely
-                // named: base, the context this hart claims through, the
-                // machine's source count, and the hart line the PLIC reaches
-                // it on.  A tree that named the window and a driver that did
-                // not program it would print the first three and "off".
-                //
-                // The context number is **not** asserted, for the reason the
-                // hart id above is not: it is the consumer's position in the
-                // tree's `interrupts-extended`, S-mode on hart N is context
-                // `2N+1`, and which hart firmware cold-boots is the firmware's
-                // choice.  A boot whose firmware picked hart 1 printed
-                // `context 3` and a gate requiring `context 1` failed on it —
-                // three boots in fifteen, with the controller programmed and
-                // the line taken.  What is invariant is the shape, and
-                // `paired_lines` carries it.
-                (
-                    "protofire: external controller at 0xc000000, context ",
-                    false,
-                ),
-                // A real device's interrupt, claimed and taken, not merely a
-                // controller that was programmed: the console's UART is source
-                // 10, and the count is one because the boot asks it for exactly
-                // one interrupt and then silences the device.
-                (
-                    "protofire: console source 10 enabled at the controller",
-                    true,
-                ),
-                ("protofire: console interrupt(s) taken = 1", true),
                 ("protofire: timer line enabled = 1", true),
                 ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),
@@ -822,8 +955,20 @@ pub(crate) fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()>
     }
 
     let log = run(machine, profile, timeout, None)?;
-    for (expected, exact) in required {
-        let outcome = if *exact {
+    // The shared rows, then the ones this machine's own tree produces.  Both
+    // are required, and neither is a fallback for the other.
+    let all_required = required
+        .iter()
+        .chain(machine.controller_rows().iter())
+        .copied()
+        .collect::<Vec<_>>();
+    // Counted before the loop consumes the list, and it is the whole list: a
+    // report that named only the shared rows would print the same number for
+    // two machines with different expectations, which is how a missing tail
+    // would go unnoticed.
+    let required_count = all_required.len();
+    for (expected, exact) in all_required {
+        let outcome = if exact {
             expect_line(&log, expected)
         } else {
             expect_line_prefix(&log, expected)
@@ -859,6 +1004,48 @@ pub(crate) fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()>
         }
     }
 
+    // Text that must not be there at all.
+    for forbidden in machine.absent_lines().iter().copied() {
+        if log.contains(forbidden) {
+            let mut message = String::new();
+            writeln!(
+                message,
+                "check failed: the log contains {forbidden:?}, which it must not",
+            )?;
+            for line in log.lines().filter(|line| line.contains(forbidden)) {
+                writeln!(message, "    {line}")?;
+            }
+            bail!("{message}");
+        }
+    }
+
+    // Lines that have to carry a count above zero.
+    //
+    // Required-lines can say "this line exists", and `= 0` satisfies it.  This
+    // is the question a mechanism needs answered: did the thing happen.
+    for prefix in machine.nonzero_lines().iter().copied() {
+        let seen = log
+            .lines()
+            .map(|line| line.trim_end_matches('\r'))
+            .find_map(|line| line.strip_prefix(prefix))
+            .and_then(|tail| tail.split_whitespace().next())
+            .and_then(|number| number.parse::<usize>().ok());
+        match seen {
+            Some(count) if count > 0 => {}
+            _ => {
+                let mut message = String::new();
+                writeln!(
+                    message,
+                    "check failed: no line starting with {prefix:?} carries a count above zero",
+                )?;
+                for line in log.lines() {
+                    writeln!(message, "    {line}")?;
+                }
+                bail!("{message}");
+            }
+        }
+    }
+
     // A line that has to appear more than once.
     //
     // The required-lines list can say "this line exists"; it cannot say "and it
@@ -886,9 +1073,10 @@ pub(crate) fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()>
     }
 
     println!(
-        "check passed: {} printed {} required line(s) and reached its heap",
+        "check passed: {} ({}) printed {} required line(s) and reached its heap",
+        machine.label(),
         machine.triple(),
-        required.len()
+        required_count
     );
     Ok(())
 }

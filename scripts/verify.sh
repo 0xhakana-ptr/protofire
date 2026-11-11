@@ -59,7 +59,11 @@ MACHINES="x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf"
 # riscv64 is in because its image boots: the OpenSBI hand-off, the device
 # tree, the kernel's own page table and the heap are all exercised, and the
 # machine's required lines are the evidence.
-BOOTABLE_MACHINES="x86_64 aarch64 riscv64"
+# `riscv64-aia` is the same image on a tree that names an APLIC and an IMSIC
+# instead of a PLIC: the APLIC, the IMSIC and a PCI device's message are only
+# exercised there, and a gate that booted only the PLIC machine called the
+# whole AIA path implemented rather than verified.
+BOOTABLE_MACHINES="x86_64 aarch64 riscv64 riscv64-aia"
 
 step() {
     printf '==> verify[%s]: %s\n' "$VERIFY_TIER" "$1"

@@ -289,14 +289,27 @@ as an MSI-X table entry would, and reads it back with the `stopei` claim.
 
 That line is the evidence: the page's address, the bare-identity data word, the
 pending bit, the enable bit and the claim were all executed. QEMU's `virt` with
-`-machine virt,aia=aplic-imsic` is where it runs; the default machine and
-`virt,aia=aplic` print no such line because their trees name no IMSIC, and the
-code that would touch `siselect`/`sireg` is not reached — which is load-bearing
-rather than tidy, because on those machines the pair is an **illegal
-instruction**.  Measured: `virt` and `virt,aia=aplic` both stop with
-`unhandled exception 2 (illegal instruction), address 0x15051073` if the CSRs are
-read unconditionally, and both boot to completion when the read is gated on the
-tree as it now is.
+`-machine virt,aia=aplic-imsic` is where it runs — `cargo xtask check --machine
+riscv64-aia`, which is part of `sh scripts/verify.sh p1` and therefore of every
+tier above it.  It is a **gate machine**, not a measurement made by hand: the
+same image the PLIC machine boots, on a tree that names an APLIC and an IMSIC,
+with its own required lines.  The default machine and `virt,aia=aplic` print no
+such line because their trees name no IMSIC, and the code that would touch
+`siselect`/`sireg` is not reached — which is load-bearing rather than tidy,
+because on those machines the pair is an **illegal instruction**.  Measured:
+`virt` and `virt,aia=aplic` both stop with `unhandled exception 2 (illegal
+instruction), address 0x15051073` if the CSRs are read unconditionally, and both
+boot to completion when the read is gated on the tree as it now is.
+
+The gate's four kinds of assertion cover what a single boot line cannot, and
+each was mutation-tested by breaking the kernel it guards:
+
+| assertion | what it refuses | what broke it |
+|---|---|---|
+| a required line | the boot never reached this step | an absent line fails |
+| paired fragments on one line | two lines that say different things | text change on the IMSIC line fails |
+| a count above zero | a wiring that armed every register and took nothing | the pre-reset wiring reads `= 0` and fails |
+| text that must not appear | a failure whose words contain its own success | the self-test's failure text fails |
 
 **The APLIC's message mode delivers to the IMSIC, and each source's message
 carries its own number.**  On `-machine virt,aia=aplic-imsic` the APLIC is

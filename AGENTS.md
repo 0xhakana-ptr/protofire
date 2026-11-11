@@ -39,7 +39,11 @@ The tiers accumulate: each one runs everything below it and adds its own.
 
 - **`p0`** — formatting, every crate's tests, the three kernels.
 - **`p1`** — the boot: `cargo xtask check --machine <each machine with an
-  image>`.
+  image>`.  A machine is a hardware description as well as an architecture: the
+  riscv64 image boots twice, once on a tree that names a PLIC and once
+  (`riscv64-aia`) on one that names an APLIC and an IMSIC.  A controller a boot
+  never found is a controller no gate has exercised, which is why the AIA nodes
+  live in the gate rather than in a measurement made by hand.
 - **`p2`** — the three censuses, architecture fan-out, layering, per-crate test
   counts.
 - **`p3`** — clippy in every configuration the tree builds.

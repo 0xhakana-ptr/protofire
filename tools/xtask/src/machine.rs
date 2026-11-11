@@ -26,6 +26,17 @@ pub(crate) enum Machine {
     X8664,
     Aarch64,
     Riscv64,
+    /// The AIA variant of `virt`: the same architecture and the same image, a
+    /// machine whose tree names an **IMSIC** and an APLIC instead of a PLIC.
+    ///
+    /// It is a machine rather than an environment variable because that is
+    /// what it is: the hardware description is part of what a boot is checked
+    /// against, and a gate that could be pointed somewhere else by the
+    /// environment is a gate whose evidence depends on the caller.  The image
+    /// is `Riscv64`'s — the kernel learns which controller it has from the
+    /// device tree, which is the property this machine is here to exercise.
+    #[value(name = "riscv64-aia")]
+    Riscv64Aia,
 }
 
 impl Machine {
@@ -34,7 +45,22 @@ impl Machine {
         match self {
             Self::X8664 => "x86_64-unknown-none",
             Self::Aarch64 => "aarch64-unknown-none",
-            Self::Riscv64 => "riscv64gc-unknown-none-elf",
+            Self::Riscv64 | Self::Riscv64Aia => "riscv64gc-unknown-none-elf",
+        }
+    }
+
+    /// The name this machine is called in a report.
+    ///
+    /// The triple is not enough once two machines share an architecture: the
+    /// AIA machine builds the same image for the same target and differs in
+    /// what its tree describes, so a line reporting only the triple would print
+    /// the same words for a PLIC boot and an AIA one.
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::X8664 => "x86_64",
+            Self::Aarch64 => "aarch64",
+            Self::Riscv64 => "riscv64",
+            Self::Riscv64Aia => "riscv64-aia",
         }
     }
 
@@ -43,7 +69,7 @@ impl Machine {
         match self {
             Self::X8664 => "qemu-system-x86_64",
             Self::Aarch64 => "qemu-system-aarch64",
-            Self::Riscv64 => "qemu-system-riscv64",
+            Self::Riscv64 | Self::Riscv64Aia => "qemu-system-riscv64",
         }
     }
 
@@ -131,18 +157,20 @@ impl Machine {
             // the machine's second hart, the tree lists what the firmware
             // cold-booted and asks the firmware for the rest, and a gate that
             // booted one hart would never exercise the start.
-            Self::Riscv64 => {
-                // The AIA variant is a **different machine** on the same
-                // architecture, and it is the one whose tree names an IMSIC.
-                // `PROTOFIRE_MACHINE` lets it be booted through the same
-                // fresh-disk harness a gate boot uses; the alternative is a
-                // hand-written `qemu-system-riscv64` invocation that formats
-                // its own disk, and two harnesses is two things to keep right.
-                let machine =
-                    std::env::var("PROTOFIRE_MACHINE").unwrap_or_else(|_| "virt".to_string());
+            Self::Riscv64 | Self::Riscv64Aia => {
+                // The two machines differ in **one argument**, and that is the
+                // point: the same image, the same firmware, the same disk.  A
+                // tree that names an APLIC and an IMSIC makes this kernel find
+                // and drive them, and a tree that names a PLIC makes it find
+                // that instead — the property under test, and the reason the
+                // variant is a machine rather than a knob the environment sets.
+                let machine = match self {
+                    Self::Riscv64Aia => "virt,aia=aplic-imsic",
+                    _ => "virt",
+                };
                 vec![
                     "-machine".to_string(),
-                    machine,
+                    machine.to_string(),
                     "-cpu".to_string(),
                     "rv64".to_string(),
                     "-smp".to_string(),
