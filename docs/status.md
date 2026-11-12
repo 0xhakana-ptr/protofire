@@ -63,14 +63,15 @@ program reading whatever its register held from the call before.  The rewind
 lives in `block` (each machine's `arch` answers the call's width — four bytes
 for `svc` and `ecall`, two for `int 0x80`), and a host test requires it.
 
-Two things a wait cannot promise yet:
+Two things a wait does not promise, one of which is now answered:
 
-- **It answers about *some* process, not the one asked for.**  The boot has
-  four, and the forked child exits first, so the status a reader receives can
-  be `139`, that child's fault status, not the writer's `0`.  A per-child wait
-  needs a pid argument the ABI does not have, and until it has one a program
-  must not report the wait's answer as its own status — which is why the
-  boot's reader exits with a constant of its own.
+- **`WaitProcess` answers about *some* process, not the one asked for.**  The
+  boot has four, and the forked child exits first, so the status that call
+  receives can be `139`, that child's fault status, not the writer's `0`.
+  `WaitProcessOf(pid)` (#196) is the answer and the boot's programs use it now:
+  it names the process, parks a caller whose pid has not exited, wakes it from
+  that exit, and answers `NotFound` for a pid no task has.  `WaitProcess`
+  remains for the caller that genuinely wants "whichever finished first".
 - **The reader's payload and its end-of-file are one call apart.**  The first
   read blocks and a retry returns the writer's four bytes; only the read after
   that sees the closed end.  That is a short read working as the contract says,
@@ -393,7 +394,7 @@ One limit remains, measured:
   identity and a second handler rather than a controller change; what is
   missing is a driver per device, not a message path.  The APLIC's wired sources
   are claimed too — each delivers as its own identity — and the console's is
-  enabled but not taken, which the line above records as `taken = 0`.
+  both delivered and taken, which the line above records as `taken = 1`.
 
 **Timer and clock.**  The SBI's legacy `set_timer`; arming is a trap into
 M-mode, with every clobbered register declared.  The counter's rate comes from
