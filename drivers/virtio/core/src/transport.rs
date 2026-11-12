@@ -175,14 +175,25 @@ pub trait Transport: Send + Sync {
     /// Select a queue, and tell the device how large the driver made it.
     fn configure_queue(&self, index: u16, size: u16);
 
-    /// Program the three ring addresses for the selected queue.
+    /// Program the three ring addresses for `index`'s queue.
     ///
     /// Section 4.1.4.3.2: `queue_desc`, `queue_driver` and `queue_device` are
     /// each a `le64` the driver writes once, before enabling the queue.
-    fn set_queue_addresses(&self, addresses: crate::queue::DeviceAddresses);
+    ///
+    /// The index is a parameter **and not implicit in an earlier selection**,
+    /// which is a correction: these two methods used to act on whichever queue
+    /// `configure_queue` last selected, and that works only for a device with
+    /// one queue.  A network card has a receive queue and a transmit queue, and
+    /// a driver that configured one and then programmed the other's addresses
+    /// would write them into the first — with every register reading back
+    /// exactly what it wrote.  Making the queue explicit is what the device's
+    /// own registers mean: `queue_select` names the queue every other
+    /// `queue_*` register applies to, so the selection belongs inside each
+    /// method rather than in a call made some time before it.
+    fn set_queue_addresses(&self, index: u16, addresses: crate::queue::DeviceAddresses);
 
-    /// Tell the device the selected queue is ready.
-    fn enable_queue(&self);
+    /// Tell the device that `index`'s queue is ready.
+    fn enable_queue(&self, index: u16);
 
     /// The offset to write in the notify area to ring a queue's doorbell.
     ///
@@ -236,7 +247,10 @@ impl NoDevice {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::Capability;
+    use super::Transport;
     use super::TransportError;
     use super::common;
 
@@ -277,6 +291,97 @@ mod tests {
         assert_eq!(Capability::Notify as u8, 2);
         assert_eq!(Capability::Device as u8, 4);
         assert_eq!(Capability::SharedMemory as u8, 8);
+    }
+
+    /// Every queue method names its queue, so two queues cannot be confused.
+    ///
+    /// A network card has a receive queue and a transmit queue.  The two
+    /// methods that program a queue used to act on whichever queue
+    /// `configure_queue` last selected, so a driver that configured queue 0,
+    /// then configured queue 1, then programmed queue 0's addresses wrote them
+    /// into queue 1 — and every register read back what was written.  The
+    /// index is a parameter now, and this pins that it is the one used.
+    ///
+    /// The check is on the trait's contract rather than on one implementation:
+    /// a fake records the index it was handed, and an implementation that
+    /// ignored the argument would fail here and on the machine.
+    #[test]
+    fn every_queue_operation_names_its_queue() {
+        use crate::queue::DeviceAddresses;
+        use std::sync::Mutex;
+        use std::vec;
+        use std::vec::Vec;
+
+        /// Records the index of every call, so a queue chosen by a previous
+        /// call cannot pass.
+        struct Recorder {
+            seen: Mutex<Vec<(&'static str, u16)>>,
+        }
+
+        impl Transport for Recorder {
+            fn device_features(&self) -> u64 {
+                0
+            }
+            fn set_driver_features(&self, _features: u64) {}
+            fn read_status(&self) -> u8 {
+                0
+            }
+            fn write_status(&self, _status: u8) {}
+            fn max_queue_size(&self) -> u16 {
+                8
+            }
+            fn configure_queue(&self, index: u16, _size: u16) {
+                self.seen.lock().unwrap().push(("configure", index));
+            }
+            fn set_queue_addresses(&self, index: u16, _addresses: DeviceAddresses) {
+                self.seen.lock().unwrap().push(("addresses", index));
+            }
+            fn enable_queue(&self, index: u16) {
+                self.seen.lock().unwrap().push(("enable", index));
+            }
+            fn notify_offset(&self, _queue: u16) -> u16 {
+                0
+            }
+            fn notify(&self, _queue: u16) {}
+            fn capacity_sectors(&self) -> u64 {
+                0
+            }
+            fn read_device_config_byte(&self, _offset: u64) -> u8 {
+                0
+            }
+            fn set_queue_vector(&self, _queue: u16, _vector: u16) -> bool {
+                false
+            }
+        }
+
+        let recorder = Recorder {
+            seen: Mutex::new(Vec::new()),
+        };
+        let addresses = DeviceAddresses {
+            descriptors: 0x1000,
+            available: 0x2000,
+            used: 0x3000,
+        };
+        // The order a two-queue driver uses: configure both, then program each.
+        recorder.configure_queue(0, 8);
+        recorder.configure_queue(1, 8);
+        recorder.set_queue_addresses(0, addresses);
+        recorder.enable_queue(0);
+        recorder.set_queue_addresses(1, addresses);
+        recorder.enable_queue(1);
+
+        assert_eq!(
+            *recorder.seen.lock().unwrap(),
+            vec![
+                ("configure", 0),
+                ("configure", 1),
+                ("addresses", 0),
+                ("enable", 0),
+                ("addresses", 1),
+                ("enable", 1),
+            ],
+            "each call names the queue it applies to"
+        );
     }
 
     /// A host has no device, and the stub says so rather than pretending.

@@ -195,9 +195,9 @@ impl VirtioBlock {
         // and the addresses the queue records have to be the same three, or
         // the driver would submit into a ring the device never reads.
         let addresses = queue.device_addresses();
-        transport.set_queue_addresses(addresses);
+        transport.set_queue_addresses(REQUEST_QUEUE, addresses);
         queue.set_device_addresses(addresses);
-        transport.enable_queue();
+        transport.enable_queue(REQUEST_QUEUE);
 
         status = virtio_core::status::next(status, Status::DriverOk).ok_or(Error::DeviceError)?;
         transport.write_status(status);
@@ -720,11 +720,11 @@ mod tests {
                 .store(size as u64, Ordering::Relaxed);
         }
 
-        fn set_queue_addresses(&self, addresses: DeviceAddresses) {
+        fn set_queue_addresses(&self, _index: u16, addresses: DeviceAddresses) {
             *self.addresses.lock() = Some(addresses);
         }
 
-        fn enable_queue(&self) {}
+        fn enable_queue(&self, _index: u16) {}
 
         fn notify_offset(&self, _queue: u16) -> u16 {
             0
@@ -866,8 +866,8 @@ mod tests {
                 8
             }
             fn configure_queue(&self, _index: u16, _size: u16) {}
-            fn set_queue_addresses(&self, _addresses: DeviceAddresses) {}
-            fn enable_queue(&self) {}
+            fn set_queue_addresses(&self, _index: u16, _addresses: DeviceAddresses) {}
+            fn enable_queue(&self, _index: u16) {}
             fn notify_offset(&self, _queue: u16) -> u16 {
                 0
             }

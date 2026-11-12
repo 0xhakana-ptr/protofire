@@ -309,7 +309,11 @@ impl Transport for PciTransport {
         self.common.write16(common::QUEUE_SIZE, size);
     }
 
-    fn set_queue_addresses(&self, addresses: DeviceAddresses) {
+    fn set_queue_addresses(&self, index: u16, addresses: DeviceAddresses) {
+        // The device's other `queue_*` registers apply to whichever queue
+        // `queue_select` names, so the selection is made here rather than
+        // trusting a call made earlier.
+        self.common.write16(common::QUEUE_SELECT, index);
         // The three addresses are `le64` in the common configuration, written
         // as a low dword and a high dword each (section 4.1.4.3.2).
         self.common
@@ -326,9 +330,10 @@ impl Transport for PciTransport {
             .write32(common::QUEUE_DEVICE + 4, (addresses.used >> 32) as u32);
     }
 
-    fn enable_queue(&self) {
+    fn enable_queue(&self, index: u16) {
         // Written last: the device starts reading the rings the moment this is
         // set, so everything the queue needs has to be there first.
+        self.common.write16(common::QUEUE_SELECT, index);
         self.common.write16(common::QUEUE_ENABLE, 1);
     }
 
