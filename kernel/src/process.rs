@@ -240,7 +240,51 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         };
     }
 
+    if number == SyscallNumber::Write as usize && call.arguments[2] != 0 {
+        // `Write(descriptor, buffer, length)` to a file, through the registry.
+        //
+        // Reached only when the pipe branch above did not return, so the
+        // descriptor names no pipe of this caller's: it names a file the table
+        // holds, or it names nothing, and the registry answers the same
+        // refusal for both — the answer that does not tell a caller which
+        // numbers exist.  The length is what distinguishes a write from the
+        // announcement below, the same distinction the pipe branch reads, and
+        // the validation is the read's, for the same reason: an address from
+        // ring 3 is a number until something checks it.
+        let buffer = call.arguments[1];
+        let length = call.arguments[2];
+        if !crate::address_space::is_user_range(buffer, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handler reads the
+        // bytes; a copy-on-write page demoted by an earlier write faults into
+        // the resolver like any other access.
+        let source = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, Some(source));
+        if let CallOutcome::Return(count) = outcome
+            && !abi::syscall::is_error_status(count)
+        {
+            // The evidence, printed by the kernel because a program has no
+            // other way into this log: a count is only a proof of writing if
+            // someone can read it next to the file that holds the bytes.
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" wrote ");
+            arch::serial::write_u32(count as u32);
+            arch::serial::write_str(" byte(s) to a file\n");
+        }
+        return outcome;
+    }
+
     if number == SyscallNumber::Write as usize {
+        // The no-length case: a `Write` whose third argument is zero names no
+        // bytes, so it is not a write, and it is the announcement.
+        //
         // The program's number is the one value it passes, and it is what makes
         // two programs distinguishable in one log.
         arch::serial::write_str("program ");

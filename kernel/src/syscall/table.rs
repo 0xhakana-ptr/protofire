@@ -103,6 +103,13 @@ pub(crate) enum Descriptor {
     File {
         node: Arc<dyn VNode>,
         readable: bool,
+        /// Whether the open asked to write.
+        ///
+        /// Recorded per descriptor, like `readable`: the right is the open's,
+        /// not the node's — a node the filesystem would accept bytes for is
+        /// still not writable *through a descriptor* that opened it for
+        /// reading, which is the reading least privilege needs.
+        writable: bool,
         /// The offset the next `read` starts at.
         ///
         /// Per descriptor rather than per node: two descriptors on one file are
@@ -139,11 +146,13 @@ impl Descriptor {
             Descriptor::File {
                 node,
                 readable,
+                writable,
                 offset,
                 ..
             } => Descriptor::File {
                 node: Arc::clone(node),
                 readable: *readable,
+                writable: *writable,
                 // The offset is copied, not shared.  A shared file position
                 // would move both processes' next read, which is what one open
                 // file description means; this tree reads through explicit
@@ -441,6 +450,59 @@ impl SyscallTable {
         }
         Ok(count)
     }
+
+    /// Write to a descriptor, at its own position.
+    ///
+    /// The mirror of [`Self::read_at`] without the explicit-offset form: a
+    /// write starts where the descriptor is and moves it by the bytes
+    /// accepted, which is what makes "append by writing again" one call.  The
+    /// checks run in the order a write that cannot be attempted should fail
+    /// in — owner, then kind, then the right — so a refusal answers before
+    /// the node sees a byte.
+    ///
+    /// A zero-length write to a descriptor the caller may write is a success
+    /// of zero rather than an error: nothing was asked for, so nothing failed.
+    pub(crate) fn write_at(
+        &mut self,
+        descriptor_index: usize,
+        buffer: &[u8],
+        caller: Option<u32>,
+    ) -> Result<usize> {
+        self.check_owner(descriptor_index, caller)?;
+        let descriptor = self
+            .descriptors
+            .get_mut(descriptor_index)
+            .ok_or(Error::InvalidArgument)?
+            .as_mut()
+            .ok_or(Error::InvalidArgument)?;
+
+        // A pipe end is written through the pipe path, whose blocking
+        // semantics are the pipe's; the ring-3 branch that serves it answers
+        // before the registry is reached.  A write that arrives here naming
+        // one is a write to the wrong kind of thing, and "wrong kind" is the
+        // answer — not a silent fall-through to the node.
+        let Descriptor::File {
+            node,
+            writable,
+            offset,
+            ..
+        } = descriptor
+        else {
+            return Err(Error::InvalidArgument);
+        };
+
+        if !*writable {
+            return Err(Error::PermissionDenied);
+        }
+
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+
+        let count = node.write(*offset, buffer)?;
+        *offset += count as u64;
+        Ok(count)
+    }
 }
 
 impl Default for SyscallTable {
@@ -620,6 +682,7 @@ mod tests {
     use abi::fs as fs_abi;
     use fs::MountTable;
     use fs::StaticFileSystem;
+    use fs::TmpFsVolume;
     use fs::types::NodeKind;
     use syscall::SyscallContext;
     use syscall::SyscallNumber;
@@ -638,6 +701,30 @@ mod tests {
         table.set_namespace(Arc::new(namespace));
         table.register(SyscallNumber::Open, open);
         table.register(SyscallNumber::Read, read);
+        table.register(SyscallNumber::Write, write);
+        table.register(SyscallNumber::Close, close);
+        table
+    }
+
+    /// A table on the tmpfs, the one backend whose nodes accept bytes.
+    ///
+    /// The static volume above is a synthetic view, and its nodes refuse a
+    /// write by construction; the write tests need the filesystem the boot
+    /// itself mounts for scratch space, whose `create_file` creates and whose
+    /// nodes hold what was written.  A host has no clock installed, so the
+    /// timestamps it stamps are zero, which is a timestamp that says "unknown"
+    /// and is not part of what these tests read.
+    fn writable() -> SyscallTable {
+        let volume = TmpFsVolume::new("test-tmpfs", 64 * 1024);
+        let mut table = SyscallTable::new();
+        let mut namespace = MountTable::new();
+        namespace
+            .mount("/", "tmpfs", "memory", Arc::new(volume))
+            .expect("mount");
+        table.set_namespace(Arc::new(namespace));
+        table.register(SyscallNumber::Open, open);
+        table.register(SyscallNumber::Read, read);
+        table.register(SyscallNumber::Write, write);
         table.register(SyscallNumber::Close, close);
         table
     }
@@ -752,6 +839,193 @@ mod tests {
             Ok(5)
         );
         assert_eq!(&from_start, b"hello");
+    }
+
+    /// Write through the registry, the way `read_into` reads.
+    fn write_as(
+        table: &mut SyscallTable,
+        descriptor: usize,
+        bytes: &[u8],
+        pid: Option<u32>,
+    ) -> Result<usize> {
+        let mut context = SyscallContext::new(
+            SyscallNumber::Write as usize,
+            [descriptor, 0, bytes.len(), 0, 0, 0],
+        );
+        if let Some(pid) = pid {
+            context = context.with_caller(pid);
+        }
+        // A copy, because the argument takes a mutable borrow and the test's
+        // sources are literals; the handler reads what the borrow names
+        // either way.
+        let mut copy = bytes.to_vec();
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: None,
+            buffer: Some(&mut copy),
+        };
+        let dispatch = table.dispatch(&mut arguments)?;
+        Ok(dispatch.value)
+    }
+
+    /// The loop the write closes: a program creates a file, writes it, and
+    /// reads its own bytes back through the same descriptor.
+    ///
+    /// This is the whole of what `Write` exists for, and every link is on
+    /// this path — the create flag reaching the filesystem, the descriptor
+    /// recording the right, the write starting at the position and moving it,
+    /// and the read continuing where the write stopped.  A break in any of
+    /// them fails the comparison.
+    #[test]
+    fn a_file_is_written_and_read_back_through_the_table() {
+        let mut table = writable();
+        let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let descriptor = open_path(&mut table, "/note.txt", flags).expect("create and open");
+
+        assert_eq!(
+            write_as(&mut table, descriptor, b"written ", None),
+            Ok(8),
+            "the first write answers the bytes it accepted"
+        );
+        assert_eq!(
+            write_as(&mut table, descriptor, b"by a syscall", None),
+            Ok(12),
+            "the second write continues where the first stopped"
+        );
+
+        // The position moved with each write, so a read from the descriptor's
+        // own position starts past what was written — which is how a caller
+        // knows the bytes are behind it rather than ahead of it.
+        let mut buffer = [0u8; 4];
+        assert_eq!(
+            read_into(&mut table, descriptor, READ_OFFSET_CURRENT, &mut buffer),
+            Ok(0),
+            "the position sits at end of file after two writes"
+        );
+
+        // And a fresh open reads the whole thing from the start: the bytes
+        // are the file's now, not the descriptor's.
+        let reader = open_path(&mut table, "/note.txt", fs_abi::OPEN_FLAG_READ).expect("reopen");
+        let mut whole = [0u8; 20];
+        assert_eq!(
+            read_into(&mut table, reader, READ_OFFSET_CURRENT, &mut whole),
+            Ok(20)
+        );
+        assert_eq!(&whole, b"written by a syscall");
+    }
+
+    /// A descriptor opened read-only refuses a write, and stays readable.
+    ///
+    /// The right is the open's, recorded per descriptor: a node the
+    /// filesystem would accept bytes for is still not writable through a
+    /// descriptor that did not ask.  The answer is `PermissionDenied` —
+    /// the descriptor exists and the caller owns it; what it may not do is
+    /// write.
+    #[test]
+    fn a_descriptor_opened_read_only_refuses_a_write() {
+        let mut table = writable();
+        let creator = open_path(
+            &mut table,
+            "/note.txt",
+            fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+        )
+        .expect("create");
+        assert_eq!(table.close(creator), Ok(()));
+
+        let reader = open_path(&mut table, "/note.txt", fs_abi::OPEN_FLAG_READ).expect("open");
+        assert_eq!(
+            write_as(&mut table, reader, b"no", None),
+            Err(Error::PermissionDenied)
+        );
+
+        let mut buffer = [0u8; 4];
+        assert_eq!(
+            read_into(&mut table, reader, READ_OFFSET_CURRENT, &mut buffer),
+            Ok(0),
+            "the refusal left the descriptor readable, at an empty file"
+        );
+    }
+
+    /// A write of another process's descriptor is refused, and writes nothing.
+    ///
+    /// The same reach a read refuses, one operation over: a write that went
+    /// through would put one process's bytes in another's file.
+    #[test]
+    fn one_process_cannot_write_another_process_descriptor() {
+        let mut table = writable();
+        let theirs = open_as(
+            &mut table,
+            "/note.txt",
+            fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+            8,
+        )
+        .expect("open");
+
+        assert_eq!(
+            write_as(&mut table, theirs, b"intrusion", Some(7)),
+            Err(Error::InvalidArgument)
+        );
+        assert_eq!(
+            write_as(&mut table, theirs, b"mine", Some(8)),
+            Ok(4),
+            "the owner writes"
+        );
+    }
+
+    /// A pipe end is not a file to write into.
+    ///
+    /// The pipe's write path is the ring-3 branch that never reaches the
+    /// registry; a write that arrives here naming one is naming the wrong
+    /// kind of thing, and the answer is that, not a silent fall-through to a
+    /// node the descriptor does not have.
+    #[test]
+    fn a_pipe_end_is_not_a_file_to_write() {
+        use crate::pipe;
+        use crate::pipe::End;
+
+        let pipe = Arc::new(pipe::Pipe::new(16));
+        let mut table = SyscallTable::new();
+        table.register(SyscallNumber::Write, write);
+        let end = table
+            .insert_pipe(End::writer(pipe.clone()), 7)
+            .expect("insert");
+
+        assert_eq!(
+            write_as(&mut table, end, b"bytes", None),
+            Err(Error::InvalidArgument)
+        );
+    }
+
+    /// Opening with the create flag a path the volume already has opens that
+    /// path, and opening one it does not have on a read-only volume refuses
+    /// with the volume's own answer.
+    ///
+    /// The two halves pin the branch: a create of an existing file is the
+    /// open that was asked for, and a create the filesystem cannot grant is
+    /// `PermissionDenied` — the volume's refusal, not the lookup's miss,
+    /// because reporting `NotFound` for a path the caller asked to create
+    /// would tell it the wrong thing about why.
+    #[test]
+    fn a_create_refusal_is_the_volumes_answer_and_a_create_of_an_existing_path_opens_it() {
+        let mut table = mounted();
+        assert_eq!(
+            open_path(&mut table, "/new.txt", fs_abi::OPEN_FLAG_CREATE),
+            Err(Error::PermissionDenied),
+            "the static volume creates nothing"
+        );
+
+        let existing = open_path(
+            &mut table,
+            "/greeting.txt",
+            fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_CREATE,
+        )
+        .expect("a create of an existing path is an open");
+        let mut buffer = [0u8; 5];
+        assert_eq!(
+            read_into(&mut table, existing, READ_OFFSET_CURRENT, &mut buffer),
+            Ok(5)
+        );
+        assert_eq!(&buffer, b"hello");
     }
 
     /// A number this build does not serve answers `NotImplemented`, and a

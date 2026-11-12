@@ -62,7 +62,21 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     // relative to it, and the filesystem answers for that.  `open` names no
     // filesystem, which is what lets a second one be mounted without this
     // handler changing.
-    let node = table.namespace().ok_or(Error::NotFound)?.lookup(path)?;
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let node = match namespace.lookup(path) {
+        Ok(node) => node,
+        // A create that names an existing path is the open that was asked for,
+        // so the miss is only a creation when the lookup is the one failure a
+        // creation cures.  Every other answer — a volume that refused, a path
+        // the table could not resolve — is the lookup's own, and creating on
+        // top of it would report a success the filesystem never granted.
+        Err(Error::NotFound) if flags & fs_abi::OPEN_FLAG_CREATE != 0 => {
+            let (filesystem, relative) = namespace.resolve(path)?;
+            filesystem.create_file(&relative)?;
+            namespace.lookup(path)?
+        }
+        Err(error) => return Err(error),
+    };
 
     // The opener is the owner: the process that asked, as the kernel recorded
     // it, so its exit can release the slot.  A caller the kernel made itself
@@ -75,6 +89,7 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     let descriptor = table.insert(Descriptor::File {
         node,
         readable: flags & fs_abi::OPEN_FLAG_READ != 0 || flags == fs_abi::OPEN_FLAG_NONE,
+        writable: flags & fs_abi::OPEN_FLAG_WRITE != 0,
         offset: 0,
         owner,
     })?;
@@ -114,6 +129,26 @@ pub fn read(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
         buffer,
         arguments.context.caller_pid,
     )?;
+    Ok(Dispatch::complete(count))
+}
+
+/// Write to a descriptor from the buffer the caller supplied.
+///
+/// Arguments: the descriptor, the buffer, its length, then three reserved
+/// slots that must be zero.  The write starts at the descriptor's own
+/// position, which moves by the bytes accepted — the same position `read`
+/// moves, which is why a program that opens a file, writes it, and reads it
+/// back through the same descriptor finds its own bytes.
+///
+/// The check order is the write's, not the buffer's: a descriptor the caller
+/// may not write is refused before a byte of the buffer is looked at, because
+/// a write that cannot be attempted has no business having read anything.
+pub fn write(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor_index = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 3)?;
+
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    let count = table.write_at(descriptor_index, buffer, arguments.context.caller_pid)?;
     Ok(Dispatch::complete(count))
 }
 

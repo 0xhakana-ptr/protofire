@@ -344,6 +344,33 @@ pub unsafe fn enter_user_with(context: &Context) -> ! {
             "push {flags}",
             "push {cs}",
             "push {rip}",
+            // The five words are on the stack, so the registers that carried
+            // them are free — and they are exactly the registers the program
+            // must not start with, because `iretq` changes rings and touches
+            // no general register: whatever this kernel left in one would be
+            // the program's first value in it.  Measured before this zeroing:
+            // the compiler had allocated `cs`, `flags` and `rsp` to `rdi`,
+            // `rdx` and `rcx`, so a program's first `Write` carried this
+            // kernel's own selector, flags and hand-over pointer in the three
+            // registers its arguments travel in.  A program's registers start
+            // at zero, which is how `Context::user` builds every later frame
+            // and how the trap epilogue restores every exec'd one; this is
+            // that same clean slate, for the one entry that bypasses both.
+            "xor eax, eax",
+            "xor ebx, ebx",
+            "xor ecx, ecx",
+            "xor edx, edx",
+            "xor esi, esi",
+            "xor edi, edi",
+            "xor ebp, ebp",
+            "xor r8, r8",
+            "xor r9, r9",
+            "xor r10, r10",
+            "xor r11, r11",
+            "xor r12, r12",
+            "xor r13, r13",
+            "xor r14, r14",
+            "xor r15, r15",
             "iretq",
             ss = in(reg) frame.stack_segment,
             rsp = in(reg) frame.stack_pointer,

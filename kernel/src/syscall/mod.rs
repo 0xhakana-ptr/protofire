@@ -6,7 +6,7 @@
 //! | File | What it holds |
 //! |---|---|
 //! | [`table`] | the table, its descriptors, the installed registry, and the limits |
-//! | [`handlers`] | `open`, `read`, `close`, and the three MAC calls |
+//! | [`handlers`] | `open`, `read`, `write`, `close`, and the three MAC calls |
 //! | this file | the re-exports a caller spells, and the tests |
 //!
 //! ## Why the table is here and not in the `syscall` crate
@@ -20,12 +20,13 @@
 //!
 //! ## What is served today
 //!
-//! Three handlers, `open`, `read` and `close`, backed by the one mounted
-//! volume.  That is the smallest set that makes the registry real: a program
-//! cannot read without opening, opening without closing leaks the slot, and the
-//! three together exercise every part of the interface, a number, an argument
-//! vector, the validators, a dispatch value, and an error that comes back as a
-//! status word.
+//! Four handlers, `open`, `read`, `write` and `close`, backed by the one
+//! mounted volume.  That is the smallest set that makes the registry real: a
+//! program cannot read without opening, opening without closing leaks the
+//! slot, and the four together exercise every part of the interface, a number,
+//! an argument vector, the validators, a dispatch value, and an error that
+//! comes back as a status word.  `write` closes the loop the read opened: the
+//! bytes a program puts in a file are the bytes a later open reads back.
 //!
 //! Every other number answers `Error::NotImplemented` rather than being
 //! absent.  An absent slot would have to be a panic or a silent zero, and both
@@ -71,6 +72,7 @@ pub use handlers::munmap;
 pub use handlers::open;
 pub use handlers::read;
 pub use handlers::reclaim_pages;
+pub use handlers::write;
 pub use table::Arguments;
 pub use table::Dispatch;
 pub use table::Handler;
