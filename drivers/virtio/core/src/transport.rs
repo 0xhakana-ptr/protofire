@@ -84,18 +84,6 @@ pub mod common {
     pub const QUEUE_DEVICE: u64 = 0x30;
 }
 
-/// The device-specific configuration of a block device (section 5.2.4).
-pub mod block_config {
-    /// `le64 capacity`, in 512-byte sectors.
-    pub const CAPACITY: u64 = 0x00;
-    /// `le32 size_max`, the largest request the device accepts, when
-    /// `VIRTIO_BLK_F_SIZE_MAX` is negotiated.
-    pub const SIZE_MAX: u64 = 0x04;
-    /// `le32 seg_max`, the largest number of segments, when
-    /// `VIRTIO_BLK_F_SEG_MAX` is negotiated.
-    pub const SEG_MAX: u64 = 0x08;
-}
-
 /// Why a transport operation failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportError {
@@ -204,11 +192,23 @@ pub trait Transport: Send + Sync {
     /// Ring a queue's doorbell.
     fn notify(&self, queue: u16);
 
-    /// The device's capacity in 512-byte sectors.
-    fn capacity_sectors(&self) -> u64;
-
-    /// Read one byte from the device-specific configuration.
-    fn read_device_config_byte(&self, offset: u64) -> u8;
+    /// Read one dword of the **device-specific** configuration.
+    ///
+    /// Section 4.1.4.3.4: every device has a configuration region whose
+    /// layout is the device's own, at the offset its
+    /// `VIRTIO_PCI_CAP_DEVICE_CFG` capability names.  This framework reads it
+    /// and does not interpret it: a block device's capacity, a network card's
+    /// MAC address and a GPU's resolution are all somewhere in that region, and
+    /// where is each device crate's business.
+    ///
+    /// Two methods used to sit here — `capacity_sectors` and
+    /// `read_device_config_byte` — and both were the block device's.  The first
+    /// named the block layout (`0x00` is its `le64 capacity`) in a crate that
+    /// is not the block crate, and the second had no caller at all: a method on
+    /// a trait every implementor must write, for a byte no driver read.  One
+    /// generic reader replaces both, and the device crate that owns a layout
+    /// reads its own fields out of it.
+    fn read_device_config_dword(&self, offset: u64) -> u32;
 
     /// Map the selected queue's completion interrupt to MSI-X vector `vector`.
     ///
@@ -343,10 +343,7 @@ mod tests {
                 0
             }
             fn notify(&self, _queue: u16) {}
-            fn capacity_sectors(&self) -> u64 {
-                0
-            }
-            fn read_device_config_byte(&self, _offset: u64) -> u8 {
+            fn read_device_config_dword(&self, _offset: u64) -> u32 {
                 0
             }
             fn set_queue_vector(&self, _queue: u16, _vector: u16) -> bool {

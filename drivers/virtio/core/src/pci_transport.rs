@@ -38,7 +38,6 @@ use crate::queue::DeviceAddresses;
 use crate::transport::Capability;
 use crate::transport::Transport;
 use crate::transport::TransportError;
-use crate::transport::block_config;
 use crate::transport::common;
 
 /// A mapped region of device memory: the accessor a BAR is used through.
@@ -347,14 +346,8 @@ impl Transport for PciTransport {
         self.notify_base.write16(offset, queue);
     }
 
-    fn capacity_sectors(&self) -> u64 {
-        let low = self.device_config.read32(block_config::CAPACITY) as u64;
-        let high = self.device_config.read32(block_config::CAPACITY + 4) as u64;
-        low | (high << 32)
-    }
-
-    fn read_device_config_byte(&self, offset: u64) -> u8 {
-        self.device_config.read8(offset)
+    fn read_device_config_dword(&self, offset: u64) -> u32 {
+        self.device_config.read32(offset)
     }
 
     /// Map a queue's completion interrupt to an MSI-X vector.

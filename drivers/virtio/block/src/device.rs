@@ -206,8 +206,11 @@ impl VirtioBlock {
         }
 
         // The capacity is in 512-byte sectors, which is the unit a request's
-        // `sector` field uses, so no conversion happens here.
-        let capacity_sectors = transport.capacity_sectors();
+        // `sector` field uses, so no conversion happens here.  The layout is
+        // this crate's now: the framework reads the configuration region as
+        // opaque dwords, and what they mean is a block device's business.
+        let capacity_sectors =
+            crate::config::capacity_sectors(|offset| transport.read_device_config_dword(offset));
 
         Ok(Arc::new(Self {
             transport,
@@ -737,12 +740,11 @@ mod tests {
             unsafe { self.perform() };
         }
 
-        fn capacity_sectors(&self) -> u64 {
-            self.capacity
-        }
-
-        fn read_device_config_byte(&self, _offset: u64) -> u8 {
-            0
+        fn read_device_config_dword(&self, offset: u64) -> u32 {
+            match offset {
+                0 => self.capacity as u32,
+                _ => (self.capacity >> 32) as u32,
+            }
         }
     }
 
@@ -872,11 +874,11 @@ mod tests {
                 0
             }
             fn notify(&self, _queue: u16) {}
-            fn capacity_sectors(&self) -> u64 {
-                4
-            }
-            fn read_device_config_byte(&self, _offset: u64) -> u8 {
-                0
+            fn read_device_config_dword(&self, offset: u64) -> u32 {
+                match offset {
+                    0 => 4,
+                    _ => 0,
+                }
             }
         }
 
