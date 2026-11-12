@@ -310,6 +310,21 @@ impl Scheduler {
             return None;
         }
 
+        // Where this program may grow: its window, and the break it grows
+        // from.  Recorded here because this is the only place that knows both
+        // — the window is what `program_base` names, and the image's end is
+        // what the loader computed a few lines up and was, until now, dropped.
+        //
+        // The break starts **one page past the stack**, so a program's `Brk`
+        // cannot grow into its own stack.  The reservations a `Mmap` makes come
+        // down from the window's top, so the two ends meet in the middle and
+        // the gap between them is what a program can actually use.
+        let window_base = crate::process::program_base(1);
+        let window_end = window_base + crate::address_space::USER_WINDOW;
+        let break_base = stack_page + paging::PAGE_SIZE;
+        space.set_window(window_base, window_end);
+        space.set_brk(break_base);
+
         // The exec block: the one inheritance an `exec` carries.  The words go
         // below the stack top, the pointer starts at them, and the path's
         // bytes sit where [`crate::process::EXEC_PATH_OFFSET`] says — written

@@ -115,6 +115,26 @@ pub struct AddressSpace {
     /// upward from, and the value a `Brk` query answers when nothing has grown
     /// yet.  Zero for a space no image was loaded into.
     brk: usize,
+    /// Where the next `Mmap` goes, counting **down** from the top of this
+    /// program's window.
+    ///
+    /// Downward because the bottom of the window is taken: the image starts at
+    /// the window's base, its stack is one page above the image, and `Brk`
+    /// grows up from the image's end.  Growing mappings downward from the top
+    /// keeps the two ends apart, and the gap between them is the budget.
+    ///
+    /// Zero means "no reservation has been made", which is resolved against
+    /// the window's end on the first one.
+    map_cursor: usize,
+    /// This program's window, as the exec path placed it: the lowest address a
+    /// mapping may take, and one past the highest.
+    ///
+    /// Recorded rather than derived, because deriving it needs the image's base
+    /// and the image does not keep it — `exec` computes where the image ends
+    /// and what window it went into, and this is where those two facts live
+    /// afterwards.  `(0, 0)` for a space no image was loaded into, which is the
+    /// boot's own machine-code programs; they never reserve.
+    window: (usize, usize),
 }
 
 #[cfg(target_os = "none")]
@@ -156,6 +176,8 @@ impl AddressSpace {
             // the scheduler may hold its lock.
             frames: alloc::vec::Vec::new(),
             brk: 0,
+            map_cursor: 0,
+            window: (0, 0),
         })
     }
 
@@ -346,6 +368,119 @@ impl AddressSpace {
         None
     }
 
+    /// Map `length` newly allocated pages at a reserved address.
+    ///
+    /// The whole of `Mmap` after the arguments are validated: reserve the
+    /// range, allocate a frame per page, map each, and record it as owned.  A
+    /// step that fails undoes the ones before it — a mapping that allocated
+    /// nine of ten pages and returned an error would leave nine frames the
+    /// program has no name for and the space has forgotten.
+    ///
+    /// Permissions come from the caller's `PROT_*` set.  `user` is always true,
+    /// because everything an `AddressSpace` maps is a program's, and writable
+    /// and executable are the two the set names.
+    ///
+    /// # Safety
+    ///
+    /// `self` must not be the installed address space, for the reason
+    /// [`unmap_page`](Self::unmap_page) gives.
+    pub unsafe fn map_anonymous(
+        &mut self,
+        base: usize,
+        length: usize,
+        writable: bool,
+        executable: bool,
+    ) -> bool {
+        let pages = length.div_ceil(paging::PAGE_SIZE);
+        let permissions = Permissions {
+            writable,
+            executable,
+            user: true,
+            cache: paging::Cache::Normal,
+        };
+        let mut mapped = 0usize;
+        while mapped < pages {
+            let Some(frame) = crate::address_space::allocate_image_frame() else {
+                // Out of frames: undo what this call did and answer no.  The
+                // frames themselves are the space's `own`s, so `release` is
+                // not what undoes this — each is unmapped and disowned here,
+                // one at a time, which is the only thing that knows which
+                // pages this call is responsible for.
+                // SAFETY: the caller's contract covers the whole function.
+                unsafe { self.undo_anonymous(base, mapped) };
+                return false;
+            };
+            if !self.own(frame) {
+                // SAFETY: as above.
+                unsafe { self.undo_anonymous(base, mapped) };
+                return false;
+            }
+            // SAFETY: the range was reserved by `reserve`, which is what makes
+            // it unmapped; the frame is this space's own.
+            let ok = unsafe {
+                self.map_page_with(base + mapped * paging::PAGE_SIZE, frame, permissions)
+            };
+            if !ok {
+                // SAFETY: as above.
+                unsafe { self.undo_anonymous(base, mapped) };
+                return false;
+            }
+            mapped += 1;
+        }
+        true
+    }
+
+    /// Take back the first `pages` pages of a mapping that failed partway.
+    ///
+    /// # Safety
+    ///
+    /// The pages must be ones this space mapped and owns, which is the state
+    /// `map_anonymous` holds when it calls this.
+    unsafe fn undo_anonymous(&mut self, base: usize, pages: usize) {
+        for index in 0..pages {
+            let address = base + index * paging::PAGE_SIZE;
+            // SAFETY: the caller's contract is this function's.
+            let frame = unsafe { self.unmap_page(address) };
+            if let Some(frame) = frame {
+                let _ = self.disown(frame);
+            }
+        }
+    }
+
+    /// Unmap everything in `[base, base + length)` and give its frames back.
+    ///
+    /// Answers how many pages were taken away, which is zero for a range
+    /// nothing was mapped in — an unmapped range is not an error, for the
+    /// reason [`unmap_page`](Self::unmap_page) gives.
+    ///
+    /// The frames go back through the pool's co-owner count, so a page a fork
+    /// shares is released from this space and kept for the other, which is the
+    /// whole reason `disown` and `unmap_page` are separate.
+    ///
+    /// # Safety
+    ///
+    /// `self` must not be the installed address space.
+    pub unsafe fn unmap_range(&mut self, base: usize, length: usize) -> usize {
+        let pages = length.div_ceil(paging::PAGE_SIZE);
+        let mut taken = 0usize;
+        for index in 0..pages {
+            let address = base + index * paging::PAGE_SIZE;
+            // SAFETY: the caller's contract is this function's.
+            let frame = unsafe { self.unmap_page(address) };
+            let Some(frame) = frame else {
+                continue;
+            };
+            if self.disown(frame) {
+                taken += 1;
+            }
+            let mut guard = TABLES.lock();
+            if guard.frames.release_reference(frame) {
+                let _ = guard.frames.deallocate(frame as *mut u8, 1);
+            }
+        }
+        taken
+    }
+
     /// Record a frame this space owns, so freeing the space frees its share.
     ///
     /// Answers whether it did: a space at its bound refuses the frame rather
@@ -404,6 +539,66 @@ impl AddressSpace {
     /// The frames this space owns, in the order it took them.
     pub fn owned(&self) -> &[usize] {
         &self.frames
+    }
+
+    /// Reserve `length` bytes of virtual address space, answering the base.
+    ///
+    /// The reservation is arithmetic: it moves this space's cursor and does not
+    /// touch a page table, so a caller that reserves and then fails to map
+    /// leaves a hole rather than a mapping.  The order is the caller's because
+    /// it is the one that has to allocate the frames, and a reservation that
+    /// allocated them would be a function that both reserves and can fail
+    /// halfway.
+    ///
+    /// **Downward from the top of this program's window**, which is what keeps
+    /// a mapping clear of the image and the stack at the bottom.  `hint` is
+    /// honoured when it names a page-aligned address inside the window and
+    /// below the cursor; anything else is treated as "somewhere", because a
+    /// hint is a hint and a caller that wanted a specific address has no way to
+    /// demand one in the four numbers this ABI gives it.
+    pub fn reserve(&mut self, hint: usize, length: usize) -> Option<usize> {
+        if length == 0 {
+            return None;
+        }
+        let length = length.checked_add(paging::PAGE_SIZE - 1)? & !(paging::PAGE_SIZE - 1);
+        let (floor, ceiling) = self.window;
+        if floor == 0 || ceiling <= floor {
+            return None;
+        }
+
+        // Where the cursor starts: the top of this program's window, so the
+        // first reservation ends where the window does.
+        let cursor = if self.map_cursor == 0 {
+            ceiling
+        } else {
+            self.map_cursor
+        };
+
+        // A hint below the cursor and inside the window wins, because it is the
+        // only thing that lets a program place two mappings adjacently.
+        let usable_hint = hint >= floor && hint.is_multiple_of(paging::PAGE_SIZE);
+        let start = if usable_hint && hint.checked_add(length)? <= cursor {
+            hint
+        } else {
+            cursor.checked_sub(length)?
+        };
+
+        if start < floor {
+            // The window is full.  `None` is what the caller turns into the
+            // answer the program reads.
+            return None;
+        }
+        self.map_cursor = start;
+        Some(start)
+    }
+
+    /// Record where this program's window lies, for the reservation above.
+    ///
+    /// Called by the exec path, which is the only code that knows both numbers:
+    /// the window is what `program_base` names and the image's end is what the
+    /// loader computed.
+    pub fn set_window(&mut self, base: usize, end: usize) {
+        self.window = (base, end);
     }
 
     /// Where this space's `Brk` may grow from, and what a query answers.

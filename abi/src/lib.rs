@@ -30,6 +30,7 @@ pub mod boot;
 pub mod error;
 pub mod exception;
 pub mod fs;
+pub mod memory;
 pub mod number;
 pub mod power;
 pub mod process;
