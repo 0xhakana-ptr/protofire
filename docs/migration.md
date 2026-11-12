@@ -26,18 +26,25 @@ says so and says what it would take.
 - **`kernel`** — the boot sequence, the syscall table, the scheduler, device
   discovery.
 - **`memory`** — the frame pool and the region pools.
-- **`drivers`** — PCI (ports, ECAM, BAR enumeration, MSI-X) and virtio block.
+- **`drivers`** — four crates rather than one directory under one name:
+  `drivers/bus/pci` (ports, ECAM, capability walks, BAR enumeration, MSI-X),
+  `drivers/virtio/core` (the split virtqueue, feature negotiation, the status
+  sequence, the PCI modern transport), `drivers/virtio/block` (the request
+  layout and the driver over that transport), and `drivers/net/e1000` (a
+  placeholder for a device this tree does not boot with).
 - **`syscall`** — the context, the validators, and a handful of handlers.
 - **`libs`** — allocator, audit, cell, crypto, fdt, irq, paging, profiler,
   rights, sync, unicode.  Each is a crate rather than a module under `kernel`
   or `memory` as it once was, because a crate is what can be tested on a host
   without the kernel it belongs to.
-- **`network`** — nothing.  The crate is one line so the layer exists and the
-  boundary is declared before there is code to put behind it.
-- **`apps`** — `init`, `shell` and `service_manager`, each with the shape a
-  program must have and no body, because the syscall that starts a process is
-  served as `NotImplemented` and a body that pretended to work would be a claim
-  the tree cannot back.
+- **`net`** — nothing.  The crate is one line so the layer exists and the
+  boundary is declared before there is code to put behind it.  It is `net`, the
+  name the workspace member uses, and not `network`.
+- **`apps`** — `init`, `shell` and `service_manager`.  `init` is a working
+  program rather than a shape: the kernel execs it from its own filesystem, it
+  reads the boot volume's greeting file through `open`/`read`/`close`, and its
+  exit status is that file's first byte — the boot's `exit statuses 1 -> 116`.
+  The other two are shapes with a body still to be built against them.
 
 ## Filesystems
 
@@ -194,12 +201,18 @@ than the list.
 Every entry takes one global lock.  A task is not pinned to a CPU: nothing says
 where it may run, so the lock is what keeps two CPUs from being handed one
 task, and placement is `next_runnable`'s rule — a task the asking CPU last ran,
-then a task no CPU has run, then a steal from another CPU.  A per-CPU queue
-would shard the contention and would not change what a task is allowed to do;
-what it would change is that an idle CPU's work is *nearer* it, which the rule
-now approaches from the other side by preferring not to move a task at all.
+then a task no CPU has run, then a steal from another CPU.
 
-The measurement is in `docs/status.md`: six boots of the same image read 6, 9,
-9, 7, 7 and 16 migrations before the rule and 1, 1, 2, 3, 3 and 3 after it.  A
-rule that refused the steal would take that to zero and leave a core idle with
-work in the queue, which is why the steal stays.
+A per-CPU queue is the shape that would shard that contention, and the cost it
+would remove was measured before deciding against it: two rotation scans over
+four tasks look at five to seven candidates per placement, which is two linear
+passes over an array that fits in a cache line.  Sharding moves that cost and
+adds a steal path between queues, which is the same migration one indirection
+further from the decision.  `docs/status.md` carries the six boots and the
+counts.  What would change the arithmetic is many more runnable tasks than
+CPUs, and nothing here has that.
+
+The placement rule's own measurement is in `docs/status.md` too: six boots of
+the same image read 6, 9, 9, 7, 7 and 16 migrations before the rule and 1, 1,
+2, 3, 3 and 3 after it.  A rule that refused the steal would take that to zero
+and leave a core idle with work in the queue, which is why the steal stays.
