@@ -18,6 +18,9 @@ healthy `AGENTS.md` gets shorter as the gates get stronger.
   [`docs/migration.md`](docs/migration.md).
 - **What exists, and what is missing, on each machine?** —
   [`docs/status.md`](docs/status.md).
+- **What is missing overall, and which gap blocks which?** —
+  [`docs/roadmap.md`](docs/roadmap.md).  It carries the counts and the command
+  that re-takes them, so the answer is measured rather than remembered.
 - **What does a change have to satisfy?** — [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **How does a subsystem work?** — the crate's own `//!` header.
 - **What may a contributor rely on?** — this file, and the gate's own header
