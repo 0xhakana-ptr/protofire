@@ -49,7 +49,10 @@ child; a pipe end copies as a **handle**, so the pipe's count rises and
 end-of-file waits for both processes.  The boot's own programs remain
 machine code, and `/bin/init` is the workspace's first compiled ring-3 program.
 
-Verified by `the timer preempted, `, `a write woke `, `forked a process, child pid 4`, `copy-on-write copy at `, `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`, `process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
+Verified by `the timer preempted, `, `a write woke `,
+`forked a process, child pid 4`, `copy-on-write copy at `,
+`copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`,
+`process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
 
 The pipe's reader also calls `WaitProcess` after its end-of-file read, and the
 gate requires the kernel's own `a wait answered status ` line on all three
@@ -110,7 +113,8 @@ with the address to continue at, because an instruction's length is the
 program's fact and not the kernel's — x86_64's vary.
 
 **Devices.**  The PCI scan, BARs assigned by the boot, and virtio-blk
-attached.  Verified by `block device from virtio-blk on pci` and `virtio-blk wrote and read back sector `.
+attached.  Verified by `block device from virtio-blk on pci` and
+`virtio-blk wrote and read back sector `.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement
@@ -122,7 +126,9 @@ placement that migrates.  Measured on the same image: `task migrations` read 6,
 it, against 12 to 16 `task placings home` — which is the rule's preferred arm
 running, not merely a lower number.
 
-Verified by `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `, `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `, `task placings home `, `address spaces reaped 4, `, and `tlb shootdown `.
+Verified by `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `,
+`program ended on cpu 1`, `parallel, programs ended on `, `task migrations `,
+`task placings home `, `address spaces reaped 4, `, and `tlb shootdown `.
 
 **A queue per CPU is not a gap, and the measurement says so.**  The offer of
 work is still the lock's: every CPU scans the same list rather than taking from
@@ -194,7 +200,8 @@ by the entry.  Verified by the gate's `entered via dtb` line.
 **Console.**  The PL011, at the address the tree names.
 
 **Page table.**  The kernel's own 4 KiB table; `TCR_EL1` sized for the full
-48-bit walk; the tree's device windows uncached.  Verified by `page table built and installed, 4 KiB granule`.
+48-bit walk; the tree's device windows uncached.  Verified by
+`page table built and installed, 4 KiB granule`.
 
 **Interrupts.**  The GIC; the self-test raises a software interrupt the
 controller delivers.  Verified by `interrupt delivered to its handler`.
@@ -202,7 +209,8 @@ controller delivers.  Verified by `interrupt delivered to its handler`.
 **Timer and clock.**  The generic timer, one clock for both the deadline and
 the counter.  Its private interrupt is configured **level**-triggered, which is
 what `CNTP_CTL_EL0.ISTATUS` staying set until reprogramming makes it, and the
-started core's own clock fires from it.  Verified by `timer armed at ` and `cpu 1 id 1, ticking, `.
+started core's own clock fires from it.  Verified by `timer armed at ` and
+`cpu 1 id 1, ticking, `.
 
 **Idle.**  A CPU with nothing to run parks in `wfe` and is woken by the event
 the kernel's inter-CPU wake issues.  The mechanism is the **event**, not the
@@ -272,7 +280,9 @@ Verified by `page table built and installed, 4 KiB granule`.
 the machine raises on itself, and the external one a PLIC source arrives on.
 The PLIC is programmed and the console's UART is claimed as a real source —
 enabled at the controller, asked for one transmitter interrupt, acknowledged at
-the device before the source is completed.  Verified by `interrupt delivered to its handler`, `external controller at `, and `console interrupt(s) taken = 1`.
+the device before the source is completed.  Verified by
+`interrupt delivered to its handler`, `external controller at `, and
+`console interrupt(s) taken = 1`.
 
 **A delivery the device does not own is not counted as an interrupt.**  The
 controller can hand this source over once more after the handler silenced the

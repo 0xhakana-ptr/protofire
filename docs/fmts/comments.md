@@ -5,7 +5,8 @@
 
 Comments in this kernel are not decoration. A driver that pokes a device
 register, a page-table walk that depends on an alignment invariant, or a lock
-that must be held across a call is not self-explanatory from the code alone, and the reader is usually someone debugging a triple fault at 3 a.m., with no
+that must be held across a call is not self-explanatory from the code alone,
+and the reader is usually someone debugging a triple fault at 3 a.m., with no
 other documentation open. Write for that reader.
 
 This document defines what comments look like and what they must say. The
@@ -245,11 +246,11 @@ checked. "SAFETY: this is fine" is not a comment, it is a hope.
 ### Capitalisation is not optional
 
 The mixed-case `// Safety:` form used to appear in the tree, mostly in
-`drivers/virtio/block/src/device.rs` and the other drivers. Those have been migrated, and
-the tree now has no occurrences left: `// SAFETY:` is the only accepted spelling.
-A new `// Safety:` is a defect, not a style preference, it reads as a different
-marker to anyone grepping for the convention, which is exactly how the block
-that most needs a safety argument goes unnoticed in review.
+`drivers/virtio/block/src/device.rs` and the other drivers. Those have been
+migrated, and the tree now has no occurrences left: `// SAFETY:` is the only
+accepted spelling. A new `// Safety:` is a defect, not a style preference, it
+reads as a different marker to anyone grepping for the convention, which is
+exactly how the block that most needs a safety argument goes unnoticed in review.
 
 ### Nothing enforces this
 
@@ -302,8 +303,9 @@ a `TODO` that never gets resolved is a lie about intent.
   `NOTE`: an intentional deviation from the surrounding pattern, a workaround
   for a specific device's behaviour, an ordering that looks arbitrary but is not.
 
-A topical tag in parentheses, `// NOTE(utf-8): ...`, `// TODO(init): ...`, appears a couple of times and is acceptable when a module has several threads of
-notes. It is not required; do not invent a taxonomy of tags.
+A topical tag in parentheses, `// NOTE(utf-8): ...`, `// TODO(init): ...`, appears
+a couple of times and is acceptable when a module has several threads of notes. It
+is not required; do not invent a taxonomy of tags.
 
 **There is no `FIXME`, `XXX`, `HACK`, or `WARNING` in this codebase**, and new
 ones should not be introduced, `TODO:` and `NOTE:` cover the same ground with

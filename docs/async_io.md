@@ -43,7 +43,8 @@ operations* in the ABI.  Adding one would mean extending a wire format, and ever
 service would have to understand operations it does not provide.
 
 Here the request is opaque to the queue.  A service decides what it accepts, and
-the crate never learns what an operation is.  The `io_uring` ABI stays what it is, a program's view of a submission, and is translated into these requests at the
+the crate never learns what an operation is.  The `io_uring` ABI stays what it is,
+a program's view of a submission, and is translated into these requests at the
 syscall boundary.
 
 ## What "everything is a service" buys
@@ -86,13 +87,15 @@ express that, and a timeout would be a policy this crate has no basis for.
 
 What makes it checkable is that everything a service does goes through the queue:
 a request accepted and never completed leaves the queue's accounting disagreeing
-with the service's.  The test service in `service_tests.rs` is checked that way, `every_accepted_request_is_completed`, and a driver's version of that check is a
+with the service's.  The test service in `service_tests.rs` is checked that way,
+`every_accepted_request_is_completed`, and a driver's version of that check is a
 boot that drains its queue, which is a different gate and a later change.
 
 ## Why the queue is bounded
 
 A completion is a value a service produces and a caller takes.  If the producer
-can outrun the consumer forever, the queue is a memory leak with a polite name, and a service that completed four thousand requests during one syscall is exactly
+can outrun the consumer forever, the queue is a memory leak with a polite name,
+and a service that completed four thousand requests during one syscall is exactly
 the shape that fills one.
 
 So the queue has a capacity, filling it is an error the producer is told about,

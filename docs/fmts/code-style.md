@@ -184,11 +184,11 @@ needs a reason and an exit condition written next to it:
 ```
 
 `scripts/verify.sh` p2 fails a change that adds one without both lines, through
-the `dead-code` census. The two that motivated the check had outlived their reasons: a skeleton
-whose comment still said "step 1b wires the consumers" after step 1b had been
-done, and accessors described as having "no callers in the kernel" that had
-four. Disk-format type tables and host-coverage modules are the legitimate
-uses; "the compiler was complaining" is not.
+the `dead-code` census. The two that motivated the check had outlived their
+reasons: a skeleton whose comment still said "step 1b wires the consumers"
+after step 1b had been done, and accessors described as having "no callers in
+the kernel" that had four. Disk-format type tables and host-coverage modules
+are the legitimate uses; "the compiler was complaining" is not.
 
 ---
 
@@ -228,7 +228,8 @@ use crate::fs::FileMetadata;
 use crate::fs::NodeKind;
 ```
 
-Prefer `super::` over `crate::` when the item is genuinely in the parent module, it keeps a module readable in isolation. Reach for `crate::` when crossing
+Prefer `super::` over `crate::` when the item is genuinely in the parent module,
+it keeps a module readable in isolation. Reach for `crate::` when crossing
 subsystems. `#[cfg]`-gated imports sit in the group they belong to, on their own
 line.
 
@@ -337,7 +338,8 @@ you a value could be `None`, the question is whether that is a bug or a case you
 should handle, and the answer is only rarely "abort the kernel".
 
 `assert!`/`assert_eq!` are used freely in tests and host-side code. In kernel
-paths, prefer `debug_assert!` for expensive checks that hold by construction, `debug_assert!` is compiled out of release builds, so it must never be load-
+paths, prefer `debug_assert!` for expensive checks that hold by construction,
+`debug_assert!` is compiled out of release builds, so it must never be load-
 bearing.
 
 ---
@@ -383,7 +385,8 @@ Rules that make this pattern safe to read:
   annotated with the reason the reference outlives the process.
 
 Do not add a fourth variant or a new global without a reason the existing three
-cannot express. And do not reach for a global to avoid threading a parameter, the pattern exists for things interrupt handlers must find, not for convenience.
+cannot express. And do not reach for a global to avoid threading a parameter,
+the pattern exists for things interrupt handlers must find, not for convenience.
 
 ---
 
@@ -481,8 +484,8 @@ everyday code:
 - [ ] New feature flags are registered in `Cargo.toml`, `README.md`, and the
       Makefile.
 - [ ] New architecture gates outside `arch/` carry the `fact:` or `gap:`
-      reason §14 requires, and `sh scripts/check-arch-fanout.sh` is re-recorded if they
-      move.
+      reason §14 requires, and `sh scripts/check-arch-fanout.sh` is re-recorded
+      if they move.
 - [ ] `sh scripts/verify.sh p3` is green.
 
 ---
@@ -551,8 +554,8 @@ it has the same kind of check.
 every `target_arch = "x86_64" | "aarch64" | "riscv64"` in a `.rs` file outside
 `arch/`, per file, and compares the result with
 [`scripts/arch-fanout-baseline.txt`](../../scripts/arch-fanout-baseline.txt).
-A count that grows fails `sh scripts/check-arch-fanout.sh`; a count that drops has to be
-re-recorded in the same change.
+A count that grows fails `sh scripts/check-arch-fanout.sh`; a count that drops
+has to be re-recorded in the same change.
 
 The number is what porting costs.  An architecture is supposed to be
 `arch/<arch>/` plus its `main.rs` entry point; every gate the census finds

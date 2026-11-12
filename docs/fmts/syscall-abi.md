@@ -158,7 +158,8 @@ The two parameters are the point:
   context alone.
 
 - **`&mut Arguments`** is how a handler reaches a caller's bytes.  It carries
-  the context plus the address-shaped arguments already turned into borrows, `path: Option<&str>`, `buffer: Option<&mut [u8]>`.  A handler that did
+  the context plus the address-shaped arguments already turned into borrows,
+  `path: Option<&str>`, `buffer: Option<&mut [u8]>`.  A handler that did
   `from_raw_parts` on `context.arg(1)` would carry a promise it cannot show;
   taking a borrow puts that promise where the borrow was built.
 
@@ -233,10 +234,10 @@ What is already decided, and is what a new call with an address argument does to
 
 ## 8. Userspace wrappers
 
-The previous tree carried a `shared` crate holding its user-side wrappers: number re-exports, the raw
-trap instruction, and typed `sys_<name>` wrappers.  This tree has no such crate
-yet, `apps/` holds three program skeletons, so the wrapper conventions are
-recorded here for the change that adds one:
+The previous tree carried a `shared` crate holding its user-side wrappers: number
+re-exports, the raw trap instruction, and typed `sys_<name>` wrappers. This tree
+has no such crate yet, `apps/` holds three program skeletons, so the wrapper
+conventions are recorded here for the change that adds one:
 
 - Name them `sys_` + the syscall's name (`sys_open`, `sys_read`, `sys_stat`).
 - Convert the raw status word into a typed `Result` using

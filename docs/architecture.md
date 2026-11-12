@@ -147,7 +147,8 @@ runs on.  `scripts/check-arch-fanout.sh` holds it: every `target_arch` name
 outside `arch/` is counted, each file in the census carries a reason, and the
 number is expected to reach zero.
 
-**It is now zero.**  The census's first honest reading was one row, `bootloader/src/main.rs`, five occurrences, and the reason on it said the entry
+**It is now zero.**  The census's first honest reading was one row,
+`bootloader/src/main.rs`, five occurrences, and the reason on it said the entry
 symbol and the panic handler are things only a binary can define.  That was true
 and it was not the question: the *symbol* is a binary's, but the *instruction* it
 reaches for is the machine's.  Five `target_arch` gates meant five places
@@ -160,9 +161,9 @@ arrived in `%eax`, the stack is at this symbol, an image links at this address.
 
 A new loader changes the first; a new machine changes the second.  So the
 machine's entry assembly, its linker script and its stop instruction all live in
-`arch/<machine>/`, and `bootloader` defines one neutral symbol, `protofire_entry`, that every machine's assembly calls.  The kernel's own four
-gates went the same way: the handshake is the architecture's to parse and the
-kernel takes no arguments.
+`arch/<machine>/`, and `bootloader` defines one neutral symbol, `protofire_entry`,
+that every machine's assembly calls.  The kernel's own four gates went the same way:
+the handshake is the architecture's to parse and the kernel takes no arguments.
 
 That last sentence is a link-time reference in one direction, not a crate edge:
 `arch` sits *below* `bootloader`, so `arch`'s assembly cannot name it, and the
@@ -185,8 +186,9 @@ price, it is cheaper than the alternative, and it is written down because an
 exception nobody argues for is what the gate is for.
 
 `memory` is at a lower layer and does *not* name `arch`: the frame pool is a range
-and a bitmap, and the one place it needs the machine, "make this range writable", is an injected function.  That is what keeps the page table out of a data
-structure, and it is why the frame pool's arithmetic can be tested on a host.
+and a bitmap, and the one place it needs the machine, "make this range writable",
+is an injected function.  That is what keeps the page table out of a data structure,
+and it is why the frame pool's arithmetic can be tested on a host.
 
 ### `virtio_core`: a framework below the drivers
 

@@ -28,7 +28,8 @@ grow.  **Test-only helpers** live inside the `tests` module, or in a
 `test_util.rs` declared `#[cfg(test)]`.
 
 There is no `tests/` directory of integration binaries.  A "test that needs the
-whole crate" is a test in the crate, and it can call anything the crate can, the crate *is* the boundary the split drew.
+whole crate" is a test in the crate, and it can call anything the crate can, the
+crate *is* the boundary the split drew.
 
 ### Why this differs from a single-crate tree
 

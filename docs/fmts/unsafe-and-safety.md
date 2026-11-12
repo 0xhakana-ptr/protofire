@@ -134,7 +134,8 @@ while the baseline row said zero, both messages are counted now.
 
 It held that line while the tree was being paid down, and it was the reason the
 work could be done one file at a time instead of in one change that pasted a
-comment onto every block. With every row at zero the two jobs the ratchet did, "fail a new block" and "record the debt honestly", are done by the deny and by
+comment onto every block. With every row at zero the two jobs the ratchet did,
+"fail a new block" and "record the debt honestly", are done by the deny and by
 empty rows respectively; what is left is the census, which would still catch a
 configuration no clippy target covers.
 

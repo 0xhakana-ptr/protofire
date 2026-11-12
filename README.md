@@ -63,9 +63,9 @@ sh scripts/verify.sh p3
 `p0` is formatting, every crate's tests, and the three kernels.  `p1` adds the
 boot, of every machine that has an image, not just the first one whose console
 printed, and each machine's own claims: x86_64's disk write-back, aarch64's
-interrupt delivered through its controller.  `p2` adds three censuses, the architecture gates, the dependency
-layering, and the per-crate test counts.  `p3` adds clippy in every
-configuration.
+interrupt delivered through its controller.  `p2` adds three censuses,
+the architecture gates, the dependency layering, and the per-crate test counts. 
+`p3` adds clippy in every configuration.
 
 A census is a ratchet: it records a number, refuses growth, and refuses a
 baseline row that no longer describes the tree.  Meeting one by recording a new
