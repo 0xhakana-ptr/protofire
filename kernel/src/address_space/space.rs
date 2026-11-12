@@ -255,6 +255,97 @@ impl AddressSpace {
         true
     }
 
+    /// Remove the mapping at `virtual_address`, answering the frame it named.
+    ///
+    /// `None` when nothing was mapped there, which is not an error: a program
+    /// that unmaps a range it partly owns has asked a question with two true
+    /// answers, and the one that says "there was nothing" is the honest one.
+    ///
+    /// ## Why the walk creates nothing
+    ///
+    /// [`walk_or_create`] allocates the tables a mapping needs.  An unmap needs
+    /// the opposite: a table that does not exist is a page that was never
+    /// mapped, and allocating one to then find an empty leaf would turn an
+    /// unmap of a range nobody used into three frames of permanent leakage.
+    /// So this walks the entries that are already there and stops at the first
+    /// absent one.
+    ///
+    /// ## What it does not do
+    ///
+    /// It does not free the frame, and it does not touch the ownership list.
+    /// The two are the caller's, in that order: a frame still recorded and no
+    /// longer mapped is what a `Munmap` leaves behind until it releases the
+    /// record, and a frame freed while another space still maps it is the
+    /// corruption the co-owner counts exist to prevent.
+    ///
+    /// # Safety
+    ///
+    /// `self` must not be the installed address space: clearing an entry this
+    /// CPU is translating through is a fault on the next instruction.  The
+    /// caller also owns the frame that was returned, and owns the decision
+    /// about when it may be freed.
+    pub unsafe fn unmap_page(&mut self, virtual_address: usize) -> Option<usize> {
+        if virtual_address < USER_BASE || !virtual_address.is_multiple_of(GRANULE) {
+            return None;
+        }
+        let mut guard = TABLES.lock();
+        let tables = &mut *guard;
+
+        // Entry 0 is the kernel's shared table and entry 1 and above are this
+        // space's; the second level is found, never created.
+        let root_slot = index(Level::Root, virtual_address);
+        let root_word = unsafe { &*(self.root as *const PageTable) }.entry(root_slot);
+        if root_word == 0 {
+            return None;
+        }
+        let second = arch::paging::decode(root_word, Level::Root);
+        if second.is_leaf {
+            // A block mapping is not a page this space allocated.
+            return None;
+        }
+        let _ = tables;
+
+        let mut current = second.address;
+        for level in [Level::Second, Level::Third] {
+            // SAFETY: `current` is a table this walk reached through an entry
+            // that was present, so it is a frame the space owns.
+            let table = unsafe { &*(current as *const PageTable) };
+            let slot = index(level, virtual_address);
+            let word = table.entry(slot);
+            if word == 0 {
+                return None;
+            }
+            let entry = arch::paging::decode(word, level);
+            if level == Level::Third {
+                if !entry.is_leaf {
+                    return None;
+                }
+                // The write the whole function exists for.  `encode` answers
+                // zero for a non-present entry on all three machines, which is
+                // how "clear this" is spelled without a machine-specific word.
+                table.set_entry(
+                    slot,
+                    encode(
+                        Entry {
+                            address: 0,
+                            permissions: entry.permissions,
+                            is_leaf: true,
+                            present: false,
+                        },
+                        level,
+                    ),
+                );
+                arch::flush_translation();
+                return Some(entry.address);
+            }
+            if entry.is_leaf {
+                return None;
+            }
+            current = entry.address;
+        }
+        None
+    }
+
     /// Record a frame this space owns, so freeing the space frees its share.
     ///
     /// Answers whether it did: a space at its bound refuses the frame rather
@@ -286,6 +377,28 @@ impl AddressSpace {
             }
         }
         false
+    }
+
+    /// Stop recording `frame` as owned by this space, answering whether it was.
+    ///
+    /// [`unmap_page`](Self::unmap_page) is the other half: it takes the entry
+    /// out of the page table and answers the frame, and this takes the frame
+    /// out of the ownership list.  Both are needed and neither implies the
+    /// other, because a frame can be mapped in more than one space and a frame
+    /// can be recorded by a space that has already unmapped it while the copy
+    /// is still in flight.
+    ///
+    /// It does not free the frame.  The pool decides that, and it decides by
+    /// [`release_reference`](memory::FrameAllocator::release_reference): a
+    /// frame a fork shared goes back only when the last space lets go.
+    /// Answering the frame to the caller would invite a `deallocate` here,
+    /// which is the double free this method exists to keep out of reach.
+    pub fn disown(&mut self, frame: usize) -> bool {
+        let Some(position) = self.frames.iter().position(|owned| *owned == frame) else {
+            return false;
+        };
+        self.frames.swap_remove(position);
+        true
     }
 
     /// The frames this space owns, in the order it took them.
