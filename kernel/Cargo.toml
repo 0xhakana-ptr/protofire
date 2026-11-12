@@ -46,3 +46,7 @@ virtio_block = { path = "../drivers/virtio/block" }
 # one is the ordinary state on two of the three machines, and the driver prints
 # nothing then.
 virtio_net = { path = "../drivers/virtio/net" }
+# The table a caller finds a service by name in, and the request/completion
+# model a service answers through.
+service = { path = "../service" }
+async_io = { path = "../async_io" }

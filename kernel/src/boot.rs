@@ -119,6 +119,32 @@ pub fn kernel_main() -> ! {
     #[cfg(target_os = "none")]
     crate::tick::report_console();
 
+    // The service table: what this kernel offers by name, installed once and
+    // then closed.  Placed after the timer, because the clock service reads it,
+    // and before the programs, because a program's calls are what will use the
+    // table next.
+    #[cfg(target_os = "none")]
+    {
+        let installed = crate::service::install_all();
+        arch::serial::write_str("protofire: services installed = ");
+        arch::serial::write_u32(installed as u32);
+        arch::serial::write_str(", frozen\n");
+
+        // The self-test goes **through the table** rather than calling the
+        // service: a boot that called `Clock` directly would exercise none of
+        // what this change added.
+        match crate::service::read_the_clock() {
+            Some(reading) => {
+                arch::serial::write_str("protofire: clock service answered ");
+                arch::serial::write_hex(reading as u64);
+                arch::serial::write_str(" through the table\n");
+            }
+            None => {
+                arch::serial::write_str("protofire: clock service did not answer\n");
+            }
+        }
+    }
+
     // The network card, when the machine has one.  Placed here rather than with
     // the disk because nothing mounts on a network: the exchange is a self-test
     // of the two queues, and a machine without a card prints nothing and boots

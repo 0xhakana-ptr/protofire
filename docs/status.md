@@ -226,6 +226,41 @@ required non-zero on the AIA machine.
 
 A network stack above this is a different project.
 
+**Services.**  A table from a name to a service, installed during boot and
+frozen before anything looks one up; a caller asks for a name and drives what it
+gets through one trait, without knowing which crate implements it.  The first
+service in it is the clock, whose answer is the machine's own counter — so the
+boot shows the shape working end to end rather than only in host tests:
+
+```
+protofire: services installed = 1, frozen
+protofire: clock service answered 0x212ae78a through the table
+```
+
+The reading is hardware and not a constant: three boots answered `0x2167a7ec`,
+`0x22a11df2` and `0x2134f3b4`.
+
+Two defects were found building it, both in `async_io` and both by writing the
+test first:
+
+- **An interleaved submission lost its completion.**  `submit` counted only the
+  completions already in the queue, not the ones pending requests would produce,
+  so submitting after a poll could spend a slot twice; the transfer ran, the
+  device did the work, and `poll` dropped the completion with `let _ =`.  The
+  check is `completions + pending` now, and the two pushes that follow assert
+  their result instead of discarding it.
+- **The trait could not hand a completion back.**  `poll` answered `bool` and
+  each service kept its queue in a private field, so a `&mut dyn Service` could
+  be driven and never read.  `Service::take_completion` is the fourth method,
+  and the test for it is written over the trait object rather than a concrete
+  type — a generic bound would have passed without the trait being usable.
+
+What a service is **not**, yet: a device.  Every driver still submits through
+`block`'s `QueuedBlockDevice`, and the clock answers in the call and has no
+queue.  A process also cannot reach the table — that needs a syscall number
+(197, the first after the frozen range) and a descriptor variant, and it is a
+separate change.
+
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement
 follows a rule rather than the rotation: a task the asking CPU last ran is

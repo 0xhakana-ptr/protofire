@@ -27,8 +27,20 @@ Two layers are named and neither exists yet:
   moving one onto this trait is the step that would test the idea instead of
   describing it.
 
-The honest summary is: the model is written, tested and argued; the two things
-that would make it architecture rather than a design are not.  The section
+**One of the two layers has landed since this was written.**  `service/src/lib.rs`
+is the registry: a name, a handle, and a freeze that closes the table after the
+boot installs what it has.  Its first occupant is a clock in the kernel, whose
+answer is the machine's own counter — so the shape is no longer only argued, it
+is a boot that submits a request by name, drives a `dyn Service` through the
+trait, and prints the number that came back.
+
+What is still missing, and it is the larger half: a **device** behind the trait.
+The clock answers in the call and has no queue, so nothing yet exercises a
+service that completes later except the host tests.  `VirtioBlock` is the
+candidate and it is a real change — its `unsafe` buffer contract has to be
+described in a request that carries only two words.
+
+The section
 [The obligation the trait states and cannot enforce](#the-obligation-the-trait-states-and-cannot-enforce)
 already said a driver's version of the check is "a different gate and a later
 change" — this section is the same admission in the place a reader starts.

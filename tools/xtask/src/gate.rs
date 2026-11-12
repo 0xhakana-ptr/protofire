@@ -367,6 +367,14 @@ impl Machine {
                 // asked.  So requiring the line at all is requiring that the
                 // card sent a frame, received one, and that the one it received
                 // was addressed back to it.
+                // The service table, and one service reached through it.  The
+                // first line is the boot installing what it offers and closing
+                // the table; the second is a request submitted by **name**,
+                // driven through the trait, and answered with the machine's own
+                // counter.  A boot that printed the first without the second
+                // would have a table nothing could use.
+                ("protofire: services installed = ", false),
+                ("protofire: clock service answered ", false),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 (
@@ -774,6 +782,14 @@ impl Machine {
                     // question it asked.  So requiring the line at all is
                     // requiring that the card sent a frame, received one, and
                     // that the one it received was addressed back to it.
+                    // The service table, and one service reached through it.
+                    // The first line is the boot installing what it offers and
+                    // closing the table; the second is a request submitted by
+                    // **name**, driven through the trait, and answered with the
+                    // machine's own counter.  A boot that printed the first
+                    // without the second would have a table nothing could use.
+                    ("protofire: services installed = ", false),
+                    ("protofire: clock service answered ", false),
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
                     ("protofire: virtio-blk wrote and read back sector ", false),
@@ -863,6 +879,14 @@ impl Machine {
                 // asked.  So requiring the line at all is requiring that the
                 // card sent a frame, received one, and that the one it received
                 // was addressed back to it.
+                // The service table, and one service reached through it.  The
+                // first line is the boot installing what it offers and closing
+                // the table; the second is a request submitted by **name**,
+                // driven through the trait, and answered with the machine's own
+                // counter.  A boot that printed the first without the second
+                // would have a table nothing could use.
+                ("protofire: services installed = ", false),
+                ("protofire: clock service answered ", false),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 ("protofire: virtio-blk wrote and read back sector ", false),

@@ -68,6 +68,7 @@ pub mod policy;
 pub mod process;
 pub mod programs;
 pub mod scheduler;
+pub mod service;
 pub mod shootdown;
 pub mod syscall;
 pub mod tick;
