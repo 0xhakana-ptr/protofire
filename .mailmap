@@ -1,0 +1,49 @@
+# .mailmap
+#
+# Normalizes names and addresses for the tools that read history:
+# `git shortlog`, `git log` and `git blame` all apply this file, so a person
+# who committed under more than one address appears once.
+#
+# It records no contribution and assigns no responsibility.  `AUTHORS` is the
+# record of who took part and `MAINTAINERS` is who reviews what; this file only
+# makes the history agree with them.
+#
+# ## Writing an entry
+#
+# One entry per line.  The **left** side is what a reader should see; the
+# **right** side is what a commit says.  The forms, in the order they are
+# useful:
+#
+#   <proper@example.com> <old@example.com>
+#       Only the address is wrong: show the new one, keep the name the commit
+#       carried.
+#
+#   Proper Name <proper@example.com> <old@example.com>
+#       The address is wrong and the name belongs to it: show both new ones.
+#
+#   Proper Name <proper@example.com> Old Name <old@example.com>
+#       Both are wrong *and* the old name is used by somebody else, so the
+#       entry must match the pair and not the name alone.
+#
+#   Proper Name <proper@example.com>
+#       The one form with no right side: every commit from this address gets
+#       this name, whatever name it carried.
+#
+# Names and addresses match case-insensitively.  `#` starts a comment, blank
+# lines are ignored.
+#
+# ## Checking an entry
+#
+# `git check-mailmap` reads this file and answers the canonical form, so a
+# mapping is known to be in effect before it is committed:
+#
+#   git check-mailmap 'Old Name <old@example.com>'
+#
+# An entry is added in the same commit as the contribution that needs it.
+#
+# This history carries one address, so there is nothing to normalize yet.  What
+# is here is that address in its canonical form — the same line `AUTHORS`
+# carries — so the file has a real entry to be checked against rather than a
+# shape to be trusted.
+
+Raiden Lumine <2557597107@qq.com>
