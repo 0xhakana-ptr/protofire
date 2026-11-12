@@ -63,4 +63,21 @@ pub trait Service {
     /// has nowhere to put a completion for a request it cancelled would be
     /// leaking the token.
     fn cancel(&mut self, id: RequestId) -> bool;
+
+    /// Take one completion, if the service has one waiting.
+    ///
+    /// This is the method that makes a service **usable through the trait**.
+    /// Without it `poll` answered `bool` and the completions sat in whatever
+    /// queue the implementation happened to own, reachable only by naming that
+    /// implementation's own type: a registry holding `&mut dyn Service` could
+    /// drive a service and never learn what it finished.  Requiring the method
+    /// here is what lets one caller hold several services of different kinds
+    /// and treat their results the same way.
+    ///
+    /// The service owns the queue, not the caller: it is the thing that knows a
+    /// transfer finished, so it is the thing that holds the token until someone
+    /// asks for it.  Both existing implementations forward to a
+    /// [`CompletionQueue`](crate::queue::CompletionQueue) and differ only in
+    /// their name for it.
+    fn take_completion(&mut self) -> Option<Completion>;
 }

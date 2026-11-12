@@ -86,6 +86,10 @@ impl Service for DelayedService {
         let _ = self.completions.push(Completion::err(id, Error::Busy));
         true
     }
+
+    fn take_completion(&mut self) -> Option<Completion> {
+        self.completions.pop()
+    }
 }
 
 /// A request that is finished in the call never reaches the queue.
@@ -172,4 +176,43 @@ fn every_accepted_request_is_completed() {
         completed += 1;
     }
     assert_eq!(completed, submitted as usize);
+}
+
+/// A caller holding `&mut dyn Service` can drive it and take its completions.
+///
+/// This is the property the trait exists for and the one it did not have: with
+/// `poll` returning only `bool` and the completions in a queue named by each
+/// implementation's own type, a caller that held a service as a trait object
+/// could make progress and never learn what finished.  A registry of services
+/// is exactly such a caller.
+///
+/// `&mut dyn Service` rather than a generic parameter deliberately: a generic
+/// bound can be satisfied by a concrete type again, and such a test would pass
+/// even if the trait had no way to hand a completion over.
+#[test]
+fn a_dyn_service_hands_its_completions_over() {
+    let mut first = DelayedService::new(1, 4);
+    let mut second = DelayedService::new(2, 4);
+
+    // Two services of the same kind, held as trait objects: the point is the
+    // caller cannot name either one's type, which is what a registry does when
+    // it holds services of different kinds behind one handle.
+    let services: [&mut dyn Service; 2] = [&mut first, &mut second];
+    for (index, service) in services.into_iter().enumerate() {
+        let id = RequestId::new(index as u64);
+        assert!(
+            service.submit(Request::pending(id)).is_none(),
+            "a delayed service accepts and waits"
+        );
+        // Enough polls for the slower of the two delays.
+        let mut completions = 0;
+        for _ in 0..8 {
+            service.poll();
+            while let Some(completion) = service.take_completion() {
+                assert_eq!(completion.id, id, "the token comes back unchanged");
+                completions += 1;
+            }
+        }
+        assert_eq!(completions, 1, "exactly one completion through the trait");
+    }
 }

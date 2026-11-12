@@ -273,6 +273,17 @@ impl Service for MemoryBlockService {
         );
         true
     }
+
+    /// Forward to [`MemoryBlockService::take_completion`].
+    ///
+    /// The inherent method came first, because a concrete caller could name it.
+    /// The trait now requires the same thing, and forwarding rather than
+    /// duplicating means one implementation serves both: a caller holding
+    /// `&mut dyn Service` and a caller holding the concrete type drain the same
+    /// queue through the same code.
+    fn take_completion(&mut self) -> Option<Completion> {
+        MemoryBlockService::take_completion(self)
+    }
 }
 
 impl BlockOp {
