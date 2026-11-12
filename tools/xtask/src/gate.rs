@@ -375,6 +375,17 @@ impl Machine {
                 // would have a table nothing could use.
                 ("protofire: services installed = ", false),
                 ("protofire: clock service answered ", false),
+                // The memory calls, answered by the kernel because a program
+                // cannot print a value.  `67` is `Mmap` and `92` is `Brk`; the
+                // numbers are the ABI's, so the line is also a check that the
+                // program's own constants reached the calls they name.
+                //
+                // Both addresses have to be inside the program's window, and
+                // the mapping's is **not** an error code: a kernel that refused
+                // the call would print an encoding whose high bit is set, and
+                // the two lines would still be there.
+                ("protofire: program memory call 67 answered 0x80", false),
+                ("protofire: program memory call 92 answered 0x80", false),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 (
@@ -790,6 +801,18 @@ impl Machine {
                     // without the second would have a table nothing could use.
                     ("protofire: services installed = ", false),
                     ("protofire: clock service answered ", false),
+                    // The memory calls, answered by the kernel because a
+                    // program cannot print a value.  `67` is `Mmap` and `92` is
+                    // `Brk`; the numbers are the ABI's, so the line is also a
+                    // check that the program's own constants reached the calls
+                    // they name.
+                    //
+                    // Both addresses have to be inside the program's window,
+                    // and the mapping's is **not** an error code: a kernel that
+                    // refused the call would print an encoding whose high bit
+                    // is set, and the two lines would still be there.
+                    ("protofire: program memory call 67 answered 0x80", false),
+                    ("protofire: program memory call 92 answered 0x80", false),
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
                     ("protofire: virtio-blk wrote and read back sector ", false),
@@ -887,6 +910,17 @@ impl Machine {
                 // would have a table nothing could use.
                 ("protofire: services installed = ", false),
                 ("protofire: clock service answered ", false),
+                // The memory calls, answered by the kernel because a program
+                // cannot print a value.  `67` is `Mmap` and `92` is `Brk`; the
+                // numbers are the ABI's, so the line is also a check that the
+                // program's own constants reached the calls they name.
+                //
+                // Both addresses have to be inside the program's window, and
+                // the mapping's is **not** an error code: a kernel that refused
+                // the call would print an encoding whose high bit is set, and
+                // the two lines would still be there.
+                ("protofire: program memory call 67 answered 0x80", false),
+                ("protofire: program memory call 92 answered 0x80", false),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 ("protofire: virtio-blk wrote and read back sector ", false),

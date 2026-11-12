@@ -208,6 +208,21 @@ The calls a ring-3 program can make today, and the slots each carries.
 - **`Close`** — `a0` the descriptor; `a1`-`a5` reserved zero.
 - **`ExecProcess`** — `a0` the path, a NUL-terminated string in the caller's
   memory naming the file the process becomes; `a1`-`a5` reserved zero.
+- **`Mmap`** — `a0` an address hint, or zero for "anywhere"; `a1` the length in
+  bytes; `a2` a `PROT_*` set; `a3` a `MAP_*` set that has to name anonymous
+  private memory; `a4`-`a5` reserved zero.  Answers the base address, which is
+  page-aligned and inside the caller's window.
+- **`Munmap`** — `a0` the address; `a1` the length in bytes; `a2`-`a5` reserved
+  zero.  Both are rounded to pages, and the answer is how many were taken away.
+- **`Brk`** — `a0` the new break, or zero to ask what it is; `a1`-`a5` reserved
+  zero.  Answers the break the kernel now holds, so a caller that asked for more
+  than it can have learns what it actually got.
+- **`ReclaimPages`** — `a0` how many pages the caller would like back, or zero
+  for as many as will go; `a1`-`a5` reserved zero.  Answers how many came back.
+
+The four memory calls take **no pointer**: every argument is a value, which is
+why they are the first calls a program can make that change its own address
+space without the kernel copying anything in or out.
 
 `Read`'s buffer and length travel in slots because a ring-3 caller has no
 borrow to hand over; the kernel's own callers leave both zero and pass the

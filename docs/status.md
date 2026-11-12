@@ -323,6 +323,41 @@ None of these is a service-layer change: they are the memory and process layers
 underneath it.  Recorded here so the next reader does not read "the table landed"
 as "the direction is nearly done".
 
+**Memory.**  A program can ask for memory and get it.  `Mmap`, `Munmap`, `Brk`
+and `ReclaimPages` are served from ring 3 — four numbers that had none — and the
+boot shows a program using two of them:
+
+```
+protofire: program memory call 67 answered 0x807ffff000
+protofire: program memory call 92 answered 0x8040003000
+```
+
+`67` is `Mmap` and `92` is `Brk`.  The mapping's base is the last page of init's
+own window — reservations count **down** from the top, because the image starts
+at the window's base, its stack is one page above the image, and `Brk` grows up
+from the stack; growing mappings down from the top keeps the two ends apart.  The
+break is one page past that stack.  Both are addresses the kernel computed from
+the program's own layout, and a kernel that had mapped nothing could not name
+either — which is why the two lines are the evidence and not the fact that the
+call returned.
+
+The store is the other half: init writes a byte into the page it was given, and
+the boot reaches its exit status.  A mapping the kernel reported but did not make
+would fault there instead.
+
+`AddressSpace` changed to make room: the frame list was a fixed array sized by
+what an **image** may weigh, and a heap has nothing to do with an image's size.
+It is a `Vec` now and the bounds are two — `MAX_IMAGE_FRAMES` (65) for the
+loader's budget and `MAX_OWNED_FRAMES` (4096) for what one space may hold.
+
+**Raising that bound was not enough to raise it.**  Two stack arrays had been
+sized by it while it was 65: `fork_from`'s page list (98 KiB at 4096) and the
+exec path's (32 KiB).  The kernel stack has neither, and every riscv64 boot died
+with a store page fault three frames below `USER_BASE` — reported as
+`unhandled exception ... on cpu 4294967295`, because the fault had already
+destroyed the register that names the CPU.  Both are sized by the image bound
+now, which is the set of pages each actually describes.
+
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement
 follows a rule rather than the rotation: a task the asking CPU last ran is

@@ -818,7 +818,25 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        return through_registry(&mut context, None, None);
+        let outcome = through_registry(&mut context, None, None);
+        // The answer, printed by the kernel because a program has no way to
+        // print one: `Write` prints a fixed line, so a value a program obtained
+        // would otherwise reach this log only through its exit status — and an
+        // exit status is one byte.
+        //
+        // The pair of lines is the evidence that the call went **through the
+        // page tables** rather than returning a plausible number: `mmap`'s base
+        // and `brk`'s answer are addresses inside the program's own window, and
+        // a kernel that had not mapped anything could not name them.
+        if let CallOutcome::Return(answer) = outcome {
+            let is_error = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: program memory call ");
+            arch::serial::write_u32(number as u32);
+            arch::serial::write_str(" answered ");
+            arch::serial::write_hex(answer as u64);
+            arch::serial::write_str(if is_error { " (error)\n" } else { "\n" });
+        }
+        return outcome;
     }
 
     // Everything else is a call this boot does not serve.  `encode_error` is

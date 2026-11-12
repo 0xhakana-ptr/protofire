@@ -54,6 +54,26 @@ const SYS_READ: usize = 5;
 const SYS_CLOSE: usize = 7;
 #[cfg(target_os = "none")]
 const SYS_EXIT: usize = 3;
+/// `Mmap`, and the only two of its arguments this program varies.
+///
+/// The numbers are the ABI's, spelled here for the same reason the file's
+/// others are: a program compiles against the numbering and not against the
+/// kernel's crate.
+#[cfg(target_os = "none")]
+const SYS_MMAP: usize = 67;
+#[cfg(target_os = "none")]
+const SYS_BRK: usize = 92;
+/// Readable and writable, which is what a mapping this program stores into
+/// needs.  Not executable: the kernel refuses write-xor-execute together, and
+/// a page of data is not a page of code.
+#[cfg(target_os = "none")]
+const PROT_READ_WRITE: usize = 1 | 2;
+/// Anonymous private memory: the only kind this kernel maps.
+#[cfg(target_os = "none")]
+const MAP_ANONYMOUS_PRIVATE: usize = 0x20 | 0x02;
+/// One page, which is the smallest mapping worth asking for.
+#[cfg(target_os = "none")]
+const MMAP_BYTES: usize = 4096;
 
 /// `open(path, OPEN_FLAG_READ)`: the descriptor, or the ABI's error encoding.
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -106,6 +126,60 @@ fn sys_close(descriptor: usize) {
             options(nostack)
         );
     }
+}
+
+/// `mmap(hint, length, prot, flags)`: the base address, or an error encoding.
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn sys_mmap(hint: usize, length: usize, protection: usize, flags: usize) -> usize {
+    let number = SYS_MMAP as u64;
+    let answer: u64;
+    // SAFETY: `int 0x80` with the arguments in the registers the ABI names;
+    // the kernel validates every one of them and answers with a value.
+    unsafe {
+        asm!(
+            "int 0x80",
+            inlateout("rax") number => answer,
+            in("rdi") hint as u64,
+            in("rsi") length as u64,
+            in("rdx") protection as u64,
+            // `int 0x80`, so the fourth argument is `rcx` and not `r10`: the
+            // tree's call gate is the interrupt, and the trap entry reads the
+            // six words from `rdi, rsi, rdx, rcx, r8, r9`.  Writing `r10` put
+            // the flags where nothing reads them, and every call was refused
+            // as `InvalidArgument` — measured, both calls answered `-1` on
+            // x86_64 while the other two machines were fine.
+            in("rcx") flags as u64,
+            in("r8") 0u64,
+            in("r9") 0u64,
+            options(nostack)
+        );
+    }
+    answer as usize
+}
+
+/// `brk(new_break)`: the break the kernel now holds.
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn sys_brk(requested: usize) -> usize {
+    let number = SYS_BRK as u64;
+    let answer: u64;
+    // SAFETY: as `sys_mmap`.
+    unsafe {
+        asm!(
+            "int 0x80",
+            inlateout("rax") number => answer,
+            in("rdi") requested as u64,
+            // The ABI requires the unused slots to be zero, and a register
+            // holds whatever the last code left in it: a call that left them
+            // alone was refused as "a reserved argument that is not zero".
+            in("rsi") 0u64,
+            in("rdx") 0u64,
+            in("rcx") 0u64,
+            in("r8") 0u64,
+            in("r9") 0u64,
+            options(nostack)
+        );
+    }
+    answer as usize
 }
 
 /// `exit(status)`: control does not come back.
@@ -169,6 +243,49 @@ fn sys_close(descriptor: usize) {
 }
 
 /// `exit(status)`: control does not come back.
+/// `mmap(hint, length, prot, flags)`: the base address, or an error encoding.
+#[cfg(all(target_os = "none", target_arch = "aarch64"))]
+fn sys_mmap(hint: usize, length: usize, protection: usize, flags: usize) -> usize {
+    let answer: usize;
+    // SAFETY: `svc #0` with the arguments in the registers the ABI names.
+    unsafe {
+        asm!(
+            "svc #0",
+            in("x8") SYS_MMAP,
+            inlateout("x0") hint => answer,
+            in("x1") length,
+            in("x2") protection,
+            in("x3") flags,
+            in("x4") 0usize,
+            in("x5") 0usize,
+            options(nostack)
+        );
+    }
+    answer
+}
+
+/// `brk(new_break)`: the break the kernel now holds.
+#[cfg(all(target_os = "none", target_arch = "aarch64"))]
+fn sys_brk(requested: usize) -> usize {
+    let answer: usize;
+    // SAFETY: as `sys_mmap`.
+    unsafe {
+        asm!(
+            "svc #0",
+            in("x8") SYS_BRK,
+            inlateout("x0") requested => answer,
+            // Unused slots zero, for the reason the x86_64 arm gives.
+            in("x1") 0usize,
+            in("x2") 0usize,
+            in("x3") 0usize,
+            in("x4") 0usize,
+            in("x5") 0usize,
+            options(nostack)
+        );
+    }
+    answer
+}
+
 #[cfg(all(target_os = "none", target_arch = "aarch64"))]
 fn sys_exit(status: usize) -> ! {
     unsafe {
@@ -229,6 +346,49 @@ fn sys_close(descriptor: usize) {
 }
 
 /// `exit(status)`: control does not come back.
+/// `mmap(hint, length, prot, flags)`: the base address, or an error encoding.
+#[cfg(all(target_os = "none", target_arch = "riscv64"))]
+fn sys_mmap(hint: usize, length: usize, protection: usize, flags: usize) -> usize {
+    let answer: usize;
+    // SAFETY: `ecall` with the arguments in the registers the ABI names.
+    unsafe {
+        asm!(
+            "ecall",
+            in("a7") SYS_MMAP,
+            inlateout("a0") hint => answer,
+            in("a1") length,
+            in("a2") protection,
+            in("a3") flags,
+            in("a4") 0usize,
+            in("a5") 0usize,
+            options(nostack)
+        );
+    }
+    answer
+}
+
+/// `brk(new_break)`: the break the kernel now holds.
+#[cfg(all(target_os = "none", target_arch = "riscv64"))]
+fn sys_brk(requested: usize) -> usize {
+    let answer: usize;
+    // SAFETY: as `sys_mmap`.
+    unsafe {
+        asm!(
+            "ecall",
+            in("a7") SYS_BRK,
+            inlateout("a0") requested => answer,
+            // Unused slots zero, for the reason the x86_64 arm gives.
+            in("a1") 0usize,
+            in("a2") 0usize,
+            in("a3") 0usize,
+            in("a4") 0usize,
+            in("a5") 0usize,
+            options(nostack)
+        );
+    }
+    answer
+}
+
 #[cfg(all(target_os = "none", target_arch = "riscv64"))]
 fn sys_exit(status: usize) -> ! {
     unsafe {
@@ -274,7 +434,38 @@ pub extern "C" fn _start() -> ! {
     let path = GREETING_PATH.as_ptr() as usize;
     let descriptor = sys_open(path);
     let first = read_first_byte(descriptor, &mut buffer);
+
+    // Two memory calls, and the kernel prints both answers.
+    //
+    // A program here cannot print a value — `Write` prints a fixed line — so
+    // the evidence for these is the kernel's own line beside each answer.  What
+    // makes the pair worth having is that neither number can be invented: the
+    // mapping's base is inside this program's window and the break is past its
+    // own stack, and a kernel that had mapped nothing could not name either.
+    //
+    // The **store** is the part that proves the mapping is real: a page the
+    // kernel reported but did not map faults here, and the boot would show the
+    // fault instead of the exit status.
+    let mapping = sys_mmap(0, MMAP_BYTES, PROT_READ_WRITE, MAP_ANONYMOUS_PRIVATE);
+    if mapping != 0 && !is_error(mapping) {
+        // SAFETY: the kernel just answered with a base it mapped writable for
+        // this program, one page long, which is what this program asked for.
+        unsafe { core::ptr::write_volatile(mapping as *mut u8, first as u8) };
+    }
+    let break_now = sys_brk(0);
+    let _ = break_now;
+
     sys_exit(first)
+}
+
+/// Whether a syscall's answer is the ABI's error encoding.
+///
+/// The ABI encodes an error as a word with its high bit set, which is the one
+/// test a program needs: a successful answer is a small positive number — a
+/// descriptor, a count, an address inside the user window.
+#[cfg(target_os = "none")]
+const fn is_error(answer: usize) -> bool {
+    answer & (1 << (usize::BITS - 1)) != 0
 }
 
 /// Read the file and answer its first byte, closing the descriptor on the way

@@ -26,7 +26,7 @@ grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
 As of the commit that added this file: **39 crates, 87,492 lines, 832 tests**,
-four machines booting, and **18 of 195 syscall numbers served**.
+four machines booting, and **22 of 195 syscall numbers served**.
 
 ---
 
@@ -106,7 +106,7 @@ missing capability is design and code, a missing syscall is wiring.
 | **write a file** | yes, `VNode::write` | **no** — `Write` prints to the console |
 | **create, remove, rename** | yes, PyroFS has all of it | **no** — no syscall at all |
 | **list a directory, stat** | yes | **no** |
-| **allocate memory** | yes, the heap | **no** — `Brk`, `Mmap`, `Munmap`, `ReclaimPages` are unimplemented |
+| allocate memory | yes, the heap | **yes** — `Mmap`, `Munmap`, `Brk`, `ReclaimPages` |
 | start a process | yes | only the boot's own `ExecProcess` |
 | fork, wait, pipe | yes | yes |
 | **signals** | no | no — five numbers, all empty |
@@ -145,16 +145,18 @@ shows the command.
 Each level depends on the one above it.  Nothing here is scheduled; the order is
 what the dependencies say, not a plan of work.
 
-### Level 1 — memory, because nothing else can be built on nothing
+### Level 1 — memory — **done**
 
-`Brk`, or `Mmap` and `Munmap` (`ReclaimPages` alongside).  Four numbers and no
-implementation anywhere.  Until a program can obtain memory beyond what the
-loader gave it, every structure it builds is bounded by the image.
+`Mmap`, `Munmap`, `Brk` and `ReclaimPages` are served, and a program maps a page,
+writes into it and reads its own break back.  `docs/status.md` carries the boot
+lines; the two facts worth keeping here are that reservations count down from the
+window's top (the image and its stack own the bottom) and that raising the
+ownership bound needed two stack arrays resized with it, which is what the first
+attempt to raise it discovered.
 
-This is the hardest level in this list, and the reason is that
-`kernel/src/address_space/` is one of the few places a mistake is a triple fault
-rather than a failing test.  `AGENTS.md` lists the address-space activation path
-as a "ask first" boundary, and this work is exactly that path.
+What is still not here: **shared memory**.  `ShmGet` and its three siblings are
+separate numbers and a separate problem — two processes naming one region — and
+they are not part of what this level promised.
 
 ### Level 2 — the filesystem interface
 
