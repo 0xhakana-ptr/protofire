@@ -2,6 +2,16 @@
 //!
 //! A table from a name to a service, and the rule that keeps it a table.
 //!
+//! ## Parked on purpose
+//!
+//! This crate is built and tested, and **nothing further should be added to it
+//! without deciding it is time for "everything is a service"**.  That direction
+//! is for later; the table exists so it has a base when it is reached.  What
+//! makes that a decision rather than a note: no driver implements
+//! [`async_io::Service`], no syscall reaches this table, and the ring-3 half
+//! ([`apps/service_manager`](../../apps/service_manager)) is still a shell.
+//! `docs/status.md` carries the reasoning and the prerequisites.
+//!
 //! ## What a service is, here
 //!
 //! [`async_io::Service`]: a thing that accepts a request and completes it

@@ -226,9 +226,10 @@ required non-zero on the AIA machine.
 
 A network stack above this is a different project.
 
-**Services.**  A table from a name to a service, installed during boot and
-frozen before anything looks one up; a caller asks for a name and drives what it
-gets through one trait, without knowing which crate implements it.  The first
+**Services — built, and deliberately parked.**  A table from a name to a
+service, installed during boot and frozen before anything looks one up; a caller
+asks for a name and drives what it gets through one trait, without knowing which
+crate implements it.  The first
 service in it is the clock, whose answer is the machine's own counter — so the
 boot shows the shape working end to end rather than only in host tests:
 
@@ -275,6 +276,27 @@ list is this boot's content, the same division as `fs`'s `MountTable` and
 What a service is **not**, yet: a device.  Every driver still submits through
 `block`'s `QueuedBlockDevice`, and the clock answers in the call and has no
 queue, so nothing in a boot exercises the *pending* half of the model.
+
+**This is parked on purpose, not half-finished in the way.**  "Everything is a
+service" is a direction for later, and the work above exists so the direction has
+a base when it is reached — not because it is the next thing to build.  It landed
+early: `async_io` was being reviewed for whether it should exist at all with no
+caller, and the answer "keep it, and here is the layer it is missing" turned into
+building that layer.  The reasoning was sound and the result is gate-green, but
+the *timing* was not the plan.
+
+So: nothing below is scheduled, and no further work on the service layer should
+be started without deciding it is time.  In particular:
+
+- **No driver implements `Service`.**  `VirtioBlock` stays on
+  `QueuedBlockDevice`, which works and has a caller.
+- **No syscall reaches the table.**  Number 197 stays unassigned.
+- **`apps/service_manager` stays a shell.**  It is the ring-3 half, and it is the
+  half that matters when this direction is picked up.
+
+The four items this section lists below are the prerequisites for that half, and
+they are prerequisites for a userland of any shape — which is why they are worth
+reading whether or not this direction is taken.
 
 ### What the user-space half still needs
 

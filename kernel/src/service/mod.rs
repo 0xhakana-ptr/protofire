@@ -3,6 +3,10 @@
 //! The boot's side of the service table: what it installs, in what order, and
 //! the freeze that closes it.
 //!
+//! **Parked on purpose.**  The clock is the one service, and it is here to show
+//! the table working end to end — not as the start of a list that should grow
+//! now.  `docs/status.md` says why, and what has to exist before it resumes.
+//!
 //! ## Why the boot installs and the crate does not
 //!
 //! `service` knows how to hold a table; only the boot knows which services this
