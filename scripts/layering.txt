@@ -202,6 +202,20 @@
 # the framework is above the bus — layer 6.
 6 virtio_core
 
+# `service` is the table from a name to a service: what a caller asks for when
+# it does not know, and must not need to know, which crate implements the thing
+# it wants.  It names `async_io` (2) for the trait it stores and `sync` (5) for
+# the lock a lookup takes, so it cannot sit below `sync` — and it must sit below
+# its callers, which are the kernel and, later, the drivers that install a
+# service of their own.
+#
+# Layer 7 rather than 6 for the reason `pci` is at 5 and `virtio_core` at 6: it
+# is *named by* the drivers as well as by the kernel, and a table the kernel
+# installs into and a driver looks up from has to be under both.  What it does
+# not do is name a driver back — a service arrives through `install`, which is
+# a call, not a dependency.
+7 service
+
 # `virtio_block` is the block device on that framework: a request header, a
 # data buffer, a status byte, and the two block traits over them.  It names
 # `virtio_core` for the queue and `block` for the interface it answers, so it

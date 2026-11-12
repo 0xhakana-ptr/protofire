@@ -27,7 +27,7 @@ extracted yet.
      9   kernel                                        the core
   5-8   syscall, pci, e1000, sound, virt, fs, net,
          security, allocator, virtio_core, virtio_block,
-         virtio_net
+         virtio_net, service
      4-5  arch, block, memory, sync                     the route, the disk
                                                          interface, the frames,
                                                          the lock

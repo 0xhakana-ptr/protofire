@@ -1,0 +1,18 @@
+[package]
+name = "service"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The table from a name to a service, and the freeze that keeps it a boot-time
+# table rather than a place anything can write at any time.
+#
+# It names `async_io` for the trait it stores, `sync` for the lock a lookup
+# takes, and `abi` for nothing yet — the error it answers an installation with
+# is its own enum, because "the name is taken" is not an error a syscall has to
+# be able to report.
+[dependencies]
+abi.workspace = true
+async_io = { path = "../async_io" }
+sync = { path = "../libs/sync" }

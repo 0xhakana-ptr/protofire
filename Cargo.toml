@@ -16,6 +16,7 @@ members = [
     "net",
     "power",
     "security",
+    "service",
     "sound",
     "syscall",
     "virt",
