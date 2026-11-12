@@ -695,6 +695,17 @@ pub fn report_and_finish() -> ! {
     );
     arch::serial::write_str("\n");
 
+    // The network card's, on its own line and its own identity.  Two counts
+    // rather than one total because two devices are the claim: a sum would say
+    // a message arrived without saying which device sent it, and a boot whose
+    // card never delivered one while the disk delivered two would read as
+    // three.
+    arch::serial::write_str("protofire: network message(s) taken = ");
+    arch::serial::write_u32(
+        crate::NETWORK_MESSAGES.load(core::sync::atomic::Ordering::Acquire) as u32,
+    );
+    arch::serial::write_str("\n");
+
     // A boot that gave up waiting says so, and says on how many CPUs.  This is
     // the line that turns "the machine ended" from an assumption into a fact
     // with a number: zero is a boot where every CPU confirmed, and a count is a

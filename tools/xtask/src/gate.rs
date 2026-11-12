@@ -263,10 +263,17 @@ impl Machine {
     pub(crate) fn nonzero_lines(self) -> &'static [&'static str] {
         match self {
             Self::X8664 | Self::Aarch64 | Self::Riscv64 => &[],
-            // The block device's completion messages.  This is the line a boot
-            // whose wiring ran before the driver's reset prints as `= 0`, which
-            // is the defect this gate exists to catch.
-            Self::Riscv64Aia => &["protofire: block completion message(s) taken = "],
+            // The two devices' messages.  The block device's line is the one a
+            // boot whose wiring ran before the driver's reset prints as `= 0`,
+            // which is the defect this gate exists to catch.  The card's is
+            // the second identity in the same table: two devices, two bits in
+            // the file, two handlers, and each count is its own — a boot that
+            // took one device's message and not the other's fails here rather
+            // than passing on a total.
+            Self::Riscv64Aia => &[
+                "protofire: block completion message(s) taken = ",
+                "protofire: network message(s) taken = ",
+            ],
         }
     }
 
@@ -867,6 +874,12 @@ impl Machine {
                 // absent — the AIA machine's own boot is where a non-zero
                 // count is evidence, and no gate machine has an IMSIC yet.
                 ("protofire: block completion message(s) taken = ", false),
+                // The card's own count, on its own identity.  Every machine
+                // prints it; the AIA machine is where a non-zero number is
+                // evidence, and it is a separate line from the block device's
+                // so that one device's delivery cannot stand in for the
+                // other's.
+                ("protofire: network message(s) taken = ", false),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,

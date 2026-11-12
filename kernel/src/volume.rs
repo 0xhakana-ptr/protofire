@@ -153,7 +153,12 @@ fn attach_device(
             // do differently: a machine whose tree names no IMSIC answers
             // `false`, and the driver polls either way.  The line the wiring
             // prints is the evidence for a reader.
-            let _ = crate::devices::wire_block_message_interrupt(&found);
+            #[cfg(target_os = "none")]
+            let _ = crate::devices::wire_device_message(
+                &found,
+                crate::devices::BLOCK_MESSAGE,
+                crate::devices::note_block_message_interrupt,
+            );
             (device, SOURCE_VIRTIO)
         }
         None => {

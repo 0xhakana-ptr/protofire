@@ -149,17 +149,53 @@ found because each was invisible to a host test and to every register read-back:
   bytes of a buffer whose header the driver wrote as ten.  Two more probes
   pinned the number — a header descriptor declaring eight bytes shifted the
   frame to `4, 5, 6, …`, and a single buffer with twelve leading zeros
-  delivered it whole.  `docs/virtio-net.md` carries the sequence.
+  delivered it whole.  The driver writes twelve now, and
+  `drivers/virtio/net/src/header.rs` records which measurement decided it.
 - **The receive path stripped the wrong header.**  With the card writing twelve
   bytes and the driver reading ten, the reply was on the wire — captured with
   QEMU's `filter-dump` — while the driver parsed the frame four bytes into its
   own ARP message and reported it as not an ARP.
 
-What the card does not have: an interrupt of its own.  The receive queue
-completes through the driver's polling, so the IMSIC still claims exactly one
-device's message — the block device's, on identity 200.  Giving the card a
-second identity is `docs/virtio-net.md`'s step 4; a network stack above this is
-a different project.
+**The card's receive queue has its own message, and it is the second identity in
+the same table.**  On `riscv64-aia` both devices wire a queue to an IMSIC
+identity — the block device's transmit queue to 200, the card's receive queue to
+201 — and the boot reports each device's count on its own line:
+
+```
+protofire: block message wired to imsic page 0x28000000, identity 200, vector 2, queue 0
+protofire: net message wired to imsic page 0x28000000, identity 201, vector 2, queue 0
+protofire: block completion message(s) taken = 2
+protofire: network message(s) taken = 1
+```
+
+Two counts rather than one total is the claim: a sum would say a message
+arrived without saying which device sent it.  The gate requires both lines
+non-zero on this machine, so a boot that took one device's message and not the
+other's fails rather than passing on a total.
+
+**The wiring is one function for both devices now.**  It was a block-device
+function that named identity 200, vector 2 and queue 0 in its body; the card
+would have been a second copy of the table arithmetic, and a second copy is a
+second place the same bug can hide.  `MessagePlan` carries the three numbers and
+a name, `wire_device_message` carries the mechanism, and each device names its
+own handler — a function pointer, because the registry stores one and the trap
+path hands it the identity.  The compile-time assertions moved onto the list of
+plans, which is also the only place a **pair** of devices can be checked for
+sharing an identity: a per-device pair of assertions could not see the
+collision.
+
+**The independence was measured, not assumed.**  With the card's queue vector
+left unset — a control that leaves the block device's wiring untouched — the
+boot printed `net message wiring refused: ..., queue vector cleared, identity
+enabled` and `network message(s) taken = 0`, while `block completion message(s)
+taken = 2` did not move.  That is the evidence that the card's 1 is its own
+queue's message, and not the block device's count reaching a second counter by
+accident.  A first attempt at this control moved the card's *vector number*
+instead of failing the write, and the count stayed at 1 — a vector a device is
+told about is a vector it sends to, whatever number it is, so the control had
+not disconnected anything.
+
+A network stack above this is a different project.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement

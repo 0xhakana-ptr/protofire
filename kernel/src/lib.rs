@@ -153,6 +153,21 @@ pub fn note_block_message_interrupt() {
     BLOCK_MESSAGES.fetch_add(1, core::sync::atomic::Ordering::Release);
 }
 
+/// How many messages the network card's receive queue has delivered.
+///
+/// A separate count from the block device's because they are separate
+/// identities and separate bits: one total over both would say a boot took a
+/// message without saying which device sent it, and the two are the whole
+/// question when a table has two entries in it.
+pub static NETWORK_MESSAGES: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Count one message from the network card.
+#[cfg(target_os = "none")]
+pub fn note_network_message_interrupt() {
+    NETWORK_MESSAGES.fetch_add(1, core::sync::atomic::Ordering::Release);
+}
+
 /// Stop this CPU.
 ///
 /// Delegated to the architecture crate: the instructions belong there, and this

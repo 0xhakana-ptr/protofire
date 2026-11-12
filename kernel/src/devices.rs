@@ -187,8 +187,14 @@ const MAX_FUNCTIONS: usize = 64;
 /// not descend into.
 const BUS_COUNT: u8 = 1;
 
-/// A block device found on the PCI bus, ready to be mounted.
-pub struct FoundBlockDevice {
+/// A virtio function found on the PCI bus, ready for its driver.
+///
+/// One type for both devices because what a boot has, after the scan, is the
+/// same three things whatever the function does: the transport its driver
+/// submits through, the PCI address its message table hangs off, and the
+/// configuration space that answers questions about it.  A second struct per
+/// device would have carried three identical fields and a name.
+pub struct FoundVirtio {
     pub transport: Arc<virtio_core::PciTransport>,
     pub device: Device,
     /// The bus's configuration space, for a caller that has to ask the
@@ -197,23 +203,60 @@ pub struct FoundBlockDevice {
     pub config: Arc<dyn ConfigSpace>,
 }
 
-/// The identity the block device's completion message carries.
+/// Where one device's message is armed: which identity it carries, and which
+/// MSI-X vector carries it.
 ///
-/// One per device, chosen by the boot because a message's identity is the
-/// kernel's numbering and not the device's: an MSI-X table entry is
-/// `(address, word)` and the word is whatever the driver put there.  It is
-/// above the wired sources an APLIC owns (this machine declares 96) so it
+/// The numbers are the boot's because a message's identity is the kernel's
+/// numbering and not the device's: an MSI-X table entry is `(address, word)`
+/// and the word is whatever the driver put there.  Choosing them here, once
+/// per device, is what makes a colliding pair a compile-time question rather
+/// than a delivery that served two drivers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessagePlan {
+    /// The identity the message carries into the IMSIC file.
+    pub identity: u32,
+    /// The MSI-X vector the device's queue is mapped to.
+    pub vector: u16,
+    /// The queue whose completions this message reports.
+    pub queue: u16,
+    /// A word for the line the wiring prints, so a reader can tell two
+    /// devices' lines apart.
+    pub name: &'static str,
+}
+
+/// The block device's completion message.
+///
+/// Above the wired sources an APLIC owns (this machine declares 96) so it
 /// cannot be confused with one, and below the identity the IMSIC self-test
 /// takes (one past the last), so the two never share a pending bit.
-pub const BLOCK_MESSAGE_IDENTITY: u32 = 200;
+pub const BLOCK_MESSAGE: MessagePlan = MessagePlan {
+    identity: 200,
+    // Vector zero is reserved for the device's configuration-change message,
+    // which this tree does not use; the queue gets the next one.
+    vector: 2,
+    queue: virtio_block::REQUEST_QUEUE,
+    name: "block",
+};
 
-/// The MSI-X vector the block queue's completions are mapped to.
+/// The network card's receive message.
 ///
-/// Vector zero is reserved for the device's configuration-change message,
-/// which this tree does not use; the queue gets the next one.
-pub const BLOCK_MESSAGE_VECTOR: u16 = 2;
+/// Receive is the queue a message is worth having for: a frame arriving is the
+/// event a driver cannot poll for cheaply, because it has nothing to check
+/// until one does.  Transmit completes into the driver's own count and needs
+/// no message.
+///
+/// The identity is the block device's plus one, which is the whole of the
+/// numbering: two devices, two bits in the file, two entries in the handler
+/// table.  It stays below the self-test's 254 for the reason the block
+/// device's does.
+pub const NETWORK_MESSAGE: MessagePlan = MessagePlan {
+    identity: 201,
+    vector: 2,
+    queue: virtio_net::RECEIVE_QUEUE,
+    name: "net",
+};
 
-/// Wire the block device's completion interrupt to this machine's IMSIC.
+/// Wire one device's queue completion to this machine's IMSIC.
 ///
 /// ## Why this runs after the driver is built
 ///
@@ -227,20 +270,36 @@ pub const BLOCK_MESSAGE_VECTOR: u16 = 2;
 /// and after it **8 of 8**, with every step of the wiring reading back what it
 /// wrote in both runs.
 ///
+/// ## Why the plan is a parameter and the handler is not
+///
+/// The numbers differ per device and the mechanism does not, so the numbers
+/// are [`MessagePlan`] and the mechanism is this function.  A second copy of
+/// it for the network card was the alternative, and it would have been the
+/// second place a bug in the table arithmetic could hide.
+///
+/// The handler is separate because it has to be a `fn`, not a closure: the
+/// registry stores a function pointer, and an identity is what the trap path
+/// hands it.  So each device names its own counter and this function registers
+/// it under the identity from the plan.
+///
 /// ## What it returns
 ///
 /// The line it prints is the evidence, and every fact on it was read back from
 /// the device: the table entry's address and word, the MSI-X enable, the queue
 /// vector, and the IMSIC file's enable.  A machine whose tree names no IMSIC
-/// answers `None` and gains nothing — the driver completes through its polling
+/// answers `false` and gains nothing — the driver completes through its polling
 /// as every other machine's does, so this is an extra, not a dependency.
-pub fn wire_block_message_interrupt(found: &FoundBlockDevice) -> bool {
-    wire_block_message_interrupt_inner(found)
+pub fn wire_device_message(found: &FoundVirtio, plan: MessagePlan, handler: irq::Handler) -> bool {
+    wire_device_message_inner(found, plan, handler)
 }
 
 /// The wiring itself, on a machine.
 #[cfg(target_os = "none")]
-fn wire_block_message_interrupt_inner(found: &FoundBlockDevice) -> bool {
+fn wire_device_message_inner(
+    found: &FoundVirtio,
+    plan: MessagePlan,
+    handler: irq::Handler,
+) -> bool {
     let config = &*found.config;
     let device = found.device;
 
@@ -277,13 +336,14 @@ fn wire_block_message_interrupt_inner(found: &FoundBlockDevice) -> bool {
     // The entry, written and read back.  The address is this hart's MSI page
     // and the word is the bare identity: the file reads the 4-byte store as an
     // identity and nothing else, so a word with a bit above it is dropped.
-    let entry_address =
-        pci::msix::entry_address(bar_base, &capability, BLOCK_MESSAGE_VECTOR as usize);
-    let entry = pci::msix::Entry::new(page as u64, BLOCK_MESSAGE_IDENTITY).unmasked();
+    let entry_address = pci::msix::entry_address(bar_base, &capability, plan.vector as usize);
+    let entry = pci::msix::Entry::new(page as u64, plan.identity).unmasked();
     write_table_entry(entry_address, entry);
     let read_back = read_table_entry(entry_address);
     if read_back != entry {
-        arch::serial::write_str("protofire: block message entry did not stick\n");
+        arch::serial::write_str("protofire: ");
+        arch::serial::write_str(plan.name);
+        arch::serial::write_str(" message entry did not stick\n");
         return false;
     }
 
@@ -293,12 +353,14 @@ fn wire_block_message_interrupt_inner(found: &FoundBlockDevice) -> bool {
     // never sent one.
     let msix_enabled = pci::msix::enable(config, device.address, &capability);
     let vector_set =
-        virtio_core::Transport::set_queue_vector(&*found.transport, 0, BLOCK_MESSAGE_VECTOR);
+        virtio_core::Transport::set_queue_vector(&*found.transport, plan.queue, plan.vector);
     // SAFETY: `message_page` answered, so the tree named an IMSIC and the CSR
     // pair exists on this hart.
-    let identity_enabled = unsafe { arch::enable_message_identity(BLOCK_MESSAGE_IDENTITY) };
+    let identity_enabled = unsafe { arch::enable_message_identity(plan.identity) };
     if !msix_enabled || !vector_set || !identity_enabled {
-        arch::serial::write_str("protofire: block message wiring refused: msix ");
+        arch::serial::write_str("protofire: ");
+        arch::serial::write_str(plan.name);
+        arch::serial::write_str(" message wiring refused: msix ");
         arch::serial::write_str(if msix_enabled { "on" } else { "off" });
         arch::serial::write_str(", queue vector ");
         arch::serial::write_str(if vector_set { "set" } else { "cleared" });
@@ -314,17 +376,18 @@ fn wire_block_message_interrupt_inner(found: &FoundBlockDevice) -> bool {
 
     // The handler, registered under the identity the message carries, which is
     // the number the trap path hands the registry for an IMSIC delivery.
-    irq::register(
-        BLOCK_MESSAGE_IDENTITY as usize,
-        note_block_message_interrupt,
-    );
+    irq::register(plan.identity as usize, handler);
 
-    arch::serial::write_str("protofire: block message wired to imsic page ");
+    arch::serial::write_str("protofire: ");
+    arch::serial::write_str(plan.name);
+    arch::serial::write_str(" message wired to imsic page ");
     arch::serial::write_hex(page as u64);
     arch::serial::write_str(", identity ");
-    arch::serial::write_u32(BLOCK_MESSAGE_IDENTITY);
+    arch::serial::write_u32(plan.identity);
     arch::serial::write_str(", vector ");
-    arch::serial::write_u32(BLOCK_MESSAGE_VECTOR as u32);
+    arch::serial::write_u32(plan.vector as u32);
+    arch::serial::write_str(", queue ");
+    arch::serial::write_u32(plan.queue as u32);
     arch::serial::write_str("\n");
     true
 }
@@ -335,7 +398,11 @@ fn wire_block_message_interrupt_inner(found: &FoundBlockDevice) -> bool {
 /// the answer as "the driver polls", which is also what a boot on a machine
 /// whose tree names no IMSIC does.
 #[cfg(not(target_os = "none"))]
-fn wire_block_message_interrupt_inner(_found: &FoundBlockDevice) -> bool {
+fn wire_device_message_inner(
+    _found: &FoundVirtio,
+    _plan: MessagePlan,
+    _handler: irq::Handler,
+) -> bool {
     false
 }
 
@@ -347,8 +414,21 @@ fn wire_block_message_interrupt_inner(_found: &FoundBlockDevice) -> bool {
 /// and the count is what makes "the device's MSI arrived" a fact about a boot
 /// rather than about the wiring's print.
 #[cfg(target_os = "none")]
-fn note_block_message_interrupt(_identity: usize) -> bool {
+#[cfg(target_os = "none")]
+pub fn note_block_message_interrupt(_identity: usize) -> bool {
     crate::note_block_message_interrupt();
+    true
+}
+
+/// Count one message from the network card's receive queue.
+///
+/// The frame itself is taken from the used ring by the driver's own drain, so
+/// this is a notification too — and the count is what says the card's message
+/// reached this kernel rather than being held in the file.
+#[cfg(target_os = "none")]
+#[cfg(target_os = "none")]
+pub fn note_network_message_interrupt(_identity: usize) -> bool {
+    crate::note_network_message_interrupt();
     true
 }
 
@@ -541,9 +621,9 @@ fn find_virtio(
 /// Returns `None` when the machine has no such device, which is a normal
 /// state: a boot with no disk still has a console and a heap, and a machine
 /// that refused to boot because a disk was absent could not be debugged.
-pub fn find_virtio_block() -> Option<FoundBlockDevice> {
+pub fn find_virtio_block() -> Option<FoundVirtio> {
     let (transport, device, config) = find_virtio(&BLOCK_IDS, "virtio-blk")?;
-    Some(FoundBlockDevice {
+    Some(FoundVirtio {
         transport,
         device,
         config,
@@ -586,11 +666,11 @@ const OUR_PROTOCOL: [u8; 4] = [10, 0, 2, 15];
 /// would be noise a reader learns to skip.
 #[cfg(target_os = "none")]
 pub fn exercise_network() -> bool {
-    let Some((transport, _device, _config)) = find_virtio(&NETWORK_IDS, "virtio-net") else {
+    let Some((transport, device, config)) = find_virtio(&NETWORK_IDS, "virtio-net") else {
         return false;
     };
 
-    let card = match virtio_net::VirtioNet::new(transport) {
+    let card = match virtio_net::VirtioNet::new(transport.clone()) {
         Ok(card) => card,
         Err(error) => {
             arch::serial::write_str("protofire: virtio-net refused the device: ");
@@ -615,6 +695,22 @@ pub fn exercise_network() -> bool {
     arch::serial::write_str(", transmit queue ");
     arch::serial::write_u32(card.transmit_queue_size() as u32);
     arch::serial::write_str("\n");
+
+    // The receive queue's message, wired **after** the driver for the reason
+    // the block device's is: the driver's first step is a reset, and a reset
+    // forgets every queue's vector.
+    #[cfg(target_os = "none")]
+    let wired = {
+        let found = FoundVirtio {
+            transport: transport.clone(),
+            device,
+            config,
+        };
+        wire_device_message(&found, NETWORK_MESSAGE, note_network_message_interrupt)
+    };
+    #[cfg(not(target_os = "none"))]
+    let wired = false;
+    let _ = wired;
 
     // A buffer posted **before** the request goes out.  A driver that sent
     // first would be relying on the card holding the answer until a buffer
@@ -732,30 +828,55 @@ pub fn physical_address(virtual_address: u64) -> usize {
     virtual_address as usize
 }
 
-// The block device's identity is clear of every other user of the file, and
-// these are compile-time assertions because an identity that collides is not a
-// case a test catches at run time — it is a constant the next editor can break,
-// and the break has to fail the build rather than a boot.
+// The devices' identities are clear of every other user of the file, and these
+// are compile-time assertions because an identity that collides is not a case a
+// test catches at run time — it is a constant the next editor can break, and
+// the break has to fail the build rather than a boot.
 //
 // An IMSIC file holds one pending bit per identity, so two users sharing one is
 // one delivery for two of them.  The firmware enables identity 1 in every
 // hart's file at hart start (OpenSBI's S-mode IPI); an APLIC in message mode
 // uses each wired source's own number, and this machine declares 96 of them;
 // identity 10 is the console's own source on that machine; and the boot's
-// IMSIC self-test takes the last identity the file holds (254 of 255), so the
+// IMSIC self-test takes the last identity the file holds (254 of 255), so a
 // device has to sit strictly below it or the two share the bit the self-test
 // reads back.
-const _: () = assert!(
-    BLOCK_MESSAGE_IDENTITY > 96,
-    "an APLIC source's own number is its identity, and 96 are declared"
-);
-const _: () = assert!(BLOCK_MESSAGE_IDENTITY != 1, "the firmware's IPI");
-const _: () = assert!(BLOCK_MESSAGE_IDENTITY != 10, "the console's source");
-const _: () = assert!(
-    BLOCK_MESSAGE_IDENTITY < 254,
-    "the self-test takes the last identity the file holds"
-);
-// Virtio reserves vector zero for configuration-change messages, so a queue
-// mapped onto it would have its completions counted as configuration changes
-// the kernel never asks for.
-const _: () = assert!(BLOCK_MESSAGE_VECTOR != 0);
+//
+// Written over the plans rather than over each device's number so that adding a
+// third device is a row in this list and not a new set of assertions the next
+// author has to remember.  The pairwise check is the one a per-device pair of
+// assertions could not make.
+const DEVICE_MESSAGES: [MessagePlan; 2] = [BLOCK_MESSAGE, NETWORK_MESSAGE];
+
+const _: () = {
+    let mut index = 0;
+    while index < DEVICE_MESSAGES.len() {
+        let plan = DEVICE_MESSAGES[index];
+        assert!(
+            plan.identity > 96,
+            "an APLIC source's own number is its identity, and 96 are declared"
+        );
+        assert!(plan.identity != 1, "the firmware's IPI");
+        assert!(plan.identity != 10, "the console's source");
+        assert!(
+            plan.identity < 254,
+            "the self-test takes the last identity the file holds"
+        );
+        // Virtio reserves vector zero for configuration-change messages, so a
+        // queue mapped onto it would have its completions counted as
+        // configuration changes the kernel never asks for.
+        assert!(plan.vector != 0);
+
+        // Two devices sharing an identity share one pending bit, and two
+        // sharing a vector have one table entry written twice.
+        let mut other = index + 1;
+        while other < DEVICE_MESSAGES.len() {
+            assert!(
+                plan.identity != DEVICE_MESSAGES[other].identity,
+                "two devices cannot share a message identity"
+            );
+            other += 1;
+        }
+        index += 1;
+    }
+};
