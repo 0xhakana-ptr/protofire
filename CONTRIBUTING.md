@@ -35,6 +35,10 @@ order:
   one that lost tests.
 - `scripts/check-repo-integrity.sh` — refuses a tracked file that is ignored,
   or a build product that is tracked.
+- `scripts/check-ignored-files.sh` — refuses the other direction: a file that is
+  ignored and **not** tracked, when it is not a build product.  `git add -A`
+  skips one without a word, so a source file hidden by an ignore rule reaches
+  neither the index nor the commit.
 - `cargo clippy`, four times — refuses a lint, in every configuration the tree
   builds.
 

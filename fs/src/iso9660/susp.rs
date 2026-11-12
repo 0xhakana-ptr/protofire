@@ -10,10 +10,10 @@
 //! length that includes the header, and a version, so that two extensions can
 //! share the area without understanding each other.
 //!
-//! Rock Ridge is the extension Linux, and this reader, uses: `NM` for the POSIX
-//! name the author meant, `PX` for the mode and ownership, `SL` for a symbolic
-//! link's target.  A disc without it is still readable, the identifiers are
-//! the names, which is why every field here is optional.
+//! Rock Ridge is the extension this reader handles: `NM` for the POSIX name the
+//! author meant, `PX` for the mode and ownership, `SL` for a symbolic link's
+//! target.  A disc without it is still readable, the identifiers are the names,
+//! which is why every field here is optional.
 //!
 //! ## The entry a reader must skip
 //!

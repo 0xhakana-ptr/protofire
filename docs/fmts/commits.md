@@ -221,9 +221,7 @@ important to get right, because nothing will remind you:
 - **Trailer order.** `Signed-off-by:` comes first, then `Co-authored-by:` and
   `Assisted-by:`, the order the example in §6 uses, the order the trailer
   table in [`CONTRIBUTING.md`](../../CONTRIBUTING.md)
-  lists, and the order every AI-assisted commit in this history carries.  The
-  Linux kernel puts its sign-off chain last; this repository does not, and the
-  hook cannot see either way.
+  lists, and the order every AI-assisted commit in this history carries.
 
 Attribution trailers are exempt from the 72-character body wrap. Keep each on a
 single line.

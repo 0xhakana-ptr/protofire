@@ -4,7 +4,7 @@
 # has contributed, in the order they did; this one says who is responsible for
 # each part of the tree **now**, and it changes when responsibility does.
 #
-# The format is Linux's, reduced to the tags this tree uses:
+# What each tag means, and the order an entry lists them in:
 #
 #   M:  the person who reviews a change to the listed paths
 #   R:  someone who reviews but does not have the final say

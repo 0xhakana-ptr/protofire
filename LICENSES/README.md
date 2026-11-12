@@ -16,9 +16,6 @@ modified files; CC BY is about attribution.  A README under Apache-2.0 is
 legally fine and is a poor fit: nothing in it is a patent question, and the
 section about "modified source files" has nothing to say about a paragraph.
 
-Using one licence for each kind of file is what the Rust project, the Linux
-kernel's documentation subtree and most projects with substantial prose do.
-
 ## What CC BY asks of a document's author
 
 - **Attribution**, name this project and say what you changed.

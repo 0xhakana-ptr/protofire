@@ -41,8 +41,8 @@
 //!   number; an APLIC's are in a per-hart **interrupt delivery control** block
 //!   at a fixed stride from `0x4000`.
 //!
-//! So the offsets below are the AIA's (specification §4.5 and §4.8, and the
-//! same numbers Linux's `riscv-aplic.h` carries), and a test pins them.
+//! So the offsets below are the AIA's (specification §4.5 and §4.8), and a test
+//! pins them.
 //!
 //! ## Why the register half is gated
 //!

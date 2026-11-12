@@ -211,6 +211,15 @@ run_p2() {
     # Neither is a defect a compiler or a boot can see.
     step "scripts/check-repo-integrity.sh"
     sh scripts/check-repo-integrity.sh || fail "an ignored file is tracked, or a product is"
+
+    # The other direction of the same question, and the one that had no answer:
+    # a file that is **not** tracked and is ignored.  `git add -A` skips one
+    # without a word, so a source file hidden by an ignore rule reaches neither
+    # the index nor the commit — which is how `.mailmap` was written, added, and
+    # absent from the commit whose message said it was added.
+    step "scripts/check-ignored-files.sh"
+    sh scripts/check-ignored-files.sh \
+        || fail "an ignore rule hides a file that is not a build product"
 }
 
 run_p3() {

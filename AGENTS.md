@@ -118,8 +118,9 @@ machine.
 
 - **An independent kernel.**  Another system's layout is a reference for what is
   reasonable, never the authority.  When this tree follows a convention, the
-  reason is in the file that follows it.  "Linux does it this way" is not an
-  argument; "this is what the trait's implementors require" is.
+  reason is in the file that follows it. In other words, we prefer an argument
+  like "this is what the trait's implementors require" instead of "other kernels
+  do it this way".
 
 ## Boundaries
 
