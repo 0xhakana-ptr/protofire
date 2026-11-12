@@ -5,15 +5,33 @@ queue, and a trait with three methods — and it is deliberately small: no
 executor, no task, no future, no scheduler, and this document says why each of
 those is absent.
 
-**No device uses it today.**  Every driver in the tree submits through `block`'s
-`QueuedBlockDevice` or through a virtio queue of its own; both are typed methods
-with a ticket per request, which is the other trade and a working one.  What
-this crate is, is the shape for when a *uniform* submission interface is wanted
-— one where adding an operation does not extend a wire format — written and
-tested before there is a caller to disagree with it.  The section
+## Where this is going
+
+This crate is the foundation of **everything is a service**.  A disk queue, a
+socket's read half, a timer, a kernel thread and a user program all accept a
+request and complete it later, and one trait describes all of them — that is
+[What "everything is a service" buys](#what-everything-is-a-service-buys) below,
+and it is the reason the request is opaque instead of an operation code.
+
+Two layers are named and neither exists yet:
+
+- **A registry**: a name a caller asks for, and a handle it submits through.
+  Today a `Service` is a Rust trait that only exists at compile time; there is
+  no table in the kernel that turns a name into one, and no way for a process to
+  hold a handle.
+- **A device or a process behind the trait**: the implementations are
+  `MemoryBlockService`, which is a byte slice, and nothing else.  Every driver
+  in the tree submits through `block`'s `QueuedBlockDevice` or through a virtio
+  queue of its own — a typed method per operation, a ticket per request, an
+  `unsafe` buffer contract — and that is a working shape, which is exactly why
+  moving one onto this trait is the step that would test the idea instead of
+  describing it.
+
+The honest summary is: the model is written, tested and argued; the two things
+that would make it architecture rather than a design are not.  The section
 [The obligation the trait states and cannot enforce](#the-obligation-the-trait-states-and-cannot-enforce)
 already said a driver's version of the check is "a different gate and a later
-change"; this paragraph is the same admission in the place a reader starts.
+change" — this section is the same admission in the place a reader starts.
 
 ## The model
 
@@ -36,11 +54,16 @@ caller                          service
   │ pop() ──▶ Some(Completion{id: 7, Ok(4096)})
 ```
 
-The caller takes completions from a [`CompletionQueue`](../async_io/src/queue.rs)
-it owns, not from the service.  That is what makes the queue's accounting
-checkable, what went in, what came out, what was refused, and it is the same
-split an `io_uring` ring has, where the program sizes the ring and the kernel
-fills it.
+The completions live in the **service's** queue, and the caller takes them from
+it.  That is the opposite of what an earlier version of this paragraph said, and
+the code is what settled it: a service is the thing that knows a transfer
+finished, so a service is the thing that holds the tokens until a caller comes
+for them.  Putting the queue in the caller would mean the caller had to be told
+where to put a completion before it knew whether the work succeeded.
+
+The queue's accounting is what makes the trait's one obligation checkable —
+what went in, what came out, what was refused — and the count of refused pushes
+stays on the queue for the same reason.
 
 ## Why a trait and not a table of operation codes
 

@@ -3,21 +3,30 @@
 //! Requests and completions: a request, a service that finishes it later, and
 //! the bounded queue the completions go through.
 //!
+//! ## Where this is going
+//!
+//! This crate is the foundation of **everything is a service**: a driver, a
+//! timer, a kernel thread and a user program are all things that accept a
+//! request and complete it later, and one trait describes all of them.  That is
+//! the part worth designing for, and it is why the request is opaque — a
+//! service decides what it accepts, so a new kind of service does not extend a
+//! wire format and does not have to understand operations it does not provide.
+//!
+//! The layer above this one is a **registry**: a name a caller can ask for, and
+//! a handle it submits through.  It does not exist yet, and neither does the
+//! first service that is not a byte slice.
+//!
 //! ## What uses this, today
 //!
-//! **No device.**  Every driver in this tree submits through `block`'s
-//! `QueuedBlockDevice`, or through a virtio queue of its own, and those are a
-//! different shape on purpose: a typed method per operation, a ticket per
-//! request, and an `unsafe` buffer contract that a two-word [`Request`] cannot
-//! carry.  What this crate is, is the other trade — an opaque request and a
-//! service-defined operation set, so that adding an operation does not extend a
-//! wire format — written out and tested before there is a caller to be wrong
-//! about.
+//! No device.  Every driver submits through `block`'s `QueuedBlockDevice` or
+//! through a virtio queue of its own: a typed method per operation, a ticket
+//! per request, and an `unsafe` buffer contract.  That is a working shape and
+//! it is where the devices are; moving one onto this trait is what would turn
+//! the idea above into a tested claim rather than a design.
 //!
 //! The one implementation here is
 //! [`MemoryBlockService`], which is a byte slice rather than a device: its job
-//! is to be the shape a driver would have.  The claim that a driver fits it is
-//! what `docs/async_io.md` argues, and this crate has not yet had to keep it.
+//! is to be the shape a driver would have.
 //!
 //! ## The model
 //!

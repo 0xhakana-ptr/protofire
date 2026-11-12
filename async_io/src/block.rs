@@ -172,7 +172,19 @@ impl Service for MemoryBlockService {
         // A queue with no room for the completion would accept a transfer it
         // could not report.  Refusing at submission is the honest answer: the
         // caller learns now rather than after the device has done the work.
-        if self.completions.len() >= self.completions.capacity() {
+        //
+        // **The room a request needs is one slot per completion it will
+        // produce plus the ones already queued**, not the queue's current
+        // length alone.  A request that has been accepted and not yet performed
+        // owns a slot nothing occupies yet, and counting only what is *in* the
+        // queue lets a submission in on space a pending request already
+        // claimed.  When that request finishes its completion has nowhere to
+        // go: the transfer was performed, the device did the work, and the
+        // caller is never told.  Measured by submitting, polling, submitting
+        // again and draining —
+        // `an_interleaved_submit_does_not_lose_a_completion`.
+        let claimed = self.completions.len() + self.pending.len();
+        if claimed >= self.completions.capacity() {
             return Some(Completion::err(request.id, Error::Busy));
         }
 
@@ -227,11 +239,19 @@ impl Service for MemoryBlockService {
         }
 
         self.performed += 1;
-        // The completion cannot be refused: `submit` checked there was room
-        // before it accepted the transfer.
-        let _ = self
+        // This push cannot be refused, and the code says so rather than
+        // discarding the answer: `submit` reserved a slot for every request it
+        // accepted, so the queue has room by construction.  A `let _ =` here
+        // would hide the case where that reservation was wrong — which is
+        // exactly how the dropped-completion defect went unnoticed — so a
+        // refusal is reported as the bug it would be.
+        let pushed = self
             .completions
             .push(Completion::ok(pending.id, pending.length));
+        debug_assert!(
+            pushed.is_ok(),
+            "a request accepted with a reserved slot found the queue full"
+        );
         true
     }
 
@@ -240,7 +260,17 @@ impl Service for MemoryBlockService {
             return false;
         };
         self.pending.remove(position);
-        let _ = self.completions.push(Completion::err(id, Error::Busy));
+        // A cancellation completes the request, so it needs the slot the
+        // submission reserved.  It cannot be refused, for the same reason
+        // `poll`'s push cannot: the request was accepted with room for exactly
+        // one completion.  Checked rather than discarded, so a broken
+        // reservation is a failing assertion instead of a caller waiting for a
+        // completion that will never come.
+        let pushed = self.completions.push(Completion::err(id, Error::Busy));
+        debug_assert!(
+            pushed.is_ok(),
+            "a cancelled request with a reserved slot found the queue full"
+        );
         true
     }
 }
@@ -527,6 +557,106 @@ mod tests {
             completed += 1;
         }
         assert_eq!(completed, accepted);
+        assert_eq!(service.pending(), 0);
+    }
+
+    /// Every transfer the service accepted leaves a completion, even when
+    /// submissions and polls are interleaved.
+    ///
+    /// This is the sequence that found the defect: `submit` used to check only
+    /// the completions queue's **current** length, so a request whose
+    /// completion had not been produced yet counted as room. Submitting again
+    /// after a poll therefore accepted work whose completion had nowhere to
+    /// go, and `poll` dropped that completion on the floor with `let _ =`. The
+    /// accepted request then finished — the device did the work — and the
+    /// caller never heard about it, which breaks the trait's one obligation.
+    ///
+    /// Capacity two, so the sequence is short:
+    ///
+    /// ```text
+    /// submit A            pending [A]        queue []
+    /// submit B            pending [A, B]     queue []
+    /// poll                pending [A]        queue [B]     (B performed)
+    /// submit C            pending [A, C]     queue [B]     accepted: 1 < 2
+    /// poll                pending [A]        queue [B, C]  (C performed)
+    /// poll                pending []         queue [B, C]  (A performed, refused)
+    /// ```
+    ///
+    /// After the fix the third submit is refused, because one pending request
+    /// plus one queued completion already fills the queue.
+    #[test]
+    fn an_interleaved_submit_does_not_lose_a_completion() {
+        let mut service = MemoryBlockService::new(8, 2);
+        let mut buffers = vec![vec![0u8; SECTOR_SIZE]; 3];
+
+        // Two accepted, nothing performed yet.
+        let first = BlockOp::Read {
+            sector: 0,
+            count: 1,
+        }
+        .token(0);
+        assert!(
+            service
+                .submit(Request::with_arguments(
+                    first,
+                    buffers[0].as_mut_ptr() as u64,
+                    buffers[0].len(),
+                ))
+                .is_none(),
+            "the first payload is accepted"
+        );
+        let second = BlockOp::Read {
+            sector: 1,
+            count: 1,
+        }
+        .token(1);
+        assert!(
+            service
+                .submit(Request::with_arguments(
+                    second,
+                    buffers[1].as_mut_ptr() as u64,
+                    buffers[1].len(),
+                ))
+                .is_none(),
+            "the second payload is accepted"
+        );
+
+        // One completion produced, one request still pending: the queue holds
+        // one of its two slots.
+        assert!(service.poll());
+        assert_eq!(service.pending(), 1);
+
+        // The third submission has no room for its completion — the pending
+        // request owns the other slot — so it is refused **in the call**.
+        let third = BlockOp::Read {
+            sector: 2,
+            count: 1,
+        }
+        .token(2);
+        let refused = service
+            .submit(Request::with_arguments(
+                third,
+                buffers[2].as_mut_ptr() as u64,
+                buffers[2].len(),
+            ))
+            .expect("refused in the call, not accepted and dropped");
+        assert!(!refused.is_ok());
+        assert_eq!(refused.id, third);
+
+        // Drain: the two accepted transfers each produce exactly one
+        // completion, and none is lost.
+        while service.poll() {}
+        let mut delivered = alloc::vec::Vec::new();
+        while let Some(completion) = service.take_completion() {
+            delivered.push(completion.id);
+        }
+        delivered.sort_by_key(|id| id.get());
+        assert_eq!(
+            delivered,
+            vec![first, second],
+            "both accepted transfers are reported exactly once"
+        );
+        assert_eq!(service.performed(), 2, "the refused one never ran");
         assert_eq!(service.pending(), 0);
     }
 
