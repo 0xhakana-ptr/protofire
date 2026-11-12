@@ -26,12 +26,14 @@ says so and says what it would take.
 - **`kernel`** — the boot sequence, the syscall table, the scheduler, device
   discovery.
 - **`memory`** — the frame pool and the region pools.
-- **`drivers`** — four crates rather than one directory under one name:
+- **`drivers`** — five crates rather than one directory under one name:
   `drivers/bus/pci` (ports, ECAM, capability walks, BAR enumeration, MSI-X),
   `drivers/virtio/core` (the split virtqueue, feature negotiation, the status
   sequence, the PCI modern transport), `drivers/virtio/block` (the request
-  layout and the driver over that transport), and `drivers/net/e1000` (a
-  placeholder for a device this tree does not boot with).
+  layout and the driver over that transport), `drivers/virtio/net` (the card:
+  receive and transmit queues, and the address the device publishes), and
+  `drivers/net/e1000` (a placeholder for a device this tree does not boot
+  with).
 - **`syscall`** — the context, the validators, and a handful of handlers.
 - **`libs`** — allocator, audit, cell, crypto, fdt, irq, paging, profiler,
   rights, sync, unicode.  Each is a crate rather than a module under `kernel`

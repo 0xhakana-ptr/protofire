@@ -295,11 +295,17 @@ impl Transport for PciTransport {
         fence(Ordering::SeqCst);
     }
 
-    fn max_queue_size(&self) -> u16 {
-        // The largest queue is read after selecting queue 0: `queue_size` is
-        // per-queue, and a device may offer different sizes.  This driver uses
-        // one queue, so the first one's answer is the one that matters.
-        self.common.write16(common::QUEUE_SELECT, 0);
+    fn queue_count(&self) -> u16 {
+        // Section 4.1.4.3: `num_queues` is device-wide, unlike every other
+        // `queue_*` register, so no selection precedes it.
+        self.common.read16(common::NUM_QUEUES)
+    }
+
+    fn max_queue_size(&self, index: u16) -> u16 {
+        // `queue_size` is per-queue, so the queue is selected here.  It used to
+        // select queue 0 and answer for that one whatever the caller wanted,
+        // which a one-queue device cannot tell apart from the right answer.
+        self.common.write16(common::QUEUE_SELECT, index);
         self.common.read16(common::QUEUE_SIZE)
     }
 

@@ -207,6 +207,15 @@
 # `virtio_core` for the queue and `block` for the interface it answers, so it
 # has to be above the framework — layer 7, beside `fs`.
 7 virtio_block
+
+# `virtio_net` is the second device on the framework, and the one that proved
+# every queue operation had to name its queue: a block device uses one queue, so
+# its driver could not tell "the queue I selected" from "the queue I mean", and a
+# card that receives on 0 and transmits on 1 is the device where the difference
+# is a ring programmed twice and another left empty.  It names `virtio_core` and
+# `abi` and nothing else — not `net`, because a packet's format is the stack's
+# business and the card's is the ring.
+7 virtio_net
 5 e1000
 
 # `sound` and `virt` are laid out but not filled.  Their ranks are the ones

@@ -157,8 +157,26 @@ pub trait Transport: Send + Sync {
     /// Write the device status byte.
     fn write_status(&self, status: u8);
 
-    /// The largest queue this device offers.
-    fn max_queue_size(&self) -> u16;
+    /// How many queues the device has.
+    ///
+    /// Section 4.1.4.3: `num_queues` describes the device, not one queue, and
+    /// it is the answer a driver needs before it programs a second queue.
+    /// `queue_select` naming a queue the device does not have is a write whose
+    /// meaning the device does not define, and a driver that went on to enable
+    /// that queue would hold a receive ring nothing ever fills — a card that
+    /// looks up and never receives.
+    fn queue_count(&self) -> u16;
+
+    /// The largest size the device offers for `index`'s queue.
+    ///
+    /// Section 4.1.4.3.2: `queue_size` is per-queue state, so the selection is
+    /// made here rather than by a `configure_queue` call made some time before.
+    /// This method used to take no index and always select queue 0, which is
+    /// the same defect the addresses had: a two-queue driver that sized its
+    /// transmit queue from the receive queue's answer would program a size the
+    /// device never offered for it, and every register would read back what was
+    /// written.
+    fn max_queue_size(&self, index: u16) -> u16;
 
     /// Select a queue, and tell the device how large the driver made it.
     fn configure_queue(&self, index: u16, size: u16);
@@ -327,7 +345,11 @@ mod tests {
                 0
             }
             fn write_status(&self, _status: u8) {}
-            fn max_queue_size(&self) -> u16 {
+            fn queue_count(&self) -> u16 {
+                2
+            }
+            fn max_queue_size(&self, index: u16) -> u16 {
+                self.seen.lock().unwrap().push(("size", index));
                 8
             }
             fn configure_queue(&self, index: u16, _size: u16) {
@@ -359,7 +381,10 @@ mod tests {
             available: 0x2000,
             used: 0x3000,
         };
-        // The order a two-queue driver uses: configure both, then program each.
+        // The order a two-queue driver uses: ask each queue its size, configure
+        // both, then program each.
+        recorder.max_queue_size(0);
+        recorder.max_queue_size(1);
         recorder.configure_queue(0, 8);
         recorder.configure_queue(1, 8);
         recorder.set_queue_addresses(0, addresses);
@@ -370,6 +395,8 @@ mod tests {
         assert_eq!(
             *recorder.seen.lock().unwrap(),
             vec![
+                ("size", 0),
+                ("size", 1),
                 ("configure", 0),
                 ("configure", 1),
                 ("addresses", 0),

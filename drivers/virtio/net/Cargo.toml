@@ -1,0 +1,17 @@
+[package]
+name = "virtio_net"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The virtio network card: two queues, the address the device publishes, and
+# the frame path that arrives with the next change.
+#
+# It names `virtio_core` for the queue and the transport and `abi` for the
+# errors it answers with.  It names no other device, and no device names it: a
+# framework one device reaches through another device's code is not a framework.
+[dependencies]
+abi.workspace = true
+virtio_core = { path = "../core" }
+spin.workspace = true

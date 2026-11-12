@@ -116,6 +116,19 @@ program's fact and not the kernel's — x86_64's vary.
 attached.  Verified by `block device from virtio-blk on pci` and
 `virtio-blk wrote and read back sector `.
 
+The virtio network card is **implemented and not attached**.  `virtio_net`
+brings a card up: the same status sequence the block device runs, the address
+read from the configuration region after negotiating `VIRTIO_NET_F_MAC`, and
+both queues — receive 0, transmit 1 — each sized from its own answer, programmed
+with its own rings and enabled.  It is verified on a host by thirteen tests over
+a transport that records what it was asked; two of them are mutation-tested, and
+they are the ones this driver exists for: a driver that programmed every queue
+with queue 0's index, and one that sized every queue from queue 0's answer, both
+fail.  What it does not do is move a frame, and no boot finds a card yet, so
+none of it is verified on a machine.  The frame path, an IMSIC identity for the
+receive queue, and the gate's `-netdev user` are the next three changes;
+`docs/virtio-net.md` is the plan they follow.
+
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement
 follows a rule rather than the rotation: a task the asking CPU last ran is

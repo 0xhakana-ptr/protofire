@@ -26,7 +26,8 @@ extracted yet.
          service_manager                                not shipped, or linked alone
      9   kernel                                        the core
   5-8   syscall, pci, e1000, sound, virt, fs, net,
-         security, allocator, virtio_core, virtio_block
+         security, allocator, virtio_core, virtio_block,
+         virtio_net
      4-5  arch, block, memory, sync                     the route, the disk
                                                          interface, the frames,
                                                          the lock
@@ -196,17 +197,29 @@ and it is why the frame pool's arithmetic can be tested on a host.
 negotiation, the status state machine a device goes through, and a `Transport`
 trait with the PCI modern register offsets.  `virtio_block` is the block device
 on top of it: a request header, a data buffer, a status byte, and the two block
-traits over them.
+traits over them.  `virtio_net` is the network card: receive on queue 0,
+transmit on queue 1, and the address the device publishes rather than one the
+driver invents.
 
-They are two crates and not one because virtio is a protocol with several
+They are three crates and not one because virtio is a protocol with several
 devices behind it.  A network driver and a GPU driver submit through the same
 queue and negotiate features the same way; a `virtio` crate that also held the
 block driver would make them depend on block code to reach a queue.
 
+**The network card is what proved the queue index.**  Until it existed, every
+queue operation could act on "the queue last selected" and be right, because a
+block device uses one queue and cannot tell the difference.  A card receives on
+0 and transmits on 1, so a driver that selected 1 and then programmed queue 0's
+addresses would fill a ring nothing reads — with every register reading back
+exactly what was written.  The index is a parameter of every queue operation
+now, and `virtio_net`'s host test is what holds it there: a fake records the
+index of each call and the addresses each queue was given, and a driver that
+reused one address set fails it.
+
 **The framework sits at layer 6, and the bus it walks at 5.**  The chain is the
 narrowest one its facts allow: `arch` (4) gives `pci` (5) the port mechanism,
 `pci` walks a capability list so `virtio_core` (6) sits above it, and
-`virtio_block` (7) is the device on top.
+`virtio_block` and `virtio_net` (7) are the devices on top.
 
 A framework belongs under the drivers that name it, the same argument that put
 `block` at 4.  What moved it up is that it also *names* the bus: a virtio PCI
@@ -221,7 +234,10 @@ addresses a machine chose, so its host arm reports "no device" rather than
 pretending.  The block driver is written against `Transport` rather than against
 PCI, which is what lets a host test drive the whole of it, initialisation,
 request encoding, the descriptor chain, the doorbell, the used ring, with a
-fake device that behaves like one.
+fake device that behaves like one.  The network driver is driven the same way,
+and its fake is a recorder rather than a card that services frames: the change
+that brought the card up asks which queues were programmed, and the fake that
+services a frame arrives with the frame path that needs it.
 
 That last point is the reason the trait exists.  Without it the driver would be
 tested by booting, and a boot tells you that it failed, not which of the forty

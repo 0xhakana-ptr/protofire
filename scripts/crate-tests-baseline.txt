@@ -49,4 +49,5 @@ unicode              4630   31
 virt                   55    0
 virtio_block         1106   13
 virtio_core          1850   24
+virtio_net            696   13
 xtask                 773    9

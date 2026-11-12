@@ -21,6 +21,7 @@ members = [
     "virt",
     "drivers/virtio/core",
     "drivers/virtio/block",
+    "drivers/virtio/net",
     "drivers/bus/pci",
     "drivers/net/e1000",
     "libs/allocator",

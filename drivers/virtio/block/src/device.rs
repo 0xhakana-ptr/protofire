@@ -142,7 +142,7 @@ impl VirtioBlock {
 
     /// Bring up a device with a chosen queue size.
     ///
-    /// `queue_size` is capped by what the device offers
+    /// `queue_size` is capped by what the device offers for the request queue
     /// ([`Transport::max_queue_size`]); asking for more than the device has is
     /// the caller's mistake and is refused rather than silently reduced,
     /// because the caller asked for a depth it will then pipeline to.
@@ -180,7 +180,7 @@ impl VirtioBlock {
         }
 
         // 6. One queue, at a size the device accepts.
-        let max = transport.max_queue_size();
+        let max = transport.max_queue_size(REQUEST_QUEUE);
         let size = match queue_size {
             Some(requested) if requested > max => return Err(Error::InvalidArgument),
             Some(requested) if requested.is_power_of_two() => requested,
@@ -714,7 +714,11 @@ mod tests {
             self.status.store(status as u64, Ordering::Relaxed);
         }
 
-        fn max_queue_size(&self) -> u16 {
+        fn queue_count(&self) -> u16 {
+            1
+        }
+
+        fn max_queue_size(&self, _index: u16) -> u16 {
             8
         }
 
@@ -864,7 +868,10 @@ mod tests {
             fn write_status(&self, status: u8) {
                 self.0.write_status(status)
             }
-            fn max_queue_size(&self) -> u16 {
+            fn queue_count(&self) -> u16 {
+                1
+            }
+            fn max_queue_size(&self, _index: u16) -> u16 {
                 8
             }
             fn configure_queue(&self, _index: u16, _size: u16) {}

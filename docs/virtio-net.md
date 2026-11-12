@@ -38,6 +38,12 @@ layout claim is in the crate that owns it.
 
 ### 2. A `virtio-net` crate that brings a device up
 
+**Done.**  `drivers/virtio/net` holds `VirtioNet::new`: the status sequence,
+feature negotiation requiring `VIRTIO_NET_F_MAC`, and both queues brought up.
+The queue index parameter from step 1 turned out not to be enough on its own —
+`max_queue_size` still took no index and answered for queue 0 — so that was
+corrected here, in the change that has a second queue to ask about.
+
 Modern virtio-net: device id `0x1041` (transitional `0x1000`), class code
 `0x02` (network).  Two queues, receive `0` and transmit `1`, and the
 `VIRTIO_NET_F_MAC` feature so the driver learns the card's address instead of
