@@ -64,6 +64,7 @@ pub mod table;
 
 pub use handlers::brk;
 pub use handlers::close;
+pub use handlers::create_dir;
 pub use handlers::mac_add_rule;
 pub use handlers::mac_get_status;
 pub use handlers::mac_set_mode;
@@ -72,6 +73,8 @@ pub use handlers::munmap;
 pub use handlers::open;
 pub use handlers::read;
 pub use handlers::reclaim_pages;
+pub use handlers::remove_path;
+pub use handlers::rename;
 pub use handlers::stat;
 pub use handlers::write;
 pub use table::Arguments;

@@ -174,6 +174,15 @@ fn install_registry(namespace: fs::MountTable) {
     table.register(::syscall::SyscallNumber::Close, crate::syscall::close);
     table.register(::syscall::SyscallNumber::Stat, crate::syscall::stat);
     table.register(
+        ::syscall::SyscallNumber::CreateDir,
+        crate::syscall::create_dir,
+    );
+    table.register(
+        ::syscall::SyscallNumber::RemovePath,
+        crate::syscall::remove_path,
+    );
+    table.register(::syscall::SyscallNumber::Rename, crate::syscall::rename);
+    table.register(
         ::syscall::SyscallNumber::MacGetStatus,
         crate::syscall::mac_get_status,
     );

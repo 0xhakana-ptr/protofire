@@ -16,6 +16,7 @@ use abi::fs as fs_abi;
 use abi::memory as memory_abi;
 use paging;
 use security::mac;
+use syscall::SyscallContext;
 use syscall::validate_known_flags;
 use syscall::validate_zeroed_args;
 
@@ -209,6 +210,92 @@ fn file_kind(kind: fs::NodeKind) -> usize {
         fs::NodeKind::Device => fs_abi::FILE_KIND_DEVICE,
         fs::NodeKind::Symlink => fs_abi::FILE_KIND_SYMLINK,
     }
+}
+
+// The path mutations.
+//
+// Three calls that change the namespace rather than a file's bytes: make a
+// name for a directory, take a name away, move one name to another.  They
+// share everything but the operation — a path, the policy asked first, the
+// namespace resolving the path to the filesystem that answers for it — which
+// is why the three handlers are three one-liners over one shape rather than
+// three copies of it.
+//
+// A rename names two paths, and they can resolve to two different
+// filesystems; no filesystem sees both, so the call is refused rather than
+// approximated with a copy and a delete, which would not be a rename — a
+// crash between its halves would leave the file in neither place.
+
+/// Create a directory at a path.
+///
+/// Arguments: the path, then five reserved slots that must be zero.  Answers
+/// zero.  A path whose parent is not a directory, or whose last name already
+/// exists, is the filesystem's refusal to answer.
+pub fn create_dir(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 1)?;
+
+    // A creation is a write: the same permission the open-with-create asks
+    // for, asked of the same policy.
+    mac_write_checked(arguments.context, path)?;
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let (filesystem, relative) = namespace.resolve(path)?;
+    filesystem.create_dir(&relative)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Remove the file, directory or symlink at a path.
+///
+/// Arguments: the path, then five reserved slots that must be zero.  Answers
+/// zero.  Whether removing a directory that still holds entries is the
+/// filesystem's own rule; the namespace does not have an opinion.
+pub fn remove_path(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 1)?;
+    mac_write_checked(arguments.context, path)?;
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let (filesystem, relative) = namespace.resolve(path)?;
+    filesystem.remove_path(&relative)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Move a name to another path, replacing what the destination names.
+///
+/// Arguments: the old path, the new path, then four reserved slots that must
+/// be zero.  Answers zero.  Both names must belong to the same filesystem —
+/// the two resolve to two mounts, and a filesystem cannot rename what it
+/// does not hold.
+pub fn rename(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let old_path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let new_path = arguments.second_path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 2)?;
+    mac_write_checked(arguments.context, old_path)?;
+    mac_write_checked(arguments.context, new_path)?;
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let (old_filesystem, old_relative) = namespace.resolve(old_path)?;
+    let (new_filesystem, new_relative) = namespace.resolve(new_path)?;
+    if !alloc::sync::Arc::ptr_eq(&old_filesystem, &new_filesystem) {
+        // A rename that crossed volumes would have to be a copy and a
+        // delete, and a copy that failed midway leaves the file in neither
+        // place — the one outcome a rename exists to make impossible.
+        return Err(Error::Unsupported);
+    }
+    old_filesystem.rename(&old_relative, &new_relative)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Ask the policy whether this caller may write this path.
+///
+/// The three mutations share the question and the order: the policy is asked
+/// before the path resolves, so a denial does not tell the caller whether
+/// the path exists.  A caller with no identity is unlabelled, which is what
+/// `open` treats it as too.
+fn mac_write_checked(context: &SyscallContext, path: &str) -> Result<()> {
+    let subject = context.identity.unwrap_or(mac::MAC_TYPE_UNLABELED);
+    mac::check_file(subject, path, mac::MAC_CLASS_FILE, mac::MAC_PERM_WRITE, 0)
 }
 
 /// Close a descriptor.

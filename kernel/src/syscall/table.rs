@@ -61,6 +61,14 @@ pub struct Arguments<'a> {
     pub context: &'a mut SyscallContext,
     /// The path `open` was given, when this is an `open`.
     pub path: Option<&'a str>,
+    /// The second path of a call that names two — `rename`'s destination.
+    ///
+    /// A separate slot rather than a pair packed into [`Self::path`], because
+    /// a call with one path and a call with two differ in more than arity:
+    /// the reserved arguments sit in different slots, and a handler that
+    /// reached into a list for its second path would be one that could not
+    /// say from its signature whether it had one.
+    pub second_path: Option<&'a str>,
     /// The buffer `read` was given, when this is a `read`.
     pub buffer: Option<&'a mut [u8]>,
 }
@@ -71,6 +79,7 @@ impl<'a> Arguments<'a> {
         Self {
             context,
             path: None,
+            second_path: None,
             buffer: None,
         }
     }
@@ -730,6 +739,9 @@ mod tests {
         table.register(SyscallNumber::Read, read);
         table.register(SyscallNumber::Write, write);
         table.register(SyscallNumber::Stat, stat);
+        table.register(SyscallNumber::CreateDir, create_dir);
+        table.register(SyscallNumber::RemovePath, remove_path);
+        table.register(SyscallNumber::Rename, rename);
         table.register(SyscallNumber::Close, close);
         table
     }
@@ -740,6 +752,7 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: Some(path),
+            second_path: None,
             buffer: None,
         };
         let dispatch = table.dispatch(&mut arguments)?;
@@ -760,6 +773,7 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: None,
+            second_path: None,
             buffer: Some(buffer),
         };
         let dispatch = table.dispatch(&mut arguments)?;
@@ -867,6 +881,7 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: None,
+            second_path: None,
             buffer: Some(&mut copy),
         };
         let dispatch = table.dispatch(&mut arguments)?;
@@ -1064,6 +1079,7 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: Some("/greeting.txt"),
+            second_path: None,
             buffer: None,
         };
         assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
@@ -1072,6 +1088,7 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: Some("/greeting.txt"),
+            second_path: None,
             buffer: None,
         };
         assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
@@ -1168,6 +1185,7 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: Some(path),
+            second_path: None,
             buffer: None,
         };
         Ok(table.dispatch(&mut arguments)?.value)
@@ -1308,6 +1326,7 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: Some(path),
+            second_path: None,
             buffer: Some(&mut record),
         };
         table.dispatch(&mut arguments)?;
@@ -1357,6 +1376,7 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: Some("/greeting.txt"),
+            second_path: None,
             buffer: Some(&mut short),
         };
         assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
@@ -1394,7 +1414,168 @@ mod tests {
         let mut arguments = Arguments {
             context: &mut context,
             path: Some("/greeting.txt"),
+            second_path: None,
             buffer: Some(&mut record),
+        };
+        assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
+    }
+
+    /// Create a directory through the registry.
+    fn make_dir(table: &mut SyscallTable, path: &str) -> Result<usize> {
+        let mut context = SyscallContext::new(SyscallNumber::CreateDir as usize, [0; 6]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(path),
+            second_path: None,
+            buffer: None,
+        };
+        Ok(table.dispatch(&mut arguments)?.value)
+    }
+
+    /// Remove a path through the registry.
+    fn remove(table: &mut SyscallTable, path: &str) -> Result<usize> {
+        let mut context = SyscallContext::new(SyscallNumber::RemovePath as usize, [0; 6]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(path),
+            second_path: None,
+            buffer: None,
+        };
+        Ok(table.dispatch(&mut arguments)?.value)
+    }
+
+    /// Rename through the registry.
+    fn rename_to(table: &mut SyscallTable, old_path: &str, new_path: &str) -> Result<usize> {
+        let mut context = SyscallContext::new(SyscallNumber::Rename as usize, [0; 6]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(old_path),
+            second_path: Some(new_path),
+            buffer: None,
+        };
+        Ok(table.dispatch(&mut arguments)?.value)
+    }
+
+    /// A made directory is there, and is a directory.
+    ///
+    /// The claim is checked with `stat`, not with a second create: a create
+    /// that answered zero without making anything would fail the stat, and
+    /// a create that made something of the wrong kind would fail the kind.
+    #[test]
+    fn a_made_directory_is_there_and_is_a_directory() {
+        let mut table = writable();
+        assert_eq!(make_dir(&mut table, "/notes"), Ok(0));
+        assert_eq!(
+            stat_path(&mut table, "/notes"),
+            Ok((fs_abi::FILE_KIND_DIRECTORY, 0))
+        );
+        // A second create of the same name is the filesystem's refusal, not
+        // a silent success that would have replaced it.
+        assert_eq!(make_dir(&mut table, "/notes"), Err(Error::AlreadyExists));
+    }
+
+    /// A file is made inside a made directory, and removed by name.
+    ///
+    /// This is the path mutations composing: the directory exists because a
+    /// create made it, the file exists because an open-with-create made it
+    /// under that directory, and the remove takes exactly the file and
+    /// leaves the directory.
+    #[test]
+    fn a_file_in_a_made_directory_is_removed_and_the_directory_stays() {
+        let mut table = writable();
+        assert_eq!(make_dir(&mut table, "/notes"), Ok(0));
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let descriptor = open_path(&mut table, "/notes/todo.txt", flags).expect("create");
+        assert_eq!(write_as(&mut table, descriptor, b"buy milk", None), Ok(8));
+        assert_eq!(table.close(descriptor), Ok(()));
+
+        assert_eq!(remove(&mut table, "/notes/todo.txt"), Ok(0));
+        assert_eq!(
+            stat_path(&mut table, "/notes/todo.txt"),
+            Err(Error::NotFound)
+        );
+        assert_eq!(
+            stat_path(&mut table, "/notes"),
+            Ok((fs_abi::FILE_KIND_DIRECTORY, 0)),
+            "the removal took the file and left the directory"
+        );
+        assert_eq!(remove(&mut table, "/notes/todo.txt"), Err(Error::NotFound));
+    }
+
+    /// A rename moves the file, its bytes and nothing else.
+    ///
+    /// Both names are checked, because the failure modes differ: a rename
+    /// that lost the bytes would leave an empty file at the new name, and
+    /// one that copied rather than moved would leave the old name behind.
+    #[test]
+    fn a_rename_moves_the_file_and_its_bytes() {
+        let mut table = writable();
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let descriptor = open_path(&mut table, "/draft.txt", flags).expect("create");
+        assert_eq!(write_as(&mut table, descriptor, b"final v2", None), Ok(8));
+        assert_eq!(table.close(descriptor), Ok(()));
+
+        assert_eq!(rename_to(&mut table, "/draft.txt", "/sent.txt"), Ok(0));
+        assert_eq!(stat_path(&mut table, "/draft.txt"), Err(Error::NotFound));
+        assert_eq!(
+            stat_path(&mut table, "/sent.txt"),
+            Ok((fs_abi::FILE_KIND_FILE, 8))
+        );
+        let reader = open_path(&mut table, "/sent.txt", fs_abi::OPEN_FLAG_READ).expect("open");
+        let mut buffer = [0u8; 8];
+        assert_eq!(
+            read_into(&mut table, reader, READ_OFFSET_CURRENT, &mut buffer),
+            Ok(8)
+        );
+        assert_eq!(&buffer, b"final v2");
+    }
+
+    /// A rename whose two names resolve to different filesystems is
+    /// refused, and moves nothing.
+    ///
+    /// No filesystem sees both names, so the only ways to serve the call
+    /// are a copy and a delete — whose crash between the halves is the one
+    /// outcome a rename exists to make impossible — or a refusal.  The
+    /// refusal is what this tree answers.
+    #[test]
+    fn a_rename_across_filesystems_is_refused() {
+        let volume = TmpFsVolume::new("test-tmpfs", 64 * 1024);
+        let mut table = SyscallTable::new();
+        let mut namespace = MountTable::new();
+        namespace
+            .mount(
+                "/",
+                "pyrofs",
+                "boot",
+                Arc::new(StaticFileSystem::with_entries(
+                    "pyrofs",
+                    &[("/greeting.txt", NodeKind::File, b"hello")],
+                )),
+            )
+            .expect("mount");
+        namespace
+            .mount("/tmp", "tmpfs", "memory", Arc::new(volume))
+            .expect("mount");
+        table.set_namespace(Arc::new(namespace));
+        table.register(SyscallNumber::Rename, rename);
+
+        assert_eq!(
+            rename_to(&mut table, "/greeting.txt", "/tmp/greeting.txt"),
+            Err(Error::Unsupported)
+        );
+    }
+
+    /// A rename without a second path is refused before the filesystem is
+    /// reached.
+    #[test]
+    fn a_rename_without_a_second_path_is_refused() {
+        let mut table = writable();
+        let mut context = SyscallContext::new(SyscallNumber::Rename as usize, [0; 6]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some("/draft.txt"),
+            second_path: None,
+            buffer: None,
         };
         assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
     }

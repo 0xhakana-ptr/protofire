@@ -265,7 +265,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // bytes; a copy-on-write page demoted by an earlier write faults into
         // the resolver like any other access.
         let source = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
-        let outcome = through_registry(&mut context, None, Some(source));
+        let outcome = through_registry(&mut context, None, None, Some(source));
         if let CallOutcome::Return(count) = outcome
             && !abi::syscall::is_error_status(count)
         {
@@ -711,7 +711,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                     .with_caller(
                         crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS),
                     );
-            let _ = through_registry(&mut context, None, None);
+            let _ = through_registry(&mut context, None, None, None);
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory));
         };
         arch::serial::write_str("protofire: pipe made, read ");
@@ -755,7 +755,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let mut context = syscall::SyscallContext::new(number, [0, flags, 0, 0, 0, 0])
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        let outcome = through_registry(&mut context, Some(path), None);
+        let outcome = through_registry(&mut context, Some(path), None, None);
         if let CallOutcome::Return(descriptor) = outcome {
             // **Only a descriptor is an open.**  The registry answers an error
             // the same way it answers a value — the ABI's error encoding is a
@@ -803,7 +803,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // task's own mappings, installed on this CPU.  The handler writes only
         // what the filesystem read.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
-        return through_registry(&mut context, None, Some(destination));
+        return through_registry(&mut context, None, None, Some(destination));
     }
 
     if number == SyscallNumber::Close as usize {
@@ -823,7 +823,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let mut context = syscall::SyscallContext::new(number, [call.arguments[0], 0, 0, 0, 0, 0])
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        let outcome = through_registry(&mut context, None, None);
+        let outcome = through_registry(&mut context, None, None, None);
         if closes_a_write_end && matches!(outcome, CallOutcome::Return(0)) {
             let woken = crate::scheduler::wake_blocked();
             // Reported whether or not anyone was blocked, for the reason the
@@ -867,7 +867,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // task's own mappings, installed on this CPU.  The handler writes the
         // record and nothing past it.
         let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
-        let outcome = through_registry(&mut context, Some(path), Some(destination));
+        let outcome = through_registry(&mut context, Some(path), None, Some(destination));
         if let CallOutcome::Return(answer) = outcome
             && !abi::syscall::is_error_status(answer)
             && let (Ok(kind), Ok(size)) = (
@@ -892,6 +892,64 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // The path mutations: make a directory, take a name away, move a name.
+    // They take paths the same way `Open` and `Stat` do, and the rename's
+    // second path is the one call whose path borrow arrives in a second slot.
+    if number == SyscallNumber::CreateDir as usize || number == SyscallNumber::RemovePath as usize {
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, Some(path), None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            let verb = if number == SyscallNumber::CreateDir as usize {
+                "created directory"
+            } else {
+                "removed"
+            };
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" ");
+            arch::serial::write_str(verb);
+            arch::serial::write_str(" ");
+            arch::serial::write_str(path);
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
+    if number == SyscallNumber::Rename as usize {
+        let mut old_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(old_path) = copy_user_path(call.arguments[0], &mut old_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let mut new_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(new_path) = copy_user_path(call.arguments[1], &mut new_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, Some(old_path), Some(new_path), None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" renamed ");
+            arch::serial::write_str(old_path);
+            arch::serial::write_str(" to ");
+            arch::serial::write_str(new_path);
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
     // The memory calls, in one block because they share everything but their
     // number: none takes a pointer, so each rebuilds the argument words and
     // hands them straight to the registry.
@@ -909,7 +967,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        let outcome = through_registry(&mut context, None, None);
+        let outcome = through_registry(&mut context, None, None, None);
         // The answer, printed by the kernel because a program has no way to
         // print one: `Write` prints a fixed line, so a value a program obtained
         // would otherwise reach this log only through its exit status — and an
@@ -1003,11 +1061,13 @@ const OPEN_PATH_MAX: usize = 128;
 fn through_registry(
     context: &mut syscall::SyscallContext,
     path: Option<&str>,
+    second_path: Option<&str>,
     buffer: Option<&mut [u8]>,
 ) -> arch::CallOutcome {
     let mut arguments = crate::syscall::Arguments {
         context,
         path,
+        second_path,
         buffer,
     };
     match crate::syscall::serve(&mut arguments) {

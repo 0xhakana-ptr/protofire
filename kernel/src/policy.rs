@@ -96,6 +96,7 @@ fn open_as(identity: u32) -> bool {
     let mut arguments = Arguments {
         context: &mut context,
         path: Some(BOOT_GREETING_PATH),
+        second_path: None,
         buffer: None,
     };
 

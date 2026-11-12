@@ -333,6 +333,7 @@ pub fn read_greeting_through_syscall() -> bool {
     let mut arguments = Arguments {
         context: &mut context,
         path: Some(BOOT_VOLUME_PATH),
+        second_path: None,
         buffer: None,
     };
     // Through the installed registry, not a table this function was handed.
@@ -353,6 +354,7 @@ pub fn read_greeting_through_syscall() -> bool {
     let mut arguments = Arguments {
         context: &mut context,
         path: None,
+        second_path: None,
         buffer: Some(&mut buffer),
     };
     let read_ok = match crate::syscall::serve(&mut arguments) {
