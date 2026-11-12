@@ -56,51 +56,65 @@ use super::table::leaf_for;
 /// `0x80_0000_0000` is root entry 1: 512 GiB, one entry past the identity map.
 pub const USER_BASE: usize = 0x80_0000_0000;
 
-/// The most frames one address space records as its own.
+/// The most frames one loaded image may occupy, plus its stack.
 ///
-/// An image's segments, a stack, and the frames a `fork` shares.  Sharing
-/// does not copy, so a child records the same frames its parent does, each
-/// once.  The bound rose from four when programs stopped being one page of
-/// machine code and became loaded images: a two-segment ELF with a BSS is
-/// three frames before the stack is counted.  The bound is a bound on the
-/// *records* and not on the pages, and a program past it is one this bound
-/// refuses rather than silently forgetting, the refusal is `own` answering
-/// `false`, which the caller reports.
+/// The loader's budget, not the space's: `MAX_IMAGE_BYTES` is a quarter of the
+/// boot disk and admits a 64-page image, and one slot past the pages is the
+/// stack the exec path adds.  It is derived rather than written down because
+/// the two have to agree and they did not once — a legal 64 KiB program was
+/// refused by a bound whose own documentation described a smaller thing.
 ///
-/// It is **derived from the loader's image bound**, because the two have to
-/// agree and they did not.  `MAX_IMAGE_BYTES` is a quarter of the boot disk and
-/// admits a 64-page image; this was sixteen, so a legal 64 KiB program was
-/// refused by a bound whose own documentation described a smaller thing.  No
-/// boot has needed more than three, which is exactly why nobody noticed: the
-/// only boot that would is one with a program large enough to exercise a limit
-/// that no test names.
+/// This is the number the **exec** path checks; a space's total ownership has
+/// its own bound below.
+pub const MAX_IMAGE_FRAMES: usize = crate::loader::MAX_IMAGE_BYTES / paging::PAGE_SIZE + 1;
+
+/// The most frames one address space may record as its own.
 ///
-/// One slot past the pages is the stack the exec path adds, and the sum is
-/// rounded up because a fork can share the boundary page of two segments and
-/// record it once.
-pub const MAX_OWNED_FRAMES: usize = crate::loader::MAX_IMAGE_BYTES / paging::PAGE_SIZE + 1;
+/// An image, its stack, the frames a `fork` shares and the pages a program
+/// obtained at run time.  The last is why this is no longer the image budget:
+/// a `Brk` or an `Mmap` adds pages to a space that has already loaded, and
+/// bounding the total by what an image may weigh would have refused a program
+/// a heap the moment its image was large.
+///
+/// 4096 pages is 16 MiB per process, which is a bound this kernel states
+/// rather than one it discovers: the free pool on the smallest machine is
+/// 64 MiB, so four processes may each hold a sixteenth of it and the boot's
+/// own test still has room.
+pub const MAX_OWNED_FRAMES: usize = 4096;
 
 /// A program's address space: a root of its own, sharing the kernel's entry 0.
+///
+/// Not `Copy`, and the reason is the frame list below.  It was `Copy` while the
+/// list was a fixed array, and two call sites relied on that: a fork read the
+/// parent's space out of the task table by value, and a task answered its root
+/// the same way.  Both now borrow, which is the honest description — a space is
+/// one object a task owns, not a value to be duplicated at each question.
 #[cfg(target_os = "none")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct AddressSpace {
     /// The root table's frame.
     root: usize,
-    /// The frames the program owns: its image, its stack, and, for a program
-    /// that forked, the shared frame behind each page it inherited.
+    /// The frames the program owns: its image, its stack, the shared frame
+    /// behind each page it inherited from a fork, and every page it obtained at
+    /// run time.
     ///
     /// Ownership is one *record* per frame this space holds a reference to, and
     /// a frame two spaces share is recorded by both: the pool's co-owner count
-    /// is what makes that sound, and `release` is what consults it.  Four
-    /// rather than two because a fork's child records both frames it inherited,
-    /// and a limit that silently dropped the third would be a leak whose
-    /// symptom is a pool that shrinks with no line in the log to say why.  A
-    /// `Vec` would grow past this, and a `Vec` in a `Copy` type is not one: the
-    /// fixed bound is the honest statement of what this kernel has decided to
-    /// own per process.
-    frames: [usize; MAX_OWNED_FRAMES],
-    /// How many of `frames` are in use.
-    used: usize,
+    /// is what makes that sound, and `release` is what consults it.  A record
+    /// dropped silently is a leak whose symptom is a pool that shrinks with no
+    /// line in the log to say why, so `own` refuses past the bound rather than
+    /// forgetting.
+    ///
+    /// It was a fixed array, sized by what an image may weigh.  That bound is
+    /// the loader's and not this type's: a `Brk` or an `Mmap` adds pages to a
+    /// space that has already loaded, and a program's heap has nothing to do
+    /// with its image size.  Growing it is a `Vec`, which is why the struct is
+    /// no longer `Copy`.
+    frames: alloc::vec::Vec<usize>,
+    /// Where the program's data segment ends: the address a `Brk` may grow
+    /// upward from, and the value a `Brk` query answers when nothing has grown
+    /// yet.  Zero for a space no image was loaded into.
+    brk: usize,
 }
 
 #[cfg(target_os = "none")]
@@ -137,8 +151,11 @@ impl AddressSpace {
 
         Some(AddressSpace {
             root,
-            frames: [0; MAX_OWNED_FRAMES],
-            used: 0,
+            // Depth zero.  Not `with_capacity`: allocating 520 bytes here
+            // would be a heap allocation for every space, at the one moment
+            // the scheduler may hold its lock.
+            frames: alloc::vec::Vec::new(),
+            brk: 0,
         })
     }
 
@@ -244,11 +261,10 @@ impl AddressSpace {
     /// than dropping it, because a frame nobody records is a leak the pool
     /// will report as exhaustion much later.
     pub fn own(&mut self, frame: usize) -> bool {
-        if self.used == self.frames.len() {
+        if self.frames.len() >= MAX_OWNED_FRAMES {
             return false;
         }
-        self.frames[self.used] = frame;
-        self.used += 1;
+        self.frames.push(frame);
         true
     }
 
@@ -263,7 +279,7 @@ impl AddressSpace {
     /// a state the resolver can reach and is a bug report rather than a silent
     /// swap of nothing.
     pub fn replace_owned(&mut self, old_frame: usize, new_frame: usize) -> bool {
-        for slot in &mut self.frames[..self.used] {
+        for slot in &mut self.frames {
             if *slot == old_frame {
                 *slot = new_frame;
                 return true;
@@ -274,7 +290,17 @@ impl AddressSpace {
 
     /// The frames this space owns, in the order it took them.
     pub fn owned(&self) -> &[usize] {
-        &self.frames[..self.used]
+        &self.frames
+    }
+
+    /// Where this space's `Brk` may grow from, and what a query answers.
+    pub const fn brk(&self) -> usize {
+        self.brk
+    }
+
+    /// Set the break, for the exec path that places a new image.
+    pub fn set_brk(&mut self, brk: usize) {
+        self.brk = brk;
     }
 
     /// Give every frame this space holds a reference to its share back, and
@@ -306,7 +332,7 @@ impl AddressSpace {
     pub unsafe fn release(self) {
         let mut guard = TABLES.lock();
         let tables = &mut *guard;
-        for frame in &self.frames[..self.used] {
+        for frame in &self.frames {
             // The protocol, in two lines: release asks whether this was the
             // last owner, and only a `true` returns the frame.  A frame no
             // fork ever shared counts zero co-owners, so its first release is
@@ -1008,9 +1034,13 @@ pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usi
 /// than one whose share is silently partial, which is the only other way this
 /// could go wrong.
 ///
-/// Derived from the image bound for the reason [`MAX_OWNED_FRAMES`] gives: a
-/// program the loader admits has to be one a `fork` can share, and two
-/// constants that describe the same set of pages drift apart silently.  This
-/// was sixteen while the loader admitted sixty-four.
+/// Derived from the **image** bound and not from [`MAX_OWNED_FRAMES`]: a
+/// program the loader admits has to be one a `fork` can share, and those two
+/// describe the same set of pages.  The ownership bound describes a different
+/// set — everything a space may add at run time as well — and tying them
+/// together made this a stack array of 4096 entries, 98 KiB the kernel stack
+/// does not have.  Measured: raising `MAX_OWNED_FRAMES` alone took every
+/// riscv64 boot down with a store page fault at the bottom of the kernel
+/// stack, three frames below `USER_BASE`.
 #[cfg(target_os = "none")]
-pub const MAX_FORK_PAGES: usize = MAX_OWNED_FRAMES;
+pub const MAX_FORK_PAGES: usize = MAX_IMAGE_FRAMES;

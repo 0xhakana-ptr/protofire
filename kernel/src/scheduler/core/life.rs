@@ -51,9 +51,13 @@ impl Scheduler {
         // The parent's space, shared frame by frame.  A task with no space is
         // one sharing the kernel's, which a program never has: a fork of it
         // would be a fork of nothing.
-        let parent_space = self.tasks.get(parent)?.space?;
+        // Borrowed, not copied: a space owns a growable frame list, and the
+        // fork reads it to decide what to share.  A copy would be a second
+        // ownership of the same frames — which the pool's co-owner count would
+        // then believe was two spaces when there was one.
+        let parent_space = self.tasks.get(parent)?.space.as_ref()?;
         // SAFETY: the parent's space is live and this boot is the only writer.
-        let child_space = unsafe { crate::address_space::fork_from(&parent_space) }?;
+        let child_space = unsafe { crate::address_space::fork_from(parent_space) }?;
 
         let pid = self.next_pid;
         self.next_pid += 1;
@@ -180,9 +184,14 @@ impl Scheduler {
         // the largest image the loader admits.  It was `MAX_SEGMENTS * 2` —
         // sixteen — which is a bound on segments and was doing double duty as
         // a bound on pages, and the two are not the same number.
+        // `MAX_IMAGE_FRAMES`, not the space's ownership bound: this array is
+        // one slot per page an **image** can have, and the ownership bound now
+        // also covers what a program acquires at run time.  Sizing this by the
+        // latter made it 32 KiB of kernel stack, which is a fault three frames
+        // below `USER_BASE` rather than a refusal.
         let mut mapped: [Option<(usize, usize, paging::Permissions)>;
-            crate::address_space::MAX_OWNED_FRAMES] =
-            [None; crate::address_space::MAX_OWNED_FRAMES];
+            crate::address_space::MAX_IMAGE_FRAMES] =
+            [None; crate::address_space::MAX_IMAGE_FRAMES];
         for segment in image.segments() {
             for plan in crate::loader::pages(segment) {
                 let permissions = paging::Permissions {

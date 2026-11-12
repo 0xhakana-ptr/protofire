@@ -182,7 +182,7 @@ impl Task {
     /// and the check that says so is this one touching the field it would use.
     #[cfg(not(target_os = "none"))]
     pub fn root(&self) -> Option<usize> {
-        self.space.map(|_| None).unwrap_or(None)
+        self.space.as_ref().map(|_| None).unwrap_or(None)
     }
 
     pub fn pid(&self) -> u32 {

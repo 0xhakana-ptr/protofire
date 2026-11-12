@@ -331,6 +331,7 @@ pub use space::AddressSpace;
 #[cfg(target_os = "none")]
 pub use space::MAX_FORK_PAGES;
 #[cfg(target_os = "none")]
+pub use space::MAX_IMAGE_FRAMES;
 pub use space::MAX_OWNED_FRAMES;
 #[cfg(target_os = "none")]
 pub use space::MappedPage;

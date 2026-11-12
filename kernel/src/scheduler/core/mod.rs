@@ -169,7 +169,10 @@ impl Scheduler {
             homed: 0,
             last_homed: None,
             #[cfg(target_os = "none")]
-            retired: [None; RETIRED_SPACES],
+            // `const { None }` because `AddressSpace` is no longer `Copy`:
+            // the repeat expression requires it, and this builds the array
+            // one element at a time instead.
+            retired: [const { None }; RETIRED_SPACES],
         }
     }
 
