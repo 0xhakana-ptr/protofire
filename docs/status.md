@@ -255,11 +255,51 @@ test first:
   and the test for it is written over the trait object rather than a concrete
   type — a generic bound would have passed without the trait being usable.
 
+Three crates answer to the word "service", and they are not the same thing:
+
+- **`service_table`** (layer 7) is the table: `install`, `lookup`, `freeze`, and
+  a value type so a test can build its own.  It knows how to hold a service and
+  nothing about which services exist.
+- **`kernel/src/service/`** is what this boot installs: `install_all` names the
+  clock, `clock.rs` implements it.  A kernel with a second service changes this
+  directory and not the table.
+- **`apps/service_manager`** is a ring-3 program, and it is where "everything is
+  a service" is meant to end up: it supervises processes with lifecycle policies.
+  Its own header says it is a shell today because `SpawnProcess` and
+  `WaitProcess` are not served for programs yet.
+
+The first two split for a reason worth keeping: the table is a mechanism, the
+list is this boot's content, the same division as `fs`'s `MountTable` and
+`kernel`'s `volume` module.
+
 What a service is **not**, yet: a device.  Every driver still submits through
 `block`'s `QueuedBlockDevice`, and the clock answers in the call and has no
-queue.  A process also cannot reach the table — that needs a syscall number
-(197, the first after the frozen range) and a descriptor variant, and it is a
-separate change.
+queue, so nothing in a boot exercises the *pending* half of the model.
+
+### What the user-space half still needs
+
+"Everything is a service" is a direction, and the user side is the larger half
+of it.  The kernel's job there is a base, not the feature.  Measured against the
+tree today, four things are missing, in the order they block each other:
+
+- **Shared memory.**  `Brk`, `Mmap`, `Munmap` and `ReclaimPages` all have
+  numbers in the ABI and **no implementation anywhere in `kernel/src/`**.  A
+  submit ring and a completion ring a program can write are the whole point of a
+  fast asynchronous interface, and without a mapping there is only copying.
+- **A handle that can be given away.**  `Descriptor` has two variants, `File`
+  and `Pipe`.  A service handle that one process can pass to another — with the
+  rights it was granted and nothing more — needs a third.
+- **A process a program can start.**  `SpawnProcess` has a number and no
+  handler; only the boot's own `ExecProcess` path exists.  A supervisor cannot
+  supervise what it cannot start.
+- **A way to reach the table from ring 3.**  The next free syscall number is
+  197 — the range `0..=196` is fully assigned and 141/142 are retired — and
+  reaching the table also needs the descriptor variant above, so this comes
+  last of the four.
+
+None of these is a service-layer change: they are the memory and process layers
+underneath it.  Recorded here so the next reader does not read "the table landed"
+as "the direction is nearly done".
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement

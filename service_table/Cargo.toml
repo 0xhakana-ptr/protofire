@@ -1,12 +1,15 @@
 [package]
-name = "service"
+name = "service_table"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 # The table from a name to a service, and the freeze that keeps it a boot-time
-# table rather than a place anything can write at any time.
+# table rather than a place anything can write at any time.  Named for the table
+# and not for the thing it holds: the services themselves live where they are
+# implemented, and one crate called `service` beside `kernel/src/service/` and
+# `apps/service_manager/` made three different things answer to one word.
 #
 # It names `async_io` for the trait it stores, `sync` for the lock a lookup
 # takes, and `abi` for nothing yet — the error it answers an installation with

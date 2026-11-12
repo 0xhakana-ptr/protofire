@@ -1,4 +1,4 @@
-//! service/src/tests.rs
+//! service_table/src/tests.rs
 //!
 //! The table's tests: installation, lookup, the freeze, and the end-to-end
 //! submit-and-take through a name.

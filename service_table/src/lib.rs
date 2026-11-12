@@ -1,4 +1,4 @@
-//! service/src/lib.rs
+//! service_table/src/lib.rs
 //!
 //! A table from a name to a service, and the rule that keeps it a table.
 //!

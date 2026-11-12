@@ -40,7 +40,7 @@ power                 321   12
 profiler              312    2
 rights                 78    3
 security             1281   14
-service               544    7
+service_table         544    7
 service_manager        61    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 shell                  60    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 sound                   2    0

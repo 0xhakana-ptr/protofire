@@ -48,5 +48,5 @@ virtio_block = { path = "../drivers/virtio/block" }
 virtio_net = { path = "../drivers/virtio/net" }
 # The table a caller finds a service by name in, and the request/completion
 # model a service answers through.
-service = { path = "../service" }
+service_table = { path = "../service_table" }
 async_io = { path = "../async_io" }

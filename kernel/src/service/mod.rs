@@ -26,8 +26,8 @@ use async_io::RequestId;
 
 /// The name the clock answers to.
 ///
-/// `&'static str`, which is what `service::install` requires: a service's name
-/// is part of this boot's code and not something built at run time.
+/// `&'static str`, which is what `service_table::install` requires: a service's
+/// name is part of this boot's code and not something built at run time.
 pub const CLOCK_NAME: &str = "clock";
 
 /// How many polls a boot gives a service before it calls the request
@@ -49,14 +49,14 @@ pub fn install_all() -> usize {
         Err(error) => {
             arch::serial::write_str("protofire: clock service refused: ");
             arch::serial::write_str(match error {
-                service::InstallError::NameTaken => "the name is taken",
-                service::InstallError::TableFull => "the table is full",
-                service::InstallError::Frozen => "the table is frozen",
+                service_table::InstallError::NameTaken => "the name is taken",
+                service_table::InstallError::TableFull => "the table is full",
+                service_table::InstallError::Frozen => "the table is frozen",
             });
             arch::serial::write_str("\n");
         }
     }
-    service::freeze();
+    service_table::freeze();
     installed
 }
 
@@ -73,7 +73,7 @@ pub fn install_all() -> usize {
 #[cfg(target_os = "none")]
 pub fn read_the_clock() -> Option<usize> {
     let token = RequestId::new(1);
-    let completion = service::request(CLOCK_NAME, Request::pending(token), POLLS)?;
+    let completion = service_table::request(CLOCK_NAME, Request::pending(token), POLLS)?;
     if completion.id != token || !completion.is_ok() {
         return None;
     }

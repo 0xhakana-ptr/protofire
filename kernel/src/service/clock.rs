@@ -100,8 +100,8 @@ impl Service for Clock {
 ///
 /// A refusal is printed by the caller rather than here, so one place in the
 /// boot owns the report and this function stays a call.
-pub fn install() -> Result<(), service::InstallError> {
-    service::install(CLOCK_NAME, Clock::shared())
+pub fn install() -> Result<(), service_table::InstallError> {
+    service_table::install(CLOCK_NAME, Clock::shared())
 }
 
 #[cfg(test)]
