@@ -691,7 +691,10 @@ mod tests {
     fn mounted() -> SyscallTable {
         let volume = StaticFileSystem::with_entries(
             "test",
-            &[("/greeting.txt", NodeKind::File, b"hello from a syscall")],
+            &[
+                ("/greeting.txt", NodeKind::File, b"hello from a syscall"),
+                ("/docs", NodeKind::Directory, b""),
+            ],
         );
         let mut table = SyscallTable::new();
         let mut namespace = MountTable::new();
@@ -702,6 +705,7 @@ mod tests {
         table.register(SyscallNumber::Open, open);
         table.register(SyscallNumber::Read, read);
         table.register(SyscallNumber::Write, write);
+        table.register(SyscallNumber::Stat, stat);
         table.register(SyscallNumber::Close, close);
         table
     }
@@ -725,6 +729,7 @@ mod tests {
         table.register(SyscallNumber::Open, open);
         table.register(SyscallNumber::Read, read);
         table.register(SyscallNumber::Write, write);
+        table.register(SyscallNumber::Stat, stat);
         table.register(SyscallNumber::Close, close);
         table
     }
@@ -1294,6 +1299,104 @@ mod tests {
             pipe.has_writers(),
             "the child still holds a write end, so the pipe is not closed"
         );
+    }
+
+    /// Stat through the registry, and read the record the way a caller does.
+    fn stat_path(table: &mut SyscallTable, path: &str) -> Result<(usize, usize)> {
+        let mut context = SyscallContext::new(SyscallNumber::Stat as usize, [0, 0, 16, 0, 0, 0]);
+        let mut record = [0u8; 16];
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(path),
+            buffer: Some(&mut record),
+        };
+        table.dispatch(&mut arguments)?;
+        let kind = usize::from_le_bytes(record[..8].try_into().expect("kind bytes"));
+        let size = usize::from_le_bytes(record[8..].try_into().expect("size bytes"));
+        Ok((kind, size))
+    }
+
+    /// A stat of a file answers the kind and the size the volume holds.
+    ///
+    /// The record is the wire format, so the parse is the caller's own: kind
+    /// in the first word, size in the second, little-endian, the layout the
+    /// ABI pins.  A handler that answered a different layout would still
+    /// answer zero, and the caller's next read would start at a size that
+    /// was never the file's.
+    #[test]
+    fn a_stat_reports_the_kind_and_size_the_volume_holds() {
+        let mut table = mounted();
+        assert_eq!(
+            stat_path(&mut table, "/greeting.txt"),
+            Ok((fs_abi::FILE_KIND_FILE, 20))
+        );
+        assert_eq!(
+            stat_path(&mut table, "/docs"),
+            Ok((fs_abi::FILE_KIND_DIRECTORY, 0)),
+            "a directory is stat'd as one, at size zero"
+        );
+    }
+
+    /// A stat of a path the namespace does not have answers `NotFound`.
+    #[test]
+    fn a_stat_of_a_missing_path_answers_not_found() {
+        let mut table = mounted();
+        assert_eq!(stat_path(&mut table, "/no-such-file"), Err(Error::NotFound));
+    }
+
+    /// A record shorter than the stat is refused, not partly written.
+    ///
+    /// A caller handed eight bytes would otherwise read a size field that
+    /// holds the kind's bytes — a number that looks like a size, which is
+    /// the kind of wrong answer that survives a program's own checking.
+    #[test]
+    fn a_record_shorter_than_the_stat_is_refused() {
+        let mut table = mounted();
+        let mut context = SyscallContext::new(SyscallNumber::Stat as usize, [0, 0, 8, 0, 0, 0]);
+        let mut short = [0u8; 8];
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some("/greeting.txt"),
+            buffer: Some(&mut short),
+        };
+        assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
+        assert_eq!(short, [0u8; 8], "and nothing was written into it");
+    }
+
+    /// A stat of a file the table's own writes grew answers the grown size.
+    ///
+    /// The static volume's sizes are fixed at build time, so this is the one
+    /// test that can catch a stat reading a cached or declared size where
+    /// the file's current one belongs.
+    #[test]
+    fn a_stat_after_a_write_answers_the_written_size() {
+        let mut table = writable();
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let descriptor = open_path(&mut table, "/note.txt", flags).expect("create");
+        assert_eq!(
+            write_as(&mut table, descriptor, b"twelve byte", None),
+            Ok(11)
+        );
+        assert_eq!(table.close(descriptor), Ok(()));
+
+        assert_eq!(
+            stat_path(&mut table, "/note.txt"),
+            Ok((fs_abi::FILE_KIND_FILE, 11))
+        );
+    }
+
+    /// A stat whose reserved arguments are not zero is refused.
+    #[test]
+    fn a_stat_with_reserved_arguments_set_is_refused() {
+        let mut table = mounted();
+        let mut context = SyscallContext::new(SyscallNumber::Stat as usize, [0, 0, 16, 1, 0, 0]);
+        let mut record = [0u8; 16];
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some("/greeting.txt"),
+            buffer: Some(&mut record),
+        };
+        assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
     }
 
     /// Call a number through the registry with six argument words and no

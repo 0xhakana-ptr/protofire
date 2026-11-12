@@ -152,6 +152,65 @@ pub fn write(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
     Ok(Dispatch::complete(count))
 }
 
+/// Report a path's kind and size.
+///
+/// Arguments: the path, the record, its length, then three reserved slots
+/// that must be zero.  The record is the ABI's [`fs_abi::FileStat`], sixteen
+/// bytes: the kind and the size.  A buffer shorter than the record is refused
+/// rather than partly filled — a caller handed a truncated answer would read
+/// a size that was never there — and a longer one gets the record's own
+/// sixteen, because the record is the wire format and a caller that asked for
+/// more asked for room, not fields.
+///
+/// The answer is zero: a status, not a count.  The record's length is the
+/// caller's own argument, so the one thing the call could report back is
+/// something the caller already knows.
+pub fn stat(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 3)?;
+
+    // Who is asking, before what they asked for is resolved — the same order
+    // `open` keeps, and for the same reason: a denial and a "not found" are
+    // different answers, and the one that leaks less does not distinguish
+    // them.  A stat is a read of the file's face, and the read permission is
+    // the one it is policed by.
+    let subject = arguments
+        .context
+        .identity
+        .unwrap_or(mac::MAC_TYPE_UNLABELED);
+    mac::check_file(subject, path, mac::MAC_CLASS_FILE, mac::MAC_PERM_READ, 0)?;
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < fs_abi::FILE_STAT_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let (filesystem, relative) = namespace.resolve(path)?;
+    let metadata = filesystem.stat(&relative)?;
+    let record = fs_abi::FileStat::new(file_kind(metadata.kind), metadata.size);
+    buffer[..8].copy_from_slice(&record.kind.to_le_bytes());
+    buffer[8..16].copy_from_slice(&record.size.to_le_bytes());
+    Ok(Dispatch::complete(0))
+}
+
+/// The ABI's kind word for a node's kind.
+///
+/// The two enums live on opposite sides of the boundary — the filesystem's is
+/// the tree's own, the ABI's is the wire — and the mapping is total, which is
+/// why it is a function a test pins rather than a cast a reader trusts.
+fn file_kind(kind: fs::NodeKind) -> usize {
+    match kind {
+        fs::NodeKind::Directory => fs_abi::FILE_KIND_DIRECTORY,
+        fs::NodeKind::File => fs_abi::FILE_KIND_FILE,
+        fs::NodeKind::Device => fs_abi::FILE_KIND_DEVICE,
+        fs::NodeKind::Symlink => fs_abi::FILE_KIND_SYMLINK,
+    }
+}
+
 /// Close a descriptor.
 ///
 /// Arguments: the descriptor, then five reserved slots that must be zero.

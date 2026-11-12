@@ -845,6 +845,53 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    if number == SyscallNumber::Stat as usize {
+        // `Stat(path, record, length)`: the path is a NUL-terminated string in
+        // the caller's memory, the record is where the kernel writes the ABI's
+        // sixteen-byte `FileStat`, and the length is how much room the caller
+        // made.  The copy is the `Open` branch's, and so is the reason for it.
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let record = call.arguments[1];
+        let length = call.arguments[2];
+        if !crate::address_space::is_user_range(record, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handler writes the
+        // record and nothing past it.
+        let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, Some(path), Some(destination));
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+            && let (Ok(kind), Ok(size)) = (
+                destination[..8].try_into().map(usize::from_le_bytes),
+                destination[8..16].try_into().map(usize::from_le_bytes),
+            )
+        {
+            // The record reached the caller's memory, and the borrow that
+            // carried it can be read back here: the line is the kernel
+            // reporting what it answered, so the boot log carries the fact
+            // without trusting the program to report it.
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" stat'd ");
+            arch::serial::write_str(path);
+            arch::serial::write_str(", kind ");
+            arch::serial::write_str(stat_kind_name(kind));
+            arch::serial::write_str(", size ");
+            arch::serial::write_u32(size as u32);
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
     // The memory calls, in one block because they share everything but their
     // number: none takes a pointer, so each rebuilds the argument words and
     // hands them straight to the registry.
@@ -917,6 +964,22 @@ fn copy_user_path(path_ptr: usize, bytes: &mut [u8; OPEN_PATH_MAX]) -> Result<&s
         length += 1;
     }
     core::str::from_utf8(&bytes[..length]).map_err(|_| abi::Error::InvalidArgument)
+}
+
+/// The name a `Stat` evidence line prints for the ABI's kind word.
+///
+/// The words are the log's, not the wire's: the record carries the number,
+/// and a boot line that printed the number would be one a reader had to
+/// decode against the ABI to read at all.
+#[cfg(target_os = "none")]
+fn stat_kind_name(kind: usize) -> &'static str {
+    match kind {
+        abi::fs::FILE_KIND_DIRECTORY => "directory",
+        abi::fs::FILE_KIND_FILE => "file",
+        abi::fs::FILE_KIND_DEVICE => "device",
+        abi::fs::FILE_KIND_SYMLINK => "symlink",
+        _ => "unknown",
+    }
 }
 
 /// The longest path a ring-3 `Open` or `ExecProcess` may name.

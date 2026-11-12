@@ -72,6 +72,7 @@ pub use handlers::munmap;
 pub use handlers::open;
 pub use handlers::read;
 pub use handlers::reclaim_pages;
+pub use handlers::stat;
 pub use handlers::write;
 pub use table::Arguments;
 pub use table::Dispatch;
