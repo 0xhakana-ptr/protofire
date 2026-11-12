@@ -1,9 +1,19 @@
 # `async_io`: requests, completions, and what a service is
 
-`async_io` is the shape every asynchronous operation in this tree has.  It is
-deliberately small: a request, a completion, a bounded queue, and a trait with
-three methods.  There is no executor, no task, no future and no scheduler, and
-this document says why each of those is absent.
+`async_io` is a request/completion model — a request, a completion, a bounded
+queue, and a trait with three methods — and it is deliberately small: no
+executor, no task, no future, no scheduler, and this document says why each of
+those is absent.
+
+**No device uses it today.**  Every driver in the tree submits through `block`'s
+`QueuedBlockDevice` or through a virtio queue of its own; both are typed methods
+with a ticket per request, which is the other trade and a working one.  What
+this crate is, is the shape for when a *uniform* submission interface is wanted
+— one where adding an operation does not extend a wire format — written and
+tested before there is a caller to disagree with it.  The section
+[The obligation the trait states and cannot enforce](#the-obligation-the-trait-states-and-cannot-enforce)
+already said a driver's version of the check is "a different gate and a later
+change"; this paragraph is the same admission in the place a reader starts.
 
 ## The model
 

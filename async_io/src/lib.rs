@@ -1,7 +1,23 @@
 //! async_io/src/lib.rs
 //!
-//! Requests and completions: the shape every asynchronous operation in this
-//! tree has, and the queue they go through.
+//! Requests and completions: a request, a service that finishes it later, and
+//! the bounded queue the completions go through.
+//!
+//! ## What uses this, today
+//!
+//! **No device.**  Every driver in this tree submits through `block`'s
+//! `QueuedBlockDevice`, or through a virtio queue of its own, and those are a
+//! different shape on purpose: a typed method per operation, a ticket per
+//! request, and an `unsafe` buffer contract that a two-word [`Request`] cannot
+//! carry.  What this crate is, is the other trade — an opaque request and a
+//! service-defined operation set, so that adding an operation does not extend a
+//! wire format — written out and tested before there is a caller to be wrong
+//! about.
+//!
+//! The one implementation here is
+//! [`MemoryBlockService`], which is a byte slice rather than a device: its job
+//! is to be the shape a driver would have.  The claim that a driver fits it is
+//! what `docs/async_io.md` argues, and this crate has not yet had to keep it.
 //!
 //! ## The model
 //!
