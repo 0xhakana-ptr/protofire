@@ -1021,4 +1021,112 @@ mod tests {
             "the child still holds a write end, so the pipe is not closed"
         );
     }
+
+    /// Call a number through the registry with six argument words and no
+    /// borrow.
+    ///
+    /// The memory calls take no pointer, so this is the whole of their wire
+    /// shape: a number, six words, and an answer.
+    fn call(table: &mut SyscallTable, number: SyscallNumber, args: [usize; 6]) -> Result<usize> {
+        let mut context = SyscallContext::new(number as usize, args);
+        let mut arguments = Arguments::plain(&mut context);
+        let dispatch = table.dispatch(&mut arguments)?;
+        Ok(dispatch.value)
+    }
+
+    /// The memory calls validate their arguments, and a host can check that
+    /// without a page table.
+    ///
+    /// Each of these is refused **before** the mapping is attempted, which is
+    /// what makes them testable on a host and what makes them cheap on a
+    /// machine: a call that reached the allocator with a bad length would have
+    /// spent frames before discovering the caller was wrong.
+    #[test]
+    fn the_memory_calls_refuse_bad_arguments() {
+        let mut table = SyscallTable::new();
+        table.register(SyscallNumber::Mmap, mmap);
+        table.register(SyscallNumber::Munmap, munmap);
+        table.register(SyscallNumber::Brk, brk);
+
+        // A zero-length mapping names nothing.
+        assert_eq!(
+            call(&mut table, SyscallNumber::Mmap, [0, 0, 1, 0x20, 0, 0]),
+            Err(Error::InvalidArgument)
+        );
+        // A protection bit outside the set this build knows.
+        assert_eq!(
+            call(
+                &mut table,
+                SyscallNumber::Mmap,
+                [0, 4096, 1 << 7, 0x20, 0, 0]
+            ),
+            Err(Error::InvalidArgument)
+        );
+        // Anonymous is required: without it the call asks for a mapping this
+        // kernel cannot back.
+        assert_eq!(
+            call(&mut table, SyscallNumber::Mmap, [0, 4096, 1, 0x02, 0, 0]),
+            Err(Error::InvalidArgument)
+        );
+        // Write and execute together, which the loader already refuses for
+        // images and which turns a bug into an exploit.
+        assert_eq!(
+            call(
+                &mut table,
+                SyscallNumber::Mmap,
+                [0, 4096, 3 | 4, 0x22, 0, 0]
+            ),
+            Err(Error::InvalidArgument)
+        );
+        // A reserved argument that is not zero.
+        assert_eq!(
+            call(&mut table, SyscallNumber::Mmap, [0, 4096, 1, 0x20, 7, 0]),
+            Err(Error::InvalidArgument)
+        );
+        // A zero-length unmap names no range.
+        assert_eq!(
+            call(
+                &mut table,
+                SyscallNumber::Munmap,
+                [0x80_0000_0000, 0, 0, 0, 0, 0]
+            ),
+            Err(Error::InvalidArgument)
+        );
+        // An unmap below the user window would name the kernel's own pages.
+        assert_eq!(
+            call(
+                &mut table,
+                SyscallNumber::Munmap,
+                [0x1000, 4096, 0, 0, 0, 0]
+            ),
+            Err(Error::InvalidArgument)
+        );
+        // A brk with a reserved argument that is not zero.
+        assert_eq!(
+            call(&mut table, SyscallNumber::Brk, [0, 3, 0, 0, 0, 0]),
+            Err(Error::InvalidArgument)
+        );
+    }
+
+    /// A memory call whose arguments are well-formed gets past validation.
+    ///
+    /// On a host there is no page table, so the answer is `NotImplemented` —
+    /// and that is the assertion: the call was **accepted by the validator**
+    /// and refused by the machine it could not reach, which is a different
+    /// outcome from `InvalidArgument` and is what a host can honestly check.
+    #[test]
+    fn a_well_formed_mapping_passes_validation() {
+        let mut table = SyscallTable::new();
+        table.register(SyscallNumber::Mmap, mmap);
+        table.register(SyscallNumber::Brk, brk);
+        assert_eq!(
+            call(&mut table, SyscallNumber::Mmap, [0, 4096, 1, 0x22, 0, 0]),
+            Err(Error::NotImplemented),
+            "validated, then refused by a host that has no page table"
+        );
+        assert_eq!(
+            call(&mut table, SyscallNumber::Brk, [0, 0, 0, 0, 0, 0]),
+            Err(Error::NotImplemented)
+        );
+    }
 }

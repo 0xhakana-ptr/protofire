@@ -13,6 +13,8 @@
 use abi::Error;
 use abi::Result;
 use abi::fs as fs_abi;
+use abi::memory as memory_abi;
+use paging;
 use security::mac;
 use syscall::validate_known_flags;
 use syscall::validate_zeroed_args;
@@ -215,4 +217,170 @@ pub fn mac_add_rule(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) ->
     let mut state = mac::policy_state().lock();
     state.policy.add_rule(rule, replace == 1);
     Ok(Dispatch::complete(state.policy.rule_count()))
+}
+
+// The memory calls.
+//
+// Four numbers that had none, and the shape each has is the one this tree's
+// older ABI already gave them: a program written against either means the same
+// thing.  They are in the frozen range, so that is not a preference.
+//
+// ## Why the address space is not touched here
+//
+// A page mapping belongs to a task's space, the task belongs to the scheduler,
+// and reaching it means taking the scheduler's lock.  This module is where a
+// **wire format** is turned into a validated request, and the scheduler is
+// where a request reaches the object it is about.  A handler that walked a page
+// table would be a handler holding two locks whose order it decided on its own.
+
+/// Map anonymous memory, answering the base address.
+///
+/// `Mmap(addr_hint, length, protection, flags)`: the hint is where the caller
+/// would like the mapping, `length` is in bytes and rounded up, the protection
+/// is a `PROT_*` set, and the flags are a `MAP_*` set that has to name
+/// anonymous private memory — this kernel has no file-backed mapping and no
+/// shared one.
+///
+/// A hint of zero means "somewhere", which is the ordinary call.  A hint that
+/// names a specific address is honoured when it is page-aligned and still below
+/// the kernel's own descending cursor; a hint it cannot honour is treated as
+/// zero rather than refused, because the four numbers this ABI gives a caller
+/// have nowhere else to say "I do not care".
+pub fn mmap(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let hint = arguments.context.arg(0);
+    let length = arguments.context.arg(1);
+    let protection = arguments.context.arg(2);
+    let flags = arguments.context.arg(3);
+    validate_zeroed_args(arguments.context, 4)?;
+
+    if length == 0 || length > memory_abi::MAP_MAX_BYTES {
+        return Err(Error::InvalidArgument);
+    }
+    validate_known_flags(protection, memory_abi::PROT_KNOWN)?;
+    validate_known_flags(flags, memory_abi::MAP_KNOWN_FLAGS)?;
+    // Anonymous is not optional: a mapping this kernel cannot back with a file
+    // is one it must refuse rather than quietly make anonymous.
+    if flags & memory_abi::MAP_ANONYMOUS == 0 {
+        return Err(Error::InvalidArgument);
+    }
+    let writable = protection & memory_abi::PROT_WRITE != 0;
+    let executable = protection & memory_abi::PROT_EXEC != 0;
+    // Write and execute together is the one pair that turns a bug into an
+    // exploit, and the loader already refuses it for images.  Refusing it here
+    // keeps the rule one rule.
+    if writable && executable {
+        return Err(Error::InvalidArgument);
+    }
+
+    // A host has no page table to map into, so the validation above is the
+    // whole of what is testable there and the mapping answers `NotImplemented`.
+    // The handler is still the same function, so a host test that exercises the
+    // argument rules is exercising the code a machine runs.
+    #[cfg(target_os = "none")]
+    {
+        let mapped = crate::scheduler::map_current(
+            crate::per_cpu::current_slot(),
+            hint,
+            length,
+            writable,
+            executable,
+        )
+        .ok_or(Error::OutOfMemory)?;
+        Ok(Dispatch::complete(mapped))
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = (hint, length, writable, executable);
+        Err(Error::NotImplemented)
+    }
+}
+
+/// Unmap a range, answering how many pages were taken away.
+///
+/// `Munmap(addr, length)`: both are byte values, the address is rounded down
+/// and the length up, and a range with nothing mapped in it is a success of
+/// zero rather than an error — asking to remove what is not there has two true
+/// answers and the quiet one is the honest one.
+pub fn munmap(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let address = arguments.context.arg(0);
+    let length = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+
+    if length == 0 {
+        return Err(Error::InvalidArgument);
+    }
+    let base = address & !(paging::PAGE_SIZE - 1);
+    let rounded = length
+        .checked_add(paging::PAGE_SIZE - 1)
+        .ok_or(Error::InvalidArgument)?
+        & !(paging::PAGE_SIZE - 1);
+    if base < crate::address_space::USER_BASE
+        || base
+            .checked_add(rounded)
+            .is_none_or(|end| end > crate::address_space::USER_LIMIT)
+    {
+        return Err(Error::InvalidArgument);
+    }
+
+    #[cfg(target_os = "none")]
+    {
+        let taken = crate::scheduler::unmap_current(crate::per_cpu::current_slot(), base, rounded)
+            .ok_or(Error::InvalidArgument)?;
+        Ok(Dispatch::complete(taken))
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = (base, rounded);
+        Err(Error::NotImplemented)
+    }
+}
+
+/// Read or move the program's break.
+///
+/// `Brk(new_break)`: zero is a query, anything else is a request to grow to
+/// that address.  The answer is the break the kernel now holds, so a caller
+/// that asked for more than it can have learns what it actually got — which is
+/// the whole reason the call answers with a value rather than with success.
+pub fn brk(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let requested = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+
+    #[cfg(target_os = "none")]
+    {
+        let current = crate::scheduler::brk_current(crate::per_cpu::current_slot(), requested)
+            .ok_or(Error::OutOfMemory)?;
+        Ok(Dispatch::complete(current))
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = requested;
+        Err(Error::NotImplemented)
+    }
+}
+
+/// Give back pages the space is holding, answering how many came back.
+///
+/// `ReclaimPages(target)`: `target` is how many pages the caller would like
+/// returned and zero means "as many as will go".  This tree's answer is the
+/// first that is honest — it walks the space's own records and gives back the
+/// ones no page table names any more, which is the only set the kernel can
+/// identify without a scan of every program.
+///
+/// A diagnostic, not a policy: a caller that relied on it to bound its
+/// footprint would be relying on the kernel's timing rather than its own
+/// bookkeeping.
+pub fn reclaim_pages(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let target = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    #[cfg(target_os = "none")]
+    {
+        let reclaimed =
+            crate::scheduler::reclaim_current(crate::per_cpu::current_slot(), target).unwrap_or(0);
+        Ok(Dispatch::complete(reclaimed))
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = target;
+        Err(Error::NotImplemented)
+    }
 }

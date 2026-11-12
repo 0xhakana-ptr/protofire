@@ -183,6 +183,15 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::MacAddRule,
         crate::syscall::mac_add_rule,
     );
+    // The memory calls.  Their numbers and their argument slots are frozen, so
+    // the handlers take the shape the ABI already published for them.
+    table.register(::syscall::SyscallNumber::Mmap, crate::syscall::mmap);
+    table.register(::syscall::SyscallNumber::Munmap, crate::syscall::munmap);
+    table.register(::syscall::SyscallNumber::Brk, crate::syscall::brk);
+    table.register(
+        ::syscall::SyscallNumber::ReclaimPages,
+        crate::syscall::reclaim_pages,
+    );
     let served = table.served();
 
     // SAFETY: called once, after the namespace is set and every handler is

@@ -801,6 +801,26 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // The memory calls, in one block because they share everything but their
+    // number: none takes a pointer, so each rebuilds the argument words and
+    // hands them straight to the registry.
+    //
+    // **This branch is what makes them reachable.**  `MacGetStatus` and its two
+    // siblings are registered in the same table and have no branch here, so a
+    // program that calls one gets `NotImplemented` from the fallthrough below
+    // and nothing says why.  A handler is reachable from ring 3 only when this
+    // function forwards to it.
+    if number == SyscallNumber::Mmap as usize
+        || number == SyscallNumber::Munmap as usize
+        || number == SyscallNumber::Brk as usize
+        || number == SyscallNumber::ReclaimPages as usize
+    {
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        return through_registry(&mut context, None, None);
+    }
+
     // Everything else is a call this boot does not serve.  `encode_error` is
     // the ABI's own encoding, so the program reads the same word it would from
     // a handler that answered through the registry.

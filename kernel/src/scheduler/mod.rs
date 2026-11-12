@@ -887,6 +887,99 @@ pub(crate) fn with_current_space<R>(
     })
 }
 
+/// Map anonymous pages into the running process's space, answering the base.
+///
+/// `Mmap`'s work, and the reason it lives here rather than in the handler: the
+/// space belongs to a task, the task belongs to the scheduler, and reaching it
+/// takes the scheduler's lock.  The handler validates and formats; this is the
+/// one place that knows which space "the caller's" means.
+///
+/// Answers `None` when there is no running task with a space, or when the
+/// window has no room, or when the frames ran out — three different refusals
+/// the handler cannot tell apart, and does not need to: all three are
+/// `InvalidArgument` or `OutOfMemory`, and the program learns only that the
+/// mapping did not happen.
+#[cfg(target_os = "none")]
+pub(crate) fn map_current(
+    cpu: usize,
+    hint: usize,
+    length: usize,
+    writable: bool,
+    executable: bool,
+) -> Option<usize> {
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        let task = scheduler.running.get(cpu).copied().flatten()?;
+        let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
+        let base = space.reserve(hint, length)?;
+        // SAFETY: the space is the running task's, so it is the installed one —
+        // and `map_anonymous` requires the opposite.  That is why this cannot
+        // be called from a trap that is already translating through it.
+        //
+        // The mapping is into the *current* space, which the CPU is using: the
+        // new pages are outside every address the program is executing or
+        // reading at this instant, so the entries it changes are ones no
+        // instruction is mid-way through.  A stale TLB entry for them cannot
+        // exist, because nothing had mapped them.
+        unsafe { space.map_anonymous(base, length, writable, executable) }.then_some(base)
+    })
+}
+
+/// Unmap a range from the running process's space, answering the page count.
+///
+/// `Munmap`'s work.  The safety note on [`map_current`] applies unchanged, with
+/// one addition: unmapping a range the program is **currently executing from**
+/// or reading through would fault the very instruction that asked, which is a
+/// program's own mistake and one the machine reports as a fault rather than the
+/// kernel refusing.
+#[cfg(target_os = "none")]
+pub(crate) fn unmap_current(cpu: usize, base: usize, length: usize) -> Option<usize> {
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        let task = scheduler.running.get(cpu).copied().flatten()?;
+        let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
+        // SAFETY: as `map_current`.
+        Some(unsafe { space.unmap_range(base, length) })
+    })
+}
+
+/// Read or set the running process's break.
+///
+/// `Some(current)` for a query, and the new break for a set that the space
+/// accepted.  The **space** decides what is acceptable: it knows the window,
+/// the stack above the image, and how many frames it already owns.
+#[cfg(target_os = "none")]
+pub(crate) fn brk_current(cpu: usize, requested: usize) -> Option<usize> {
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        let task = scheduler.running.get(cpu).copied().flatten()?;
+        let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
+        // SAFETY: as `map_current` — the space is the running task's and the
+        // pages a break adds are above every address it is using.
+        unsafe { space.set_break(requested) }
+    })
+}
+
+/// Give back the pages the running process's space holds and no table names.
+///
+/// `ReclaimPages`'s work, and the only set this kernel can identify without
+/// scanning every program's tables: a frame the space still records but whose
+/// entry was cleared — by a `Munmap` that failed partway, or by a mapping the
+/// space undid — is a frame nothing can reach and the space still owns.
+///
+/// `target` bounds the walk, zero meaning "all of them".  Answers how many
+/// frames went back to the pool.
+#[cfg(target_os = "none")]
+pub(crate) fn reclaim_current(cpu: usize, target: usize) -> Option<usize> {
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        let task = scheduler.running.get(cpu).copied().flatten()?;
+        let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
+        // SAFETY: as `map_current` — the space belongs to the running task.
+        Some(unsafe { space.reclaim_unmapped(target) })
+    })
+}
+
 /// Fork the running process: share its pages with a new task and hand the
 /// context down.
 ///

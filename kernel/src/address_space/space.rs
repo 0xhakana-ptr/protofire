@@ -592,6 +592,181 @@ impl AddressSpace {
         Some(start)
     }
 
+    /// Read or move the program's break.
+    ///
+    /// `requested == 0` is a query and answers the current break.  Anything
+    /// else has to be page-aligned, at or above the current break, and below
+    /// the cursor `Mmap` is counting down from — a break that grew past it
+    /// would hand the program a page `reserve` also believes it may use, and
+    /// the two would map over each other with no error anywhere.
+    ///
+    /// **Growing the break maps pages.**  The frames are allocated here, one
+    /// per new page, and a failure undoes the pages this call added rather than
+    /// leaving a break past pages that are not mapped.  A `Brk` that only moved
+    /// the number would be a promise the kernel makes and the program discovers
+    /// is false at its first store.
+    ///
+    /// The break never shrinks.  A program that asks for a smaller one is
+    /// asking for memory to be given back, which this ABI's `Brk` does not
+    /// promise (`Munmap` is the call that gives memory back), and honouring it
+    /// here would make `Brk` mean two things.
+    ///
+    /// # Safety
+    ///
+    /// `self` must not be the installed address space.
+    pub unsafe fn set_break(&mut self, requested: usize) -> Option<usize> {
+        let current = self.brk;
+        if current == 0 {
+            // A space no image was loaded into: the boot's machine-code
+            // programs, which have no window and no heap.
+            return if requested == 0 { Some(0) } else { None };
+        }
+        if requested == 0 {
+            return Some(current);
+        }
+        if !requested.is_multiple_of(paging::PAGE_SIZE) || requested < current {
+            return None;
+        }
+
+        let cursor = if self.map_cursor == 0 {
+            self.window.1
+        } else {
+            self.map_cursor
+        };
+        if requested > cursor {
+            // The two ends would meet.  The program is asking for more than the
+            // gap between its image and the mappings it already made.
+            return None;
+        }
+
+        let pages = (requested - current) / paging::PAGE_SIZE;
+        let permissions = Permissions {
+            writable: true,
+            executable: false,
+            user: true,
+            cache: paging::Cache::Normal,
+        };
+        for index in 0..pages {
+            let Some(frame) = crate::address_space::allocate_image_frame() else {
+                // SAFETY: the caller's contract covers the whole function; the
+                // pages undone are exactly the ones this call mapped.
+                unsafe { self.undo_anonymous(current, index) };
+                return None;
+            };
+            if !self.own(frame) {
+                // SAFETY: as above.
+                unsafe { self.undo_anonymous(current, index) };
+                return None;
+            }
+            // SAFETY: the range below the cursor and above the old break is
+            // unmapped by construction; the frame is this space's own.
+            let ok = unsafe {
+                self.map_page_with(current + index * paging::PAGE_SIZE, frame, permissions)
+            };
+            if !ok {
+                // SAFETY: as above.
+                unsafe { self.undo_anonymous(current, index) };
+                return None;
+            }
+        }
+        self.brk = requested;
+        Some(requested)
+    }
+
+    /// Give back every frame this space records and no page table names.
+    ///
+    /// The set is smaller than "everything it owns" on purpose: a frame a
+    /// mapping still points at is a page the program is using, and freeing it
+    /// would hand the next allocation memory the program is about to write.  So
+    /// this asks the page table, one recorded frame at a time, and takes only
+    /// the ones whose entry no longer names them.
+    ///
+    /// `target` bounds the work; zero means all of them.  Answers how many
+    /// frames went back.
+    ///
+    /// # Safety
+    ///
+    /// `self` must not be the installed address space, for the reason
+    /// [`unmap_page`](Self::unmap_page) gives.
+    pub unsafe fn reclaim_unmapped(&mut self, target: usize) -> usize {
+        let limit = if target == 0 { usize::MAX } else { target };
+        let mut reclaimed = 0usize;
+        let mut index = 0usize;
+        while index < self.frames.len() && reclaimed < limit {
+            let frame = self.frames[index];
+            if self.maps(frame) {
+                index += 1;
+                continue;
+            }
+            self.frames.swap_remove(index);
+            let mut guard = TABLES.lock();
+            if guard.frames.release_reference(frame) {
+                let _ = guard.frames.deallocate(frame as *mut u8, 1);
+            }
+            reclaimed += 1;
+            // No index bump: `swap_remove` moved a different frame here.
+        }
+        reclaimed
+    }
+
+    /// Whether any page table entry in this space names `frame`.
+    ///
+    /// A linear scan of the user window's tables, which is what a diagnostic
+    /// may do and a fault path may not.  It stops at the first hit, and it
+    /// walks only tables that exist — an absent second level is a window with
+    /// nothing in it.
+    fn maps(&self, frame: usize) -> bool {
+        // SAFETY: `self.root` is this space's live root table.
+        let root = unsafe { &*(self.root as *const PageTable) };
+        for root_index in index(Level::Root, USER_BASE)..paging::ENTRIES_PER_TABLE {
+            let word = root.entry(root_index);
+            if word == 0 {
+                continue;
+            }
+            let second = arch::paging::decode(word, Level::Root);
+            if second.is_leaf {
+                continue;
+            }
+            // SAFETY: an entry this space's own `map` calls wrote.
+            let second_table = unsafe { &*(second.address as *const PageTable) };
+            for second_index in 0..paging::ENTRIES_PER_TABLE {
+                let word = second_table.entry(second_index);
+                if word == 0 {
+                    continue;
+                }
+                let third = arch::paging::decode(word, Level::Second);
+                if third.is_leaf {
+                    continue;
+                }
+                // SAFETY: as above, one level down.
+                let third_table = unsafe { &*(third.address as *const PageTable) };
+                for third_index in 0..paging::ENTRIES_PER_TABLE {
+                    let word = third_table.entry(third_index);
+                    if word == 0 {
+                        continue;
+                    }
+                    let leaf_table = arch::paging::decode(word, Level::Third);
+                    if leaf_table.is_leaf {
+                        continue;
+                    }
+                    // SAFETY: as above, at the level whose entries name pages.
+                    let leaves = unsafe { &*(leaf_table.address as *const PageTable) };
+                    for leaf_index in 0..paging::ENTRIES_PER_TABLE {
+                        let word = leaves.entry(leaf_index);
+                        if word == 0 {
+                            continue;
+                        }
+                        let leaf = arch::paging::decode(word, Level::Leaf);
+                        if leaf.is_leaf && leaf.address == frame {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Record where this program's window lies, for the reservation above.
     ///
     /// Called by the exec path, which is the only code that knows both numbers:
