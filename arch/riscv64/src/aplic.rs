@@ -222,13 +222,34 @@ impl Aplic {
     }
 
     /// The target word for `number`.
+    ///
+    /// ## The array is one-indexed, and both offsets are off by one without it
+    ///
+    /// `sourcecfg` and `target` are arrays **of sources**, and sources are
+    /// numbered from one: source `N`'s word is at the array's base plus
+    /// `(N - 1) * 4`.  The first version of this used `N * 4`, so every
+    /// write landed one source too high — and the defect is invisible from
+    /// every register the driver reads back, because the driver reads its own
+    /// (wrong) offsets.  What it produced, measured with QEMU's
+    /// `memory_region_ops_write` trace: the console's source 10 carried the
+    /// **target written for source 9** — identity 9 — so the APLIC delivered
+    /// every console message to identity 9 while the kernel had enabled and
+    /// was waiting on identity 10.  The message was sent, claimed, and never
+    /// recognised: `console interrupt(s) taken = 0` with the whole path sound.
+    ///
+    /// `setie` is **not** affected: it is a bitmap whose word is `number / 32`
+    /// and whose bit is `number % 32`, and bit zero of each word is unused
+    /// rather than source zero.
     pub const fn target_offset(number: usize) -> usize {
-        TARGET_BASE + number * 4
+        TARGET_BASE + (number - 1) * 4
     }
 
     /// The source-configuration word for `number`.
+    ///
+    /// One-indexed for the same reason as [`Aplic::target_offset`]: source
+    /// `N`'s configuration is at `SOURCE_CONFIG_BASE + (N - 1) * 4`.
     pub const fn source_offset(number: usize) -> usize {
-        SOURCE_CONFIG_BASE + number * 4
+        SOURCE_CONFIG_BASE + (number - 1) * 4
     }
 
     /// This hart's interrupt delivery control block.
@@ -610,16 +631,26 @@ mod tests {
             "enables end at {enables_end:#x}"
         );
         // The target array is what the delivery blocks bound: one word per
-        // source from 0x3004, and the blocks start at 0x4000.  A source cap of
-        // 1024 is exactly the array's capacity, which is why the two meet.
-        // Sources are numbered from 1, so the last one's target is at
-        // `TARGET_BASE + (MAX_SOURCES - 1) * 4`, and the block after it is the
-        // first delivery control block.
+        // source from 0x3004, and the blocks start at 0x4000.  Sources are
+        // numbered from one, so source `MAX_SOURCES`'s target is the **last**
+        // word before the first delivery block, not the block itself.
+        //
+        // This assertion is what caught the off-by-one the driver shipped
+        // with: `target_offset` used `number * 4`, which put source N's word
+        // one source too high, and this check passed anyway because it was
+        // written against the same wrong arithmetic.  What did not pass was
+        // the machine: the console's target carried source 9's identity, and
+        // `console interrupt(s) taken` stayed zero.
         let last_target = super::Aplic::target_offset(MAX_SOURCES);
         assert_eq!(
-            last_target, IDC_BASE,
-            "the last target is at {last_target:#x}"
+            last_target,
+            IDC_BASE - 4,
+            "the last target is at {last_target:#x}, one word before the blocks"
         );
+        // And source one's is the array's first word, which is where an
+        // off-by-one in the other direction would show.
+        assert_eq!(super::Aplic::target_offset(1), TARGET_BASE);
+        assert_eq!(super::Aplic::source_offset(1), super::SOURCE_CONFIG_BASE);
         assert_eq!(MAX_SOURCES, 1023, "the layout's own cap");
     }
 

@@ -325,9 +325,32 @@ source's own, the file's enable is the **filter** — only the sources a driver
 claims get one, because enabling the whole range turned every wired line with
 nobody to answer it into a storm (41,201 deliveries in ten seconds from one
 source, silenced at its controller once the trap path stopped re-arming it).
-Those boots finish, with `console interrupt(s) taken = 0` — the console's own
-message is held pending in the file, and the trap that would take it is a later
-change.
+Those boots finish, with `console interrupt(s) taken = 1` — the console's own
+message, delivered through the APLIC, claimed as its source's identity, and
+acknowledged at the UART.
+
+**That one was an off-by-one in the source arrays, and no register the driver
+read could show it.**  The APLIC's `sourcecfg` and `target` arrays are indexed
+by **source number, which starts at one**: source `N`'s word is at the array's
+base plus `(N - 1) * 4`.  The driver wrote `number * 4`, so every word landed one
+source too high.  The console's source 10 therefore carried the target written
+for source 9 — identity 9 — and the APLIC delivered every console message to
+identity 9 while the kernel had enabled and was waiting on identity 10.  Every
+register read back correctly, because the driver read its own wrong offsets;
+`CLRIP` showed the wire asserted at source 10, `SETIE` showed it enabled, and the
+file showed identity 10 enabled.  The message was sent and claimed and simply
+never recognised.
+
+What found it was QEMU's own MMIO trace, which is external to the guest:
+
+    qemu-system-riscv64 -trace memory_region_ops_write ...
+    memory_region_ops_write ... addr 0x28000000 value 0x9 size 4 name 'riscv.imsic'
+
+Identity **9** arriving at the file, written for a kernel waiting on 10, is the
+whole of the defect in one line.  After the fix the same trace reads `value 0xa`,
+and the count is one on **6 of 6** boots — the same number the PLIC machine has
+reached by a different mechanism.  `check --machine riscv64-aia` requires that
+one, and reverting the `- 1` makes the gate fail on exactly that line.
 
 **A PCI device's MSI-X reaches the IMSIC, and the reason it once did not is the
 order the wiring ran in.**  The block device's queue is mapped to a message: an

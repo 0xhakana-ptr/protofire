@@ -180,11 +180,20 @@ impl Machine {
                 // identity and the vector.  The page follows the hart the
                 // firmware cold-booted, so it is a prefix.
                 ("protofire: block message wired to imsic page ", false),
-                // The console's own message is held pending on this machine,
-                // because nothing acknowledges a message the way a UART's `IIR`
-                // read acknowledges a line.  Asserted as zero rather than left
-                // out: a boot that took it by accident would be visible.
-                ("protofire: console interrupt(s) taken = 0", true),
+                // The console's own message, delivered through the APLIC and
+                // claimed as its source's identity.  This is the end of the
+                // message path: a source the tree named, an APLIC that turned
+                // its wire into a message, a file that delivered it, and a
+                // trap that acknowledged the UART and counted it.
+                //
+                // The count is one because the boot asks for exactly one
+                // transmit interrupt and then silences the device — the same
+                // shape the PLIC machine's line has, reached by a different
+                // mechanism.  A boot whose `sourcecfg`/`target` writes are off
+                // by one source delivers identity 9 to a kernel waiting on 10
+                // and prints zero here; measured, that is what this machine did
+                // before the fix.
+                ("protofire: console interrupt(s) taken = 1", true),
             ],
             Self::Riscv64 => &[
                 // The external controller, initialized rather than merely
