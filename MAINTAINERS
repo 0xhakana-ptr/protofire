@@ -1,0 +1,95 @@
+# MAINTAINERS
+#
+# Who reviews what.  The counterpart of `AUTHORS`: that file lists everyone who
+# has contributed, in the order they did; this one says who is responsible for
+# each part of the tree **now**, and it changes when responsibility does.
+#
+# The format is Linux's, reduced to the tags this tree uses:
+#
+#   M:  the person who reviews a change to the listed paths
+#   R:  someone who reviews but does not have the final say
+#   L:  a list a change is sent to (none yet: the tree has no list)
+#   F:  a file or directory pattern this entry covers
+#   T:  a summary, when the entry is about a subject rather than a path
+#
+# One entry ends at the next blank line.  A path may appear in more than one
+# entry; the most specific match is the reviewer for a change, which is the
+# rule `scripts/` will implement when there is a script — until then this file
+# is read by people, and a person resolves the same way.
+#
+# A change touching several subsystems is sent to each entry's maintainer.  A
+# maintainer who is also the author of a change is not its reviewer, which is
+# why the whole tree has a fallback entry below the subsystems.
+#
+# Adding an entry: name the paths, name the person, and do not invent a role
+# you have not agreed to.  An entry that names nobody is worse than no entry:
+# it reads as coverage and answers nothing.
+
+THE WHOLE TREE
+M: Raiden Lumine <2557597107@qq.com>
+F: *
+T: everything below, for a change that no other entry names
+
+ARCHITECTURE PORTS
+M: Raiden Lumine <2557597107@qq.com>
+F: arch/
+F: bootloader/
+F: docs/architecture.md
+T: the machine-specific half, the entry each loader calls, and the layering
+   argument a new architecture has to be placed against
+
+PLATFORM INTERRUPT CONTROLLERS
+M: Raiden Lumine <2557597107@qq.com>
+F: arch/riscv64/src/aplic.rs
+F: arch/riscv64/src/imsic.rs
+F: arch/riscv64/src/external.rs
+T: the AIA pair, where a wired source becomes a message and a file it arrives
+   at; `docs/status.md` carries what is measured and what is open
+
+VIRTIO TRANSPORT AND DEVICES
+M: Raiden Lumine <2557597107@qq.com>
+F: drivers/virtio/
+F: drivers/bus/pci/
+T: the shared transport and queue, and the devices that sit on it.  A change
+   here is felt by every device crate, which is why the shared half has one
+   owner and the device half is expected to grow its own
+
+FILESYSTEMS
+M: Raiden Lumine <2557597107@qq.com>
+F: fs/
+T: the VFS contract, PyroFS, tmpfs, ISO 9660, and the mount table.  A new
+   filesystem arrives only after a mount has been verified on a machine
+
+SCHEDULER AND PROCESSES
+M: Raiden Lumine <2557597107@qq.com>
+F: kernel/src/scheduler/
+F: kernel/src/process.rs
+F: kernel/src/cpus.rs
+F: kernel/src/per_cpu.rs
+T: placement, preemption, waits, and the second CPU.  `docs/migration.md` has
+   the arguments; a change to the placement rule has to bring a measurement
+
+SYSCALLS AND THE ABI
+M: Raiden Lumine <2557597107@qq.com>
+F: abi/
+F: syscall/
+F: docs/fmts/syscall-abi.md
+T: the wire format and the numbers.  The range below 120 is frozen; a change in
+   it is the one thing this file asks about before it is written
+
+THE GATE AND THE TOOLS
+M: Raiden Lumine <2557597107@qq.com>
+F: scripts/
+F: tools/xtask/
+F: justfile
+T: what "green" means.  A gate that accepts more than it did yesterday is a
+   change to this entry, not to the code it was written for
+
+DOCUMENTATION
+M: Raiden Lumine <2557597107@qq.com>
+F: docs/
+F: README.md
+F: CONTRIBUTING.md
+F: AGENTS.md
+T: the prose, under CC BY 4.0, except `docs/fmts/` which other code is written
+   against and changes with the code it constrains

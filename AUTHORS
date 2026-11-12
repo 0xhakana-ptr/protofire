@@ -1,1 +1,18 @@
+# AUTHORS
+#
+# Everyone who has contributed to this tree, in the order they first did.
+#
+# A name is added in the commit that first carries it, and the form is the one
+# `.mailmap` maps to: `Proper Name <address>`.  That file is the authority when
+# a person has committed under more than one address, so a name here is the
+# proper name and an address here is the one `.mailmap` resolves to.
+#
+# This file is **history**.  Who is responsible for which part now is
+# `MAINTAINERS`, and the two answer different questions: a contributor who has
+# moved on stays here, and a maintainer who takes over a subsystem is an entry
+# there.
+#
+# The prose in this tree is CC BY 4.0 and the code is Apache-2.0; `NOTICE` says
+# which files fall on which side.
+
 Raiden Lumine <2557597107@qq.com>

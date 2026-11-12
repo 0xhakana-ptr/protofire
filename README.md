@@ -14,8 +14,24 @@ why: every measurement in the previous tree had three answers, every script had
 a shell-difference branch, and a defect that only appeared on one host was found
 by whoever ran the gate there.
 
+Three things are needed, and the first two are enough to **test** the tree:
+
 ```sh
-cargo install just    # once; a distribution package is preferred where there is one
+# 1. The toolchain the tree pins.  rustup reads rust-toolchain.toml.
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 2. `just` runs the recipes below.  It is not a build dependency: every recipe
+#    is one line naming one command, and `scripts/verify.sh` is what a gate
+#    actually runs, so a reader without `just` can copy the command out.
+cargo install just        # or: apt install just / dnf install just
+
+# 3. QEMU, only for the tiers that boot something.
+#    `cargo test --workspace` and `sh scripts/verify.sh p0` need neither QEMU
+#    nor a boot: they build every crate and run its tests on the host.
+apt install qemu-system-x86 qemu-system-arm qemu-system-misc
+```
+
+```sh
 just build-x86_64     # the image, into target/x86_64-unknown-none/debug/bootloader
 just run-x86_64       # boot it and keep the serial output
 just check-x86_64     # boot it and require what it prints
@@ -25,6 +41,18 @@ just check-x86_64     # boot it and require what it prints
 anything with an argument or a conditional lives in `tools/xtask`, which is Rust
 so that its assertions can be tested without an emulator.  Nothing in the gate
 *needs* `just`, `scripts/verify.sh` is what a gate actually runs.
+
+### A first change
+
+The smallest useful contribution is a document correction: `docs/status.md` and
+`docs/migration.md` state what the code does, and when the two disagree the code
+is right and the document is the bug.  `sh scripts/verify.sh p0` proves a
+document-only change without booting anything, because `check-docs` refuses a
+citation that does not resolve and `check_source_headers` refuses a header that
+names a path it is not at.
+
+`CONTRIBUTING.md` is the list a change has to satisfy, `docs/fmts/` is the
+format each kind of file is written in, and `MAINTAINERS` says who reviews what.
 
 ## The gate
 
