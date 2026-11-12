@@ -195,6 +195,35 @@ instead of failing the write, and the count stayed at 1 — a vector a device is
 told about is a vector it sends to, whatever number it is, so the control had
 not disconnected anything.
 
+**The receive wait is bounded by the timer, and the wait itself has never run.**
+The ARP exchange used to spin: a `spin_loop` poll with a turn count.  It now
+checks the ring and, when it is empty, arms the machine's timer for a slice and
+stops the core until an interrupt arrives — the card's message is one of the two
+that can end it, and the timer's is the other.
+
+Two things were measured about that loop, and only two:
+
+- **The bound is real.**  With no receive buffer posted, the card has nowhere to
+  put the reply and the loop exhausts its turns: the boot prints `virtio-net
+  arp request went unanswered after 41 turn(s)` and **continues**, rather than
+  stopping in a wait.  That is the difference between a bound and a count that
+  can never be reached — the first version of this change counted turns and was
+  killed by the checker's timeout instead, because `wait_for_a_wakeup` does not
+  return without an interrupt.
+- **The wait branch does not execute on this machine.**  The boot prints
+  `virtio-net waited 0 time(s) for the reply`: QEMU puts the reply in the
+  receive ring inside the doorbell write, so the ring is already populated when
+  the loop first looks.  A frame's arrival does not depend on the message at
+  all — measured by removing the card's queue vector, after which the reply
+  still arrived and `network message(s) taken` read 0.
+
+So the card's message is **delivered and counted, and the driver does not yet
+wait on it in any boot this gate runs**.  That is "implemented", not "verified",
+and it stays a gap rather than a claim: making the wait execute needs a machine
+whose device completes asynchronously, which QEMU's user-mode network is not.
+The count is what the message's own mechanism has for evidence, and it is
+required non-zero on the AIA machine.
+
 A network stack above this is a different project.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken

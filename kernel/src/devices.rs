@@ -414,21 +414,41 @@ fn wire_device_message_inner(
 /// and the count is what makes "the device's MSI arrived" a fact about a boot
 /// rather than about the wiring's print.
 #[cfg(target_os = "none")]
-#[cfg(target_os = "none")]
 pub fn note_block_message_interrupt(_identity: usize) -> bool {
     crate::note_block_message_interrupt();
     true
 }
 
-/// Count one message from the network card's receive queue.
+/// Count one message from the network card's receive queue, and wake a waiter.
 ///
 /// The frame itself is taken from the used ring by the driver's own drain, so
-/// this is a notification too — and the count is what says the card's message
-/// reached this kernel rather than being held in the file.
-#[cfg(target_os = "none")]
+/// the message is a notification — but unlike the block device's it is the
+/// **only** thing that ends a wait.  The block device is read and written by a
+/// caller that already knows it asked for something; a received frame arrives
+/// when nobody asked, which is the case a poll cannot answer cheaply and the
+/// reason this queue has an identity at all.
+///
+/// So the handler does two things: it counts, which is what makes "the card's
+/// message arrived" a fact about a boot, and it wakes the blocked set, which is
+/// what makes the frame reach a caller that parked rather than spun.  The wake
+/// is [`crate::scheduler::wake_blocked`], the same call a pipe's write makes
+/// and with the same discipline: the waiter re-checks before it parks, under
+/// the lock that wake takes, so the two have exactly two orders and neither
+/// loses a frame.
 #[cfg(target_os = "none")]
 pub fn note_network_message_interrupt(_identity: usize) -> bool {
     crate::note_network_message_interrupt();
+    // A wake with nothing blocked is not an error: the boot's own exchange
+    // polls before it parks, and the message can land between those two.  The
+    // count reports it either way, for the reason the pipe's wake line reports
+    // a zero.
+    let woken = crate::scheduler::wake_blocked();
+    if woken > 0 {
+        // The woken task may be held by another CPU parked in a wait whose own
+        // clock may never move, and only the IPI ends that wait.
+        // SAFETY: the boot's own IPI path, installed before any program ran.
+        unsafe { arch::send_ipi_to_others() };
+    }
     true
 }
 
@@ -720,8 +740,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // **Submitted, not completed.**  The request goes out and this boot does
+    // not wait for the transmit queue to retire it, because the reply is what
+    // it wants and the two travel independently: waiting for the send first
+    // hides the receive wait entirely — measured, the reply was already in the
+    // ring by the time the send finished, so the receive loop took zero turns
+    // and could not tell a working message from a poll that never needed one.
     let request = virtio_net::arp_request(mac, OUR_PROTOCOL, GATEWAY_PROTOCOL);
-    if let Err(error) = card.submit_frame_blocking(&request) {
+    if let Err(error) = card.submit_frame(&request) {
         arch::serial::write_str("protofire: virtio-net could not send the arp request: ");
         arch::serial::write_str(match error {
             abi::Error::TimedOut => "timed out",
@@ -733,12 +759,49 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
-    // The reply is polled for, bounded, because a card that does not answer is
-    // a card that does not answer: waiting for an interrupt this boot has not
-    // wired would wait for something nobody asked for.
+    // The reply is waited for on the card's own message, with a bound.
+    //
+    // ## Why this is a wait and not a spin
+    //
+    // It was a `spin_loop` poll with a fifty-million-turn bound, which works
+    // and is the reason the exchange passed while the card's message was
+    // counted and never consumed: the trap arrived, incremented a counter, and
+    // changed nothing, because the loop never asked what the counter meant.
+    // A driver that spins is a driver that would run a whole core flat on a
+    // machine whose card is quiet, and the message it was wired for bought
+    // nothing.
+    //
+    // So the loop asks twice per turn: has the driver got a frame, and if not,
+    // stop this core until an interrupt arrives.  The handler wakes the blocked
+    // set, and on this path nothing is blocked — the boot is not a task — so
+    // the wake that ends the wait is the machine's, which is what
+    // `arch::wait_for_a_wakeup` is: `sti; hlt` on one machine, `wfe` on
+    // another, `wfi` with the mask lifted on the third.
+    //
+    // ## Why the bound is a timer and not a turn count
+    //
+    // The first version of this counted turns and stopped after a
+    // `WAIT_LIMIT` of them, which is not a bound at all: `wait_for_a_wakeup`
+    // does not return until an interrupt arrives, so a card that never sent one
+    // left the count at 1 and the boot in the wait for ever.  Measured — with
+    // the card's vector removed, the boot printed nothing more until the
+    // checker's own timeout killed it.
+    //
+    // So the wait is bounded by the machine's own timer: each turn arms it for
+    // a slice, and the interrupt that ends `wait_for_a_wakeup` is then either
+    // the card's — which is the one that matters — or the timer's, which is a
+    // turn spent and nothing more.  The bound is real because something
+    // guaranteed to fire is what ends each wait.
     let mut frame = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
-    const POLL_LIMIT: u32 = 50_000_000;
-    let mut polls = 0;
+    // Two seconds in slices of a twentieth of a second: enough for QEMU's
+    // user-mode network, and short enough that a card that will never answer
+    // ends the boot with a line instead of a checker's timeout.
+    const TURN_US: u64 = 50_000;
+    const TURNS: u32 = 40;
+    let mut waits = 0;
+    // SAFETY: the timer's line is enabled by `tick::bring_up`, which the boot
+    // ran before this.
+    let frequency = unsafe { arch::timer_frequency() };
     loop {
         match card.receive_frame(&mut frame) {
             Ok(Some(length)) => {
@@ -752,6 +815,14 @@ pub fn exercise_network() -> bool {
                     arch::serial::write_str("protofire: virtio-net received an arp request\n");
                     return false;
                 }
+                // The wait count is the evidence that the message did the
+                // work: a reply that arrives after one wait was delivered by
+                // the card's interrupt, and one that arrives after many is
+                // the bound's doing.  Printed before the reply's fields so a
+                // reader sees how the frame got here beside what it says.
+                arch::serial::write_str("protofire: virtio-net waited ");
+                arch::serial::write_u32(waits);
+                arch::serial::write_str(" time(s) for the reply\n");
                 arch::serial::write_str("protofire: virtio-net arp reply ");
                 write_mac(arp.sender_hardware);
                 arch::serial::write_str(" holds ");
@@ -770,12 +841,28 @@ pub fn exercise_network() -> bool {
                     && arp.sender_protocol == GATEWAY_PROTOCOL;
             }
             Ok(None) => {
-                polls += 1;
-                if polls > POLL_LIMIT {
-                    arch::serial::write_str("protofire: virtio-net arp request went unanswered\n");
+                waits += 1;
+                if waits > TURNS {
+                    arch::serial::write_str(
+                        "protofire: virtio-net arp request went unanswered after ",
+                    );
+                    arch::serial::write_u32(waits);
+                    arch::serial::write_str(" turn(s)\n");
                     return false;
                 }
-                core::hint::spin_loop();
+                // A deadline **before** the wait, so the wait cannot be
+                // endless: the same interrupt that ends it is the one this
+                // turn is bounded by.
+                if let Some(frequency) = frequency {
+                    // SAFETY: the timer's line is enabled, which is
+                    // `arm_timer`'s contract.
+                    unsafe { arch::arm_timer(frequency, TURN_US) };
+                }
+                // The core stops here until an interrupt arrives; the one that
+                // matters is the card's, and the loop re-checks the ring after
+                // every wake, so a wake from the timer or an IPI costs a turn
+                // and nothing else.
+                arch::wait_for_a_wakeup();
             }
             Err(_) => {
                 arch::serial::write_str("protofire: virtio-net receive buffer too small\n");
