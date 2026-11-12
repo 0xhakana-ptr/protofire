@@ -270,6 +270,7 @@ dependencies = [
  "syscall",
  "virtio_block",
  "virtio_core",
+ "virtio_net",
 ]
 
 [[package]]

@@ -32,17 +32,23 @@
 //! framework.  The boot prints the address the card gave and the two depths, so
 //! "the card came up" is a fact about a boot rather than about this comment.
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use spin::Mutex;
 use virtio_core::Features;
 use virtio_core::Status;
 use virtio_core::Transport;
 use virtio_core::VirtQueue;
+use virtio_core::queue::DESC_F_NEXT;
+use virtio_core::queue::DESC_F_WRITE;
+use virtio_core::queue::Descriptor;
 
 use crate::config;
 use crate::features::NETWORK_KNOWN;
 use crate::features::VIRTIO_NET_F_MAC;
+use crate::header;
 
 use abi::Error;
 use abi::Result;
@@ -65,6 +71,70 @@ pub const TRANSMIT_QUEUE: u16 = 1;
 /// two, which [`VirtQueue::new`] requires.
 const QUEUE_SIZE_LIMIT: u16 = 256;
 
+/// The largest frame this driver accepts, header included.
+///
+/// 1514 is the largest Ethernet frame with a VLAN tag, and 1526 is that plus
+/// the twelve-byte header a mergeable-receive device would write.  This driver
+/// negotiates neither, so the buffer is 1514 and a device that writes more is
+/// [degraded](Health::Degraded) rather than believed — a length past the
+/// buffer would be a read past the allocation.
+pub const RECEIVE_BUFFER_LEN: usize = 1514;
+
+/// What the driver has asked the card to send.
+///
+/// The frame is the driver's: it was copied into storage the request owns,
+/// because the device reads it after `submit` returns.  The header is the
+/// shared [`header::PLAIN`] static, which needs no owner.
+struct Pending {
+    /// The ticket the caller was given.
+    ticket: u64,
+    /// The descriptor chain's head, which is what the used ring names.
+    head: u16,
+    /// The frame's bytes, which the device reads.
+    ///
+    /// Never read by this driver again — the device is the reader — and held
+    /// anyway, because the descriptor points at it.
+    #[allow(dead_code)]
+    _frame: Box<[u8]>,
+}
+
+/// A buffer the driver has posted for the card to fill.
+struct Received {
+    /// The descriptor the buffer sits in, which is what the used ring names.
+    head: u16,
+    /// The bytes: the device's header, then the frame, then whatever the buffer
+    /// had left.
+    buffer: Box<[u8; RECEIVE_BUFFER_LEN]>,
+}
+
+/// How the card is behaving, as far as the driver can tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Health {
+    /// Nothing has gone wrong that the driver noticed.
+    Healthy,
+    /// A frame arrived that the driver cannot interpret.  The card works; what
+    /// it sent was not something this driver accepts, and the count is worth a
+    /// reader's attention rather than a panic.
+    Degraded,
+    /// The card said `FAILED`, and it is not going to work.
+    Failed,
+}
+
+/// A ticket naming one submitted frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ticket(u64);
+
+impl Ticket {
+    /// The identifier this ticket carries.
+    pub const fn id(self) -> u64 {
+        self.0
+    }
+
+    const fn new(id: u64) -> Self {
+        Self(id)
+    }
+}
+
 /// A virtio network card.
 pub struct VirtioNet {
     transport: Arc<dyn Transport>,
@@ -73,6 +143,15 @@ pub struct VirtioNet {
     features: Features,
     /// The address the card published, and the one frames will carry.
     mac: [u8; 6],
+    /// The frames submitted and not yet completed, by ticket.
+    pending: Mutex<Vec<Pending>>,
+    /// The buffers posted for receive and not yet completed.
+    received: Mutex<Vec<Received>>,
+    /// The frames the device has delivered, waiting for a reader.
+    delivered: Mutex<Vec<Vec<u8>>>,
+    /// The next ticket number to hand out.
+    next_ticket: Mutex<u64>,
+    health: Mutex<Health>,
 }
 
 impl VirtioNet {
@@ -147,6 +226,11 @@ impl VirtioNet {
             transmit: Mutex::new(transmit),
             features: accepted,
             mac,
+            pending: Mutex::new(Vec::new()),
+            received: Mutex::new(Vec::new()),
+            delivered: Mutex::new(Vec::new()),
+            next_ticket: Mutex::new(0),
+            health: Mutex::new(Health::Healthy),
         }))
     }
 
@@ -206,6 +290,272 @@ impl VirtioNet {
     pub fn transport(&self) -> &Arc<dyn Transport> {
         &self.transport
     }
+
+    /// Put one frame on the transmit queue.
+    ///
+    /// The chain is the specification's (section 5.1.6.2): a driver-readable
+    /// header, then the frame's bytes.  The header is [`header::PLAIN`], ten
+    /// zero bytes saying "no offload", which is what a driver that negotiated
+    /// no offload features must send.
+    ///
+    /// Returns a ticket; [`VirtioNet::submit_frame_blocking`] is the caller
+    /// that waits on one.
+    /// The frame is copied into storage the request owns: the device reads it
+    /// until it finishes, and the caller's borrow ends when this returns.
+    pub fn submit_frame(&self, frame: &[u8]) -> Result<Ticket> {
+        if *self.health.lock() == Health::Failed {
+            return Err(Error::DeviceError);
+        }
+        if frame.is_empty() {
+            return Err(Error::InvalidArgument);
+        }
+        // The device reads the frame until it finishes, and the caller's borrow
+        // is over when this returns.  Copy it into storage the request owns,
+        // and point the descriptor at the copy; the alternative is a descriptor
+        // naming a slice that no longer exists, which works on a quiet machine.
+        let owned: Box<[u8]> = frame.to_vec().into_boxed_slice();
+
+        let mut queue = self.transmit.lock();
+        if queue.free_descriptors() < 2 {
+            return Err(Error::Busy);
+        }
+        // The header is the shared `static`, not a copy: it is ten zero bytes
+        // that never change, so its address is valid for the device to read for
+        // as long as the device exists, and no request has to own one.
+        let header_desc = queue
+            .allocate(Descriptor {
+                address: header::PLAIN.as_ptr() as u64,
+                length: header::HEADER_LEN as u32,
+                flags: DESC_F_NEXT,
+                next: 0,
+            })
+            .map_err(|_| Error::Busy)?;
+        let frame_desc = queue
+            .allocate(Descriptor {
+                address: owned.as_ptr() as u64,
+                length: owned.len() as u32,
+                flags: 0,
+                next: 0,
+            })
+            .map_err(|_| Error::Busy)?;
+        queue.set_next(header_desc, frame_desc);
+
+        let id = {
+            let mut next = self.next_ticket.lock();
+            let id = *next;
+            *next = next.wrapping_add(1);
+            id
+        };
+        queue.publish(header_desc);
+        drop(queue);
+
+        // The request is recorded **before** the doorbell, for the reason the
+        // block driver records before its own: a device may complete
+        // synchronously, and a completion that arrives first is one `drain`
+        // cannot match to a ticket.
+        self.pending.lock().push(Pending {
+            ticket: id,
+            head: header_desc,
+            // Held for as long as the device may read it: the descriptor points
+            // at these bytes, and dropping them would leave the card reading
+            // memory the allocator has taken back.
+            _frame: owned,
+        });
+
+        self.transport.notify(TRANSMIT_QUEUE);
+        Ok(Ticket::new(id))
+    }
+
+    /// Wait for a submitted frame to be taken, bounded so a wedged card cannot
+    /// hang a caller for ever.
+    ///
+    /// The bound is the block driver's, and for the same reason: a card that
+    /// never answers is a real failure mode, and a loop with no exit turns it
+    /// into a hang nobody can diagnose.
+    pub fn submit_frame_blocking(&self, frame: &[u8]) -> Result<()> {
+        let ticket = self.submit_frame(frame)?;
+        const POLL_LIMIT: u32 = 50_000_000;
+        let mut polls = 0;
+        loop {
+            self.drain_transmit();
+            if self.is_complete(ticket.id()) {
+                return if *self.health.lock() == Health::Failed {
+                    Err(Error::DeviceError)
+                } else {
+                    Ok(())
+                };
+            }
+            polls += 1;
+            if polls > POLL_LIMIT {
+                return Err(Error::TimedOut);
+            }
+            core::hint::spin_loop();
+        }
+    }
+
+    /// Post a receive buffer the device can fill with one frame.
+    ///
+    /// The chain is one device-writable descriptor holding the header and a
+    /// frame's worth of bytes: the device writes the header and the frame into
+    /// it and reports how many bytes it wrote.  The buffer is
+    /// [`RECEIVE_BUFFER_LEN`] bytes, which is the largest frame this driver
+    /// accepts.
+    pub fn post_receive_buffer(&self) -> Result<()> {
+        let buffer = Box::new([0_u8; RECEIVE_BUFFER_LEN]);
+        let address = buffer.as_ptr() as u64;
+
+        let mut queue = self.receive.lock();
+        let descriptor = queue
+            .allocate(Descriptor {
+                address,
+                length: RECEIVE_BUFFER_LEN as u32,
+                flags: DESC_F_WRITE,
+                next: 0,
+            })
+            .map_err(|_| Error::Busy)?;
+        queue.publish(descriptor);
+        drop(queue);
+
+        self.received.lock().push(Received {
+            head: descriptor,
+            buffer,
+        });
+        self.transport.notify(RECEIVE_QUEUE);
+        Ok(())
+    }
+
+    /// Take one frame the card has received, if any.
+    ///
+    /// Writes the frame's bytes — without the device's header — into `into` and
+    /// answers how many there are.  `None` when the card has nothing waiting,
+    /// and an error when `into` is too short for the frame: a short buffer is
+    /// the caller's mistake, and truncating would hand up a frame that is not
+    /// the one the card sent.
+    ///
+    /// A completion whose header says the device applied an offload is dropped
+    /// rather than returned: the bytes after it are not the frame they look
+    /// like, and a caller that was handed them would read a checksum it did not
+    /// ask for.
+    pub fn receive_frame(&self, into: &mut [u8]) -> Result<Option<usize>> {
+        self.drain_receive();
+        let mut delivered = self.delivered.lock();
+        let Some(frame) = delivered.first() else {
+            return Ok(None);
+        };
+        if frame.len() > into.len() {
+            return Err(Error::InvalidArgument);
+        }
+        let length = frame.len();
+        into[..length].copy_from_slice(frame);
+        delivered.remove(0);
+        Ok(Some(length))
+    }
+
+    /// Collect the transmit completions the card has published.
+    fn drain_transmit(&self) -> usize {
+        let mut taken = 0;
+        loop {
+            let completion = {
+                let mut queue = self.transmit.lock();
+                match queue.take_completion() {
+                    Some(completion) => {
+                        queue.release(completion.0);
+                        Some(completion)
+                    }
+                    None => None,
+                }
+            };
+            let Some((head, _length)) = completion else {
+                break;
+            };
+
+            let mut pending = self.pending.lock();
+            let Some(index) = pending.iter().position(|request| request.head == head) else {
+                continue;
+            };
+            pending.swap_remove(index);
+            taken += 1;
+        }
+
+        // Tell the device where the driver's interest now ends, for the reason
+        // the block driver does: an event index left behind is one the device
+        // stops interrupting for until the counter wraps.
+        let mut queue = self.transmit.lock();
+        let processed_through = queue.last_used_index();
+        queue.set_used_event(processed_through);
+        taken
+    }
+
+    /// Collect the frames the card has written into posted buffers.
+    fn drain_receive(&self) -> usize {
+        let mut taken = 0;
+        loop {
+            let completion = {
+                let mut queue = self.receive.lock();
+                match queue.take_completion() {
+                    Some(completion) => {
+                        queue.release(completion.0);
+                        Some(completion)
+                    }
+                    None => None,
+                }
+            };
+            let Some((head, length)) = completion else {
+                break;
+            };
+
+            let mut received = self.received.lock();
+            let Some(index) = received.iter().position(|buffer| buffer.head == head) else {
+                // A completion for a buffer this driver did not post.  Nothing
+                // can be done with it, and retiring a different buffer would
+                // hand up a frame from the wrong slot.
+                continue;
+            };
+            let posted = received.swap_remove(index);
+            drop(received);
+
+            let length = length as usize;
+            if length <= header::HEADER_LEN || length > RECEIVE_BUFFER_LEN {
+                // The device wrote no frame, or claimed more than the buffer
+                // holds.  Neither is a frame this driver can hand up, and the
+                // second would be a read past the allocation if it were
+                // believed.
+                *self.health.lock() = Health::Degraded;
+                taken += 1;
+                continue;
+            }
+            if !header::is_plain(&posted.buffer[..header::HEADER_LEN]) {
+                // An offload this driver never negotiated.
+                *self.health.lock() = Health::Degraded;
+                taken += 1;
+                continue;
+            }
+            let frame_len = length - header::HEADER_LEN;
+            let mut frame_bytes = Vec::with_capacity(frame_len);
+            frame_bytes.extend_from_slice(&posted.buffer[header::HEADER_LEN..length]);
+            self.delivered.lock().push(frame_bytes);
+            taken += 1;
+        }
+
+        let mut queue = self.receive.lock();
+        let processed_through = queue.last_used_index();
+        queue.set_used_event(processed_through);
+        taken
+    }
+
+    /// Whether the ticket's request has finished, successfully or not.
+    fn is_complete(&self, ticket: u64) -> bool {
+        !self
+            .pending
+            .lock()
+            .iter()
+            .any(|request| request.ticket == ticket)
+    }
+
+    /// The card's health, as the driver sees it.
+    pub fn health(&self) -> Health {
+        *self.health.lock()
+    }
 }
 
 #[cfg(test)]
@@ -231,12 +581,15 @@ mod tests {
     use crate::device::VirtioNet;
     use crate::features::VIRTIO_NET_F_MAC;
 
-    /// A card that records what the driver asked it to do.
+    /// A card that records what the driver asked it to do, and services the
+    /// two queues when the doorbell rings.
     ///
-    /// It is a recorder rather than a fake that services frames because this
-    /// change is the bring-up: the question is whether both queues were
-    /// programmed, with which addresses, at which sizes.  The frame path
-    /// arrives with the fake's `perform`, which is the change that needs it.
+    /// The recording half is what the bring-up tests ask about: which queue was
+    /// configured, at which size, with which addresses, and whether it was
+    /// enabled.  The servicing half is what the frame tests need: it reads the
+    /// descriptor chain the driver published, and answers the way a device
+    /// does — the transmit completion on the used ring, and for an ARP request,
+    /// a reply written into a posted receive buffer.
     struct RecordingCard {
         status: AtomicU64,
         driver_features: AtomicU64,
@@ -249,6 +602,16 @@ mod tests {
         addresses: Mutex<Vec<(u16, DeviceAddresses)>>,
         enabled: Mutex<Vec<u16>>,
         mac: [u8; 6],
+        /// What the device sends back when an ARP request arrives, if anything.
+        arp_reply: Mutex<Option<Vec<u8>>>,
+        /// How many completions the device has published on each queue.
+        transmit_used: AtomicU64,
+        receive_used: AtomicU64,
+        /// How many requests the device has taken off each available ring.
+        transmit_consumed: AtomicU64,
+        receive_consumed: AtomicU64,
+        /// The frames the driver put on the transmit queue, in order.
+        transmitted: Mutex<Vec<Vec<u8>>>,
     }
 
     impl RecordingCard {
@@ -265,8 +628,170 @@ mod tests {
                 addresses: Mutex::new(Vec::new()),
                 enabled: Mutex::new(Vec::new()),
                 mac: [0x02, 0x11, 0x22, 0x33, 0x44, 0x55],
+                arp_reply: Mutex::new(None),
+                transmit_used: AtomicU64::new(0),
+                receive_used: AtomicU64::new(0),
+                transmit_consumed: AtomicU64::new(0),
+                receive_consumed: AtomicU64::new(0),
+                transmitted: Mutex::new(Vec::new()),
             })
         }
+
+        fn addresses_for(&self, index: u16) -> Option<DeviceAddresses> {
+            self.addresses
+                .lock()
+                .iter()
+                .find(|(queue, _)| *queue == index)
+                .map(|(_, addresses)| *addresses)
+        }
+
+        /// Take one request off `queue`'s available ring, if the driver
+        /// published one the device has not consumed.
+        fn next_available(&self, queue: u16, consumed: &AtomicU64) -> Option<u16> {
+            let addresses = self.addresses_for(queue)?;
+            let size = self.sizes.get(queue as usize).copied()? as usize;
+            if size == 0 {
+                return None;
+            }
+            // SAFETY: the addresses came from the driver's own `VirtQueue`,
+            // which lives as long as the driver, and `size` is the depth the
+            // device was told.
+            unsafe {
+                let index = *((addresses.available as *const u8).add(2) as *const u16);
+                let taken = consumed.load(Ordering::Relaxed) as u16;
+                if taken == index {
+                    return None;
+                }
+                let ring = (addresses.available as *const u8).add(4) as *const u16;
+                let slot = (taken as usize) & (size - 1);
+                let head = *ring.add(slot);
+                consumed.store(taken.wrapping_add(1) as u64, Ordering::Relaxed);
+                Some(head)
+            }
+        }
+
+        /// Publish one completion on `queue`'s used ring.
+        fn publish_completion(&self, queue: u16, head: u16, length: u32, used: &AtomicU64) {
+            let Some(addresses) = self.addresses_for(queue) else {
+                return;
+            };
+            let Some(size) = self.sizes.get(queue as usize).copied() else {
+                return;
+            };
+            let size = size as usize;
+            if size == 0 {
+                return;
+            }
+            // SAFETY: as `next_available`: the used ring is the driver's, and
+            // the slot is inside the depth the device was told.
+            unsafe {
+                let index = used.load(Ordering::Relaxed) as u16;
+                let slot = (index as usize) & (size - 1);
+                let element = (addresses.used as *mut u8).add(4 + slot * 8);
+                core::ptr::write_unaligned(element as *mut u32, head as u32);
+                core::ptr::write_unaligned(element.add(4) as *mut u32, length);
+                let counter = (addresses.used as *mut u8).add(2) as *mut u16;
+                core::ptr::write_unaligned(counter, index.wrapping_add(1));
+                used.store(index.wrapping_add(1) as u64, Ordering::Relaxed);
+            }
+        }
+
+        /// Read the descriptor at `index` of `queue`, as the device sees it.
+        fn descriptor(&self, queue: u16, index: u16) -> Option<WireDescriptor> {
+            let addresses = self.addresses_for(queue)?;
+            // SAFETY: the descriptor table is the driver's and `index` is one
+            // the driver allocated.
+            Some(unsafe { *((addresses.descriptors as *const WireDescriptor).add(index as usize)) })
+        }
+
+        /// Service the transmit queue the way a card does.
+        fn service_transmit(&self) {
+            while let Some(head) = self.next_available(TRANSMIT_QUEUE, &self.transmit_consumed) {
+                let Some(header) = self.descriptor(TRANSMIT_QUEUE, head) else {
+                    return;
+                };
+                let Some(frame) = self.descriptor(TRANSMIT_QUEUE, header.next) else {
+                    return;
+                };
+                let header_bytes = read_bytes(header.address as *const u8, header.length as usize);
+                let frame_bytes = read_bytes(frame.address as *const u8, frame.length as usize);
+                let total = header.length + frame.length;
+                self.transmitted.lock().push(frame_bytes.clone());
+
+                // An ARP request is what the fake answers.  It is the smallest
+                // thing a device can say back, and it is what the machine's
+                // user-mode network answers too.
+                if let Some(reply) = self.arp_reply.lock().as_ref()
+                    && crate::frame::parse_arp(&frame_bytes)
+                        .is_some_and(|arp| arp.operation == crate::frame::OPER_REQUEST)
+                {
+                    self.deliver(reply);
+                }
+                // The header is ten bytes and is not part of the frame the
+                // driver wrote: the device consumed it and the length it
+                // reports is everything it read.
+                let _ = header_bytes;
+                self.publish_completion(TRANSMIT_QUEUE, head, total, &self.transmit_used);
+            }
+        }
+
+        /// Service the receive queue: write `frame` into a posted buffer, with
+        /// a plain ten-byte header in front of it, the way a device does.
+        fn deliver(&self, frame: &[u8]) {
+            let Some(head) = self.next_available(RECEIVE_QUEUE, &self.receive_consumed) else {
+                // No buffer posted: a real card drops the frame.  Saying so is
+                // what makes a test that forgot to post one fail on the frame
+                // rather than on a timeout.
+                return;
+            };
+            let Some(descriptor) = self.descriptor(RECEIVE_QUEUE, head) else {
+                return;
+            };
+            let capacity = descriptor.length as usize;
+            let length = crate::header::HEADER_LEN + frame.len();
+            if length > capacity {
+                return;
+            }
+            // SAFETY: the buffer is the driver's, device-writable, and the
+            // write is inside the length the descriptor declares.
+            unsafe {
+                let base = descriptor.address as *mut u8;
+                core::ptr::write_bytes(base, 0, crate::header::HEADER_LEN);
+                core::ptr::copy_nonoverlapping(
+                    frame.as_ptr(),
+                    base.add(crate::header::HEADER_LEN),
+                    frame.len(),
+                );
+            }
+            self.publish_completion(RECEIVE_QUEUE, head, length as u32, &self.receive_used);
+        }
+
+        /// Service both queues, as a device does after a doorbell.
+        fn perform(&self) {
+            self.service_transmit();
+        }
+    }
+
+    /// The descriptor as the device reads it: sixteen bytes, the same fields.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct WireDescriptor {
+        address: u64,
+        length: u32,
+        flags: u16,
+        next: u16,
+    }
+
+    /// Read `length` bytes from `address`, which the driver published.
+    fn read_bytes(address: *const u8, length: usize) -> Vec<u8> {
+        let mut bytes = alloc::vec![0_u8; length];
+        // SAFETY: the address and length are from a descriptor the driver
+        // published for the device to read, and the driver keeps it alive until
+        // the completion this is part of.
+        unsafe {
+            core::ptr::copy_nonoverlapping(address, bytes.as_mut_ptr(), length);
+        }
+        bytes
     }
 
     impl Transport for RecordingCard {
@@ -316,7 +841,9 @@ mod tests {
             0
         }
 
-        fn notify(&self, _queue: u16) {}
+        fn notify(&self, _queue: u16) {
+            self.perform();
+        }
 
         fn read_device_config_dword(&self, offset: u64) -> u32 {
             // The address lives at 0x00 as six bytes, so the low dword is the
@@ -471,5 +998,172 @@ mod tests {
         let card = RecordingCard::new(2, alloc::vec![8, 8]);
         card.offered.store(VIRTIO_NET_F_MAC, Ordering::Relaxed);
         assert_eq!(VirtioNet::new(card).err(), Some(abi::Error::Unsupported));
+    }
+
+    /// Build the reply a user-mode network sends to an ARP request.
+    ///
+    /// Written here rather than by the driver's own builder so the driver is
+    /// checked against the wire format and not against itself.
+    fn gateway_reply(card: [u8; 6], us: [u8; 4], gateway: [u8; 4]) -> Vec<u8> {
+        const GATEWAY_HARDWARE: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+        let mut frame = alloc::vec![0_u8; crate::frame::ARP_FRAME_LEN];
+        frame[0..6].copy_from_slice(&card);
+        frame[6..12].copy_from_slice(&GATEWAY_HARDWARE);
+        frame[12..14].copy_from_slice(&crate::frame::ETHERTYPE_ARP.to_be_bytes());
+        frame[14..16].copy_from_slice(&1u16.to_be_bytes());
+        frame[16..18].copy_from_slice(&crate::frame::ETHERTYPE_IPV4.to_be_bytes());
+        frame[18] = 6;
+        frame[19] = 4;
+        frame[20..22].copy_from_slice(&crate::frame::OPER_REPLY.to_be_bytes());
+        frame[22..28].copy_from_slice(&GATEWAY_HARDWARE);
+        frame[28..32].copy_from_slice(&gateway);
+        frame[32..38].copy_from_slice(&card);
+        frame[38..42].copy_from_slice(&us);
+        frame
+    }
+
+    /// An ARP request on transmit, and the reply on receive.
+    ///
+    /// The whole exchange through the real driver: the transmit chain is
+    /// published with a ten-byte header in front, the device reads the frame,
+    /// answers it, and the driver takes the reply off the receive queue with
+    /// the header stripped.  Nothing here is stubbed except the card.
+    #[test]
+    fn an_arp_request_leaves_and_the_reply_comes_back() {
+        const US: [u8; 4] = [10, 0, 2, 15];
+        const GATEWAY: [u8; 4] = [10, 0, 2, 2];
+
+        let card = RecordingCard::new(2, alloc::vec![8, 8]);
+        let mac = card.mac;
+        *card.arp_reply.lock() = Some(gateway_reply(mac, US, GATEWAY));
+        let net = VirtioNet::new(card.clone()).expect("bring up");
+
+        net.post_receive_buffer().expect("post a receive buffer");
+        let request = crate::frame::arp_request(mac, US, GATEWAY);
+        net.submit_frame_blocking(&request).expect("send");
+
+        // What the device was handed: the frame the driver built, behind the
+        // ten zero bytes of header.
+        let sent = card.transmitted.lock().clone();
+        assert_eq!(sent.len(), 1, "the device was sent one frame");
+        assert_eq!(sent[0], request, "the frame the driver wrote");
+
+        let mut buffer = [0_u8; crate::device::RECEIVE_BUFFER_LEN];
+        let length = net
+            .receive_frame(&mut buffer)
+            .expect("a frame was waiting")
+            .expect("the reply arrived");
+        assert_eq!(
+            length,
+            crate::frame::ARP_FRAME_LEN,
+            "the reply, without the device's header"
+        );
+        let reply = crate::frame::parse_arp(&buffer[..length]).expect("an ARP frame");
+        assert_eq!(reply.operation, crate::frame::OPER_REPLY);
+        assert_eq!(
+            reply.sender_hardware,
+            [0x52, 0x54, 0x00, 0x12, 0x34, 0x56],
+            "the gateway's address is the answer the request asked for"
+        );
+        assert_eq!(reply.sender_protocol, GATEWAY);
+        assert_eq!(reply.target_hardware, mac, "the reply is addressed to us");
+        assert_eq!(reply.target_protocol, US);
+        assert_eq!(net.health(), crate::device::Health::Healthy);
+    }
+
+    /// The header in front of a received frame is stripped, not kept.
+    ///
+    /// A driver that handed the whole buffer up would put ten bytes of device
+    /// header in front of every frame, and an ARP parser reads the ethertype
+    /// from bytes 12 and 13 — so the frame would parse as something else and
+    /// the mistake would look like a device sending garbage.
+    #[test]
+    fn the_devices_header_is_not_part_of_the_frame() {
+        let card = RecordingCard::new(2, alloc::vec![8, 8]);
+        let net = VirtioNet::new(card.clone()).expect("bring up");
+        net.post_receive_buffer().expect("post");
+
+        let frame = alloc::vec![0xAB_u8; 60];
+        card.deliver(&frame);
+
+        let mut buffer = [0_u8; crate::device::RECEIVE_BUFFER_LEN];
+        let length = net.receive_frame(&mut buffer).unwrap().unwrap();
+        assert_eq!(length, frame.len(), "the frame's own length");
+        assert_eq!(
+            &buffer[..length],
+            frame.as_slice(),
+            "the first byte is the frame's, not the header's"
+        );
+    }
+
+    /// A frame the device says it offloaded is dropped, and the card is
+    /// degraded rather than trusted.
+    ///
+    /// This driver negotiates no offloads, so a header with a flag set is a
+    /// device doing something it was not asked to.  The bytes after it are then
+    /// not the frame they look like, and handing them up would read a checksum
+    /// the driver never asked for as if it were the sender's.
+    #[test]
+    fn a_frame_with_an_unnegotiated_offload_is_dropped() {
+        let card = RecordingCard::new(2, alloc::vec![8, 8]);
+        let net = VirtioNet::new(card.clone()).expect("bring up");
+        net.post_receive_buffer().expect("post");
+
+        // Deliver through the card, then set a flag in the header the device
+        // wrote before the driver drains it.
+        card.deliver(&alloc::vec![0xAB_u8; 60]);
+        {
+            let addresses = card.addresses_for(RECEIVE_QUEUE).expect("programmed");
+            // SAFETY: the buffer is the one the driver posted and the device
+            // wrote into; the flag is its first byte.
+            unsafe {
+                let head = *((addresses.available as *const u8).add(4) as *const u16);
+                let descriptor = card.descriptor(RECEIVE_QUEUE, head).expect("posted");
+                *(descriptor.address as *mut u8) = 0x01;
+            }
+        }
+
+        let mut buffer = [0_u8; crate::device::RECEIVE_BUFFER_LEN];
+        assert_eq!(
+            net.receive_frame(&mut buffer).expect("drained"),
+            None,
+            "the frame was not handed up"
+        );
+        assert_eq!(net.health(), crate::device::Health::Degraded);
+    }
+
+    /// A frame the device never wrote is not handed up as an empty one.
+    ///
+    /// A completed receive buffer that reports ten bytes or fewer wrote no
+    /// frame: a frame of zero length is what a driver that trusted the length
+    /// would hand up, and an ARP parser would then read past it.
+    #[test]
+    fn a_receive_completion_with_no_frame_is_dropped() {
+        let card = RecordingCard::new(2, alloc::vec![8, 8]);
+        let net = VirtioNet::new(card.clone()).expect("bring up");
+        net.post_receive_buffer().expect("post");
+
+        // Publish a completion that wrote only the header.
+        let head = {
+            let addresses = card.addresses_for(RECEIVE_QUEUE).expect("programmed");
+            // SAFETY: the available ring is the driver's, and the driver
+            // published one entry before this.
+            unsafe { *((addresses.available as *const u8).add(4) as *const u16) }
+        };
+        card.receive_consumed.store(1, Ordering::Relaxed);
+        card.publish_completion(
+            RECEIVE_QUEUE,
+            head,
+            crate::header::HEADER_LEN as u32,
+            &card.receive_used,
+        );
+
+        let mut buffer = [0_u8; crate::device::RECEIVE_BUFFER_LEN];
+        assert_eq!(net.receive_frame(&mut buffer).expect("drained"), None);
+        assert_eq!(
+            net.health(),
+            crate::device::Health::Degraded,
+            "the completion was noticed and not believed"
+        );
     }
 }

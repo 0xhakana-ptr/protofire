@@ -61,28 +61,67 @@ queue-selection defect.
 
 ### 3. A frame in, a frame out
 
-Two virtqueue layouts, both from the specification:
+**Done**, and it cost three boot-level defects that this section records because
+none of them was visible to a host test.
 
-- **receive**: a chain of device-writable buffers, each `{ virtio_net_hdr (10
-  bytes, VIRTIO_NET_HDR_LEN when no offloads are negotiated), then the frame }`.
-  The device fills them; the driver takes the used ones.
-- **transmit**: a chain of driver-readable buffers with the same header first.
+Two virtqueue layouts:
+
+- **receive**: a device-writable buffer holding `{ virtio_net_hdr, then the
+  frame }`.  The device fills it; the driver takes the used one.
+- **transmit**: the same header first, then the frame, both driver-readable.
 
 The smallest thing that proves both directions is an **ARP request on transmit
 and the reply on receive**: QEMU's user-mode network (`-netdev user`) answers an
 ARP for its gateway without any configuration, and the frame is 42 bytes with
-fields the driver wrote.  The boot prints the reply's sender and target.
+fields the driver wrote.
 
-**Verified by**: the boot line, and the frame's bytes are what the driver wrote
-— the reply's target is the address the driver asked about.  A host test pins
-the header length and the field offsets, because those are the specification's.
+**The three defects, in the order they were found.**
+
+1. **The notify region's multiplier.**  `PciTransport` read
+   `notify_off_multiplier` from the notify capability's `length`, which is the
+   region's *size* (section 4.1.4.4: the multiplier is the dword appended after
+   the structure).  QEMU's card has a 0x1000-byte notify region, so a doorbell
+   was written at `queue_notify_off * 0x1000` and the boot died with
+   `write past the mapped BAR`.  Every register read back what was written,
+   which is why the bring-up tests passed.
+
+2. **The header is twelve bytes.**  With ten, a probe that filled the frame with
+   its own byte indices had the wire carry `2, 3, 4, …` — the card skipped
+   twelve of a buffer whose header was ten, so every frame left two bytes short
+   at the front.  The confirming probes: a header descriptor declaring eight
+   bytes shifted the frame to `4, 5, 6, …`; two descriptors and one descriptor
+   behaved identically; and a single buffer with twelve leading zeros delivered
+   the frame whole.  The driver writes twelve now, and
+   `drivers/virtio/net/src/header.rs` says which measurement decided it.
+
+3. **A short response.**  The gateway's reply was on the wire (captured with
+   QEMU's `filter-dump`) while the driver reported none, because it stripped ten
+   bytes instead of twelve and then read the frame four bytes into its own ARP
+   message.
+
+**Verified by** the boot line on all four machines, with the reply's fields
+checked against the request:
+
+```
+protofire: virtio-net arp reply 52:55:0a:00:02:02 holds 10.0.2.2, asked by 52:54:00:12:34:56 for 10.0.2.15
+```
+
+The driver returns false unless the reply names this card's address and the
+address this boot asked about, so requiring the line is requiring an answer to
+the question.  A host test pins the header length and the ARP field offsets, and
+three more pin the receive path's guards: a frame with an unnegotiated offload
+is dropped, a completion that wrote no frame is dropped, and the device's header
+is not part of the frame handed up.  Each is mutation-tested.
 
 ### 4. The interrupt, and the second identity
 
-The card's receive queue gets an MSI-X vector and an IMSIC identity, exactly as
-the block device's transmit queue did — but this is the **second** identity in
-the handler table, which is the claim `docs/status.md` still lists as open
-("only one device's message is claimed").
+**Not done.**  The receive queue completes through the driver's polling, so the
+box still has one device whose message the IMSIC claims — which is
+`docs/status.md`'s open claim.
+
+The card's receive queue would get an MSI-X vector and an IMSIC identity,
+exactly as the block device's transmit queue did, and it would be the **second**
+identity in the handler table.
 
 The identity is the boot's to hand out: a number above the APLIC's wired range,
 distinct from the block device's 200 and the IMSIC self-test's 254.
@@ -93,12 +132,17 @@ devices, two identities, one table.
 
 ### 5. `-netdev user` in the gate, and the line that says it worked
 
-`qemu_arguments` gains a `-netdev user,id=net0` and a `-device
-virtio-net-pci,netdev=net0,disable-legacy=on` for the machines that can drive
-it.  The gate requires the ARP line.
+**Done, with step 3.**  `qemu_arguments` gives every bootable machine
+`-netdev user,id=net0` and a `virtio-net-pci`, and the gate requires
+`protofire: virtio-net up, address ` and `protofire: virtio-net arp reply ` on
+all four boots.
 
-This step is last because it is the only one that changes what a boot does
-without a human asking, and it should land when the four before it are proven.
+It landed with step 3 rather than after it because the frame path has no
+evidence until a machine runs it, and a boot-level driver asserted only on a
+host is the state `docs/status.md` calls "implemented", not "verified".  The
+step was written last for the opposite reason — that it changes what a boot
+does without a human asking — and that reason is why the gate's own two lines
+are the whole of the change to a boot: a machine with no card prints nothing.
 
 ## What is deliberately not in this plan
 

@@ -73,15 +73,34 @@ impl Machine {
         }
     }
 
+    /// The network card every bootable machine is given.
+    ///
+    /// `-netdev user` is QEMU's own network, which needs no host privilege, no
+    /// tap device and no configuration: it puts the guest on `10.0.2.0/24`,
+    /// answers ARP for its gateway at `10.0.2.2`, and drops everything it was
+    /// not asked for.  That is exactly enough for the one exchange the driver
+    /// does, and it is the reason the gate can assert a reply at all.
+    ///
+    /// `disable-legacy=on` asks for the modern interface only, for the reason
+    /// the disks ask: this tree implements the modern transport, and a
+    /// transitional device's capability list is one its parser does not read
+    /// the way it expects.
+    fn network_arguments() -> Vec<String> {
+        vec![
+            "-netdev".to_string(),
+            "user,id=net0".to_string(),
+            "-device".to_string(),
+            "virtio-net-pci,netdev=net0,disable-legacy=on".to_string(),
+        ]
+    }
+
     /// The emulator arguments that describe the machine, without the kernel.
     ///
-    /// Only x86_64 has one today, because only x86_64 has an image this tree
-    /// can boot.  The other two return their arguments as an empty list rather
-    /// than a guess: a machine whose boot has not been written is not a machine
-    /// whose boot can be asserted, and inventing arguments for it would be a
-    /// gate that passes because it never ran anything.
+    /// Every machine this tree boots has an arm here, and each one ends with
+    /// the same network card: the exchange the driver does is the same on all
+    /// three, and only the bus mechanism that reaches the PCI function differs.
     pub(crate) fn qemu_arguments(self, disk: &Path) -> Vec<String> {
-        match self {
+        let mut arguments = match self {
             // A disk is part of the machine the gate boots: the boot prefers a
             // real device over its in-memory image, and a machine with no disk
             // would exercise the fallback instead of the driver.  The image is
@@ -187,6 +206,11 @@ impl Machine {
                     "virtio-blk-pci,drive=blk0,disable-legacy=on".to_string(),
                 ]
             }
-        }
+        };
+        // Every machine that boots gets the card, because the exchange the
+        // driver does is the same exchange on all three: the device tree names
+        // a different bus mechanism and the PCI function is the same one.
+        arguments.extend(Self::network_arguments());
+        arguments
     }
 }

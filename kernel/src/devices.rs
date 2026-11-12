@@ -44,6 +44,26 @@ const VENDOR_REDHAT: u16 = 0x1AF4;
 const DEVICE_VIRTIO_BLOCK_MODERN: u16 = 0x1042;
 const DEVICE_VIRTIO_BLOCK_TRANSITIONAL: u16 = 0x1001;
 
+/// The class code a network controller carries.
+///
+/// `0x02` is network and `0x00` is Ethernet, so a virtio network card reports
+/// `0x02 / 0x00 / 0x00`.  It is a separate constant from the storage class
+/// because a device is found by what it *is*, not by what driver happens to be
+/// looking for it: a scan that matched only the vendor and device id would
+/// hand a block driver a network card on a machine where the two ids collided.
+///
+/// A host build has no bus to scan, so the family is only compiled where its
+/// only user is: `exercise_network`.
+#[cfg(target_os = "none")]
+const CLASS_NETWORK: u8 = 0x02;
+
+/// QEMU's `virtio-net-pci`: device `0x1041` for the modern interface,
+/// `0x1000` for the transitional one.
+#[cfg(target_os = "none")]
+const DEVICE_VIRTIO_NET_MODERN: u16 = 0x1041;
+#[cfg(target_os = "none")]
+const DEVICE_VIRTIO_NET_TRANSITIONAL: u16 = 0x1000;
+
 /// A mapped region of device memory.
 ///
 /// The identity map again: a BAR's address is already the address this code
@@ -357,38 +377,40 @@ fn read_table_entry(address: usize) -> pci::msix::Entry {
     pci::msix::Entry::decode(&bytes)
 }
 
-/// Scan the bus for a virtio block device, and bring up its transport.
+/// What a virtio function is, so a scan can match one family.
 ///
-/// Returns `None` when the machine has no such device, which is a normal
-/// state: a boot with no disk still has a console and a heap, and a machine
-/// that refused to boot because a disk was absent could not be debugged.
-pub fn find_virtio_block() -> Option<FoundBlockDevice> {
-    let config = configuration_space();
-    let (scan_result, found) = pci::device::scan(&*config, BUS_COUNT, |device| {
-        let modern = device.vendor == VENDOR_REDHAT
-            && device.device == DEVICE_VIRTIO_BLOCK_MODERN
-            && device.class == CLASS_STORAGE;
-        let transitional = device.vendor == VENDOR_REDHAT
-            && device.device == DEVICE_VIRTIO_BLOCK_TRANSITIONAL
-            && device.class == CLASS_STORAGE;
-        if modern || transitional {
-            Some((device, modern))
-        } else {
-            None
-        }
-    });
+/// The bus reports a vendor, a device id and a class, and a driver cares about
+/// a combination of them: the vendor is Red Hat's either way, and the class is
+/// what says whether this is a disk or a card.
+struct VirtioIds {
+    modern: u16,
+    transitional: u16,
+    class: u8,
+}
 
-    // A probe that found nothing is worth reporting: "no virtio-blk" and "the
-    // bus answered for nothing" are different states, and only the second means
-    // the scan itself is not reaching the machine.
-    arch::serial::write_str("protofire: pci scan found ");
-    arch::serial::write_u32(scan_result.devices as u32);
-    arch::serial::write_str(" device(s) on ");
-    arch::serial::write_u32(scan_result.buses as u32);
-    arch::serial::write_str(" bus\n");
+/// A block device's ids.
+const BLOCK_IDS: VirtioIds = VirtioIds {
+    modern: DEVICE_VIRTIO_BLOCK_MODERN,
+    transitional: DEVICE_VIRTIO_BLOCK_TRANSITIONAL,
+    class: CLASS_STORAGE,
+};
 
-    let (device, _modern) = found?;
+/// A network card's ids.  Only a machine scans for one.
+#[cfg(target_os = "none")]
+const NETWORK_IDS: VirtioIds = VirtioIds {
+    modern: DEVICE_VIRTIO_NET_MODERN,
+    transitional: DEVICE_VIRTIO_NET_TRANSITIONAL,
+    class: CLASS_NETWORK,
+};
 
+/// Bring up a virtio function's transport, with the BARs mapped uncached.
+///
+/// The steps are the machine's and not any device's: the ECAM window or the
+/// port pair, the BAR assignment pass a firmware-less machine needs, the
+/// capability walk, and the mapping that makes a register a register.  Both
+/// drivers reach their transport through here so that a machine whose BARs are
+/// not addressed is a question with one answer.
+fn virtio_transport(config: &Arc<dyn ConfigSpace>, device: Device) -> Option<Arc<PciTransport>> {
     // Give the devices their addresses before anything reads a BAR.
     //
     // On a machine with firmware this does nothing: every BAR already holds an
@@ -402,9 +424,9 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     // then fails with a reason.
     if let Some((base, size)) = arch::pcie_memory_window() {
         let mut listing = [Device::ABSENT; MAX_FUNCTIONS];
-        let found = pci::scan_all(&*config, BUS_COUNT, &mut listing);
+        let found = pci::scan_all(&**config, BUS_COUNT, &mut listing);
         let assignment =
-            pci::assign_memory_bars(&*config, &listing[..found.min(MAX_FUNCTIONS)], base, size);
+            pci::assign_memory_bars(&**config, &listing[..found.min(MAX_FUNCTIONS)], base, size);
         arch::serial::write_str("protofire: pci bars assigned ");
         arch::serial::write_u32(assignment.assigned as u32);
         arch::serial::write_str(", kept ");
@@ -445,8 +467,8 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
     // while the scan ran over ECAM reads every capability as `0xFF`, which is
     // what a port that does not exist answers, and reports the device as
     // having none.
-    let transport = match PciTransport::new(config.clone(), device, &map_bar) {
-        Ok(transport) => transport,
+    match PciTransport::new(config.clone(), device, &map_bar) {
+        Ok(transport) => Some(Arc::new(transport)),
         Err(error) => {
             arch::serial::write_str("protofire: virtio transport failed: ");
             arch::serial::write_str(match error {
@@ -473,21 +495,230 @@ pub fn find_virtio_block() -> Option<FoundBlockDevice> {
                 }
             });
             arch::serial::write_str("\n");
-            return None;
+            None
         }
-    };
-    let transport = Arc::new(transport);
+    }
+}
 
-    // The completion interrupt, when this machine can receive a message.
-    // Wired here rather than in the driver because the identity is the boot's
-    // to hand out and the machine's MSI destination is `arch`'s to name; the
-    // driver keeps completing through its own polling either way, so a machine
-    // without a destination loses nothing.
+/// Find one virtio function of a family, and bring up its transport.
+fn find_virtio(
+    ids: &VirtioIds,
+    what: &str,
+) -> Option<(Arc<PciTransport>, Device, Arc<dyn ConfigSpace>)> {
+    let config = configuration_space();
+    let (scan_result, found) = pci::device::scan(&*config, BUS_COUNT, |device| {
+        let modern = device.vendor == VENDOR_REDHAT
+            && device.device == ids.modern
+            && device.class == ids.class;
+        let transitional = device.vendor == VENDOR_REDHAT
+            && device.device == ids.transitional
+            && device.class == ids.class;
+        if modern || transitional {
+            Some((device, modern))
+        } else {
+            None
+        }
+    });
+
+    // A probe that found nothing is worth reporting: "no virtio-blk" and "the
+    // bus answered for nothing" are different states, and only the second means
+    // the scan itself is not reaching the machine.
+    arch::serial::write_str("protofire: pci scan found ");
+    arch::serial::write_u32(scan_result.devices as u32);
+    arch::serial::write_str(" device(s) on ");
+    arch::serial::write_u32(scan_result.buses as u32);
+    arch::serial::write_str(" bus, looking for ");
+    arch::serial::write_str(what);
+    arch::serial::write_str("\n");
+
+    let (device, _modern) = found?;
+    let transport = virtio_transport(&config, device)?;
+    Some((transport, device, config))
+}
+
+/// Scan the bus for a virtio block device, and bring up its transport.
+///
+/// Returns `None` when the machine has no such device, which is a normal
+/// state: a boot with no disk still has a console and a heap, and a machine
+/// that refused to boot because a disk was absent could not be debugged.
+pub fn find_virtio_block() -> Option<FoundBlockDevice> {
+    let (transport, device, config) = find_virtio(&BLOCK_IDS, "virtio-blk")?;
     Some(FoundBlockDevice {
         transport,
         device,
         config,
     })
+}
+
+/// The gateway a boot asks about, as QEMU's user-mode network answers it.
+///
+/// `-netdev user` puts the guest on `10.0.2.0/24` with the gateway at `.2`, and
+/// it answers an ARP request for that address without any configuration.  The
+/// guest's own address is `.15`, which is the one the request carries as its
+/// sender.  Neither number is negotiated: they are QEMU's defaults, named here
+/// because a request for an address nothing owns gets no reply and the exchange
+/// would look like a card that does not receive.
+#[cfg(target_os = "none")]
+const GATEWAY_PROTOCOL: [u8; 4] = [10, 0, 2, 2];
+
+/// The address this boot claims on that network.
+#[cfg(target_os = "none")]
+const OUR_PROTOCOL: [u8; 4] = [10, 0, 2, 15];
+
+/// Ask the gateway who it is, and print the answer.
+///
+/// This is the self-test the frame path exists for.  It exercises four things a
+/// bring-up cannot: the transmit chain with a real frame in it, the device's
+/// own send path, the receive chain, and the device's receive path.  The
+/// evidence is the line, and every field on it came out of the reply's bytes.
+///
+/// ## Why the reply is not waited for with a timeout
+///
+/// It is.  A card that never answers is a card that is not working, and the
+/// line says which of the four steps failed instead of hanging the boot: the
+/// request's own completion, the reply's arrival, and the two addresses the
+/// reply names.
+///
+/// ## What a machine without a card prints
+///
+/// Nothing, and that is the design: a boot with no network is the ordinary
+/// state on two of the three machines, and a line that said so on every boot
+/// would be noise a reader learns to skip.
+#[cfg(target_os = "none")]
+pub fn exercise_network() -> bool {
+    let Some((transport, _device, _config)) = find_virtio(&NETWORK_IDS, "virtio-net") else {
+        return false;
+    };
+
+    let card = match virtio_net::VirtioNet::new(transport) {
+        Ok(card) => card,
+        Err(error) => {
+            arch::serial::write_str("protofire: virtio-net refused the device: ");
+            arch::serial::write_str(match error {
+                abi::Error::Unsupported => "unsupported",
+                abi::Error::DeviceError => "device error",
+                abi::Error::InvalidArgument => "invalid argument",
+                abi::Error::Busy => "busy",
+                abi::Error::TimedOut => "timed out",
+                _ => "error",
+            });
+            arch::serial::write_str("\n");
+            return false;
+        }
+    };
+
+    let mac = card.mac();
+    arch::serial::write_str("protofire: virtio-net up, address ");
+    write_mac(mac);
+    arch::serial::write_str(", receive queue ");
+    arch::serial::write_u32(card.receive_queue_size() as u32);
+    arch::serial::write_str(", transmit queue ");
+    arch::serial::write_u32(card.transmit_queue_size() as u32);
+    arch::serial::write_str("\n");
+
+    // A buffer posted **before** the request goes out.  A driver that sent
+    // first would be relying on the card holding the answer until a buffer
+    // appeared, and a real card drops a frame it has nowhere to put.
+    if card.post_receive_buffer().is_err() {
+        arch::serial::write_str("protofire: virtio-net could not post a receive buffer\n");
+        return false;
+    }
+
+    let request = virtio_net::arp_request(mac, OUR_PROTOCOL, GATEWAY_PROTOCOL);
+    if let Err(error) = card.submit_frame_blocking(&request) {
+        arch::serial::write_str("protofire: virtio-net could not send the arp request: ");
+        arch::serial::write_str(match error {
+            abi::Error::TimedOut => "timed out",
+            abi::Error::Busy => "busy",
+            abi::Error::DeviceError => "device error",
+            _ => "error",
+        });
+        arch::serial::write_str("\n");
+        return false;
+    }
+
+    // The reply is polled for, bounded, because a card that does not answer is
+    // a card that does not answer: waiting for an interrupt this boot has not
+    // wired would wait for something nobody asked for.
+    let mut frame = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
+    const POLL_LIMIT: u32 = 50_000_000;
+    let mut polls = 0;
+    loop {
+        match card.receive_frame(&mut frame) {
+            Ok(Some(length)) => {
+                let Some(arp) = virtio_net::parse_arp(&frame[..length]) else {
+                    arch::serial::write_str(
+                        "protofire: virtio-net received a frame that is not arp\n",
+                    );
+                    return false;
+                };
+                if arp.operation != 2 {
+                    arch::serial::write_str("protofire: virtio-net received an arp request\n");
+                    return false;
+                }
+                arch::serial::write_str("protofire: virtio-net arp reply ");
+                write_mac(arp.sender_hardware);
+                arch::serial::write_str(" holds ");
+                write_ipv4(arp.sender_protocol);
+                arch::serial::write_str(", asked by ");
+                write_mac(arp.target_hardware);
+                arch::serial::write_str(" for ");
+                write_ipv4(arp.target_protocol);
+                arch::serial::write_str("\n");
+                // The reply has to be the answer to the question this boot
+                // asked, or it is a frame from somewhere else that happened to
+                // parse.  Checked rather than assumed: a card that received its
+                // own request would pass every test above.
+                return arp.target_hardware == mac
+                    && arp.target_protocol == OUR_PROTOCOL
+                    && arp.sender_protocol == GATEWAY_PROTOCOL;
+            }
+            Ok(None) => {
+                polls += 1;
+                if polls > POLL_LIMIT {
+                    arch::serial::write_str("protofire: virtio-net arp request went unanswered\n");
+                    return false;
+                }
+                core::hint::spin_loop();
+            }
+            Err(_) => {
+                arch::serial::write_str("protofire: virtio-net receive buffer too small\n");
+                return false;
+            }
+        }
+    }
+}
+
+/// Write six bytes as an address a reader recognizes.
+///
+/// Two hex digits per octet, through `write_str`, which is what the rest of the
+/// boot uses and what keeps a line in one buffer: `write_byte` goes straight to
+/// the UART on x86_64, so a line that mixed the two came out with the address's
+/// digits ahead of the text before them.
+#[cfg(target_os = "none")]
+fn write_mac(mac: [u8; 6]) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for (index, byte) in mac.iter().enumerate() {
+        if index != 0 {
+            arch::serial::write_str(":");
+        }
+        let pair = [
+            DIGITS[(byte >> 4) as usize] as char,
+            DIGITS[(byte & 0x0F) as usize] as char,
+        ];
+        arch::serial::write_str(pair.iter().collect::<alloc::string::String>().as_str());
+    }
+}
+
+/// Write four bytes as a dotted quad, which is how the request carries them.
+#[cfg(target_os = "none")]
+fn write_ipv4(address: [u8; 4]) {
+    for (index, byte) in address.iter().enumerate() {
+        if index != 0 {
+            arch::serial::write_str(".");
+        }
+        arch::serial::write_u32(*byte as u32);
+    }
 }
 
 /// The address the device sees, for an address this code can use.

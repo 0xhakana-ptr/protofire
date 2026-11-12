@@ -119,6 +119,13 @@ pub fn kernel_main() -> ! {
     #[cfg(target_os = "none")]
     crate::tick::report_console();
 
+    // The network card, when the machine has one.  Placed here rather than with
+    // the disk because nothing mounts on a network: the exchange is a self-test
+    // of the two queues, and a machine without a card prints nothing and boots
+    // exactly as it did.
+    #[cfg(target_os = "none")]
+    crate::devices::exercise_network();
+
     crate::programs::run();
 
     halt()

@@ -139,6 +139,9 @@ impl PciTransport {
         let mut common_location = None;
         let mut notify_location = None;
         let mut device_location = None;
+        // The notify structure's own byte offset, because its multiplier is
+        // the dword appended after the structure rather than a field inside it.
+        let mut notify_structure_offset = 0_u8;
         let mut seen = crate::transport::Seen::new();
 
         device.capabilities(&*config, |_id, offset, word| {
@@ -198,7 +201,10 @@ impl PciTransport {
                 let location = decode_capability(capability, bar, region_offset, region_length);
                 match capability {
                     Capability::Common => common_location = Some(location),
-                    Capability::Notify => notify_location = Some(location),
+                    Capability::Notify => {
+                        notify_location = Some(location);
+                        notify_structure_offset = offset;
+                    }
                     Capability::Device => device_location = Some(location),
                     Capability::SharedMemory => {}
                 }
@@ -229,16 +235,31 @@ impl PciTransport {
         let device_location = device_location.unwrap_or_else(|| unreachable!());
 
         let common = map_capability(map_bar, &bar_address, common_location)?;
+
+        // The notify capability is a `virtio_pci_cap` with one field appended
+        // (section 4.1.4.4.1):
+        //
+        // ```text
+        // struct virtio_pci_notify_cap {
+        //         struct virtio_pci_cap cap;      // 16 bytes
+        //         le32 notify_off_multiplier;     // at +16
+        // };
+        // ```
+        //
+        // So `length` is the region's size, exactly as it is for the other two
+        // capabilities, and the multiplier is the dword **after** the
+        // structure.  Reading the multiplier out of `length` — which this
+        // transport did — makes a doorbell land at `off * length`, and with
+        // QEMU's 0x1000-byte notify region that is an address past the mapped
+        // BAR: the boot died with `write past the mapped BAR` on the first
+        // transmit, after every register had read back what it was written.
+        //
+        // The multiplier's dword is the one after the structure: the structure
+        // starts at `notify_structure_offset`, and its fields run to +16.
+        let multiplier_dword = (notify_structure_offset as u32 >> 2) + 4;
+        let notify_offset_multiplier = config.read_dword(device.address, multiplier_dword as u8);
         let notify = map_capability(map_bar, &bar_address, notify_location)?;
         let device_config = map_capability(map_bar, &bar_address, device_location)?;
-
-        // The notify multiplier is read from the notification capability's
-        // second dword (section 4.1.4.4): a doorbell is at
-        // `base + queue_notify_off * multiplier` inside the notify region.
-        // The multiplier is the capability's own `length` field, reused: for
-        // the notify capability it is "the multiplier to apply to
-        // `queue_notify_off`" (section 4.1.4.4.1), not a region length.
-        let notify_offset_multiplier = notify_location.length;
 
         Ok(PciTransport {
             common,

@@ -350,6 +350,18 @@ impl Machine {
                 ),
                 ("protofire: heap at ", false),
                 ("protofire: block device from virtio-blk on pci", true),
+                // The network card, and the ARP exchange that proves both
+                // queues.  The first line is the bring-up, the second is a
+                // frame leaving and the reply coming back — the only evidence
+                // this tree has that the frame path runs on a machine.
+                //
+                // The reply's own fields are on the line, and the driver
+                // returns false when they are not the answer to the question it
+                // asked.  So requiring the line at all is requiring that the
+                // card sent a frame, received one, and that the one it received
+                // was addressed back to it.
+                ("protofire: virtio-net up, address ", false),
+                ("protofire: virtio-net arp reply ", false),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
@@ -744,6 +756,19 @@ impl Machine {
                     // virtio path, and the second is a sector leaving the
                     // machine and coming back through the driver's own queue.
                     ("protofire: block device from virtio-blk on pci", true),
+                    // The network card, and the ARP exchange that proves both
+                    // queues.  The first line is the bring-up, the second is a
+                    // frame leaving and the reply coming back — the only
+                    // evidence this tree has that the frame path runs on a
+                    // machine.
+                    //
+                    // The reply's own fields are on the line, and the driver
+                    // returns false when they are not the answer to the
+                    // question it asked.  So requiring the line at all is
+                    // requiring that the card sent a frame, received one, and
+                    // that the one it received was addressed back to it.
+                    ("protofire: virtio-net up, address ", false),
+                    ("protofire: virtio-net arp reply ", false),
                     ("protofire: virtio-blk wrote and read back sector ", false),
                     (
                         "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
@@ -821,6 +846,18 @@ impl Machine {
                 ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),
                 ("protofire: block device from virtio-blk on pci", true),
+                // The network card, and the ARP exchange that proves both
+                // queues.  The first line is the bring-up, the second is a
+                // frame leaving and the reply coming back — the only evidence
+                // this tree has that the frame path runs on a machine.
+                //
+                // The reply's own fields are on the line, and the driver
+                // returns false when they are not the answer to the question it
+                // asked.  So requiring the line at all is requiring that the
+                // card sent a frame, received one, and that the one it received
+                // was addressed back to it.
+                ("protofire: virtio-net up, address ", false),
+                ("protofire: virtio-net arp reply ", false),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 // The completion-message report, which every machine prints
                 // and whose **number is the machine's**: a tree that names no

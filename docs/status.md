@@ -116,18 +116,50 @@ program's fact and not the kernel's — x86_64's vary.
 attached.  Verified by `block device from virtio-blk on pci` and
 `virtio-blk wrote and read back sector `.
 
-The virtio network card is **implemented and not attached**.  `virtio_net`
-brings a card up: the same status sequence the block device runs, the address
-read from the configuration region after negotiating `VIRTIO_NET_F_MAC`, and
-both queues — receive 0, transmit 1 — each sized from its own answer, programmed
-with its own rings and enabled.  It is verified on a host by thirteen tests over
-a transport that records what it was asked; two of them are mutation-tested, and
-they are the ones this driver exists for: a driver that programmed every queue
-with queue 0's index, and one that sized every queue from queue 0's answer, both
-fail.  What it does not do is move a frame, and no boot finds a card yet, so
-none of it is verified on a machine.  The frame path, an IMSIC identity for the
-receive queue, and the gate's `-netdev user` are the next three changes;
-`docs/virtio-net.md` is the plan they follow.
+The virtio network card is **attached on all four boots**.  `virtio_net` brings
+a card up — the same status sequence the block device runs, the address read
+from the configuration region under `VIRTIO_NET_F_MAC`, and both queues,
+receive 0 and transmit 1 — and then moves a frame in each direction.  The
+exchange is an ARP request for QEMU's user-mode gateway and the reply:
+`qemu_arguments` gives every bootable machine `-netdev user` and a
+`virtio-net-pci`, and the gate requires `protofire: virtio-net arp reply ` on
+all four.  Measured on x86_64:
+
+```
+protofire: virtio-net up, address 52:54:00:12:34:56, receive queue 256, transmit queue 256
+protofire: virtio-net arp reply 52:55:0a:00:02:02 holds 10.0.2.2, asked by 52:54:00:12:34:56 for 10.0.2.15
+```
+
+The driver's reads of the reply are checked against the request it sent — the
+reply has to name this card's address and the address this boot asked about —
+so the line is evidence that a frame left, a frame arrived, and the frame that
+arrived answers the question.
+
+Three defects were found by booting, and all three are recorded where they were
+found because each was invisible to a host test and to every register read-back:
+
+- **The notify region's multiplier was read from its `length`.**  Section
+  4.1.4.4.1 makes the multiplier the dword appended *after* the capability
+  structure; `length` is the region's size, as it is for the other two.  With
+  the multiplier taken from `length` (0x1000 on QEMU's card) a doorbell landed
+  at `off * 0x1000`, past the mapped BAR, and the boot died with
+  `write past the mapped BAR` on its first transmit.
+- **The header is twelve bytes, not ten.**  A probe that filled the frame with
+  its own byte indices had the wire carry `2, 3, 4, …`: the card skipped twelve
+  bytes of a buffer whose header the driver wrote as ten.  Two more probes
+  pinned the number — a header descriptor declaring eight bytes shifted the
+  frame to `4, 5, 6, …`, and a single buffer with twelve leading zeros
+  delivered it whole.  `docs/virtio-net.md` carries the sequence.
+- **The receive path stripped the wrong header.**  With the card writing twelve
+  bytes and the driver reading ten, the reply was on the wire — captured with
+  QEMU's `filter-dump` — while the driver parsed the frame four bytes into its
+  own ARP message and reported it as not an ARP.
+
+What the card does not have: an interrupt of its own.  The receive queue
+completes through the driver's polling, so the IMSIC still claims exactly one
+device's message — the block device's, on identity 200.  Giving the card a
+second identity is `docs/virtio-net.md`'s step 4; a network stack above this is
+a different project.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement
