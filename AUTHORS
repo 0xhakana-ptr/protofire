@@ -1,18 +1,37 @@
 # AUTHORS
 #
-# Everyone who has contributed to this tree, in the order they first did.
+# Everyone who has contributed to this tree, in the order they first did, one
+# `Proper Name <address>` per line.
 #
-# A name is added in the commit that first carries it, and the form is the one
-# `.mailmap` maps to: `Proper Name <address>`.  That file is the authority when
-# a person has committed under more than one address, so a name here is the
-# proper name and an address here is the one `.mailmap` resolves to.
+# ## What this file is authoritative for
 #
-# This file is **history**.  Who is responsible for which part now is
+# The **name** on each line is the name this tree calls that person, and the
+# **address** is the one they are reached at.  When a commit carries an older
+# address — a work one, an address that changed — this file is still right, and
+# the commit is the record of where the change came from rather than of who
+# made it.
+#
+# Linux keeps that mapping in `.mailmap`, which `git shortlog`, `git log` and
+# `git blame` apply automatically.  This tree does not: it has one contributor
+# and one address, so a second file that folds several addresses into one would
+# resolve a problem that does not exist yet.  When a second address does appear,
+# the mapping goes here in the same commit that first needs it, and the form is
+# `gitmailmap(5)`'s:
+#
+#   Proper Name <current@address>  Commit Name <old@address>
+#
+# until then, one line per person, no ceremony.
+#
+# ## What this file is not
+#
+# It carries no legal weight.  `NOTICE` is the file that states the copyright
+# holder and the licence, and the licence of a contribution is the one its
+# commit was made under.  A name here is a courtesy and a record; it is not a
+# copyright claim and it grants nothing.
+#
+# It is also **not** responsibility.  Who reviews which part of the tree now is
 # `MAINTAINERS`, and the two answer different questions: a contributor who has
 # moved on stays here, and a maintainer who takes over a subsystem is an entry
 # there.
-#
-# The prose in this tree is CC BY 4.0 and the code is Apache-2.0; `NOTICE` says
-# which files fall on which side.
 
 Raiden Lumine <2557597107@qq.com>
