@@ -124,15 +124,33 @@ running, not merely a lower number.
 
 Verified by `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `, `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `, `task placings home `, `address spaces reaped 4, `, and `tlb shootdown `.
 
-Missing: no queue per CPU, so the offer of work is still the lock's — an idle
-CPU takes a free task because every CPU scans the same list, not because a
-queue sharded work toward it.  A CPU with nothing to do and work belonging to
-another CPU steals it, which is the migration the rule prefers to avoid but
-will not refuse: leaving a core idle with work in the queue is the worse
-answer.  Exited programs' spaces are released at the boot's end rather than at
-each exit, because releasing one while the other CPU was still installed on its
-root faulted 186 times in six boots of eight.  `docs/migration.md` has the
-per-step cost of more CPUs.
+**A queue per CPU is not a gap, and the measurement says so.**  The offer of
+work is still the lock's: every CPU scans the same list rather than taking from
+a queue a shard filled toward it.  That is a shape worth changing only if the
+scan costs something, so it was measured rather than assumed.  Counting every
+candidate the two rotation scans look at, over six boots of the same image:
+
+| boot | switches | candidates scanned | steals |
+|---|---|---|---|
+| 1 | 23 | 155 | 3 |
+| 2 | 24 | 120 | 1 |
+| 3 | 29 | 124 | 2 |
+| 4 | 24 | 110 | 2 |
+| 5 | 28 | 147 | 2 |
+| 6 | 23 | 155 | 3 |
+
+Five to seven candidates per placement, with four tasks in the machine and a
+hard ceiling of eight: the scan is two linear passes over an array that fits in
+a cache line.  Sharding would move that cost, not remove it, and would add a
+steal path between queues — the same migration, one indirection further away.
+What would change the arithmetic is a machine with many more runnable tasks than
+CPUs, and nothing here has that yet.  So the shape stays, and the number is
+recorded so the next reader can see it was measured.
+
+Exited programs' spaces are released at the boot's end rather than at each exit,
+because releasing one while the other CPU was still installed on its root
+faulted 186 times in six boots of eight.  `docs/migration.md` has the per-step
+cost of more CPUs.
 
 ## x86_64
 
