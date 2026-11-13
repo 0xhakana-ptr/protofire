@@ -474,6 +474,39 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         };
     }
 
+    // Starting a process the caller chose, rather than becoming one.
+    //
+    // `ExecProcess` replaces the calling task; `SpawnProcess` grows the
+    // machine by one task that did not exist, named by the file the caller
+    // picked, and answers the pid — which is the number a supervisor needs,
+    // because the wait that supervises names a pid.
+    if number == SyscallNumber::SpawnProcess as usize {
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        match crate::scheduler::spawn_process(path) {
+            Some(pid) => {
+                // The one line that says the machine grew: the caller, the
+                // file it named, and the pid the kernel answered — the
+                // number a later wait carries.
+                arch::serial::write_str("protofire: process ");
+                arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                arch::serial::write_str(" spawned ");
+                arch::serial::write_str(path);
+                arch::serial::write_str(" as pid ");
+                arch::serial::write_u32(pid);
+                arch::serial::write_str("\n");
+                return CallOutcome::Return(pid as usize);
+            }
+            // The same answer exec gives for a machine that could not: no
+            // scheduler, no file, or a pool too empty to build the space.
+            None => {
+                return CallOutcome::Return(abi::syscall::encode_error(abi::Error::OutOfMemory));
+            }
+        }
+    }
+
     // Exec: the running process becomes the file it names.
     //
     // The argument is a NUL-terminated path in the caller's memory, copied

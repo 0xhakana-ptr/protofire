@@ -75,9 +75,13 @@ use userland::sys_remove_path_at;
 #[cfg(target_os = "none")]
 use userland::sys_rename_at;
 #[cfg(target_os = "none")]
+use userland::sys_spawn;
+#[cfg(target_os = "none")]
 use userland::sys_stat;
 #[cfg(target_os = "none")]
 use userland::sys_stat_at;
+#[cfg(target_os = "none")]
+use userland::sys_wait_process_of;
 #[cfg(target_os = "none")]
 use userland::sys_write;
 
@@ -105,6 +109,14 @@ static SCRATCH_NAME: &[u8] = b"scratch.txt\0";
 /// twin served yet and the directory is named by its path.
 #[cfg(target_os = "none")]
 static NOTES_DIR: &[u8] = b"/tmp/notes\0";
+/// The program this process starts: the tree's second image, on the same
+/// volume this program's own bytes came from.
+#[cfg(target_os = "none")]
+static SHELL_PATH: &[u8] = b"/bin/shell\0";
+/// The status the shell answers when it ran: the greeting's length, which
+/// no constant this process carries can fake.
+#[cfg(target_os = "none")]
+const SHELL_STATUS: usize = 23;
 /// The absolute path of the `/tmp` mount, reached once through the sentinel
 /// to become every later call's anchor.
 #[cfg(target_os = "none")]
@@ -291,6 +303,17 @@ pub extern "C" fn _start() -> ! {
     insist(sys_remove_path_at(tmp, SCRATCH_NAME.as_ptr() as usize));
     if !is_error(sys_open_at(tmp, SCRATCH_NAME.as_ptr() as usize, OPEN_READ)) {
         sys_exit(206);
+    }
+
+    // The spawn, and the wait that supervises it: this process starts the
+    // tree's second program, and its own exit waits for the child's.  The
+    // child's status is the greeting's length — a number that is only on
+    // the wire because the kernel loaded a second image from the filesystem
+    // and ran it, which is the whole of what this pair of calls proves.
+    let shell = insist(sys_spawn(SHELL_PATH.as_ptr() as usize));
+    let status = insist(sys_wait_process_of(shell));
+    if status != SHELL_STATUS {
+        sys_exit(208);
     }
 
     // The anchors are done with, and a slot closed is a slot the kernel got

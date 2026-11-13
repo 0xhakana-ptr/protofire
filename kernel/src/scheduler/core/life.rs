@@ -132,10 +132,27 @@ impl Scheduler {
     /// then is the task's space, context and frame replaced.  A failure
     /// leaves the task exactly as it was, running the program it was running,
     /// and the caller answers an error rather than a pid.
+    /// Read a program file and build the address space it runs in.
+    ///
+    /// This is the whole of what an image needs — the file read whole from
+    /// the registry's filesystem, parsed into segments, mapped page by page
+    /// at the addresses the loader accepted, a stack of the kernel's own
+    /// choosing above the image, the window and break recorded, and the exec
+    /// block written at the stack's top.  Both [`Self::exec_current`] and
+    /// [`Self::spawn_from_file`] end here, because both need all of it and
+    /// neither half of it is exec's alone; an exec replaces the calling
+    /// task's image with what comes back, a spawn hands it to a task that
+    /// does not exist yet.
+    ///
+    /// Answers the space, the entry, and the stack pointer the program
+    /// starts at.  Every failure inside releases the space it built, so a
+    /// refused image costs the pool nothing — which is also why the parse
+    /// runs before `AddressSpace::new` allocates the root: a caller that
+    /// parsed afterwards and answered `None` on a malformed file left a
+    /// frame behind for every attempt, and any ring-3 program can attempt
+    /// it as often as it likes.
     #[cfg(target_os = "none")]
-    pub fn exec_current(&mut self, cpu: usize, frame: &mut Context, path: &str) -> Option<u32> {
-        let task_index = self.running.get(cpu).copied().flatten()?;
-
+    fn build_image_space(path: &str) -> Option<(crate::address_space::AddressSpace, usize, usize)> {
         // The file, whole, from the filesystem the registry serves.  The read
         // is bounded by the loader's own ceiling — a program bigger than this
         // is one the caller refuses before it maps.
@@ -146,17 +163,6 @@ impl Scheduler {
         )
         .ok()?;
 
-        // The image, mapped page by page at the addresses the loader accepted.
-        // Every failure releases the space it built, so a failed exec leaves
-        // the pool exactly as it found it.
-        //
-        // The mapped list is what makes a page two segments share correct:
-        // the linker's text can begin mid-page, with the rodata of the *same*
-        // page continuing past it, and two map calls on one address would
-        // leave the second's permissions standing — read-only where the code
-        // needed execute.  A page already mapped takes the new segment's
-        // bytes into the frame it has and the union of the two permissions,
-        // which is the only answer both segments can run under.
         // The image, parsed **before** any frame is taken.  The order is the
         // leak: `AddressSpace::new` allocates the root table, so a caller that
         // parsed afterwards and answered `None` on a malformed file left a
@@ -352,6 +358,48 @@ impl Scheduler {
             path_at.add(path.len()).write(0);
         }
 
+        Some((space, image.entry, block_top))
+    }
+
+    /// Start a new task running the program at `path`, and answer its pid.
+    ///
+    /// This is `spawn`: a **new** task, a **new** pid, the caller as its
+    /// parent, running a program the caller named.  The image is the shared
+    /// [`Self::build_image_space`] construction — the same read, the same
+    /// loader, the same stack and exec block an `exec` builds — and what
+    /// differs is where it lands: not the calling task's own image, but a
+    /// task that did not exist before this call.  The child inherits
+    /// nothing: no descriptors, no address space, no position — a fresh
+    /// process opens its own files, which is the reading least privilege
+    /// needs of a program the caller chose but did not vouch for byte for
+    /// byte.
+    ///
+    /// The child is [`State::Runnable`] when this answers, so the next CPU
+    /// that asks for work claims it; nothing here runs it directly, because
+    /// the caller keeps the CPU it is on and the answer it is waiting for.
+    #[cfg(target_os = "none")]
+    pub fn spawn_from_file(&mut self, path: &str, parent_pid: u32) -> Option<u32> {
+        let (space, entry, block_top) = Self::build_image_space(path)?;
+        let pid = self.next_pid;
+        self.next_pid += 1;
+
+        let mut child = Task::new("child", entry, block_top, space);
+        child.identify(pid, parent_pid);
+        self.tasks.push(child);
+        Some(pid)
+    }
+
+    #[cfg(target_os = "none")]
+    pub fn exec_current(&mut self, cpu: usize, frame: &mut Context, path: &str) -> Option<u32> {
+        let task_index = self.running.get(cpu).copied().flatten()?;
+
+        // The image, built: read, parsed, mapped, stacked, and carrying the
+        // exec block.  The construction is [`Self::build_image_space`]'s,
+        // which is what a spawned task shares — the one thing an exec and a
+        // spawn both need is the whole of this, and neither half of it is
+        // exec's alone.
+        let (space, entry, block_top) = Self::build_image_space(path)?;
+
         let new_root = space.root();
         // Every exit from here releases the space it built.  The task index
         // came from `running[cpu]` and the space was built around it, so the
@@ -375,7 +423,7 @@ impl Scheduler {
         // A fresh context, not a copy: the program starts at its own first
         // instruction, on a stack that carries the exec block and nothing from
         // the program it replaced.
-        *task.context_mut() = crate::scheduler::starting_context(image.entry, block_top);
+        *task.context_mut() = crate::scheduler::starting_context(entry, block_top);
         // And the trap frame resumes the new image, because the caller's
         // epilogue is what returns to a program and this task is the one
         // running.

@@ -93,13 +93,14 @@ fn build_program(machine: Machine, package: &str) -> Result<Vec<u8>> {
         .context("running cargo build for apps/init")?
         .success()
     {
-        bail!("cargo build failed for init on {}", machine.triple());
+        bail!("cargo build failed for {} on {}", package, machine.triple());
     }
     let elf = PathBuf::from("target")
         .join(machine.triple())
         .join(INIT_PROFILE)
-        .join("init");
-    std::fs::read(&elf).with_context(|| format!("reading the built init at {}", elf.display()))
+        .join(package);
+    std::fs::read(&elf)
+        .with_context(|| format!("reading the built {} at {}", package, elf.display()))
 }
 
 /// Where cargo puts the image for a target and profile.

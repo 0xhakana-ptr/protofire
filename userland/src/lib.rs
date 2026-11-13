@@ -58,6 +58,10 @@ pub const SYS_RENAME_AT: usize = 34;
 pub const SYS_CREATE_DIR_AT: usize = 35;
 /// `RemovePathAt`, relative to a descriptor.
 pub const SYS_REMOVE_PATH_AT: usize = 36;
+/// `SpawnProcess`, a new process running the program at a path.
+pub const SYS_SPAWN_PROCESS: usize = 25;
+/// `WaitProcessOf`, one named process's exit status.
+pub const SYS_WAIT_PROCESS_OF: usize = 196;
 /// `Mmap`, anonymous private memory.
 pub const SYS_MMAP: usize = 67;
 /// `Brk`, the program's break.
@@ -354,6 +358,24 @@ pub fn sys_remove_path_at(dirfd: usize, path: usize) -> usize {
     syscall6(SYS_REMOVE_PATH_AT, dirfd, path, 0, 0, 0, 0)
 }
 
+/// `spawn_process(path)`: the new process's pid, or the error encoding.
+///
+/// The caller becomes the parent, which is what makes the pid worth
+/// having: the wait that supervises names it.
+#[cfg(target_os = "none")]
+pub fn sys_spawn(path: usize) -> usize {
+    syscall6(SYS_SPAWN_PROCESS, path, 0, 0, 0, 0, 0)
+}
+
+/// `wait_process_of(pid)`: that process's exit status.
+///
+/// Blocks until the named process has ended; a pid that is not a process of
+/// this boot answers the error encoding rather than parking for ever.
+#[cfg(target_os = "none")]
+pub fn sys_wait_process_of(pid: usize) -> usize {
+    syscall6(SYS_WAIT_PROCESS_OF, pid, 0, 0, 0, 0, 0)
+}
+
 /// `mmap(hint, length, prot, flags)`: the base address, or an error encoding.
 #[cfg(target_os = "none")]
 pub fn sys_mmap(hint: usize, length: usize, protection: usize, flags: usize) -> usize {
@@ -427,8 +449,10 @@ mod tests {
     use super::SYS_READ_DIR;
     use super::SYS_REMOVE_PATH_AT;
     use super::SYS_RENAME_AT;
+    use super::SYS_SPAWN_PROCESS;
     use super::SYS_STAT;
     use super::SYS_STAT_AT;
+    use super::SYS_WAIT_PROCESS_OF;
     use super::SYS_WRITE;
 
     /// Every number this crate names is the ABI's own, by value.
@@ -448,6 +472,8 @@ mod tests {
         assert_eq!(SYS_REMOVE_PATH_AT, SyscallNumber::RemovePathAt as usize);
         assert_eq!(SYS_MMAP, SyscallNumber::Mmap as usize);
         assert_eq!(SYS_BRK, SyscallNumber::Brk as usize);
+        assert_eq!(SYS_SPAWN_PROCESS, SyscallNumber::SpawnProcess as usize);
+        assert_eq!(SYS_WAIT_PROCESS_OF, SyscallNumber::WaitProcessOf as usize);
     }
 
     /// The frozen range's boundary, from the program's side: a number a

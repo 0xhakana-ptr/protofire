@@ -162,6 +162,19 @@ trap_entry:
 1:
     addi sp, sp, -288
 
+    /* `x5` and `x6` go into the frame **first** — before anything that could
+       touch them, and the first thing after this line is exactly that: the
+       hart-id computation below spends `t0` and `t1`, and the first version
+       of this head spent them *before* saving, so every trap destroyed
+       whatever the program kept live in its `t` registers.  Nothing noticed
+       while the only programs were machine code that reloaded before every
+       call; the first compiled program small enough for the compiler to keep
+       a value in `t0` across one — the shell's read answer — exited with a
+       value the program never put there.  The save list below skips the two
+       because they are already home. */
+    sd x5, 40(sp)
+    sd x6, 48(sp)
+
     /* The kernel's own identity for this hart, put in `tp` for the length of
        the trap.
 
@@ -183,15 +196,11 @@ trap_entry:
     divu t0, t0, t1
     mv tp, t0
 
-    /* Everything but `x2`, before anything is clobbered: the two scratch
-       registers the code below needs are ordinary slots by the time their
-       registers are used. */
+    /* Everything but `x2`, and everything but the two already saved. */
     sd x0, 0(sp)
     sd x1, 8(sp)
     sd x3, 24(sp)
     sd x4, 32(sp)
-    sd x5, 40(sp)
-    sd x6, 48(sp)
     sd x7, 56(sp)
     sd x8, 64(sp)
     sd x9, 72(sp)
@@ -239,13 +248,39 @@ trap_entry:
     mv a0, sp
     call riscv64_trap_dispatch
 
-    /* The restore.  Every register comes home from the frame before the two
-       scratch registers are spent on the return itself: `sepc` and `sstatus`
-       go back to the machine, then the frame's `x2` decides where `sret` runs,
-       and the `SPP` it carries decides what `sscratch` holds afterwards: the
-       kernel stack, for the next program's trap, or zero, for the kernel's
-       own.  `ESR` has no counterpart here to skip: `scause` and `stval`
-       describe the trap, and an `sret` reads neither. */
+    /* The restore.  Every register comes home from the frame — **all**
+       thirty-two, `x5` and `x6` with the rest, which is the point: the old
+       epilogue restored them first and then spent `t0` and `t1` on its own
+       return, so every `ecall` destroyed whatever the program kept live in
+       its `t` registers.  Nothing noticed for as long as the only programs
+       were machine code that reloaded before every call; the first compiled
+       program small enough for the compiler to keep a value in `t0` across
+       one — the shell's read answer — exited with the interrupted stack
+       pointer in its status.
+
+       The return's own work therefore happens before the restore, in the
+       stub's registers, and through CSRs the handler has already consumed:
+       `sepc` and `sstatus` go back to the machine first; the interrupted
+       `sp` parks in `stval`, whose trap-time value is dead; and `sscratch`'s
+       next value — the kernel stack for a return to a program, zero for a
+       return to the kernel, the same two endings the old tail chose — is
+       decided here too.  The frame's `x2` still decides where `sret` runs,
+       and the final `csrr sp, stval` is the one instruction that moves the
+       interrupted stack pointer without a register to put it in. */
+    ld t0, 256(sp)
+    csrw sepc, t0
+    ld t0, 264(sp)
+    csrw sstatus, t0
+    ld t0, 16(sp)
+    csrw stval, t0
+    csrr t0, sstatus
+    andi t0, t0, 256
+    bnez t0, 4f
+    addi t0, sp, 288
+    csrw sscratch, t0
+    j 5f
+4:  csrw sscratch, x0
+5:
     ld x1, 8(sp)
     ld x3, 24(sp)
     ld x4, 32(sp)
@@ -277,21 +312,8 @@ trap_entry:
     ld x30, 240(sp)
     ld x31, 248(sp)
 
-    ld t0, 256(sp)
-    csrw sepc, t0
-    ld t0, 264(sp)
-    csrw sstatus, t0
-    ld t0, 16(sp)
     addi sp, sp, 288
-
-    csrr t1, sstatus
-    andi t1, t1, 256
-    bnez t1, 4f
-    csrw sscratch, sp
-    mv sp, t0
-    sret
-4:  csrw sscratch, x0
-    mv sp, t0
+    csrr sp, stval
     sret
 
 /* The other harts' entry, which the boot hart names in the firmware's start

@@ -1033,6 +1033,24 @@ pub fn exec_current(_frame: &mut arch::Context, _path: &str) -> Option<u32> {
     None
 }
 
+/// Start a new process running the program at `path`, and answer its pid.
+///
+/// The caller is the parent, which is what makes the child a process the
+/// caller can wait for: [`WaitProcessOf`] names a pid, and a supervisor that
+/// started the child is the caller that knows which pid to name.
+#[cfg(target_os = "none")]
+pub fn spawn_process(path: &str) -> Option<u32> {
+    let caller = current_pid()?;
+    with_scheduler(|scheduler| scheduler.as_mut()?.spawn_from_file(path, caller))
+}
+
+/// A host has no scheduler to grow and no filesystem to read the program
+/// from.
+#[cfg(not(target_os = "none"))]
+pub fn spawn_process(_path: &str) -> Option<u32> {
+    None
+}
+
 /// The process id of the running task, if a scheduler is installed.
 pub fn current_pid() -> Option<u32> {
     let cpu = this_cpu();
