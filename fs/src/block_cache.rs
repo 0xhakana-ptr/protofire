@@ -368,8 +368,7 @@ impl BlockCache {
     /// Write the dirty blocks `select` accepts, through the device's queue.
     ///
     /// This is the one place the cache writes deferred data back, so `flush`,
-    /// `flush_aged` and `flush_range` cannot drift apart.  The shape is
-    /// [RFC 0009](../../docs/rfcs/0009-queue-the-writes-a-flush-makes.md)'s:
+    /// `flush_aged` and `flush_range` cannot drift apart.  The shape:
     ///
     /// * the dirty blocks are taken under the lock and submitted up to what the
     ///   device can hold, the driver copies each block before its submit

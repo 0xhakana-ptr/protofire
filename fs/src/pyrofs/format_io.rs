@@ -394,12 +394,8 @@ pub(crate) fn readable_superblock_candidates(
     // so on a device that queues they are handed over together: the same two
     // commands, one wait instead of two.  A device of depth one completes each
     // submit in place and takes exactly the path it took before, in the same
-    // order.  This is the caller [RFC
-    // 0007](../../../docs/rfcs/0007-hold-a-second-request-on-a-device.md)
-    // left the read half waiting for: the mount's reads really are independent
-    // ([RFC 0008](../../../docs/rfcs/
-    // 0008-keep-a-sequential-miss-in-one-request.md) says why the block cache's
-    // are not).
+    // order.  This is the read half the mount left waiting for: the mount's
+    // reads really are independent, where the block cache's are not.
     let mut primary = [0_u8; BLOCK_SIZE];
     let mut secondary = [0_u8; BLOCK_SIZE];
     // SAFETY: both buffers are locals that outlive the polls below, and each is
@@ -445,8 +441,7 @@ pub(crate) fn load_runtime_state_from_superblock(
 
     // The two tables do not depend on each other, so each is one request and
     // they go out together on a device that queues: the same two commands, one
-    // wait instead of two ([RFC
-    // 0010](../../../docs/rfcs/0010-carry-a-run-in-one-queued-request.md)).
+    // wait instead of two.
     let inode_bytes = format_version.inode_table_bytes(superblock.inode_count)?;
     let dirent_bytes = format_version.dirent_table_bytes(superblock.dirent_count)?;
     let mut inode_buffer = vec![0_u8; blocks_for(inode_bytes) * BLOCK_SIZE];

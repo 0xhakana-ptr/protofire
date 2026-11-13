@@ -13,10 +13,8 @@ use abi::Result;
 
 /// Which of the two extents a file is made of a caller is asking for.
 ///
-/// A file is data and holes ([RFC 0017](../../../docs/rfcs/
-/// 0017-ask-a-file-where-its-holes-are.md)): a hole is a range that reads as
-/// zeros and whose storage the filesystem does not hold, and the end of a file
-/// counts as one.
+/// A file is data and holes: a hole is a range that reads as zeros and whose
+/// storage the filesystem does not hold, and the end of a file counts as one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtentKind {
     /// The first byte at or after an offset that is data.

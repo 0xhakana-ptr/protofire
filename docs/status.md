@@ -557,7 +557,7 @@ running, not merely a lower number.
 
 Verified by `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `,
 `program ended on cpu 1`, `parallel, programs ended on `, `task migrations `,
-`task placings home `, `address spaces reaped 4, `, and `tlb shootdown `.
+`task placings home `, `address spaces reaped 6, `, and `tlb shootdown `.
 
 **A queue per CPU is not a gap, and the measurement says so.**  The offer of
 work is still the lock's: every CPU scans the same list rather than taking from

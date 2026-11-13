@@ -213,9 +213,8 @@ pub const SEEK_END: usize = 2;
 /// The offset is absolute, and the answer is the first byte of **data** at or
 /// after it; `NotFound` when there is none.
 ///
-/// The two extents a file is made of are [RFC 0017](../../docs/rfcs/
-/// 0017-ask-a-file-where-its-holes-are.md)'s: a hole is a range that reads as
-/// zeros and is not held, and the end of a file is a hole.
+/// A file is data and holes: a hole is a range that reads as zeros and is not
+/// held, and the end of a file is a hole.
 pub const SEEK_DATA: usize = 3;
 /// The offset is absolute, and the answer is the first byte of a **hole** at
 /// or after it.
@@ -343,11 +342,10 @@ mod tests {
     use crate::fs::FileStat;
     use crate::fs::PermissionMetadataRecord;
 
-    /// The record sizes `docs/kernel/user-runtime.md`
-    /// states, checked against the records themselves.
+    /// The record sizes, checked against the records themselves.
     ///
-    /// The document is where a reader looks for the wire sizes, and those
-    /// numbers are copies of facts these types own, two of them were wrong
+    /// A reader looks for the wire sizes in one place, and those numbers are
+    /// copies of facts these types own; two of them were wrong
     /// (a mount record with the wrong arithmetic, a termination record missing
     /// a field) until this test was written.  A number a document copies is a
     /// number that can drift, so the copy is what is pinned here.
@@ -372,8 +370,7 @@ mod tests {
             size_of::<ProcessSpawnOptions>(),
             size_of::<ProcessSpawnStringRef>(),
         );
-        // The numbers as `docs/kernel/user-runtime.md`
-        // states them, in the same order.
+        // The numbers a reader would look up, in the same order.
         let documented = (16usize, 8, 12, 32, 368, 88, 48, 24, 56, 16);
         assert_eq!(actual, documented);
     }

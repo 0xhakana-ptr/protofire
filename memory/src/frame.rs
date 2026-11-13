@@ -104,8 +104,7 @@ fn pool_bounds() -> (usize, usize) {
 ///
 /// A frame's address is its physical address, and the pool is the memory the
 /// allocator manages, so this is the range a boot checks against the map a
-/// machine described ([RFC
-/// 0019](../../docs/rfcs/0019-what-a-frame-is.md)).
+/// machine described.
 pub fn pool_range() -> (usize, usize) {
     pool_bounds()
 }
