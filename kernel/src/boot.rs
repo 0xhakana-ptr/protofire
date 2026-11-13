@@ -273,6 +273,24 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::ReclaimPages,
         crate::syscall::reclaim_pages,
     );
+    // Time, randomness and the two calls that report what this build is.
+    // `GetTimeOfDay` and `GetRandom` answer from the clock and the generator
+    // the boot seeded; `SystemInfo` and `AbiInfo` answer from the scheduler's
+    // own counters and from constants, which is why they are here and not in
+    // `process.rs`: nothing about them is the running program's.
+    table.register(
+        ::syscall::SyscallNumber::GetTimeOfDay,
+        crate::syscall::get_time_of_day,
+    );
+    table.register(
+        ::syscall::SyscallNumber::GetRandom,
+        crate::syscall::get_random,
+    );
+    table.register(
+        ::syscall::SyscallNumber::SystemInfo,
+        crate::syscall::system_info,
+    );
+    table.register(::syscall::SyscallNumber::AbiInfo, crate::syscall::abi_info);
     let served = table.served();
 
     // SAFETY: called once, after the namespace is set and every handler is

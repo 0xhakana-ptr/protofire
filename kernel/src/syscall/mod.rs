@@ -62,10 +62,13 @@
 pub mod handlers;
 pub mod table;
 
+pub use handlers::abi_info;
 pub use handlers::brk;
 pub use handlers::close;
 pub use handlers::create_dir;
 pub use handlers::create_dir_at;
+pub use handlers::get_random;
+pub use handlers::get_time_of_day;
 pub use handlers::mac_add_rule;
 pub use handlers::mac_get_status;
 pub use handlers::mac_set_mode;
@@ -82,6 +85,7 @@ pub use handlers::rename;
 pub use handlers::rename_at;
 pub use handlers::stat;
 pub use handlers::stat_at;
+pub use handlers::system_info;
 pub use handlers::write;
 pub use table::Arguments;
 pub use table::Dispatch;

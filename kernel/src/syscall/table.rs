@@ -2142,4 +2142,182 @@ mod tests {
             Err(Error::NotImplemented)
         );
     }
+
+    /// Call a handler that writes a record into a buffer.
+    ///
+    /// The buffer is the borrow the entry path builds on a machine, which is
+    /// why the test passes it here rather than a pointer: the handler never
+    /// sees an address, so this is the same call shape a program's call
+    /// arrives in after the copy.
+    fn call_with_buffer(
+        table: &mut SyscallTable,
+        number: SyscallNumber,
+        args: [usize; 6],
+        buffer: &mut [u8],
+    ) -> Result<usize> {
+        let mut context = SyscallContext::new(number as usize, args);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: None,
+            second_path: None,
+            buffer: Some(buffer),
+        };
+        let dispatch = table.dispatch(&mut arguments)?;
+        Ok(dispatch.value)
+    }
+
+    /// `AbiInfo` answers the constants a program checks before it trusts
+    /// anything else.
+    ///
+    /// Every field is asserted against the ABI's own values rather than against
+    /// what the handler happens to hold: the version comes from `abi::system`,
+    /// the slot count from the numbering, and the frozen boundary is the range
+    /// the document names.  A handler that wrote one of them twice, or wrote
+    /// them in the wrong order, fails here.
+    #[test]
+    fn abi_info_answers_the_builds_own_constants() {
+        let mut table = SyscallTable::new();
+        table.register(SyscallNumber::AbiInfo, abi_info);
+        let mut buffer = [0u8; 24];
+        assert_eq!(
+            call_with_buffer(&mut table, SyscallNumber::AbiInfo, [0; 6], &mut buffer),
+            Ok(0)
+        );
+        let version = usize::from_le_bytes(buffer[0..8].try_into().expect("a word"));
+        let count = usize::from_le_bytes(buffer[8..16].try_into().expect("a word"));
+        let frozen = usize::from_le_bytes(buffer[16..24].try_into().expect("a word"));
+        assert_eq!(version, abi::system::ABI_VERSION);
+        assert_eq!(count, syscall::PUBLIC_SYSCALL_COUNT as usize);
+        assert_eq!(frozen, super::super::handlers::FROZEN_SYSCALL_COUNT);
+        // And the frozen boundary is the document's, not a number that drifted:
+        // `0..=120` is 121 numbers.
+        assert_eq!(frozen, 121);
+    }
+
+    /// A record shorter than the ABI's own size is refused, and a reserved
+    /// argument that is not zero is refused, on all four calls.
+    ///
+    /// The size check is the one a handler must not skip: a program that passed
+    /// eight bytes would get the first field and a truncated second, and the
+    /// handler would have written past what it was given.
+    #[test]
+    fn the_time_and_info_calls_refuse_a_short_record() {
+        let mut table = SyscallTable::new();
+        table.register(SyscallNumber::AbiInfo, abi_info);
+        table.register(SyscallNumber::SystemInfo, system_info);
+        table.register(SyscallNumber::GetTimeOfDay, get_time_of_day);
+        table.register(SyscallNumber::GetRandom, get_random);
+
+        let mut short = [0u8; 8];
+        assert_eq!(
+            call_with_buffer(&mut table, SyscallNumber::AbiInfo, [0; 6], &mut short),
+            Err(Error::InvalidArgument)
+        );
+        assert_eq!(
+            call_with_buffer(&mut table, SyscallNumber::SystemInfo, [0; 6], &mut short),
+            Err(Error::InvalidArgument)
+        );
+        assert_eq!(
+            call_with_buffer(&mut table, SyscallNumber::GetTimeOfDay, [0; 6], &mut short),
+            Err(Error::InvalidArgument)
+        );
+        // And each call refuses a reserved argument that is not zero.
+        let mut buffer = [0u8; 24];
+        assert_eq!(
+            call_with_buffer(
+                &mut table,
+                SyscallNumber::AbiInfo,
+                [0, 0, 1, 0, 0, 0],
+                &mut buffer
+            ),
+            Err(Error::InvalidArgument)
+        );
+    }
+
+    /// `SystemInfo` refuses a selector this build does not serve.
+    ///
+    /// The old tree answered ten selectors; this build has one, and a caller
+    /// naming a second must be told rather than handed zeros that read as a
+    /// quiet machine.
+    #[test]
+    fn system_info_refuses_an_unknown_selector() {
+        let mut table = SyscallTable::new();
+        table.register(SyscallNumber::SystemInfo, system_info);
+        let mut buffer = [0u8; 64];
+        assert_eq!(
+            call_with_buffer(
+                &mut table,
+                SyscallNumber::SystemInfo,
+                [9, 0, 64, 0, 0, 0],
+                &mut buffer
+            ),
+            Err(Error::InvalidArgument)
+        );
+    }
+
+    /// `GetTimeOfDay` refuses a clock this build does not have, and answers a
+    /// defined one on a host with `Unsupported` rather than a fabricated time.
+    ///
+    /// A host has no counter, so `CLOCK_MONOTONIC` cannot be answered — and
+    /// that is the honest assertion.  An id outside the ABI's known set is a
+    /// caller's mistake and answers `InvalidArgument`, which is a different
+    /// fact from the kernel not having the clock.
+    #[test]
+    fn get_time_of_day_separates_an_unknown_clock_from_a_missing_one() {
+        let mut table = SyscallTable::new();
+        table.register(SyscallNumber::GetTimeOfDay, get_time_of_day);
+        let mut buffer = [0u8; 16];
+        assert_eq!(
+            call_with_buffer(
+                &mut table,
+                SyscallNumber::GetTimeOfDay,
+                [7, 0, 16, 0, 0, 0],
+                &mut buffer
+            ),
+            Err(Error::InvalidArgument),
+            "clock 7 is not one the ABI defines"
+        );
+        assert_eq!(
+            call_with_buffer(
+                &mut table,
+                SyscallNumber::GetTimeOfDay,
+                [abi::time::CLOCK_REALTIME, 0, 16, 0, 0, 0],
+                &mut buffer
+            ),
+            Err(Error::Unsupported),
+            "wall time is defined and this kernel has no clock for it"
+        );
+        assert_eq!(
+            call_with_buffer(
+                &mut table,
+                SyscallNumber::GetTimeOfDay,
+                [abi::time::CLOCK_MONOTONIC, 0, 16, 0, 0, 0],
+                &mut buffer
+            ),
+            Err(Error::Unsupported),
+            "a host reads no counter, so the reading it cannot take is refused"
+        );
+    }
+
+    /// `GetRandom` with a zero length answers zero and touches nothing.
+    ///
+    /// A caller asking for no bytes is not an error and not a caller the
+    /// generator should serve from: the buffer keeps whatever it held, and the
+    /// answer says how many bytes were written, which is none.
+    #[test]
+    fn get_random_writes_nothing_for_a_zero_length() {
+        let mut table = SyscallTable::new();
+        table.register(SyscallNumber::GetRandom, get_random);
+        let mut buffer = [0xAAu8; 8];
+        assert_eq!(
+            call_with_buffer(
+                &mut table,
+                SyscallNumber::GetRandom,
+                [0, 0, 0, 0, 0, 0],
+                &mut buffer
+            ),
+            Ok(0)
+        );
+        assert_eq!(buffer, [0xAAu8; 8], "the buffer was not touched");
+    }
 }

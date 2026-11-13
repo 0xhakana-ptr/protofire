@@ -14,6 +14,8 @@ use abi::Error;
 use abi::Result;
 use abi::fs as fs_abi;
 use abi::memory as memory_abi;
+use abi::system as system_abi;
+use abi::time as time_abi;
 use paging;
 use security::mac;
 use syscall::SyscallContext;
@@ -763,5 +765,181 @@ pub fn reclaim_pages(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -
     {
         let _ = target;
         Err(Error::NotImplemented)
+    }
+}
+
+/// The time, in the shape `abi::time` publishes.
+///
+/// Arguments: the clock, the record, its length, then three reserved slots that
+/// must be zero.  Answers zero, with the record filled; a caller that asked for
+/// a clock this build does not have gets `Unsupported` rather than a reading of
+/// a clock nobody read.
+///
+/// The buffer is a borrow the entry path validated and filled in place, which
+/// is why this handler does no pointer arithmetic: the same contract `stat`
+/// keeps.
+pub fn get_time_of_day(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let clock = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 3)?;
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < time_abi::TIME_RECORD_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let reading = crate::time::now(clock)?;
+    let record = time_abi::TimeRecord::new(reading.seconds, reading.nanoseconds);
+    buffer[..8].copy_from_slice(&record.seconds.to_le_bytes());
+    buffer[8..16].copy_from_slice(&record.nanoseconds.to_le_bytes());
+    Ok(Dispatch::complete(0))
+}
+
+/// Fill the caller's buffer with bytes from this boot's generator.
+///
+/// Arguments: the buffer, its length, then four reserved slots that must be
+/// zero.  Answers how many bytes were written, which is the length: this
+/// generator always has more.
+///
+/// A zero length answers zero and writes nothing, which is a caller asking for
+/// nothing rather than an error — the same reading `read` takes of a
+/// zero-length request.
+pub fn get_random(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let length = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < length {
+        return Err(Error::InvalidArgument);
+    }
+    if length == 0 {
+        return Ok(Dispatch::complete(0));
+    }
+    crate::random::fill(&mut buffer[..length])?;
+    Ok(Dispatch::complete(length))
+}
+
+/// What the scheduler has been doing, as `abi::system` publishes it.
+///
+/// Arguments: the selector, the record, its length, then three reserved slots
+/// that must be zero.  Answers zero, with the record filled.
+///
+/// The selector exists because the old tree had ten of them and this build has
+/// one: a number a caller names is what lets a future build add a second
+/// without moving the first, and a selector this build does not serve is
+/// refused rather than answered with zeros that look like a quiet machine.
+pub fn system_info(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let selector = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 3)?;
+    if selector != system_abi::SYSTEM_INFO_SCHEDULER {
+        return Err(Error::InvalidArgument);
+    }
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < system_abi::SYSTEM_INFO_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let (switches, exited, delivered_signals) = crate::scheduler::statistics();
+    // A host has no frame pool, so both counts are genuinely zero there; a boot
+    // takes them from the pool the address space manages.  Zero is the true
+    // answer in both cases rather than a placeholder, which is why the host
+    // branch is not an error.
+    #[cfg(target_os = "none")]
+    let (managed_frames, free_frames) = (
+        crate::address_space::managed_frames(),
+        crate::address_space::free_frames(),
+    );
+    #[cfg(not(target_os = "none"))]
+    let (managed_frames, free_frames) = (0, 0);
+    let record = system_abi::SystemInfo::new(
+        switches,
+        exited,
+        crate::scheduler::blocked(),
+        crate::scheduler::sleeping(),
+        delivered_signals,
+        crate::per_cpu::online_count(),
+        managed_frames,
+        free_frames,
+    );
+    write_system_info(buffer, &record);
+    Ok(Dispatch::complete(0))
+}
+
+/// What this build's interface is.
+///
+/// Arguments: the record, its length, then four reserved slots that must be
+/// zero.  Answers zero, with the record filled.
+///
+/// The three numbers are compiled in, not asked of the runtime: a version, the
+/// number of slots the table has, and where the frozen range ends.  That makes
+/// this the one call a program can make before it trusts any other — it names
+/// what the build promises, and every promise is a constant.
+pub fn abi_info(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < system_abi::ABI_INFO_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let record = system_abi::AbiInfo::new(
+        system_abi::ABI_VERSION,
+        syscall::PUBLIC_SYSCALL_COUNT as usize,
+        // The frozen boundary is the highest number that may never move, and
+        // the ABI defines it as the count rather than as a constant of its own:
+        // a number at or below it is frozen, and `120` is the line the document
+        // draws.  Written as the expression so a reader sees whose number it
+        // is.
+        FROZEN_SYSCALL_COUNT,
+    );
+    write_abi_info(buffer, &record);
+    Ok(Dispatch::complete(0))
+}
+
+/// How many numbers the frozen range holds.
+///
+/// `0..=120` is 121 numbers, which is the range `docs/fmts/syscall-abi.md` says
+/// may never be renumbered.  Spelled here rather than read from the ABI because
+/// the ABI defines the rule and this is the build reporting it; a test pins the
+/// two together.
+pub(crate) const FROZEN_SYSCALL_COUNT: usize = 121;
+
+/// Write an `AbiInfo` record at the start of a validated buffer.
+fn write_abi_info(buffer: &mut [u8], record: &system_abi::AbiInfo) {
+    buffer[0..8].copy_from_slice(&record.version.to_le_bytes());
+    buffer[8..16].copy_from_slice(&record.syscall_count.to_le_bytes());
+    buffer[16..24].copy_from_slice(&record.frozen_count.to_le_bytes());
+}
+
+/// Write a `SystemInfo` record at the start of a validated buffer.
+fn write_system_info(buffer: &mut [u8], record: &system_abi::SystemInfo) {
+    let words = [
+        record.switches,
+        record.exited,
+        record.blocked,
+        record.sleeping,
+        record.delivered_signals,
+        record.online_cpus,
+        record.managed_frames,
+        record.free_frames,
+    ];
+    for (index, word) in words.iter().enumerate() {
+        let at = index * 8;
+        buffer[at..at + 8].copy_from_slice(&word.to_le_bytes());
     }
 }
