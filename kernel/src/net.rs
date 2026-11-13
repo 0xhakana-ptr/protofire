@@ -446,8 +446,20 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
             &payload[data_at..data_at + datagram.payload_len],
         );
     }
-    if packet.header.protocol == net::ipv4::PROTOCOL_TCP {
-        demux_tcp(packet, payload);
+    if packet.header.protocol == net::ipv4::PROTOCOL_TCP && demux_tcp(packet, payload) {
+        // The same wake a datagram delivery makes, from the same kind of
+        // context: the table's lock is down, the scheduler's is next.
+        let woken = crate::scheduler::wake_blocked();
+        #[cfg(target_os = "none")]
+        if woken > 0 {
+            // The woken task may be held by another CPU parked in a wait
+            // whose own clock may never move, and only the IPI ends that
+            // wait.  SAFETY: the boot's own IPI path, installed before any
+            // program ran.
+            unsafe { arch::send_ipi_to_others() };
+        }
+        #[cfg(not(target_os = "none"))]
+        let _ = woken;
     }
 }
 
@@ -603,14 +615,23 @@ pub fn tcp_connect(destination: [u8; 4], destination_port: u16) -> Result<usize>
         return Err(Error::NotFound);
     }
 
-    let mut table = TCP.lock();
-    let (connection, outgoing) =
-        net::tcp::Connection::connect(tcp_ephemeral(), (destination, destination_port), tcp_isn());
-    let id = table.next_id;
-    table.next_id += 1;
-    table.connections.push(TcpEntry { id, connection });
-    let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
-    tcp_exchange(&mut table, queued)?;
+    let (id, noteworthy) = {
+        let mut table = TCP.lock();
+        let (connection, outgoing) = net::tcp::Connection::connect(
+            tcp_ephemeral(),
+            (destination, destination_port),
+            tcp_isn(),
+        );
+        let id = table.next_id;
+        table.next_id += 1;
+        table.connections.push(TcpEntry { id, connection });
+        let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
+        let noteworthy = tcp_exchange(&mut table, queued)?;
+        (id, noteworthy)
+    };
+    // The handshake a connect starts is what a parked accept was waiting
+    // for, and the wake is here because the table's lock is down.
+    note_stream_wake(noteworthy);
     Ok(id)
 }
 
@@ -620,14 +641,19 @@ pub fn tcp_connect(destination: [u8; 4], destination_port: u16) -> Result<usize>
 /// segment, and a partial write on a stream this size would be a caller
 /// re-writing bytes the first write already took.
 pub fn tcp_write(id: usize, bytes: &[u8]) -> Result<usize> {
-    let mut table = TCP.lock();
-    let Some(index) = table.connections.iter().position(|entry| entry.id == id) else {
-        return Err(Error::InvalidArgument);
+    let noteworthy = {
+        let mut table = TCP.lock();
+        let Some(index) = table.connections.iter().position(|entry| entry.id == id) else {
+            return Err(Error::InvalidArgument);
+        };
+        let (count, outgoing) = table.connections[index].connection.send_data(bytes);
+        let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
+        let noteworthy = tcp_exchange(&mut table, queued)?;
+        (count, noteworthy)
     };
-    let (count, outgoing) = table.connections[index].connection.send_data(bytes);
-    let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
-    tcp_exchange(&mut table, queued)?;
-    Ok(count)
+    // The bytes a stream carried are what a parked reader was waiting for.
+    note_stream_wake(noteworthy.1);
+    Ok(noteworthy.0)
 }
 
 /// Whether a stream has bytes its reader has not taken.
@@ -665,15 +691,46 @@ pub fn tcp_read(id: usize, into: &mut [u8]) -> Result<Option<usize>> {
 /// happened — the orderly one this call ran, or the abrupt one a process's
 /// exit ran when it released its descriptors.
 pub fn tcp_close(id: usize) -> Result<()> {
-    let mut table = TCP.lock();
-    let Some(index) = table.connections.iter().position(|entry| entry.id == id) else {
-        return Ok(());
+    let noteworthy = {
+        let mut table = TCP.lock();
+        let Some(index) = table.connections.iter().position(|entry| entry.id == id) else {
+            return Ok(());
+        };
+        let outgoing = table.connections[index].connection.close();
+        let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
+        let noteworthy = tcp_exchange(&mut table, queued)?;
+        table.prune();
+        noteworthy
     };
-    let outgoing = table.connections[index].connection.close();
-    let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
-    tcp_exchange(&mut table, queued)?;
-    table.prune();
+    // The finish a close sends is what a parked reader's end of file is.
+    note_stream_wake(noteworthy);
     Ok(())
+}
+
+/// Wake what a stream event parked, from a context that holds no lock.
+///
+/// The count is printed when it is not zero, because the wake is the fact
+/// the parked caller's retry answers — and the IPI, for the reason every
+/// wake here carries one: the woken task may be held by another CPU parked
+/// in a wait whose own clock may never move.
+fn note_stream_wake(noteworthy: bool) {
+    if !noteworthy {
+        return;
+    }
+    let woken = crate::scheduler::wake_blocked();
+    if woken > 0 {
+        #[cfg(target_os = "none")]
+        {
+            arch::serial::write_str("protofire: a stream event woke ");
+            arch::serial::write_u32(woken as u32);
+            arch::serial::write_str(" blocked task(s)\n");
+            // SAFETY: the boot's own IPI path, installed before any program
+            // ran.
+            unsafe { arch::send_ipi_to_others() };
+        }
+        #[cfg(not(target_os = "none"))]
+        let _ = woken;
+    }
 }
 
 /// Carry one connection's outgoing segments to their peers, and everything
@@ -686,7 +743,13 @@ pub fn tcp_close(id: usize) -> Result<()> {
 /// through the card in an IPv4 packet, which is the whole of the
 /// difference between the two wires — the state machine never learns which
 /// one carried its bytes.
-fn tcp_exchange(table: &mut TcpTable, queue: Vec<(usize, net::tcp::Outgoing)>) -> Result<()> {
+fn tcp_exchange(table: &mut TcpTable, queue: Vec<(usize, net::tcp::Outgoing)>) -> Result<bool> {
+    // Whether anything happened that a parked caller was waiting for: a
+    // connection a SYN opened, bytes that landed in a stream's inbox, a
+    // finish that ends a read.  The answer comes back to the caller, which
+    // wakes **after** this function returns — the table's lock is its
+    // caller's, and the scheduler's is never taken inside it.
+    let mut noteworthy = false;
     let mut queue = queue;
     while let Some((sender_id, outgoing)) = queue.pop() {
         // The sender's own facts, read before anything is delivered: where
@@ -742,6 +805,7 @@ fn tcp_exchange(table: &mut TcpTable, queue: Vec<(usize, net::tcp::Outgoing)>) -
                 table.next_id += 1;
                 table.connections.push(TcpEntry { id, connection });
                 table.listeners[listener_index].pending.push(id);
+                noteworthy = true;
                 queue.extend(replies.into_iter().map(|reply| (id, reply)));
                 continue;
             }
@@ -771,12 +835,16 @@ fn tcp_exchange(table: &mut TcpTable, queue: Vec<(usize, net::tcp::Outgoing)>) -
                 .connection
                 .receive(&segment, &outgoing.payload);
             answer?;
+            noteworthy |= matches!(
+                answer,
+                Ok(net::tcp::Event::Data(_)) | Ok(net::tcp::Event::PeerFinished)
+            );
             queue.extend(replies.into_iter().map(|reply| (peer_id, reply)));
         } else {
             tcp_send_on_wire(table, sender_port, address, destination_port, &outgoing)?;
         }
     }
-    Ok(())
+    Ok(noteworthy)
 }
 
 /// Put one segment in an IPv4 packet and give it to the card.
@@ -834,10 +902,10 @@ fn tcp_send_on_wire(
 /// against a listener nothing has accepted from yet, and why the data
 /// before an accept is in the connection's own inbox when the accept
 /// returns it.
-fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) {
+fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) -> bool {
     let Some(segment) = net::tcp::parse(payload, packet.header.source, packet.header.destination)
     else {
-        return;
+        return false;
     };
     let mut table = TCP.lock();
     table.prune();
@@ -849,7 +917,7 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) {
             .iter()
             .position(|entry| entry.port == segment.destination_port)
         else {
-            return;
+            return false;
         };
         let (connection, outgoing) = net::tcp::Connection::accept_syn(
             segment.destination_port,
@@ -863,7 +931,8 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) {
         table.listeners[listener_index].pending.push(id);
         let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
         let _ = tcp_exchange(&mut table, queued);
-        return;
+        // A connection opened is what a parked accept was waiting for.
+        return true;
     }
 
     let Some(id) = table.connection_for(
@@ -871,13 +940,15 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) {
         packet.header.source,
         segment.source_port,
     ) else {
-        return;
+        return false;
     };
     let index = table
         .connections
         .iter()
         .position(|entry| entry.id == id)
         .expect("the id came from this table");
+    let noteworthy = table.connections[index].connection.inbox_len() > 0
+        || segment.flags & net::tcp::FLAG_FIN != 0;
     let (answer, replies) = table.connections[index]
         .connection
         .receive(&segment, payload);
@@ -887,8 +958,10 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) {
         let _ = tcp_exchange(&mut table, queued);
     }
     // Anything the peer has waiting is what a parked reader was waiting
-    // for, so this is where the wake belongs.
-    let _ = crate::scheduler::wake_blocked();
+    // for — but the wake takes the scheduler's lock, and this function
+    // holds the table's, so the answer is returned and the wake happens
+    // where the lock is no longer held.
+    noteworthy
 }
 
 /// The boot's stream exchange: a listener on this machine, a client to it,

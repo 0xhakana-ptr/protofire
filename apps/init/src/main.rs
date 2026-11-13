@@ -61,11 +61,15 @@ use user_abi::is_error;
 #[cfg(target_os = "none")]
 use user_abi::sys_abi_info;
 #[cfg(target_os = "none")]
+use user_abi::sys_accept_tcp;
+#[cfg(target_os = "none")]
 use user_abi::sys_bind_udp;
 #[cfg(target_os = "none")]
 use user_abi::sys_brk;
 #[cfg(target_os = "none")]
 use user_abi::sys_close;
+#[cfg(target_os = "none")]
+use user_abi::sys_connect_tcp;
 #[cfg(target_os = "none")]
 use user_abi::sys_create_dir_at;
 #[cfg(target_os = "none")]
@@ -76,6 +80,8 @@ use user_abi::sys_fork;
 use user_abi::sys_get_random;
 #[cfg(target_os = "none")]
 use user_abi::sys_get_time_of_day;
+#[cfg(target_os = "none")]
+use user_abi::sys_listen_tcp;
 #[cfg(target_os = "none")]
 use user_abi::sys_mmap;
 #[cfg(target_os = "none")]
@@ -514,6 +520,42 @@ pub extern "C" fn _start() -> ! {
         sys_exit(222);
     }
     insist(sys_close(socket));
+
+    // The stream exchange, the same two processes the datagram exchange
+    // used: this process listens on a port and accepts; the fork connects,
+    // writes its nine bytes, and reads the echo back — the child's own read
+    // parks until this process's echo arrives, which is the wake the
+    // stream's write makes.  The child's exit status is the echo's first
+    // byte, which only a completed round trip could have carried.
+    let listener = insist(sys_listen_tcp(9003));
+    let child = insist(sys_fork());
+    if child == 0 {
+        // The child's side: connect, write, read the echo, and its status
+        // is the echo's first byte.
+        let stream = insist(sys_connect_tcp(user_abi::pack_address(protocol), 9003));
+        insist(sys_write(stream, DATAGRAM_TEXT));
+        let mut back = [0u8; 16];
+        let count = insist(sys_read(stream, &mut back));
+        if count != DATAGRAM_TEXT.len() {
+            sys_exit(225);
+        }
+        sys_exit(back[0] as usize);
+    }
+    // The parent's side.  The accept may park until the child's handshake
+    // opens one; the child's connect is what wakes it.
+    let stream = insist(sys_accept_tcp(listener));
+    let mut buffer = [0u8; 16];
+    let count = insist(sys_read(stream, &mut buffer));
+    if count != DATAGRAM_TEXT.len() || &buffer[..count] != DATAGRAM_TEXT {
+        sys_exit(223);
+    }
+    insist(sys_write(stream, &buffer[..count]));
+    let child_status = insist(sys_wait_process_of(child));
+    if child_status != DATAGRAM_TEXT[0] as usize {
+        sys_exit(224);
+    }
+    insist(sys_close(stream));
+    insist(sys_close(listener));
 
     // The anchors are done with, and a slot closed is a slot the kernel got
     // back: the exit's release line reports what this program left open,

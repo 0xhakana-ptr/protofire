@@ -499,6 +499,29 @@ impl Machine {
                 ("protofire: tcp connected, listener ", false),
                 ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
                 ("protofire: tcp closed, both ends done", true),
+                // The stream exchange, from ring 3: the same two programs
+                // the datagram exchange used.  The listen and the accept
+                // are prefixes — the descriptor number is the table's — and
+                // the connect, the two writes and the two reads are exact:
+                // the lengths are the program's own constant, and the
+                // child's exit status is the echo's first byte, which only
+                // a completed round trip could have carried.
+                (
+                    "protofire: process 1 listening on port 9003 as descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 8 connected to 10.0.2.15 port 9003 as stream ",
+                    false,
+                ),
+                ("protofire: process 8 wrote 9 byte(s) to a stream", true),
+                (
+                    "protofire: process 1 accepted a stream as descriptor ",
+                    false,
+                ),
+                ("protofire: process 1 read 9 byte(s) from a stream", true),
+                ("protofire: process 1 wrote 9 byte(s) to a stream", true),
+                ("protofire: process 8 read 9 byte(s) from a stream", true),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
@@ -560,7 +583,7 @@ impl Machine {
                 // the walk's scaffolding — three tables per space, fifteen on
                 // this boot — prints a smaller number and fails here.
                 (
-                    "protofire: address spaces reaped 7, 131072 frame(s) free",
+                    "protofire: address spaces reaped 8, 131072 frame(s) free",
                     true,
                 ),
                 // The invalidation's own account, as a whole line: three sends,
@@ -741,7 +764,7 @@ impl Machine {
                     // and produced 186 page faults in six boots of eight, which
                     // is why the count is here at the end rather than absent.
                     (
-                        "protofire: address spaces reaped 7, 16384 frame(s) free",
+                        "protofire: address spaces reaped 8, 16384 frame(s) free",
                         true,
                     ),
                     // One invalidation, acknowledged, and no wait ran out.
@@ -1020,6 +1043,47 @@ impl Machine {
                     ("protofire: tcp connected, listener ", false),
                     ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
                     ("protofire: tcp closed, both ends done", true),
+                    // The exchange, for the reason the x86_64 list states:
+                    // the child's exit status is the echo's first byte.
+                    (
+                        "protofire: process 1 listening on port 9003 as descriptor ",
+                        false,
+                    ),
+                    (
+                        "protofire: process 8 connected to 10.0.2.15 port 9003 as stream ",
+                        false,
+                    ),
+                    ("protofire: process 8 wrote 9 byte(s) to a stream", true),
+                    (
+                        "protofire: process 1 accepted a stream as descriptor ",
+                        false,
+                    ),
+                    ("protofire: process 1 read 9 byte(s) from a stream", true),
+                    ("protofire: process 1 wrote 9 byte(s) to a stream", true),
+                    ("protofire: process 8 read 9 byte(s) from a stream", true),
+                    // The stream exchange, from ring 3: the same two programs
+                    // the datagram exchange used.  The listen and the accept
+                    // are prefixes — the descriptor number is the table's — and
+                    // the connect, the two writes and the two reads are exact:
+                    // the lengths are the program's own constant, and the
+                    // child's exit status is the echo's first byte, which only
+                    // a completed round trip could have carried.
+                    (
+                        "protofire: process 1 listening on port 9003 as descriptor ",
+                        false,
+                    ),
+                    (
+                        "protofire: process 8 connected to 10.0.2.15 port 9003 as stream ",
+                        false,
+                    ),
+                    ("protofire: process 8 wrote 9 byte(s) to a stream", true),
+                    (
+                        "protofire: process 1 accepted a stream as descriptor ",
+                        false,
+                    ),
+                    ("protofire: process 1 read 9 byte(s) from a stream", true),
+                    ("protofire: process 1 wrote 9 byte(s) to a stream", true),
+                    ("protofire: process 8 read 9 byte(s) from a stream", true),
                     ("protofire: virtio-blk wrote and read back sector ", false),
                     (
                         "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
@@ -1226,6 +1290,29 @@ impl Machine {
                 ("protofire: tcp connected, listener ", false),
                 ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
                 ("protofire: tcp closed, both ends done", true),
+                // The stream exchange, from ring 3: the same two programs
+                // the datagram exchange used.  The listen and the accept
+                // are prefixes — the descriptor number is the table's — and
+                // the connect, the two writes and the two reads are exact:
+                // the lengths are the program's own constant, and the
+                // child's exit status is the echo's first byte, which only
+                // a completed round trip could have carried.
+                (
+                    "protofire: process 1 listening on port 9003 as descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 8 connected to 10.0.2.15 port 9003 as stream ",
+                    false,
+                ),
+                ("protofire: process 8 wrote 9 byte(s) to a stream", true),
+                (
+                    "protofire: process 1 accepted a stream as descriptor ",
+                    false,
+                ),
+                ("protofire: process 1 read 9 byte(s) from a stream", true),
+                ("protofire: process 1 wrote 9 byte(s) to a stream", true),
+                ("protofire: process 8 read 9 byte(s) from a stream", true),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 // The completion-message report, which every machine prints
                 // and whose **number is the machine's**: a tree that names no
@@ -1330,7 +1417,7 @@ impl Machine {
                 // Every finished program's address space went back, as on the
                 // other two machines.
                 (
-                    "protofire: address spaces reaped 7, 16384 frame(s) free",
+                    "protofire: address spaces reaped 8, 16384 frame(s) free",
                     true,
                 ),
                 // No invalidation, and that is this machine's fact rather than

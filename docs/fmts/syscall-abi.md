@@ -304,6 +304,23 @@ The calls a ring-3 program can make today, and the slots each carries.
   datagram addressed to this machine is delivered through the kernel's own
   demux — that is what loopback is — and one for another machine leaves
   through the gateway.
+- **`ConnectTcp`** — `a0` the destination's address, packed by
+  `pack_address`; `a1` the destination's port; `a2`-`a5` reserved zero.
+  Answers the descriptor the stream is read and written through.  The
+  handshake runs inside the call, so the first write cannot race its own
+  opening; a destination that is not this machine answers `Unsupported`,
+  because a handshake that waits on the wire is a wait this build does not
+  make a call do.
+- **`ListenTcp`** — `a0` the port; `a1`-`a5` reserved zero.  Answers the
+  descriptor an accept is called on.  Port zero is refused, and a port
+  another listener holds answers `AlreadyExists` — a listening port has one
+  owner, whatever number of processes hold its descriptor.
+- **`AcceptTcp`** — `a0` the listener descriptor; `a1`-`a5` reserved zero.
+  **Blocks** until a client's handshake opens a stream, and like
+  `RecvFromUdp` it has no registry handler: the trap path serves it, parks
+  the caller on the listener's pending list, and the connect's wake retries
+  the call.  Answers the new stream's descriptor, whose data — if the
+  client wrote before the accept ran — is already in the stream's inbox.
 - **`RecvFromUdp`** — `a0` the descriptor; `a1` the buffer; `a2` its length;
   `a3` the sender record; `a4` its length, at least
   `UDP_SENDER_RECORD_SIZE`; `a5` reserved zero.  **Blocks** until a datagram
@@ -329,6 +346,16 @@ per-process current directory yet; anything else resolves against the
 directory the descriptor was opened from.  A descriptor that names no file of
 the caller's, a pipe end, or a file that is not a directory is refused before
 the path is looked at.
+
+**Streams carry data through `Read` and `Write`.**  A connected stream
+descriptor is readable and writable through the same two calls a file and a
+pipe are, with the slots a file read takes — `a1` the offset, `a2` the
+buffer, `a3` its length.  A stream has no position to seek, so the offset
+slot is refused unless it is `READ_OFFSET_CURRENT`; a write goes out as one
+segment and answers the bytes it carried; a read parks on an empty stream
+the way a pipe's reader parks, and answers zero — end of file — once the
+stream's connection is gone, which an orderly close's last acknowledgement
+is what leaves behind.
 
 The four memory calls take **no pointer**: every argument is a value, which is
 why they are the first calls a program can make that change its own address

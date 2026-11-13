@@ -325,9 +325,43 @@ of which loses a frame; a lost frame is a connection this stack drops
 rather than recovers, and retransmission asks for timers, which are a
 decision for a stack that runs where frames are lost.
 
-A network stack above this is under construction: `net` carries Ethernet,
-ARP with its cache, IPv4, ICMP, UDP and TCP, and `docs/roadmap.md` Level 5
-carries the steps and what each is proved by.
+**The stream calls are served, and both halves park.**  `ConnectTcp` (38) and
+`ListenTcp` (56) answer through the registry; `AcceptTcp` (57) is served by
+the trap path, because it parks, and a stream's data rides the same `Read`
+and `Write` a file and a pipe ride.  `init` proves the whole of it with the
+same two processes the datagram exchange used: this process listens on port
+9003 and accepts, the fork connects, writes nine bytes, and reads the echo
+back — the child's own read parks until the echo arrives.  Measured on
+x86_64:
+
+```
+protofire: process 1 listening on port 9003 as descriptor 6
+protofire: a program waits to accept a stream
+protofire: a stream event woke 1 blocked task(s)
+protofire: process 8 connected to 10.0.2.15 port 9003 as stream 12
+protofire: process 8 wrote 9 byte(s) to a stream
+protofire: process 1 accepted a stream as descriptor 13
+protofire: a program blocks on a stream
+protofire: process 1 read 9 byte(s) from a stream
+protofire: a stream event woke 1 blocked task(s)
+protofire: process 1 wrote 9 byte(s) to a stream
+protofire: process 8 read 9 byte(s) from a stream
+```
+
+Both parks ran, and each wake is the other process's call: the connect woke
+the parked accept, and the echo's write woke the parked read.  The child's
+exit status is the echo's first byte — `112`, which is `p` — a number only a
+completed round trip could have carried, and the gate requires it as the
+status line's own fact.  The accept and the listen are prefixes on every
+machine, because the descriptor numbers are the table's to hand out; the
+four lines that name lengths are exact.
+
+A network stack above this is done as `docs/roadmap.md` Level 5 promised it:
+`net` carries Ethernet, ARP with its cache, IPv4, ICMP, UDP and TCP, and the
+seven numbers the level serves are reachable from ring 3.  What it did not
+promise stands: the twenty-three protocol numbers beside them, routing
+beyond one gateway, DNS beyond a hosts table, and a stream connect to
+another machine — each its own level's decision.
 
 **Services — built, and deliberately parked.**  A table from a name to a
 service, installed during boot and frozen before anything looks one up; a caller
@@ -399,8 +433,8 @@ be started without deciding it is time.  In particular:
 - **No driver implements `Service`.**  `VirtioBlock` stays on
   `QueuedBlockDevice`, which works and has a caller.
 - **No syscall reaches the table.**  No number names a service; 197 stays
-  unassigned, and the 47 numbers that are served are the memory, filesystem,
-  process, time, descriptor and datagram calls.
+  unassigned, and the 50 numbers that are served are the memory, filesystem,
+  process, time, descriptor, datagram and stream calls.
 - **`apps/service_manager` stays a shell.**  It is the ring-3 half, and it is the
   half that matters when this direction is picked up.
 
@@ -419,7 +453,7 @@ than the list.
 |---|---|---|
 | the memory layer | **done** — `Mmap`, `Munmap`, `Brk`, `ReclaimPages` served | the `program memory call` lines below |
 | a process a program can start | **done** — `SpawnProcess` plus the six signal calls | `process 1 spawned /bin/shell as pid 5` |
-| a way to reach the table from ring 3 | **done** — 47 numbers reachable, the registry holding 28 of them | `syscall table installed, 28 number(s) served` |
+| a way to reach the table from ring 3 | **done** — 50 numbers reachable, the registry holding 30 of them | `syscall table installed, 30 number(s) served` |
 | **a handle that can be given away** | **not started** | `Descriptor` still has two variants, `File` and `Pipe` |
 
 The last one is the one that matters now, and the fourth line of the old list
@@ -599,7 +633,7 @@ side's build rather than drifting until a host test notices.
 
 Verified by the lines above on every machine, by the gate's required lines
 for the spawn, the two waits and the suspend, and by `protofire: syscall
-table installed, 28 number(s) served` with the census at **47 of 195**
+table installed, 30 number(s) served` with the census at **50 of 195**
 reachable from ring 3.
 
 **The clock and the generator.**  `GetTimeOfDay` (70), `GetRandom` (75),
@@ -647,7 +681,7 @@ Two defects the first ring-3 boot of this found:
 
 Verified by the six lines above on every machine, by the gate's required lines
 for all four calls, and by `protofire: syscall table installed, 25 number(s)
-served` with the census at **47 of 195**.
+served` with the census at **50 of 195**.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement

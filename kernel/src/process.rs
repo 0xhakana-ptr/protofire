@@ -244,6 +244,43 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         };
     }
 
+    // A write to a stream: the bytes go out as one segment, and the answer
+    // is the count.  Reached only when the pipe branch above did not
+    // return, so the descriptor names a stream the table holds — or it
+    // names nothing, and the branch's own test refuses it before a byte is
+    // read.
+    if number == SyscallNumber::Write as usize
+        && call.arguments[2] != 0
+        && crate::syscall::tcp_stream_for(call.arguments[0], caller).is_some()
+    {
+        let descriptor = call.arguments[0];
+        let buffer = call.arguments[1];
+        let length = call.arguments[2];
+        if !crate::address_space::is_user_range(buffer, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let Some(stream) = crate::syscall::tcp_stream_for(descriptor, caller) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The stream's send
+        // reads the bytes; a copy-on-write page demoted by an earlier write
+        // faults into the resolver like any other access.
+        let source = unsafe { core::slice::from_raw_parts(buffer as *const u8, length) };
+        return match crate::net::tcp_write(stream, source) {
+            Ok(count) => {
+                arch::serial::write_str("protofire: process ");
+                arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                arch::serial::write_str(" wrote ");
+                arch::serial::write_u32(count as u32);
+                arch::serial::write_str(" byte(s) to a stream\n");
+                CallOutcome::Return(count)
+            }
+            Err(error) => CallOutcome::Return(abi::syscall::encode_error(error)),
+        };
+    }
+
     if number == SyscallNumber::Write as usize && call.arguments[2] != 0 {
         // `Write(descriptor, buffer, length)` to a file, through the registry.
         //
@@ -979,12 +1016,14 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 
     if number == SyscallNumber::Read as usize
         && crate::pipe::lookup_for(call.arguments[0], caller).is_none()
+        && crate::syscall::tcp_stream_for(call.arguments[0], caller).is_none()
     {
         // `Read(descriptor, offset, buffer, length)`: a file descriptor in the
         // registry's table, the buffer a range of the caller's own memory.  A
         // pipe descriptor never reaches here — the branch above answered it —
-        // and the registry answers `InvalidArgument` for one anyway, because a
-        // pipe's read is the pipe's to block on.
+        // and a stream descriptor never does either, because its read is the
+        // stream's to park on.  The registry answers `InvalidArgument` for
+        // both anyway, because their reads are not the file's to serve.
         let buffer = call.arguments[2];
         let length = call.arguments[3];
         if length == 0 {
@@ -1546,6 +1585,156 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 }
                 CallOutcome::Return(status)
             }
+        };
+    }
+
+    // A read from a stream: the bytes the peer sent that this side has not
+    // taken, or a park until some arrive.  The park is the pipe reader's
+    // and the datagram receiver's shape, with the same re-check under the
+    // scheduler's lock; the card's ring is drained first, so a frame the
+    // card is holding is bytes in the stream's inbox rather than a wait
+    // that answers nothing.
+    //
+    // End of file is the read that answers zero, and it comes from a stream
+    // whose connection is gone — which an orderly close's last
+    // acknowledgement leaves behind.  A read that never answered zero would
+    // be a reader parked on a writer that said it was done.
+    if number == SyscallNumber::Read as usize
+        && crate::syscall::tcp_stream_for(call.arguments[0], caller).is_some()
+    {
+        // The slots a file read takes, because a stream is a descriptor the
+        // same wrapper packs the same way: `a1` the offset, `a2` the buffer,
+        // `a3` its length.  A stream has no position to seek, so the offset
+        // slot is refused unless it is the read-from-here sentinel — an
+        // explicit offset on a stream would be a position neither side
+        // tracks.
+        let descriptor = call.arguments[0];
+        let offset = call.arguments[1];
+        let buffer = call.arguments[2];
+        let length = call.arguments[3];
+        if offset != crate::syscall::READ_OFFSET_CURRENT
+            || !crate::address_space::is_user_range(buffer, length)
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let Some(stream) = crate::syscall::tcp_stream_for(descriptor, caller) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The stream's receive
+        // writes the buffer and nothing past it.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+
+        crate::net::pump();
+        let mut answer = crate::net::tcp_read(stream, destination);
+        if answer == Ok(None) {
+            match crate::scheduler::block_unless(frame, || {
+                match crate::net::tcp_read(stream, destination) {
+                    Ok(None) => None,
+                    other => Some(other),
+                }
+            }) {
+                Some(retried) => answer = retried,
+                None => {
+                    arch::serial::write_str("protofire: a program blocks on a stream\n");
+                    if !crate::scheduler::has_selectable() {
+                        crate::scheduler::idle_until_woken();
+                    }
+                    return crate::scheduler::switch_without_saving(frame);
+                }
+            }
+        }
+        return match answer {
+            Ok(Some(count)) => {
+                arch::serial::write_str("protofire: process ");
+                arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                arch::serial::write_str(" read ");
+                arch::serial::write_u32(count as u32);
+                arch::serial::write_str(" byte(s) from a stream\n");
+                CallOutcome::Return(count)
+            }
+            Ok(None) => CallOutcome::Return(0),
+            Err(error) => CallOutcome::Return(abi::syscall::encode_error(error)),
+        };
+    }
+
+    // The stream calls that answer at once: a listen, and a connect.  The
+    // accept parks, and it is the branch below.
+    if number == SyscallNumber::ListenTcp as usize || number == SyscallNumber::ConnectTcp as usize {
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            if number == SyscallNumber::ListenTcp as usize {
+                arch::serial::write_str(" listening on port ");
+                arch::serial::write_u32(call.arguments[0] as u32);
+                arch::serial::write_str(" as descriptor ");
+            } else {
+                arch::serial::write_str(" connected to ");
+                write_ipv4_word(call.arguments[0]);
+                arch::serial::write_str(" port ");
+                arch::serial::write_u32(call.arguments[1] as u32);
+                arch::serial::write_str(" as stream ");
+            }
+            arch::serial::write_u32(answer as u32);
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
+    // The accept: one stream from a listener's pending list, or a park
+    // until a client's SYN opens one.  The re-check under the scheduler's
+    // lock is the same one every park here makes, and the SYN that fills
+    // the list is what wakes it — the demux's own wake, which fires when a
+    // connection opened or bytes arrived.
+    if number == SyscallNumber::AcceptTcp as usize {
+        let descriptor = call.arguments[0];
+        let Some(listener) = crate::syscall::tcp_listener_for(descriptor, caller) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        crate::net::pump();
+        let mut answer = crate::net::tcp_accept(listener);
+        if answer == Ok(None) {
+            match crate::scheduler::block_unless(frame, || match crate::net::tcp_accept(listener) {
+                Ok(None) => None,
+                other => Some(other),
+            }) {
+                Some(retried) => answer = retried,
+                None => {
+                    arch::serial::write_str("protofire: a program waits to accept a stream\n");
+                    if !crate::scheduler::has_selectable() {
+                        crate::scheduler::idle_until_woken();
+                    }
+                    return crate::scheduler::switch_without_saving(frame);
+                }
+            }
+        }
+        return match answer {
+            Ok(Some(stream)) => {
+                let owner =
+                    crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS);
+                match crate::syscall::attach_tcp_stream(stream, owner) {
+                    Some(descriptor) => {
+                        arch::serial::write_str("protofire: process ");
+                        arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                        arch::serial::write_str(" accepted a stream as descriptor ");
+                        arch::serial::write_u32(descriptor as u32);
+                        arch::serial::write_str("\n");
+                        CallOutcome::Return(descriptor)
+                    }
+                    None => {
+                        CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented))
+                    }
+                }
+            }
+            Ok(None) => CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotFound)),
+            Err(error) => CallOutcome::Return(abi::syscall::encode_error(error)),
         };
     }
 

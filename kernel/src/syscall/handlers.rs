@@ -983,6 +983,53 @@ pub fn send_to_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> R
     Ok(Dispatch::complete(buffer.len()))
 }
 
+/// Open a listening port, and answer the descriptor an accept is called on.
+///
+/// Arguments: the port, then five reserved slots that must be zero.  Port
+/// zero is refused, for the reason a datagram bind refuses it, and a port
+/// another listener holds answers `AlreadyExists` — a listening port has
+/// one owner, whatever number of processes hold its descriptor.
+pub fn listen_tcp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let port = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if port == 0 || port > u16::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let listener = crate::net::tcp_listen(port as u16)?;
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let descriptor = table.insert_tcp_listener(listener, owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Open a stream to an address and a port, and answer the descriptor the
+/// stream is read and written through.
+///
+/// Arguments: the destination's address, packed by the ABI's own
+/// [`abi::network::pack_address`]; the destination's port; then four
+/// reserved slots that must be zero.  The handshake runs inside the call —
+/// a connect that answered before the stream was open would be a stream
+/// whose first write raced its own handshake — and a destination that is
+/// not this machine answers `Unsupported`, because a handshake that waits
+/// on the wire is a wait this build does not make a call do.
+pub fn connect_tcp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let destination = arguments.context.arg(0);
+    let port = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+    if destination > u32::MAX as usize || port == 0 || port > u16::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let stream = crate::net::tcp_connect(abi::network::unpack_address(destination), port as u16)?;
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let descriptor = table.insert_tcp_stream(stream, owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
 /// What the network is, on this machine.
 ///
 /// Arguments: the record, its length, then four reserved slots that must be

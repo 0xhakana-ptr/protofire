@@ -153,6 +153,23 @@ pub(crate) enum Descriptor {
         /// The process that holds it, so its exit can close it.
         owner: u32,
     },
+    /// A listening port, the thing an accept is called on.  The id is the
+    /// kernel's own table's, which is why a fork's copy accepts from the
+    /// same listener: the id is not the holder's, it is the port's.
+    TcpListener {
+        listener: usize,
+        /// The process that holds it, so its exit can release it.
+        owner: u32,
+    },
+    /// One end of a stream, readable and writable through the same `Read`
+    /// and `Write` a file and a pipe are.  The id names the connection in
+    /// the kernel's table; a stream whose close finished answers a read
+    /// with end of file, which is what makes a reader's loop end.
+    TcpStream {
+        stream: usize,
+        /// The process that holds it, so its exit can release it.
+        owner: u32,
+    },
 }
 
 /// A descriptor copied into another process, with that process as its owner.
@@ -199,6 +216,17 @@ impl Descriptor {
             },
             Descriptor::UdpSocket { socket, .. } => Descriptor::UdpSocket {
                 socket: Arc::clone(socket),
+                owner,
+            },
+            // A listener's and a stream's ids are the table's, not the
+            // holder's: a copy names the same port or the same stream, which
+            // is what makes two processes' halves of one exchange meet.
+            Descriptor::TcpListener { listener, .. } => Descriptor::TcpListener {
+                listener: *listener,
+                owner,
+            },
+            Descriptor::TcpStream { stream, .. } => Descriptor::TcpStream {
+                stream: *stream,
                 owner,
             },
         }
@@ -259,7 +287,9 @@ impl SyscallTable {
         match self.descriptors.get(descriptor)? {
             Some(Descriptor::File { owner, .. })
             | Some(Descriptor::Pipe { owner, .. })
-            | Some(Descriptor::UdpSocket { owner, .. }) => Some(*owner),
+            | Some(Descriptor::UdpSocket { owner, .. })
+            | Some(Descriptor::TcpListener { owner, .. })
+            | Some(Descriptor::TcpStream { owner, .. }) => Some(*owner),
             None => None,
         }
     }
@@ -410,6 +440,20 @@ impl SyscallTable {
         self.insert(Descriptor::UdpSocket { socket, owner })
     }
 
+    /// Register a listening port and answer its descriptor.
+    ///
+    /// The same table, the same first-free-slot rule: a listener a caller
+    /// holds by descriptor 3 and a file a caller holds by descriptor 3
+    /// cannot both exist.
+    pub(crate) fn insert_tcp_listener(&mut self, listener: usize, owner: u32) -> Result<usize> {
+        self.insert(Descriptor::TcpListener { listener, owner })
+    }
+
+    /// Register one end of a stream and answer its descriptor.
+    pub(crate) fn insert_tcp_stream(&mut self, stream: usize, owner: u32) -> Result<usize> {
+        self.insert(Descriptor::TcpStream { stream, owner })
+    }
+
     /// The pipe end a descriptor names, cloned, if it names one.
     ///
     /// A clone, because the table owns its entries and a caller that borrowed
@@ -444,6 +488,26 @@ impl SyscallTable {
         }
     }
 
+    /// The listener a descriptor names, if it names one and the caller owns
+    /// it.
+    pub(crate) fn tcp_listener(&self, descriptor: usize, caller: Option<u32>) -> Option<usize> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::TcpListener { listener, .. }) => Some(*listener),
+            _ => None,
+        }
+    }
+
+    /// The stream a descriptor names, if it names one and the caller owns
+    /// it.
+    pub(crate) fn tcp_stream(&self, descriptor: usize, caller: Option<u32>) -> Option<usize> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::TcpStream { stream, .. }) => Some(*stream),
+            _ => None,
+        }
+    }
+
     /// Copy every descriptor `parent` holds to `child`, answering how many.
     ///
     /// `fork`'s inheritance: a child starts with its parent's open
@@ -462,7 +526,9 @@ impl SyscallTable {
             if let Some(descriptor) = slot
                 && let Descriptor::File { owner, .. }
                 | Descriptor::Pipe { owner, .. }
-                | Descriptor::UdpSocket { owner, .. } = descriptor
+                | Descriptor::UdpSocket { owner, .. }
+                | Descriptor::TcpListener { owner, .. }
+                | Descriptor::TcpStream { owner, .. } = descriptor
                 && *owner == parent
             {
                 inherited.push(descriptor.for_owner(child));
@@ -504,7 +570,9 @@ impl SyscallTable {
             let owned = match slot {
                 Some(Descriptor::File { owner: held, .. })
                 | Some(Descriptor::Pipe { owner: held, .. })
-                | Some(Descriptor::UdpSocket { owner: held, .. }) => *held == owner,
+                | Some(Descriptor::UdpSocket { owner: held, .. })
+                | Some(Descriptor::TcpListener { owner: held, .. })
+                | Some(Descriptor::TcpStream { owner: held, .. }) => *held == owner,
                 None => false,
             };
             if owned {
@@ -676,6 +744,20 @@ pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
         .map(|table| table.dispatch(arguments))
 }
 
+/// Register one end of a stream with the installed registry, answering its
+/// descriptor.
+///
+/// The accept path's way in: the stream the listener handed out becomes a
+/// descriptor of the process that accepted it.  `None` when no registry is
+/// installed, which is the state before the boot has mounted its namespace.
+pub fn attach_tcp_stream(stream: usize, owner: u32) -> Option<usize> {
+    REGISTRY
+        .lock()
+        .as_mut()?
+        .insert_tcp_stream(stream, owner)
+        .ok()
+}
+
 /// Register one end of a pipe with the installed registry, answering its
 /// descriptor.
 ///
@@ -734,6 +816,16 @@ pub fn udp_socket_for(
     caller: Option<u32>,
 ) -> Option<Arc<crate::net::UdpSocket>> {
     REGISTRY.lock().as_ref()?.udp_socket(descriptor, caller)
+}
+
+/// The listener a descriptor names, for a caller that must own it.
+pub fn tcp_listener_for(descriptor: usize, caller: Option<u32>) -> Option<usize> {
+    REGISTRY.lock().as_ref()?.tcp_listener(descriptor, caller)
+}
+
+/// The stream a descriptor names, for a caller that must own it.
+pub fn tcp_stream_for(descriptor: usize, caller: Option<u32>) -> Option<usize> {
+    REGISTRY.lock().as_ref()?.tcp_stream(descriptor, caller)
 }
 
 pub fn has_registry() -> bool {

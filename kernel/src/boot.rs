@@ -305,6 +305,17 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::SendToUdp,
         crate::syscall::send_to_udp,
     );
+    // The stream calls that answer at once.  The accept parks — a handler
+    // that cannot park does not hold it — and its branch is in the trap
+    // path, where the scheduler's parking machinery is.
+    table.register(
+        ::syscall::SyscallNumber::ConnectTcp,
+        crate::syscall::connect_tcp,
+    );
+    table.register(
+        ::syscall::SyscallNumber::ListenTcp,
+        crate::syscall::listen_tcp,
+    );
     let served = table.served();
 
     // SAFETY: called once, after the namespace is set and every handler is

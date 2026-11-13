@@ -79,6 +79,12 @@ pub const SYS_WAIT_SIGNAL: usize = SyscallNumber::WaitSignal as usize;
 pub const SYS_SPAWN_PROCESS: usize = SyscallNumber::SpawnProcess as usize;
 /// `Fork`, a copy of the calling process, answered differently on each side.
 pub const SYS_FORK: usize = SyscallNumber::Fork as usize;
+/// `ConnectTcp`, a stream to an address and a port.
+pub const SYS_CONNECT_TCP: usize = SyscallNumber::ConnectTcp as usize;
+/// `ListenTcp`, a listening port an accept is called on.
+pub const SYS_LISTEN_TCP: usize = SyscallNumber::ListenTcp as usize;
+/// `AcceptTcp`, one stream from a listener's pending list.
+pub const SYS_ACCEPT_TCP: usize = SyscallNumber::AcceptTcp as usize;
 /// `GetPpid`, the caller's parent.
 pub const SYS_GETPPID: usize = SyscallNumber::GetPpid as usize;
 /// `SIGUSR1`, the signal a program may use for anything of its own.
@@ -651,6 +657,26 @@ pub fn sys_recv_from_udp(
         sender.len(),
         0,
     )
+}
+
+/// `listen_tcp(port)`: the descriptor the accept is called on.
+#[cfg(target_os = "none")]
+pub fn sys_listen_tcp(port: usize) -> usize {
+    syscall6(SYS_LISTEN_TCP, port, 0, 0, 0, 0, 0)
+}
+
+/// `connect_tcp(destination, port)`: the descriptor the stream is read and
+/// written through.  The destination is packed the way `send_to_udp`'s is.
+#[cfg(target_os = "none")]
+pub fn sys_connect_tcp(destination: usize, port: usize) -> usize {
+    syscall6(SYS_CONNECT_TCP, destination, port, 0, 0, 0, 0)
+}
+
+/// `accept_tcp(listener)`: the descriptor of one stream from the listener's
+/// pending list.  Blocks until a client's handshake opens one.
+#[cfg(target_os = "none")]
+pub fn sys_accept_tcp(listener: usize) -> usize {
+    syscall6(SYS_ACCEPT_TCP, listener, 0, 0, 0, 0, 0)
 }
 
 /// A `UdpSenderRecord` is two words: the address, then the port.
