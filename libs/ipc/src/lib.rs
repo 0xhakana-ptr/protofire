@@ -1,4 +1,4 @@
-//! ipc/src/lib.rs
+//! libs/ipc/src/lib.rs
 //!
 //! Inter-process communication, starting with the pipe's ring buffer.
 //!

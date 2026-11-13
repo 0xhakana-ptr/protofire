@@ -30,7 +30,7 @@ paging = { path = "../libs/paging" }
 memory = { path = "../memory" }
 # The pipe's ring buffer.  The arithmetic is the crate's; parking a task on an
 # empty ring is this crate's, which is the split `scripts/layering.txt` argues.
-ipc = { path = "../ipc" }
+ipc = { path = "../libs/ipc" }
 # The handler table an interrupt is delivered through.
 irq = { path = "../libs/irq" }
 # The static holder for the page tables: a `static mut` would be the usual

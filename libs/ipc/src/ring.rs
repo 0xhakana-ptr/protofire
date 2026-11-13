@@ -1,4 +1,4 @@
-//! ipc/src/ring.rs
+//! libs/ipc/src/ring.rs
 //!
 //! The byte ring a pipe is: a fixed buffer, two cursors, and a count.
 //!
