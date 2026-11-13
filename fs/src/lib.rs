@@ -46,6 +46,7 @@ pub mod stats;
 pub mod tmpfs;
 pub mod types;
 pub mod vnode;
+pub mod xfs;
 
 // Everything the type module publishes, because the contract's vocabulary is
 // its whole surface and a reader of `VNode` needs all of it.  Enumerating the
