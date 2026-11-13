@@ -5,7 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# No dependency, because there is no code to use one.  The half this crate will
+# carry that drives the machine names `arch`, and the half that only models a
+# guest may name nothing at all; which of them arrives first is `src/lib.rs`'s
+# argument.  Declaring a crate here before that is a claim about code that is
+# not written, and `cargo` says so — `unused dependency abi`, on every build,
+# about the line this file used to carry.
 [dependencies]
-abi.workspace = true
-# No architecture feature: `arch` selects its implementation from the target,
-# and a forwarded feature here would be a second place the machine is named.

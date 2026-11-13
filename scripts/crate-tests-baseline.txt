@@ -13,12 +13,12 @@
 # Recording is `sh scripts/check-crate-tests.sh --record`.  A row whose crate
 # has left the workspace is refused, so the file describes the tree.
 
-abi                  3643   59
+abi                  3963   63
 allocator            2508   13
-arch                20602    1
-arch_aarch64         6537   50
-arch_riscv64         7297   50
-arch_x86_64          6202   53
+arch                20645    1
+arch_aarch64         6553   50
+arch_riscv64         7313   50
+arch_x86_64          6213   53
 async_io             1546   26
 audit                 604    8
 block                1220   10
@@ -28,10 +28,10 @@ crypto               4913   64
 e1000                   7    0
 fdt                  1668   30
 fs                  14742  114
-init                  338    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
+init                  493    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 ipc                   344    9
 irq                   463   12
-kernel              16890  115 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
+kernel              18930  134 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
 memory               2290   36
 net                     7    0
 paging                779   13
@@ -42,14 +42,14 @@ rights                 78    3
 security             1281   14
 service_manager        61    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 service_table         564    7
-shell                  82    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
+shell                 134    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 sound                   7    0
 sync                  356    3
 syscall               291    4
 unicode              4628   31
-userland              467    2
-virt                   55    0
+userland              722    2
+virt                   62    0 # exempt: a design argument and no code; the day it has a value to assert, this row loses the note
 virtio_block         1253   15
 virtio_core          2101   25
 virtio_net           1838   26
-xtask                2013    9
+xtask                2113    9

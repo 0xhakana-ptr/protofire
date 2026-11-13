@@ -234,10 +234,14 @@
 5 e1000
 
 # `sound` and `virt` are laid out but not filled.  Their ranks are the ones
-# their contents will need, not the ones their manifests argue for today: the
-# manifests name only `abi`, the contract a future implementation compiles
-# against, and the machine-facing half of either arrives in the change that
-# has something to say to a device.
+# their contents will need, not the ones their manifests argue for today: both
+# manifests are **empty**, because a placeholder with no code has no crate to
+# name.  A dependency a file cannot use is a claim about code that is not
+# written, and `cargo` prints `unused dependency` on it on every build — which
+# is how the `abi` these two used to declare was found.  The machine-facing half
+# of either arrives in the change that has something to say to a device, and
+# that change declares its dependency and moves the row here if the rank was
+# wrong.  `net` and `e1000` are in the same state for the same reason.
 #
 # `virt` is the odd one of the two, because "virtualisation" names two opposite
 # jobs — running other kernels (a hypervisor) and knowing one is running under

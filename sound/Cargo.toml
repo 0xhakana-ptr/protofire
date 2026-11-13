@@ -5,5 +5,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# Nothing yet, because there is nothing to name.  A driver here will name `abi`
+# for the error type and the machine's own crate for its registers; declaring
+# either before that is a claim about code that is not written.  `net` and
+# `virt` are in the same state for the same reason.
 [dependencies]
-abi.workspace = true

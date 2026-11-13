@@ -5,5 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# Nothing yet, because there is nothing to name.  The driver will name `abi` for
+# the error type and `arch` for the register window; declaring either before
+# that is a claim about code that is not written.
 [dependencies]
-abi.workspace = true

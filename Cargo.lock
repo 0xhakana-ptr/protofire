@@ -202,9 +202,6 @@ dependencies = [
 [[package]]
 name = "e1000"
 version = "0.1.0"
-dependencies = [
- "abi",
-]
 
 [[package]]
 name = "fdt"
@@ -387,9 +384,6 @@ dependencies = [
 [[package]]
 name = "sound"
 version = "0.1.0"
-dependencies = [
- "abi",
-]
 
 [[package]]
 name = "spin"
@@ -457,9 +451,6 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "virt"
 version = "0.1.0"
-dependencies = [
- "abi",
-]
 
 [[package]]
 name = "virtio_block"

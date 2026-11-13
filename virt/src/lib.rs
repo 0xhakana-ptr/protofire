@@ -23,14 +23,21 @@
 //! machine is not the machine, and who is answering for it", and two crates
 //! would end up disagreeing about what a guest is.
 //!
-//! ## Why it names `arch`
+//! ## The dependency it will need, and does not have
 //!
 //! Every mechanism above is the architecture's: the exit reason encoding, the
 //! hypercall instruction, the register a guest's state is saved in.  A
 //! hypervisor written above `arch` would have to spell them, which is the edge
-//! `scripts/check-arch-fanout.sh` counts to zero.  So this crate asks `arch`
-//! the machine questions, and `arch` answers with values rather than with
-//! instructions.
+//! `scripts/check-arch-fanout.sh` counts to zero.  So the half that drives one
+//! asks `arch` the machine questions, and `arch` answers with values rather
+//! than with instructions.
+//!
+//! **That dependency is not declared, because nothing here calls it.**  The
+//! manifest names no crate at all, which is the state `net` and `sound` are in
+//! and the state every placeholder should be: a dependency a file cannot use is
+//! a warning (`cargo` says `unused dependency abi` about the manifest this one
+//! used to carry) and a claim about code that is not written.  Adding `arch`
+//! here is the first line of the change that has something to ask it.
 //!
 //! ## What is here, today
 //!
