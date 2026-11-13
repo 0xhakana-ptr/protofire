@@ -988,6 +988,116 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // The `*At` calls: the same five operations their plain twins serve, with
+    // the path anchored at a descriptor instead of at the root.  The
+    // descriptor travels in the first argument, the path in the second —
+    // including for the rename, whose second name brings its own anchor in
+    // the third.
+    if number == SyscallNumber::OpenAt as usize
+        || number == SyscallNumber::CreateDirAt as usize
+        || number == SyscallNumber::RemovePathAt as usize
+    {
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[1], &mut path_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, Some(path), None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            let verb = match number {
+                n if n == SyscallNumber::OpenAt as usize => "opened",
+                n if n == SyscallNumber::CreateDirAt as usize => "created directory",
+                _ => "removed",
+            };
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" ");
+            arch::serial::write_str(verb);
+            arch::serial::write_str(" ");
+            arch::serial::write_str(path);
+            arch::serial::write_str(" via descriptor ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
+    if number == SyscallNumber::StatAt as usize {
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[1], &mut path_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let record = call.arguments[2];
+        let length = call.arguments[3];
+        if !crate::address_space::is_user_range(record, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handler writes the
+        // record and nothing past it.
+        let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, Some(path), None, Some(destination));
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+            && let (Ok(kind), Ok(size)) = (
+                destination[..8].try_into().map(usize::from_le_bytes),
+                destination[8..16].try_into().map(usize::from_le_bytes),
+            )
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" stat'd ");
+            arch::serial::write_str(path);
+            arch::serial::write_str(" via descriptor ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str(", kind ");
+            arch::serial::write_str(stat_kind_name(kind));
+            arch::serial::write_str(", size ");
+            arch::serial::write_u32(size as u32);
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
+    if number == SyscallNumber::RenameAt as usize {
+        let mut old_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(old_path) = copy_user_path(call.arguments[1], &mut old_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let mut new_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(new_path) = copy_user_path(call.arguments[3], &mut new_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, Some(old_path), Some(new_path), None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" renamed ");
+            arch::serial::write_str(old_path);
+            arch::serial::write_str(" via descriptor ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str(" to ");
+            arch::serial::write_str(new_path);
+            arch::serial::write_str(" via descriptor ");
+            arch::serial::write_u32(call.arguments[2] as u32);
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
     // The memory calls, in one block because they share everything but their
     // number: none takes a pointer, so each rebuilds the argument words and
     // hands them straight to the registry.

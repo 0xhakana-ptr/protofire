@@ -38,6 +38,45 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     validate_known_flags(flags, fs_abi::OPEN_KNOWN_FLAGS)?;
     validate_zeroed_args(arguments.context, 2)?;
 
+    // The path is anchored at the root, which is what an `open` without a
+    // descriptor to be relative to means; the normalization is the same one
+    // the namespace would apply, done here so the descriptor records the
+    // path in the form every later `*At` anchor reads.
+    let resolved = fs::path::normalize_path(path, "/")?;
+    open_resolved(table, arguments.context, &resolved, flags)
+}
+
+/// Open a path relative to a descriptor.
+///
+/// Arguments: the descriptor, the path, the flags, then three reserved slots
+/// that must be zero.  A relative path resolves against the directory the
+/// descriptor was opened from — `resolve_at` holds the three readings, and
+/// the absolute and `AT_FDCWD` cases among them.
+pub fn open_at(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let dirfd = arguments.context.arg(0);
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let flags = arguments.context.arg(2);
+    validate_known_flags(flags, fs_abi::OPEN_KNOWN_FLAGS)?;
+    validate_zeroed_args(arguments.context, 3)?;
+
+    let resolved = table.resolve_at(dirfd, path, arguments.context.caller_pid)?;
+    open_resolved(table, arguments.context, &resolved, flags)
+}
+
+/// The whole of an open, on a path that is already resolved.
+///
+/// Every open — plain and `*At` — ends here, which is what keeps the policy
+/// ask, the create-on-miss reading and the descriptor's recorded fields one
+/// flow rather than two.  The flags decide the permission and the rights
+/// exactly as they did when this was `open`'s own body; the resolved path is
+/// what the policy is asked about, because that is the path the namespace
+/// will be asked to open.
+fn open_resolved(
+    table: &mut SyscallTable,
+    context: &SyscallContext,
+    resolved: &str,
+    flags: usize,
+) -> Result<Dispatch> {
     // Who is asking, before what they asked for is resolved.
     //
     // The check comes first because a policy decision that ran after the lookup
@@ -48,23 +87,20 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     // The action decides the permission.  A descriptor opened for writing is a
     // request to write, and asking the policy about a read would grant a write
     // on the strength of a read rule.
-    let subject = arguments
-        .context
-        .identity
-        .unwrap_or(mac::MAC_TYPE_UNLABELED);
+    let subject = context.identity.unwrap_or(mac::MAC_TYPE_UNLABELED);
     let permission = if flags & (fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE) != 0 {
         mac::MAC_PERM_WRITE
     } else {
         mac::MAC_PERM_READ
     };
-    mac::check_file(subject, path, mac::MAC_CLASS_FILE, permission, 0)?;
+    mac::check_file(subject, resolved, mac::MAC_CLASS_FILE, permission, 0)?;
 
     // Through the namespace: the table resolves the path to a mount and a path
     // relative to it, and the filesystem answers for that.  `open` names no
     // filesystem, which is what lets a second one be mounted without this
     // handler changing.
     let namespace = table.namespace().ok_or(Error::NotFound)?;
-    let node = match namespace.lookup(path) {
+    let node = match namespace.lookup(resolved) {
         Ok(node) => node,
         // A create that names an existing path is the open that was asked for,
         // so the miss is only a creation when the lookup is the one failure a
@@ -72,9 +108,9 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
         // the table could not resolve — is the lookup's own, and creating on
         // top of it would report a success the filesystem never granted.
         Err(Error::NotFound) if flags & fs_abi::OPEN_FLAG_CREATE != 0 => {
-            let (filesystem, relative) = namespace.resolve(path)?;
+            let (filesystem, relative) = namespace.resolve(resolved)?;
             filesystem.create_file(&relative)?;
-            namespace.lookup(path)?
+            namespace.lookup(resolved)?
         }
         Err(error) => return Err(error),
     };
@@ -83,15 +119,13 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     // it, so its exit can release the slot.  A caller the kernel made itself
     // has no pid, and `0` is the boot's own process — the only one whose
     // descriptor outlives every program by design.
-    let owner = arguments
-        .context
-        .caller_pid
-        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let owner = context.caller_pid.unwrap_or(crate::programs::BOOT_PROCESS);
     let descriptor = table.insert(Descriptor::File {
         node,
         readable: flags & fs_abi::OPEN_FLAG_READ != 0 || flags == fs_abi::OPEN_FLAG_NONE,
         writable: flags & fs_abi::OPEN_FLAG_WRITE != 0,
         offset: 0,
+        path: alloc::string::String::from(resolved),
         owner,
     })?;
 
@@ -169,28 +203,61 @@ pub fn write(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
 pub fn stat(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let path = arguments.path.ok_or(Error::InvalidArgument)?;
     validate_zeroed_args(arguments.context, 3)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    stat_resolved(
+        table,
+        arguments.context,
+        &resolved,
+        arguments.buffer.as_deref_mut(),
+    )
+}
 
+/// Stat a path relative to a descriptor.
+///
+/// Arguments: the descriptor, the path, the record, its length, then two
+/// reserved slots that must be zero.  The record is the same sixteen bytes
+/// `stat` answers, for the path the descriptor anchors.
+pub fn stat_at(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let dirfd = arguments.context.arg(0);
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 4)?;
+    let resolved = table.resolve_at(dirfd, path, arguments.context.caller_pid)?;
+    stat_resolved(
+        table,
+        arguments.context,
+        &resolved,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
+/// The whole of a stat, on a path that is already resolved.
+fn stat_resolved(
+    table: &mut SyscallTable,
+    context: &SyscallContext,
+    resolved: &str,
+    buffer: Option<&mut [u8]>,
+) -> Result<Dispatch> {
     // Who is asking, before what they asked for is resolved — the same order
     // `open` keeps, and for the same reason: a denial and a "not found" are
     // different answers, and the one that leaks less does not distinguish
     // them.  A stat is a read of the file's face, and the read permission is
     // the one it is policed by.
-    let subject = arguments
-        .context
-        .identity
-        .unwrap_or(mac::MAC_TYPE_UNLABELED);
-    mac::check_file(subject, path, mac::MAC_CLASS_FILE, mac::MAC_PERM_READ, 0)?;
+    let subject = context.identity.unwrap_or(mac::MAC_TYPE_UNLABELED);
+    mac::check_file(
+        subject,
+        resolved,
+        mac::MAC_CLASS_FILE,
+        mac::MAC_PERM_READ,
+        0,
+    )?;
 
-    let buffer = arguments
-        .buffer
-        .as_deref_mut()
-        .ok_or(Error::InvalidArgument)?;
+    let buffer = buffer.ok_or(Error::InvalidArgument)?;
     if buffer.len() < fs_abi::FILE_STAT_SIZE {
         return Err(Error::InvalidArgument);
     }
 
     let namespace = table.namespace().ok_or(Error::NotFound)?;
-    let (filesystem, relative) = namespace.resolve(path)?;
+    let (filesystem, relative) = namespace.resolve(resolved)?;
     let metadata = filesystem.stat(&relative)?;
     let record = fs_abi::FileStat::new(file_kind(metadata.kind), metadata.size);
     buffer[..8].copy_from_slice(&record.kind.to_le_bytes());
@@ -234,13 +301,34 @@ fn file_kind(kind: fs::NodeKind) -> usize {
 pub fn create_dir(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let path = arguments.path.ok_or(Error::InvalidArgument)?;
     validate_zeroed_args(arguments.context, 1)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    create_dir_resolved(table, arguments.context, &resolved)
+}
 
+/// Create a directory relative to a descriptor.
+///
+/// Arguments: the descriptor, the path, then four reserved slots that must
+/// be zero.
+pub fn create_dir_at(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let dirfd = arguments.context.arg(0);
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 2)?;
+    let resolved = table.resolve_at(dirfd, path, arguments.context.caller_pid)?;
+    create_dir_resolved(table, arguments.context, &resolved)
+}
+
+/// The whole of a create-dir, on a path that is already resolved.
+fn create_dir_resolved(
+    table: &mut SyscallTable,
+    context: &SyscallContext,
+    resolved: &str,
+) -> Result<Dispatch> {
     // A creation is a write: the same permission the open-with-create asks
     // for, asked of the same policy.
-    mac_write_checked(arguments.context, path)?;
+    mac_write_checked(context, resolved)?;
 
     let namespace = table.namespace().ok_or(Error::NotFound)?;
-    let (filesystem, relative) = namespace.resolve(path)?;
+    let (filesystem, relative) = namespace.resolve(resolved)?;
     filesystem.create_dir(&relative)?;
     Ok(Dispatch::complete(0))
 }
@@ -253,10 +341,32 @@ pub fn create_dir(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Re
 pub fn remove_path(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let path = arguments.path.ok_or(Error::InvalidArgument)?;
     validate_zeroed_args(arguments.context, 1)?;
-    mac_write_checked(arguments.context, path)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    remove_path_resolved(table, arguments.context, &resolved)
+}
+
+/// Remove a path relative to a descriptor.
+///
+/// Arguments: the descriptor, the path, then four reserved slots that must
+/// be zero.
+pub fn remove_path_at(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let dirfd = arguments.context.arg(0);
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 2)?;
+    let resolved = table.resolve_at(dirfd, path, arguments.context.caller_pid)?;
+    remove_path_resolved(table, arguments.context, &resolved)
+}
+
+/// The whole of a remove, on a path that is already resolved.
+fn remove_path_resolved(
+    table: &mut SyscallTable,
+    context: &SyscallContext,
+    resolved: &str,
+) -> Result<Dispatch> {
+    mac_write_checked(context, resolved)?;
 
     let namespace = table.namespace().ok_or(Error::NotFound)?;
-    let (filesystem, relative) = namespace.resolve(path)?;
+    let (filesystem, relative) = namespace.resolve(resolved)?;
     filesystem.remove_path(&relative)?;
     Ok(Dispatch::complete(0))
 }
@@ -271,12 +381,41 @@ pub fn rename(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result
     let old_path = arguments.path.ok_or(Error::InvalidArgument)?;
     let new_path = arguments.second_path.ok_or(Error::InvalidArgument)?;
     validate_zeroed_args(arguments.context, 2)?;
-    mac_write_checked(arguments.context, old_path)?;
-    mac_write_checked(arguments.context, new_path)?;
+    let old_resolved = fs::path::normalize_path(old_path, "/")?;
+    let new_resolved = fs::path::normalize_path(new_path, "/")?;
+    rename_resolved(table, arguments.context, &old_resolved, &new_resolved)
+}
+
+/// Rename relative to two descriptors.
+///
+/// Arguments: the old descriptor, the old path, the new descriptor, the new
+/// path, then two reserved slots that must be zero.  Each name anchors at
+/// its own descriptor, which is what lets a file move from one directory to
+/// another in one call that names both.
+pub fn rename_at(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let old_dirfd = arguments.context.arg(0);
+    let old_path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let new_dirfd = arguments.context.arg(2);
+    let new_path = arguments.second_path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 4)?;
+    let old_resolved = table.resolve_at(old_dirfd, old_path, arguments.context.caller_pid)?;
+    let new_resolved = table.resolve_at(new_dirfd, new_path, arguments.context.caller_pid)?;
+    rename_resolved(table, arguments.context, &old_resolved, &new_resolved)
+}
+
+/// The whole of a rename, on two paths that are already resolved.
+fn rename_resolved(
+    table: &mut SyscallTable,
+    context: &SyscallContext,
+    old_resolved: &str,
+    new_resolved: &str,
+) -> Result<Dispatch> {
+    mac_write_checked(context, old_resolved)?;
+    mac_write_checked(context, new_resolved)?;
 
     let namespace = table.namespace().ok_or(Error::NotFound)?;
-    let (old_filesystem, old_relative) = namespace.resolve(old_path)?;
-    let (new_filesystem, new_relative) = namespace.resolve(new_path)?;
+    let (old_filesystem, old_relative) = namespace.resolve(old_resolved)?;
+    let (new_filesystem, new_relative) = namespace.resolve(new_resolved)?;
     if !alloc::sync::Arc::ptr_eq(&old_filesystem, &new_filesystem) {
         // A rename that crossed volumes would have to be a copy and a
         // delete, and a copy that failed midway leaves the file in neither

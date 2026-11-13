@@ -21,6 +21,7 @@ use security::mac;
 
 use abi::Error;
 use abi::Result;
+use abi::fs as fs_abi;
 use fs::MountTable;
 use fs::VNode;
 use syscall::SyscallContext;
@@ -125,6 +126,14 @@ pub(crate) enum Descriptor {
         /// two positions, which is what a program that seeks one of them
         /// expects.
         offset: u64,
+        /// The path the open resolved to, normalized.
+        ///
+        /// The `*At` calls' anchor: a relative path resolves against the
+        /// directory the descriptor was opened from, and that directory is
+        /// where the open happened, not a name the node carries — a node
+        /// knows its own last component and nothing of the namespace above
+        /// it, which is the namespace a relative path is relative *to*.
+        path: alloc::string::String,
         /// The process that opened it, so its exit can release it.
         owner: u32,
     },
@@ -157,6 +166,7 @@ impl Descriptor {
                 readable,
                 writable,
                 offset,
+                path,
                 ..
             } => Descriptor::File {
                 node: Arc::clone(node),
@@ -168,6 +178,10 @@ impl Descriptor {
                 // offsets and no boot program shares a file across a fork, so
                 // nothing observes the difference yet.
                 offset: *offset,
+                // The anchor moves with the handle: the child resolving a
+                // relative path against the descriptor it inherited anchors
+                // where the parent's open did.
+                path: path.clone(),
                 owner,
             },
             Descriptor::Pipe { end, .. } => Descriptor::Pipe {
@@ -303,6 +317,49 @@ impl SyscallTable {
 
     pub(crate) fn namespace(&self) -> Option<&Arc<MountTable>> {
         self.namespace.as_ref()
+    }
+
+    /// The path a `*At` call's argument names, given the descriptor it is
+    /// relative to.
+    ///
+    /// Three readings, in the order they are decided: an absolute path is
+    /// anchored at the root and the descriptor is bypassed — a caller that
+    /// named `/x` from where it was meant `/x`; the `AT_FDCWD` sentinel asks
+    /// for the caller's own base, and this tree has no per-process current
+    /// directory yet, so the base is `/`, the one base every process shares;
+    /// anything else resolves against the directory the descriptor was
+    /// opened from, which is what makes the descriptor the anchor.
+    ///
+    /// A descriptor that names no file of this caller's, a pipe end, or a
+    /// file that is not a directory is refused before the path is looked
+    /// at: a non-directory is not a place a relative path can be relative
+    /// from, and the answer is the same one for every reason it cannot be.
+    pub(crate) fn resolve_at(
+        &self,
+        dirfd: usize,
+        path: &str,
+        caller: Option<u32>,
+    ) -> Result<alloc::string::String> {
+        if dirfd == fs_abi::AT_FDCWD {
+            return fs::path::normalize_path(path, "/");
+        }
+        self.check_owner(dirfd, caller)?;
+        let descriptor = self
+            .descriptors
+            .get(dirfd)
+            .ok_or(Error::InvalidArgument)?
+            .as_ref()
+            .ok_or(Error::InvalidArgument)?;
+        let Descriptor::File {
+            node, path: base, ..
+        } = descriptor
+        else {
+            return Err(Error::InvalidArgument);
+        };
+        if node.kind() != fs::types::NodeKind::Directory {
+            return Err(Error::InvalidArgument);
+        }
+        fs::path::normalize_path(path, base)
     }
 
     /// Put one descriptor in a free slot and answer its index.
@@ -745,6 +802,11 @@ mod tests {
         table.register(SyscallNumber::RemovePath, remove_path);
         table.register(SyscallNumber::Rename, rename);
         table.register(SyscallNumber::ReadDir, read_dir);
+        table.register(SyscallNumber::OpenAt, open_at);
+        table.register(SyscallNumber::StatAt, stat_at);
+        table.register(SyscallNumber::CreateDirAt, create_dir_at);
+        table.register(SyscallNumber::RemovePathAt, remove_path_at);
+        table.register(SyscallNumber::RenameAt, rename_at);
         table.register(SyscallNumber::Close, close);
         table
     }
@@ -1717,6 +1779,260 @@ mod tests {
             Err(Error::InvalidArgument),
             "not even the header fits"
         );
+    }
+
+    /// Open relative to a descriptor, the way a program names one.
+    fn call_open_at(
+        table: &mut SyscallTable,
+        dirfd: usize,
+        path: &str,
+        flags: usize,
+    ) -> Result<usize> {
+        let mut context =
+            SyscallContext::new(SyscallNumber::OpenAt as usize, [dirfd, 0, flags, 0, 0, 0]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(path),
+            second_path: None,
+            buffer: None,
+        };
+        Ok(table.dispatch(&mut arguments)?.value)
+    }
+
+    /// Stat relative to a descriptor.
+    fn call_stat_at(table: &mut SyscallTable, dirfd: usize, path: &str) -> Result<(usize, usize)> {
+        let mut context =
+            SyscallContext::new(SyscallNumber::StatAt as usize, [dirfd, 0, 0, 16, 0, 0]);
+        let mut record = [0u8; 16];
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(path),
+            second_path: None,
+            buffer: Some(&mut record),
+        };
+        table.dispatch(&mut arguments)?;
+        let kind = usize::from_le_bytes(record[..8].try_into().expect("kind bytes"));
+        let size = usize::from_le_bytes(record[8..].try_into().expect("size bytes"));
+        Ok((kind, size))
+    }
+
+    /// Make a directory relative to a descriptor.
+    fn call_make_dir_at(table: &mut SyscallTable, dirfd: usize, path: &str) -> Result<usize> {
+        let mut context =
+            SyscallContext::new(SyscallNumber::CreateDirAt as usize, [dirfd, 0, 0, 0, 0, 0]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(path),
+            second_path: None,
+            buffer: None,
+        };
+        Ok(table.dispatch(&mut arguments)?.value)
+    }
+
+    /// Remove relative to a descriptor.
+    fn call_remove_at(table: &mut SyscallTable, dirfd: usize, path: &str) -> Result<usize> {
+        let mut context =
+            SyscallContext::new(SyscallNumber::RemovePathAt as usize, [dirfd, 0, 0, 0, 0, 0]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(path),
+            second_path: None,
+            buffer: None,
+        };
+        Ok(table.dispatch(&mut arguments)?.value)
+    }
+
+    /// Rename with each name anchored at its own descriptor.
+    fn call_rename_at(
+        table: &mut SyscallTable,
+        old_dirfd: usize,
+        old_path: &str,
+        new_dirfd: usize,
+        new_path: &str,
+    ) -> Result<usize> {
+        let mut context = SyscallContext::new(
+            SyscallNumber::RenameAt as usize,
+            [old_dirfd, 0, new_dirfd, 0, 0, 0],
+        );
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(old_path),
+            second_path: Some(new_path),
+            buffer: None,
+        };
+        Ok(table.dispatch(&mut arguments)?.value)
+    }
+
+    /// A directory descriptor anchors a relative path.
+    ///
+    /// The whole of what `*At` is for, in one path: the caller holds a
+    /// directory it opened, and names what it wants by where it is relative
+    /// to that directory — not by a path it had to know in advance.
+    #[test]
+    fn a_relative_path_resolves_against_the_descriptor_it_names() {
+        let mut table = writable();
+        assert_eq!(make_dir(&mut table, "/notes"), Ok(0));
+        let notes = open_path(&mut table, "/notes", fs_abi::OPEN_FLAG_READ).expect("open dir");
+
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let file = call_open_at(&mut table, notes, "todo.txt", flags).expect("open at");
+        assert_eq!(write_as(&mut table, file, b"buy milk", None), Ok(8));
+        assert_eq!(table.close(file), Ok(()));
+
+        assert_eq!(
+            stat_path(&mut table, "/notes/todo.txt"),
+            Ok((fs_abi::FILE_KIND_FILE, 8)),
+            "the file is at the anchored name, not at the literal one"
+        );
+        assert_eq!(stat_path(&mut table, "/todo.txt"), Err(Error::NotFound));
+
+        // And the anchored stat answers the same record for the same file:
+        // the path the caller names is relative, and the answer is about
+        // the file it resolves to.
+        assert_eq!(
+            call_stat_at(&mut table, notes, "todo.txt"),
+            Ok((fs_abi::FILE_KIND_FILE, 8))
+        );
+        assert_eq!(
+            call_stat_at(&mut table, notes, "no-such.txt"),
+            Err(Error::NotFound)
+        );
+    }
+
+    /// The `AT_FDCWD` sentinel anchors at the root, the one base every
+    /// process shares.
+    ///
+    /// This tree has no per-process current directory yet, so the sentinel
+    /// cannot mean "wherever I am" — it means the root, and the test pins
+    /// that reading so the day a current directory arrives it has to argue
+    /// with this test rather than drift past it.
+    #[test]
+    fn at_fdcwd_anchors_at_the_root() {
+        let mut table = writable();
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let file = call_open_at(&mut table, fs_abi::AT_FDCWD, "root.txt", flags).expect("open at");
+        assert_eq!(table.close(file), Ok(()));
+        assert_eq!(
+            stat_path(&mut table, "/root.txt"),
+            Ok((fs_abi::FILE_KIND_FILE, 0))
+        );
+    }
+
+    /// An absolute path bypasses the anchor.
+    ///
+    /// A caller that named `/x` from wherever it was meant `/x`; a handler
+    /// that joined the anchor anyway would put the file where the caller
+    /// did not ask for it and could not find it.
+    #[test]
+    fn an_absolute_path_bypasses_the_anchor() {
+        let mut table = writable();
+        assert_eq!(make_dir(&mut table, "/notes"), Ok(0));
+        let notes = open_path(&mut table, "/notes", fs_abi::OPEN_FLAG_READ).expect("open dir");
+
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let file = call_open_at(&mut table, notes, "/top.txt", flags).expect("open at");
+        assert_eq!(table.close(file), Ok(()));
+        assert_eq!(
+            stat_path(&mut table, "/top.txt"),
+            Ok((fs_abi::FILE_KIND_FILE, 0))
+        );
+        assert_eq!(
+            stat_path(&mut table, "/notes/top.txt"),
+            Err(Error::NotFound)
+        );
+    }
+
+    /// A descriptor that names a file, or a pipe end, is not an anchor.
+    ///
+    /// Both are refused with the same answer: neither is a place a relative
+    /// path can be relative from, and the caller does not learn which slots
+    /// hold what by the answer differing.
+    #[test]
+    fn a_non_directory_is_not_an_anchor() {
+        let mut table = writable();
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let file = open_path(&mut table, "/plain.txt", flags).expect("create");
+        // The path is `.` on purpose.  A name like `x` is refused twice
+        // over — once by the anchor check and once by the filesystem, whose
+        // parent resolution will not put a child under a file — and a test
+        // that passes on the filesystem's refusal proves nothing about the
+        // kernel's.  `.` anchored at a file resolves to the file's own
+        // path, so without the anchor check this call would **open the
+        // file**; the refusal this asserts is the kernel's alone.
+        assert_eq!(
+            call_open_at(&mut table, file, ".", flags),
+            Err(Error::InvalidArgument),
+            "a file is not a directory to anchor from, and `.` anchored at one would be its own open"
+        );
+
+        use crate::pipe;
+        use crate::pipe::End;
+        let pipe = Arc::new(pipe::Pipe::new(16));
+        let end = table.insert_pipe(End::reader(pipe), 7).expect("insert");
+        assert_eq!(
+            call_open_at(&mut table, end, "x", flags),
+            Err(Error::InvalidArgument),
+            "a pipe end is not either"
+        );
+    }
+
+    /// A rename can move a file between two anchors, and one anchor can be
+    /// the sentinel.
+    #[test]
+    fn a_rename_moves_a_file_between_two_anchors() {
+        let mut table = writable();
+        assert_eq!(make_dir(&mut table, "/notes"), Ok(0));
+        let notes = open_path(&mut table, "/notes", fs_abi::OPEN_FLAG_READ).expect("open dir");
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let file = call_open_at(&mut table, notes, "draft.txt", flags).expect("create");
+        assert_eq!(write_as(&mut table, file, b"final", None), Ok(5));
+        assert_eq!(table.close(file), Ok(()));
+
+        assert_eq!(
+            call_rename_at(&mut table, notes, "draft.txt", fs_abi::AT_FDCWD, "sent.txt"),
+            Ok(0)
+        );
+        assert_eq!(
+            stat_path(&mut table, "/notes/draft.txt"),
+            Err(Error::NotFound)
+        );
+        assert_eq!(
+            stat_path(&mut table, "/sent.txt"),
+            Ok((fs_abi::FILE_KIND_FILE, 5))
+        );
+    }
+
+    /// A directory is made and removed relative to a descriptor.
+    #[test]
+    fn a_directory_is_made_and_removed_relative_to_a_descriptor() {
+        let mut table = writable();
+        assert_eq!(make_dir(&mut table, "/notes"), Ok(0));
+        let notes = open_path(&mut table, "/notes", fs_abi::OPEN_FLAG_READ).expect("open dir");
+
+        assert_eq!(call_make_dir_at(&mut table, notes, "sub"), Ok(0));
+        assert_eq!(
+            stat_path(&mut table, "/notes/sub"),
+            Ok((fs_abi::FILE_KIND_DIRECTORY, 0))
+        );
+        assert_eq!(call_remove_at(&mut table, notes, "sub"), Ok(0));
+        assert_eq!(stat_path(&mut table, "/notes/sub"), Err(Error::NotFound));
+    }
+
+    /// Reserved arguments past the path and its flags are refused.
+    #[test]
+    fn an_at_open_with_reserved_arguments_set_is_refused() {
+        let mut table = writable();
+        let mut context = SyscallContext::new(
+            SyscallNumber::OpenAt as usize,
+            [fs_abi::AT_FDCWD, 0, 0, 1, 0, 0],
+        );
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some("/anything"),
+            second_path: None,
+            buffer: None,
+        };
+        assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
     }
 
     /// Call a number through the registry with six argument words and no
