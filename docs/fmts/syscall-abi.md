@@ -285,17 +285,27 @@ What is already decided, and is what a new call with an address argument does to
 
 The previous tree carried a `shared` crate holding its user-side wrappers: number
 re-exports, the raw trap instruction, and typed `sys_<name>` wrappers. This tree
-has no such crate yet, `apps/` holds three program skeletons, so the wrapper
-conventions are recorded here for the change that adds one:
+carries [`userland/`](../../userland/src/lib.rs), which is that crate: the
+numbering as constants, one six-argument gate per machine, and the wrappers
+above it.  The conventions it landed with:
 
 - Name them `sys_` + the syscall's name (`sys_open`, `sys_read`, `sys_stat`).
-- Convert the raw status word into a typed `Result` using
-  [`abi::syscall::decode_result`](../../abi/src/syscall.rs).  Do not leak raw
-  register values to callers.
-- Take Rust types in the signature (`&str`, `&mut [u8]`) and do the
-  pointer/length packing here, that is the whole point of the layer.
+- The wrapper answers the **raw status word**, and [`is_error`](../../userland/src/lib.rs)
+  is the one test a program needs: the ABI encodes an error as a word with its
+  high bit set, so a successful answer is a small positive number and a test a
+  `no_std` program can make without carrying the kernel's `Result` type.  A
+  program whose next step is meaningless after a refusal uses
+  [`insist`](../../userland/src/lib.rs), the fail-fast form.
+- Take Rust types in the signature where the operation has them (`&mut [u8]`
+  for a read's buffer) and do the pointer/length packing here, that is the
+  whole point of the layer; a path stays an address, because a NUL-terminated
+  string is what the kernel's copy reads and a slice would lie about where it
+  ends.
 - The wrapper must not derive a syscall number arithmetically.  Name the
-  variant of `abi::SyscallNumber`.
+  constant the crate spells once, with the ABI's own value beside it.
+- The gate is **one six-argument call per machine**, plus the `exit` that does
+  not return: a new architecture teaches the crate two pieces of assembly, not
+  one per operation.
 
 ## 9. Tests
 

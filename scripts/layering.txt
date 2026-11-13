@@ -305,8 +305,15 @@
 #
 # They are at layer 10 rather than 9 because a shipped program is compiled by
 # the same workspace and must not be mistaken for something the kernel links.
-# Nothing depends on them; when one is embedded as an image, the build step
-# that embeds it is what gives it a place, not a manifest edge.
+# Nothing below depends on them; when one is embedded as an image, the build
+# step that embeds it is what gives it a place, not a manifest edge.
+#
+# `userland` is the crate the programs compile against — the numbering, one
+# call gate per machine, and the wrappers above them — so the gate is spelled
+# once and not once per program.  It names nothing of this tree, which is why
+# it is layer 0: it is values and the two pieces of assembly a program's
+# machine speaks, and everything at layer 10 may name it.
+0 userland
 10 init
 10 shell
 10 service_manager

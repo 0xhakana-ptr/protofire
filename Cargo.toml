@@ -36,6 +36,7 @@ members = [
     "libs/rights",
     "libs/sync",
     "libs/unicode",
+    "userland",
     "apps/init",
     "apps/shell",
     "apps/service_manager",

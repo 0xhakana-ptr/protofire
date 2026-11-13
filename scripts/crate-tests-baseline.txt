@@ -13,42 +13,43 @@
 # Recording is `sh scripts/check-crate-tests.sh --record`.  A row whose crate
 # has left the workspace is refused, so the file describes the tree.
 
-abi                  3514   56
+abi                  3643   59
 allocator            2508   13
-arch                11082    1
-arch_aarch64         4606   44
-arch_riscv64         1528   16
-arch_x86_64          4500   49
-async_io             1302   24
-audit                 595    8
+arch                20602    1
+arch_aarch64         6537   50
+arch_riscv64         7297   50
+arch_x86_64          6202   53
+async_io             1546   26
+audit                 604    8
 block                1220   10
-bootloader            119    0 # exempt: entry symbols, a panic handler and an assembly stub; a test of those is a boot
-cell                  217    4
-crypto               4850   64
-e1000                   2    0
-fdt                  1661   30
-fs                  14683  113
-init                   68    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
-ipc                   335    9
-irq                   411   10
-kernel               4633   27 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
-memory               1950   28
-net                     2    0
-paging                755   13
-pci                  2480   43
-power                 321   12
+bootloader            113    0 # exempt: entry symbols, a panic handler and an assembly stub; a test of those is a boot
+cell                  328    5
+crypto               4913   64
+e1000                   7    0
+fdt                  1668   30
+fs                  14742  114
+init                  338    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
+ipc                   344    9
+irq                   463   12
+kernel              16890  115 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
+memory               2290   36
+net                     7    0
+paging                779   13
+pci                  2596   44
+power                 324   12
 profiler              312    2
 rights                 78    3
 security             1281   14
-service_table         544    7
 service_manager        61    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
-shell                  60    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
-sound                   2    0
-sync                  358    3
-syscall               280    4
-unicode              4630   31
+service_table         564    7
+shell                  82    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
+sound                   7    0
+sync                  356    3
+syscall               291    4
+unicode              4628   31
+userland              467    2
 virt                   55    0
-virtio_block         1106   13
-virtio_core          1850   24
-virtio_net            696   13
-xtask                 773    9
+virtio_block         1253   15
+virtio_core          2101   25
+virtio_net           1838   26
+xtask                2013    9

@@ -1,24 +1,24 @@
 //! apps/shell/src/main.rs
 //!
-//! `shell`: the interactive shell, and a ring-3 program.
+//! `shell`: the second program the tree ships, and the first one a program
+//! other than the boot can start.
 //!
 //! ## What it is
 //!
-//! A prompt, a line reader, and the commands the previous tree's `src/shell`
-//! carried, but a program, not a kernel module.  The distinction matters for
-//! what a command can do: a shell in ring 3 can only do what its user could do
-//! by writing the same syscalls, so "the shell can do it" and "the user can do
-//! it" become the same sentence.  A shell inside the kernel makes every
-//! debugging command an unprivileged bypass, which is how a system ends up
-//! with a command that is the only way to reach a capability.
+//! Not the interactive shell the doc comment once promised — that one needs a
+//! console descriptor this kernel does not serve yet.  What it is, is the
+//! smallest program whose **running is somebody else's doing**: `init` starts
+//! it, and the exit status it answers is the evidence the start worked.  A
+//! program that reads the greeting and answers its length is the shortest
+//! body whose exit status cannot be produced without the kernel having
+//! loaded, mapped and run a second image from the filesystem — 23 is the
+//! greeting's length, and no constant this program was handed can fake it.
 //!
-//! It is not PID 1.  `init` starts it, and a machine whose shell crashed still
-//! has an `init`.
+//! ## Ring 3, and where the wrappers live
 //!
-//! ## What is here, today
-//!
-//! The shape a program must have and nothing else.  A line reader needs a
-//! `read` on a console descriptor, and the console is not a descriptor yet.
+//! The calls go through the `userland` crate, the same gate `init` uses:
+//! two programs that spell the gate separately are two places for one fact
+//! to drift, which is why the crate exists.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
@@ -26,30 +26,34 @@
 #[cfg(target_os = "none")]
 use core::panic::PanicInfo;
 
-/// The program's entry, once a kernel can start it and a console can
-/// reach it.
 #[cfg(target_os = "none")]
-fn main() -> ! {
-    loop {
-        // A spin rather than a machine's wait instruction: this file is built
-        // for all three machines, and `hlt` is x86's, `wfi` is aarch64's and
-        // riscv64's.  Naming one here would compile on a third of the targets
-        // and be the wrong instruction on the others.  A real body replaces
-        // this with the syscall that exits.
-        core::hint::spin_loop();
-    }
-}
+use userland::OPEN_READ;
+#[cfg(target_os = "none")]
+use userland::insist;
+#[cfg(target_os = "none")]
+use userland::sys_close;
+#[cfg(target_os = "none")]
+use userland::sys_exit;
+#[cfg(target_os = "none")]
+use userland::sys_open;
+#[cfg(target_os = "none")]
+use userland::sys_read;
+
+/// The path the shell reads, NUL-terminated in its own `.rodata`: the same
+/// file `init` reads, which is what makes the two statuses comparable — the
+/// shell answers the file's length where `init` answers its first byte.
+#[cfg(target_os = "none")]
+static GREETING_PATH: &[u8] = b"/greeting.txt\0";
+
+/// The read's buffer length: longer than the greeting, shorter than a page.
+#[cfg(target_os = "none")]
+const BUFFER_LEN: usize = 32;
 
 /// What a panic does in a program with no unwinder: stop.
-///
-/// There is nowhere to unwind to and, on a program that has not yet made a
-/// syscall, no console guaranteed to be its own.  Stopping leaves the machine
-/// in a state a debugger can read, which is the honest answer.
 #[cfg(target_os = "none")]
-#[panic_handler]
+#[cfg_attr(target_os = "none", panic_handler)]
 fn panic(_info: &PanicInfo) -> ! {
     loop {
-        // As above: portable, because this crate is built for three machines.
         core::hint::spin_loop();
     }
 }
@@ -57,3 +61,21 @@ fn panic(_info: &PanicInfo) -> ! {
 /// The host build, which is a typecheck and nothing else.
 #[cfg(not(target_os = "none"))]
 fn main() {}
+
+/// The program's entry, named by the linker script.
+#[cfg(target_os = "none")]
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    let mut buffer = [0u8; BUFFER_LEN];
+    let descriptor = insist(sys_open(GREETING_PATH.as_ptr() as usize, OPEN_READ));
+    let read = insist(sys_read(descriptor, &mut buffer));
+    insist(sys_close(descriptor));
+
+    // The length is the answer, and a zero read is not one: a program that
+    // answered 23 without reading would be answering a constant, which is
+    // the one thing this exit status exists to refuse.
+    if read == 0 {
+        sys_exit(1);
+    }
+    sys_exit(read)
+}

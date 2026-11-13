@@ -36,6 +36,7 @@ const VOLUME_LABEL: &str = "protofire";
 const GREETING_PATH: &str = "/greeting.txt";
 const GREETING_CONTENT: &[u8] = b"the quick brown pyrofox";
 const INIT_PATH: &str = "/bin/init";
+const SHELL_PATH: &str = "/bin/shell";
 
 /// The profile every boot's `init` is built in.
 ///
@@ -55,15 +56,17 @@ const INIT_PROFILE: &str = "release";
 /// machines' loader conventions — is the wrong home for this one.
 const INIT_LINKER_SCRIPT: &str = "apps/init/linker.ld";
 
-/// Build `apps/init` for `machine`'s target, answering the ELF's bytes.
+/// Build one program crate for `machine`'s target, answering the ELF's bytes.
 ///
 /// The program's own linker script fixes its base, and its Rust flags are
 /// named here rather than in a config so the kernel's are not inherited: a
 /// program links as PIC, because its window base is far past the absolute
 /// relocations a static build would emit, and the precompiled core the
 /// sysroot carries is built with the default code model, which the program's
-/// own CGUs must not contradict.
-fn build_init(machine: Machine) -> Result<Vec<u8>> {
+/// own CGUs must not contradict.  Every shipped program goes through here —
+/// `init` and, since the tree carried two, `shell` — so their images share
+/// one construction and one set of flags rather than two.
+fn build_program(machine: Machine, package: &str) -> Result<Vec<u8>> {
     // The image is a PIE container with `relocation-model=pic` alone, and a
     // PIE's calls to its own library symbols go through a GOT whose slots
     // are filled by `R_X86_64_RELATIVE` relocations the kernel's loader does
@@ -79,7 +82,9 @@ fn build_init(machine: Machine) -> Result<Vec<u8>> {
     );
     let mut command = Command::new("cargo");
     command
-        .args(["build", "--offline", "-p", "init", "--target"])
+        .args(["build", "--offline", "-p"])
+        .arg(package)
+        .arg("--target")
         .arg(machine.triple())
         .args(["--profile", INIT_PROFILE])
         .env("RUSTFLAGS", &rustflags);
@@ -159,7 +164,8 @@ pub(crate) fn run(
     // own filesystem.  A PyroFS image built on the host from the same crate
     // the kernel mounts — the disk file is the delivery channel, and the
     // kernel's `format_if_empty` finds it already a volume.
-    let init = build_init(machine)?;
+    let init = build_program(machine, "init")?;
+    let shell = build_program(machine, "shell")?;
     let volume = fs::pyrofs::PyroFs::build_image(
         VOLUME_LABEL,
         &[
@@ -170,6 +176,10 @@ pub(crate) fn run(
             fs::pyrofs::ImageEntry {
                 path: INIT_PATH,
                 data: &init,
+            },
+            fs::pyrofs::ImageEntry {
+                path: SHELL_PATH,
+                data: &shell,
             },
         ],
     )
