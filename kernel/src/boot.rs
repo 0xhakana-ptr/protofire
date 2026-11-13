@@ -111,6 +111,25 @@ pub fn kernel_main() -> ! {
     #[cfg(target_os = "none")]
     crate::tick::bring_up();
 
+    // The clock the time calls read, recorded now that the timer's rate is a
+    // measurement rather than a claim.  Its line is the evidence that the
+    // division a program will get is over a rate this machine reported: a boot
+    // that recorded nothing would answer every `GetTimeOfDay` with
+    // `Unsupported`, which looks the same as a machine with no timer.
+    #[cfg(target_os = "none")]
+    match unsafe { crate::time::bring_up() } {
+        Some((origin, rate)) => {
+            arch::serial::write_str("protofire: time origin ");
+            arch::serial::write_hex(origin);
+            arch::serial::write_str(" at ");
+            arch::serial::write_u32((rate / 1_000_000) as u32);
+            arch::serial::write_str(" MHz\n");
+        }
+        None => {
+            arch::serial::write_str("protofire: no clock rate, the time calls will refuse\n");
+        }
+    }
+
     // A program, at ring 3, calling back.
     // What each CPU has taken so far, before the programs start: the timer is
     // up by now, so the boot CPU's count is real.

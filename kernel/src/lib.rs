@@ -72,6 +72,7 @@ pub mod service;
 pub mod shootdown;
 pub mod syscall;
 pub mod tick;
+pub mod time;
 pub mod volume;
 
 // The heap's global allocator, installed here because this is the crate that

@@ -351,6 +351,12 @@ impl Machine {
                 ("protofire: mac allowed ", false),
                 ("protofire: mac denied ", false),
                 ("protofire: syscall table installed, ", false),
+                // The clock the time calls read: the counter's origin and the
+                // rate it counts at, both read from the machine.  A boot that
+                // recorded neither answers every `GetTimeOfDay` with
+                // `Unsupported`, which reads the same as a machine whose timer
+                // never came up — so the line is what separates the two.
+                ("protofire: time origin ", false),
                 (
                     "protofire 0.1.0: entered via pvh, console up, stage 1",
                     true,
@@ -795,6 +801,7 @@ impl Machine {
                     ("protofire: mac allowed ", false),
                     ("protofire: mac denied ", false),
                     ("protofire: syscall table installed, ", false),
+                    ("protofire: time origin ", false),
                     (
                         "protofire 0.1.0: entered via dtb, console up, stage 1",
                         true,
@@ -1080,6 +1087,7 @@ impl Machine {
                     true,
                 ),
                 ("protofire: syscall table installed, ", false),
+                ("protofire: time origin ", false),
                 ("protofire: mac policy enabled, ", false),
                 ("protofire: mac allowed ", false),
                 ("protofire: mac denied ", false),
