@@ -260,7 +260,7 @@ pub(super) fn read_u32(data: &[u8], offset: usize) -> u32 {
 /// The date field's year counts from 1980, its month is 1-based, and its
 /// time field's seconds are halved — a zero date means "unset" and answers
 /// zero rather than a fabricated epoch.
-pub(super) fn dos_datetime_to_unix(date: u16, time: u16) -> u64 {
+pub(crate) fn dos_datetime_to_unix(date: u16, time: u16) -> u64 {
     if date == 0 {
         return 0;
     }
