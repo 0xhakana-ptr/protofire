@@ -490,6 +490,15 @@ impl Machine {
                     "protofire: process 1 received 9 byte(s) from 10.0.2.15 port 8613",
                     true,
                 ),
+                // The stream: a listener, a client, an echo, and the close
+                // that ends both ends, on loopback — the whole of a TCP
+                // exchange, run by the boot on every machine this gate
+                // boots.  The ids are the table's, so the connect line is a
+                // prefix; the echo's length beside the send's is exact,
+                // because a round trip that dropped a byte could not say 9.
+                ("protofire: tcp connected, listener ", false),
+                ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
+                ("protofire: tcp closed, both ends done", true),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
@@ -1005,6 +1014,12 @@ impl Machine {
                         "protofire: process 1 received 9 byte(s) from 10.0.2.15 port 8613",
                         true,
                     ),
+                    // The stream, for the reason the x86_64 list states:
+                    // the exchange is loopback, and the echo's exact length
+                    // is what a dropped byte could not say.
+                    ("protofire: tcp connected, listener ", false),
+                    ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
+                    ("protofire: tcp closed, both ends done", true),
                     ("protofire: virtio-blk wrote and read back sector ", false),
                     (
                         "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
@@ -1202,6 +1217,15 @@ impl Machine {
                     "protofire: process 1 received 9 byte(s) from 10.0.2.15 port 8613",
                     true,
                 ),
+                // The stream: a listener, a client, an echo, and the close
+                // that ends both ends, on loopback — the whole of a TCP
+                // exchange, run by the boot on every machine this gate
+                // boots.  The ids are the table's, so the connect line is a
+                // prefix; the echo's length beside the send's is exact,
+                // because a round trip that dropped a byte could not say 9.
+                ("protofire: tcp connected, listener ", false),
+                ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
+                ("protofire: tcp closed, both ends done", true),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 // The completion-message report, which every machine prints
                 // and whose **number is the machine's**: a tree that names no

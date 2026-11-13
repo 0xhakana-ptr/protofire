@@ -446,6 +446,540 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
             &payload[data_at..data_at + datagram.payload_len],
         );
     }
+    if packet.header.protocol == net::ipv4::PROTOCOL_TCP {
+        demux_tcp(packet, payload);
+    }
+}
+
+/// The initial sequence numbers, drawn from a counter.
+///
+/// A counter rather than a constant, because two connections whose
+/// handshakes used the same numbers would be two streams one segment could
+/// confuse for the other; a counter is not a secret, and this stack does
+/// not pretend the wire is one that needs it to be.
+static TCP_SEQUENCE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1000);
+
+/// The next initial sequence number.
+fn tcp_isn() -> u32 {
+    TCP_SEQUENCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+}
+
+/// One end of a stream, as the kernel holds it: the state machine the
+/// protocol crate computes, keyed by an id a descriptor carries.
+struct TcpEntry {
+    id: usize,
+    connection: net::tcp::Connection,
+}
+
+/// One listening port, with the connections its SYNs opened.
+struct TcpListenerEntry {
+    id: usize,
+    port: u16,
+    pending: Vec<usize>,
+}
+
+/// The whole of the kernel's TCP state, behind one lock.
+///
+/// One lock rather than one per connection, because the loopback exchange
+/// is synchronous — a segment delivered to a peer's state machine comes
+/// back as that machine's answer inside the same call — and a re-entrant
+/// lock is a deadlock the first full-duplex exchange would find.  Holding
+/// the table for the length of an exchange is holding it for
+/// microseconds: the exchanges are loopback-sized, and the lock is the
+/// same one a parked reader releases before it sleeps.
+struct TcpTable {
+    listeners: Vec<TcpListenerEntry>,
+    connections: Vec<TcpEntry>,
+    next_id: usize,
+}
+
+impl TcpTable {
+    const fn new() -> Self {
+        Self {
+            listeners: Vec::new(),
+            connections: Vec::new(),
+            next_id: 1,
+        }
+    }
+
+    /// The id of the connection a segment answers, by its own four fields:
+    /// the port it names and the peer it names them for.
+    fn connection_for(
+        &self,
+        destination_port: u16,
+        source: [u8; 4],
+        source_port: u16,
+    ) -> Option<usize> {
+        self.connections
+            .iter()
+            .find(|entry| {
+                entry.connection.local_port() == destination_port
+                    && entry.connection.remote() == (source, source_port)
+            })
+            .map(|entry| entry.id)
+    }
+
+    /// Drop every connection whose close finished: its id is nobody's, and
+    /// the descriptors that named it are closed or closing.
+    fn prune(&mut self) {
+        self.connections
+            .retain(|entry| entry.connection.state() != net::tcp::State::Closed);
+    }
+}
+
+static TCP: Mutex<TcpTable> = Mutex::new(TcpTable::new());
+
+/// Open a listening port, answering the listener's id.
+///
+/// `AlreadyExists` when the port is taken, for the reason a bound datagram
+/// port is: two listeners on one port would make one SYN two streams.
+pub fn tcp_listen(port: u16) -> Result<usize> {
+    let mut table = TCP.lock();
+    if table.listeners.iter().any(|entry| entry.port == port) {
+        return Err(Error::AlreadyExists);
+    }
+    let id = table.next_id;
+    table.next_id += 1;
+    table.listeners.push(TcpListenerEntry {
+        id,
+        port,
+        pending: Vec::new(),
+    });
+    Ok(id)
+}
+
+/// Whether a listener has a connection waiting to be accepted.
+pub fn tcp_has_pending(listener: usize) -> bool {
+    let table = TCP.lock();
+    table
+        .listeners
+        .iter()
+        .find(|entry| entry.id == listener)
+        .is_some_and(|entry| !entry.pending.is_empty())
+}
+
+/// Take the connection a listener has been holding, answering its id.
+///
+/// `NotFound` for an id that names no listener, and `None` when the
+/// listener holds nothing — which is the caller's signal to park, the same
+/// shape a datagram receive is.
+pub fn tcp_accept(listener: usize) -> Result<Option<usize>> {
+    let mut table = TCP.lock();
+    let Some(entry) = table
+        .listeners
+        .iter_mut()
+        .find(|entry| entry.id == listener)
+    else {
+        return Err(Error::NotFound);
+    };
+    Ok(entry.pending.pop())
+}
+
+/// The next ephemeral port a client's end of a stream uses.
+///
+/// From the range the wire's own convention reserves for clients; a counter
+/// rather than a search, because the connections a boot makes are a
+/// handful and the range is thirty thousand wide.
+static TCP_EPHEMERAL: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(49152);
+
+fn tcp_ephemeral() -> u16 {
+    TCP_EPHEMERAL.fetch_add(1, core::sync::atomic::Ordering::Relaxed) as u16
+}
+
+/// Open a stream to `destination`'s port, answering the connection's id.
+///
+/// The handshake runs here, synchronously: the SYN goes out, the listener's
+/// answer comes back through the demux, the client's acknowledgement goes
+/// back, and by the time this returns both ends hold an open stream.  A
+/// connect to another machine would have to wait for its answer on the
+/// wire, which is a wait this build does not make a call do — the answer
+/// for a destination that is not this machine is `Unsupported`, and the
+/// exchange that proves the layer runs where the proof is, on loopback.
+pub fn tcp_connect(destination: [u8; 4], destination_port: u16) -> Result<usize> {
+    if !is_loopback(destination) {
+        return Err(Error::Unsupported);
+    }
+    if !INTERFACE.lock().as_ref().is_some() {
+        return Err(Error::NotFound);
+    }
+
+    let mut table = TCP.lock();
+    let (connection, outgoing) =
+        net::tcp::Connection::connect(tcp_ephemeral(), (destination, destination_port), tcp_isn());
+    let id = table.next_id;
+    table.next_id += 1;
+    table.connections.push(TcpEntry { id, connection });
+    let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
+    tcp_exchange(&mut table, queued)?;
+    Ok(id)
+}
+
+/// Write bytes onto a stream, answering how many were carried.
+///
+/// The count is the whole write: a stream carries what it is given in one
+/// segment, and a partial write on a stream this size would be a caller
+/// re-writing bytes the first write already took.
+pub fn tcp_write(id: usize, bytes: &[u8]) -> Result<usize> {
+    let mut table = TCP.lock();
+    let Some(index) = table.connections.iter().position(|entry| entry.id == id) else {
+        return Err(Error::InvalidArgument);
+    };
+    let (count, outgoing) = table.connections[index].connection.send_data(bytes);
+    let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
+    tcp_exchange(&mut table, queued)?;
+    Ok(count)
+}
+
+/// Whether a stream has bytes its reader has not taken.
+pub fn tcp_has_data(id: usize) -> bool {
+    let table = TCP.lock();
+    table
+        .connections
+        .iter()
+        .find(|entry| entry.id == id)
+        .is_some_and(|entry| entry.connection.inbox_len() > 0)
+}
+
+/// Read bytes off a stream, answering how many.
+///
+/// `None` is "nothing arrived, ask again" — the answer a caller parks on,
+/// the same shape a datagram receive is.  A stream whose connection is gone
+/// reached its close, and answers zero: end of file, which is what a reader
+/// whose writer finished reads.  A read that never answered zero would be a
+/// reader parked on a writer that said it was done.
+pub fn tcp_read(id: usize, into: &mut [u8]) -> Result<Option<usize>> {
+    let mut table = TCP.lock();
+    let Some(entry) = table.connections.iter_mut().find(|entry| entry.id == id) else {
+        return Ok(Some(0));
+    };
+    if entry.connection.inbox_len() == 0 {
+        return Ok(None);
+    }
+    Ok(Some(entry.connection.take(into)))
+}
+
+/// Close a stream: the FIN, the peer's, and the acknowledgements that cross
+/// between them.
+///
+/// A close of an id that names nothing is `Ok`, because the close already
+/// happened — the orderly one this call ran, or the abrupt one a process's
+/// exit ran when it released its descriptors.
+pub fn tcp_close(id: usize) -> Result<()> {
+    let mut table = TCP.lock();
+    let Some(index) = table.connections.iter().position(|entry| entry.id == id) else {
+        return Ok(());
+    };
+    let outgoing = table.connections[index].connection.close();
+    let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
+    tcp_exchange(&mut table, queued)?;
+    table.prune();
+    Ok(())
+}
+
+/// Carry one connection's outgoing segments to their peers, and everything
+/// the peers answer back, until the wire is quiet.
+///
+/// This is the loopback the protocol crate's tests run on, in the kernel:
+/// a segment for this machine is delivered to the peer's own state machine
+/// inside the same locked region, whose replies queue behind it, and the
+/// loop runs until nothing is left.  A segment for another machine goes out
+/// through the card in an IPv4 packet, which is the whole of the
+/// difference between the two wires — the state machine never learns which
+/// one carried its bytes.
+fn tcp_exchange(table: &mut TcpTable, queue: Vec<(usize, net::tcp::Outgoing)>) -> Result<()> {
+    let mut queue = queue;
+    while let Some((sender_id, outgoing)) = queue.pop() {
+        // The sender's own facts, read before anything is delivered: where
+        // the segment goes, and what port it names itself from.
+        let Some(sender_index) = table
+            .connections
+            .iter()
+            .position(|entry| entry.id == sender_id)
+        else {
+            // The sender's close finished while its last segment was in
+            // flight; the segment has nowhere to name itself from, and a
+            // wire that carried it would be a wire answering a closed
+            // stream.
+            continue;
+        };
+        let (address, destination_port) = table.connections[sender_index].connection.remote();
+        let sender_port = table.connections[sender_index].connection.local_port();
+
+        if is_loopback(address) {
+            let protocol = {
+                let interface = INTERFACE.lock();
+                interface.as_ref().map(|interface| interface.protocol)
+            };
+            let Some(protocol) = protocol else {
+                return Err(Error::NotFound);
+            };
+            // A SYN for a listening port opens a connection right here: the
+            // listener answers inside the same exchange, whose SYN with ACK
+            // queues behind this one, and the connection waits in the
+            // listener's pending list for the accept that takes it.
+            if outgoing.flags & net::tcp::FLAG_SYN != 0
+                && outgoing.flags & net::tcp::FLAG_ACK == 0
+                && table
+                    .connection_for(destination_port, protocol, sender_port)
+                    .is_none()
+            {
+                let Some(listener_index) = table
+                    .listeners
+                    .iter()
+                    .position(|entry| entry.port == destination_port)
+                else {
+                    // A SYN for a port nothing listens on: dropped, the way
+                    // a datagram for an unbound port is.
+                    continue;
+                };
+                let (connection, replies) = net::tcp::Connection::accept_syn(
+                    destination_port,
+                    (protocol, sender_port),
+                    tcp_isn(),
+                    outgoing.sequence,
+                );
+                let id = table.next_id;
+                table.next_id += 1;
+                table.connections.push(TcpEntry { id, connection });
+                table.listeners[listener_index].pending.push(id);
+                queue.extend(replies.into_iter().map(|reply| (id, reply)));
+                continue;
+            }
+            let Some(peer_id) = table.connection_for(destination_port, protocol, sender_port)
+            else {
+                // A segment for a stream this table does not hold: the peer
+                // is gone, and a wire that carried the segment would be a
+                // wire talking to nobody.  Dropped, the way a segment to a
+                // closed port is.
+                continue;
+            };
+            let peer_index = table
+                .connections
+                .iter()
+                .position(|entry| entry.id == peer_id)
+                .expect("the id came from this table");
+            let segment = net::tcp::Segment {
+                source_port: sender_port,
+                destination_port,
+                sequence: outgoing.sequence,
+                acknowledgement: outgoing.acknowledgement,
+                flags: outgoing.flags,
+                window: net::tcp::WINDOW,
+                payload_len: outgoing.payload.len(),
+            };
+            let (answer, replies) = table.connections[peer_index]
+                .connection
+                .receive(&segment, &outgoing.payload);
+            answer?;
+            queue.extend(replies.into_iter().map(|reply| (peer_id, reply)));
+        } else {
+            tcp_send_on_wire(table, sender_port, address, destination_port, &outgoing)?;
+        }
+    }
+    Ok(())
+}
+
+/// Put one segment in an IPv4 packet and give it to the card.
+fn tcp_send_on_wire(
+    table: &mut TcpTable,
+    sender_port: u16,
+    address: [u8; 4],
+    destination_port: u16,
+    outgoing: &net::tcp::Outgoing,
+) -> Result<()> {
+    let _ = table;
+    let interface = INTERFACE.lock();
+    let Some(interface) = interface.as_ref() else {
+        return Err(Error::NotFound);
+    };
+    let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
+        return Err(Error::NotFound);
+    };
+    let (our_protocol, our_hardware) = (interface.protocol, interface.hardware);
+    let tcp_len = net::tcp::HEADER_LEN + outgoing.payload.len();
+    let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + tcp_len;
+    let mut frame = alloc::vec![0; packet_len];
+    net::ethernet::write_header(
+        &mut frame,
+        gateway_hardware,
+        our_hardware,
+        net::ethernet::ETHERTYPE_IPV4,
+    );
+    net::ipv4::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        our_protocol,
+        address,
+        net::ipv4::PROTOCOL_TCP,
+        tcp_len,
+    );
+    net::tcp::write_segment(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+        our_protocol,
+        address,
+        sender_port,
+        destination_port,
+        outgoing.sequence,
+        outgoing.acknowledgement,
+        outgoing.flags,
+        &outgoing.payload,
+    );
+    interface.card.submit_frame(&frame)
+}
+
+/// What the pump does with a TCP segment: route it to the connection it
+/// names, or open one for it on a listener.
+///
+/// The SYN's connection is created here, with the listener's answer sent
+/// before the accept ever runs — which is why a client's connect completes
+/// against a listener nothing has accepted from yet, and why the data
+/// before an accept is in the connection's own inbox when the accept
+/// returns it.
+fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) {
+    let Some(segment) = net::tcp::parse(payload, packet.header.source, packet.header.destination)
+    else {
+        return;
+    };
+    let mut table = TCP.lock();
+    table.prune();
+
+    // A SYN for a listening port opens a connection.
+    if segment.flags & net::tcp::FLAG_SYN != 0 && segment.flags & net::tcp::FLAG_ACK == 0 {
+        let Some(listener_index) = table
+            .listeners
+            .iter()
+            .position(|entry| entry.port == segment.destination_port)
+        else {
+            return;
+        };
+        let (connection, outgoing) = net::tcp::Connection::accept_syn(
+            segment.destination_port,
+            (packet.header.source, segment.source_port),
+            tcp_isn(),
+            segment.sequence,
+        );
+        let id = table.next_id;
+        table.next_id += 1;
+        table.connections.push(TcpEntry { id, connection });
+        table.listeners[listener_index].pending.push(id);
+        let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
+        let _ = tcp_exchange(&mut table, queued);
+        return;
+    }
+
+    let Some(id) = table.connection_for(
+        segment.destination_port,
+        packet.header.source,
+        segment.source_port,
+    ) else {
+        return;
+    };
+    let index = table
+        .connections
+        .iter()
+        .position(|entry| entry.id == id)
+        .expect("the id came from this table");
+    let (answer, replies) = table.connections[index]
+        .connection
+        .receive(&segment, payload);
+    let _ = answer;
+    if !replies.is_empty() {
+        let queued = replies.into_iter().map(|segment| (id, segment)).collect();
+        let _ = tcp_exchange(&mut table, queued);
+    }
+    // Anything the peer has waiting is what a parked reader was waiting
+    // for, so this is where the wake belongs.
+    let _ = crate::scheduler::wake_blocked();
+}
+
+/// The boot's stream exchange: a listener on this machine, a client to it,
+/// an echo, and the close that ends both ends.
+///
+/// The whole of a TCP exchange, on loopback, with no card in the path — the
+/// same exchange the protocol crate's tests run on a host, run by the boot
+/// so the lines below are a machine's evidence rather than a host's.  Each
+/// line names what only a completed exchange could have carried: the ids
+/// the table handed out, the echo's length beside the send's, and the close
+/// that left both ends done.
+#[cfg(target_os = "none")]
+pub fn tcp_probe() -> bool {
+    let listener = match tcp_listen(9000) {
+        Ok(id) => id,
+        Err(_) => {
+            arch::serial::write_str("protofire: tcp could not listen on port 9000\n");
+            return false;
+        }
+    };
+    let protocol = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let client = match tcp_connect(protocol, 9000) {
+        Ok(id) => id,
+        Err(_) => {
+            arch::serial::write_str("protofire: tcp could not connect to the listener\n");
+            return false;
+        }
+    };
+    arch::serial::write_str("protofire: tcp connected, listener ");
+    arch::serial::write_u32(listener as u32);
+    arch::serial::write_str(", stream ");
+    arch::serial::write_u32(client as u32);
+    arch::serial::write_str("\n");
+
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => {
+            arch::serial::write_str("protofire: tcp accepted nothing\n");
+            return false;
+        }
+    };
+
+    // The client's bytes, the server's echo, and the read-back — each one a
+    // segment that crossed the demux inside this call.
+    let sent = match tcp_write(client, b"protofire") {
+        Ok(count) => count,
+        Err(_) => {
+            arch::serial::write_str("protofire: tcp could not write\n");
+            return false;
+        }
+    };
+    let mut buffer = [0_u8; 32];
+    let echoed = match tcp_read(accepted, &mut buffer) {
+        Ok(Some(count)) => count,
+        _ => 0,
+    };
+    let back = tcp_write(accepted, &buffer[..echoed]).unwrap_or_default();
+    let mut read_back = [0_u8; 32];
+    let received = match tcp_read(client, &mut read_back) {
+        Ok(Some(count)) => count,
+        _ => 0,
+    };
+    let round_trip = echoed == sent && back == sent && received == sent;
+    arch::serial::write_str("protofire: tcp echoed ");
+    arch::serial::write_u32(received as u32);
+    arch::serial::write_str(" byte(s) of ");
+    arch::serial::write_u32(sent as u32);
+    arch::serial::write_str(if round_trip {
+        ", round trip\n"
+    } else {
+        ", MISMATCH\n"
+    });
+
+    // The orderly close: both sides finish, and the acknowledgements cross.
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+    let closed = table_state(client);
+    arch::serial::write_str("protofire: tcp closed, both ends ");
+    arch::serial::write_str(if closed { "done\n" } else { "lingering\n" });
+    round_trip
+}
+
+/// Whether an id's connection is gone from the table, which an orderly
+/// close leaves behind.
+#[cfg(target_os = "none")]
+fn table_state(id: usize) -> bool {
+    let table = TCP.lock();
+    table.connections.iter().all(|entry| entry.id != id)
 }
 
 #[cfg(test)]
@@ -609,21 +1143,24 @@ mod tests {
         );
     }
 
-    /// A datagram addressed to this interface is delivered through the demux
-    /// and never reaches the card; one addressed elsewhere leaves through
-    /// the gateway, addressed to its hardware address.
+    /// The interface's whole day, as one test, because the interface is one
+    /// static and the tests run beside each other: a datagram to this
+    /// machine goes through the demux and never touches the card, one for
+    /// another machine leaves through the gateway, a frame the card
+    /// received is a datagram in a socket's queue after the pump, a stream
+    /// opens, carries and closes on loopback, and a closed stream reads as
+    /// end of file.
     #[test]
-    fn loopback_is_the_demux_and_the_wire_is_the_gateway() {
+    fn the_interface_runs_the_whole_of_the_stack() {
         let card = FakeCard::new();
         let hardware = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];
         let protocol = [10, 9, 9, 15];
         let gateway = [10, 9, 9, 2];
         install(Interface::new(card.clone(), hardware, protocol, gateway));
-        // The cache learns the gateway the way the boot's exchange does.
         super::arp_learn(gateway, [0x52; 6]);
 
+        // Loopback, as a datagram: to this machine's own address.
         let socket = bind_udp(PORT_F).expect("a bind");
-        // Loopback: to this machine's own address.
         super::send_datagram(protocol, PORT_F, 50000, b"self").expect("a loopback send");
         assert!(
             card.sent.lock().is_empty(),
@@ -637,21 +1174,118 @@ mod tests {
         assert_eq!(source, protocol, "the sender is this machine");
         assert_eq!(&buffer[..count], b"self");
 
-        // The wire: to another machine.  The frame the card was given names
-        // the gateway's hardware address and the destination's protocol
-        // address, which is the whole of this build's routing.
-        super::send_datagram([10, 9, 9, 7], 9000, 50000, b"out").expect("a send");
-        let sent = card.sent.lock();
-        assert_eq!(sent.len(), 1);
-        let frame = &sent[0];
-        assert_eq!(&frame[0..6], &[0x52; 6], "to the gateway's address");
-        assert_eq!(
-            netdev::ethertype(frame),
-            Some(net::ethernet::ETHERTYPE_IPV4)
+        // The wire, as a datagram: the frame names the gateway's hardware
+        // address and the destination's protocol address, which is the
+        // whole of this build's routing.
+        super::send_datagram([10, 9, 9, 7], 9004, 50000, b"out").expect("a send");
+        {
+            let sent = card.sent.lock();
+            assert_eq!(sent.len(), 1);
+            let frame = &sent[0];
+            assert_eq!(&frame[0..6], &[0x52; 6], "to the gateway's address");
+            assert_eq!(
+                netdev::ethertype(frame),
+                Some(net::ethernet::ETHERTYPE_IPV4)
+            );
+            let packet = net::ipv4::parse(&frame[netdev::ETHERNET_HEADER_LEN..]).expect("a packet");
+            assert_eq!(packet.header.destination, [10, 9, 9, 7]);
+            assert_eq!(packet.header.source, protocol);
+        }
+
+        // The pump: a real frame in the card's ring, a datagram in a
+        // socket's queue after it — built by the same writers the send path
+        // uses, so the pump is tested against the wire's own bytes.
+        let datagram_socket = bind_udp(40008).expect("a bind");
+        let udp_len = net::udp::datagram_len(5);
+        let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
+        let mut frame = alloc::vec![0; packet_len];
+        net::ethernet::write_header(
+            &mut frame,
+            [0x02; 6],
+            [0x02; 6],
+            net::ethernet::ETHERTYPE_IPV4,
         );
-        let packet = net::ipv4::parse(&frame[netdev::ETHERNET_HEADER_LEN..]).expect("a packet");
-        assert_eq!(packet.header.destination, [10, 9, 9, 7]);
-        assert_eq!(packet.header.source, protocol);
+        net::ipv4::write_header(
+            &mut frame[netdev::ETHERNET_HEADER_LEN..],
+            [10, 9, 9, 9],
+            protocol,
+            net::ipv4::PROTOCOL_UDP,
+            udp_len,
+        );
+        net::udp::write_datagram(
+            &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+            [10, 9, 9, 9],
+            protocol,
+            77,
+            40008,
+            b"hello",
+        );
+        card.receive(&frame);
+        assert_eq!(super::pump(), 1, "the pump took the frame the card held");
+        let mut buffer = [0_u8; 8];
+        let (source, source_port, count) = datagram_socket
+            .try_recv(&mut buffer)
+            .expect("a receive")
+            .expect("the datagram the frame carried");
+        assert_eq!(source, [10, 9, 9, 9]);
+        assert_eq!(source_port, 77);
+        assert_eq!(&buffer[..count], b"hello");
+
+        // The stream: the boot's own probe, as a host test.  The same
+        // calls, the same demux, and a card that records nothing, because a
+        // loopback stream touches none of it.
+        let listener = super::tcp_listen(9002).expect("a listen");
+        let client = super::tcp_connect(protocol, 9002).expect("a connect");
+        assert_eq!(
+            card.sent.lock().len(),
+            1,
+            "the handshake never touched the card: the wire datagram's frame is still the only one"
+        );
+        assert!(super::tcp_has_pending(listener), "the SYN opened a stream");
+        let accepted = super::tcp_accept(listener)
+            .expect("an accept")
+            .expect("a pending stream");
+
+        let sent = super::tcp_write(client, b"protofire").expect("a write");
+        assert_eq!(sent, 9);
+        assert!(super::tcp_has_data(accepted), "the stream carried it");
+        let mut stream_buffer = [0_u8; 32];
+        let echoed = super::tcp_read(accepted, &mut stream_buffer)
+            .expect("a read")
+            .expect("the bytes");
+        assert_eq!(echoed, 9);
+        assert_eq!(&stream_buffer[..9], b"protofire");
+
+        let back = super::tcp_write(accepted, &stream_buffer[..echoed]).expect("a write");
+        assert_eq!(back, 9);
+        let received = super::tcp_read(client, &mut stream_buffer)
+            .expect("a read")
+            .expect("the echo");
+        assert_eq!(received, 9);
+        assert_eq!(&stream_buffer[..9], b"protofire");
+
+        // The orderly close, and the end of file it leaves behind.
+        super::tcp_close(client).expect("a close");
+        super::tcp_close(accepted).expect("a close");
+        {
+            let table = super::TCP.lock();
+            assert!(
+                table.connections.iter().all(|entry| entry.id != client),
+                "the client's end is done"
+            );
+            assert!(
+                table.connections.iter().all(|entry| entry.id != accepted),
+                "and the accepted end with it"
+            );
+        }
+        assert_eq!(
+            super::tcp_read(client, &mut stream_buffer),
+            Ok(Some(0)),
+            "a stream that is gone reads as end of file"
+        );
+        // The stream never touched the card, and the wire datagram's frame
+        // is still the only thing the card carries.
+        assert_eq!(card.sent.lock().len(), 1, "loopback is not the wire");
     }
 
     /// A frame the card received is a datagram in a socket's queue after the

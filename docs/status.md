@@ -301,9 +301,33 @@ the program's own constant, and the sender record's port came out of the
 datagram the kernel delivered, which only a delivered datagram could have
 carried.
 
-A network stack above this is under construction: `net` carries Ethernet, ARP
-with its cache, IPv4, ICMP and UDP, and `docs/roadmap.md` Level 5 carries the
-steps and what each is proved by.
+**The stream is whole, on loopback.**  TCP's state machine lives in `net` —
+the handshake, the segments, the acknowledgements, and the orderly close —
+and the boot runs the whole of an exchange through it: a listener on this
+machine, a client whose connect completes inside the call, the client's
+bytes echoed through the accepted end, and the close that leaves both ends
+gone from the table.  Measured on x86_64:
+
+```
+protofire: tcp connected, listener 1, stream 2
+protofire: tcp echoed 9 byte(s) of 9, round trip
+protofire: tcp closed, both ends done
+```
+
+The exchange never touches the card: both ends are connections in the
+kernel's own table, and a segment for this machine is delivered to the
+peer's state machine inside the same exchange that carried it — which is
+what loopback is, and why the exchange runs identically on every machine
+the gate boots.  What the state machine does not do is deliberate, and its
+own header says so: no retransmission and no flow control.  The exchanges
+this stack carries run over loopback and QEMU's user-mode network, neither
+of which loses a frame; a lost frame is a connection this stack drops
+rather than recovers, and retransmission asks for timers, which are a
+decision for a stack that runs where frames are lost.
+
+A network stack above this is under construction: `net` carries Ethernet,
+ARP with its cache, IPv4, ICMP, UDP and TCP, and `docs/roadmap.md` Level 5
+carries the steps and what each is proved by.
 
 **Services — built, and deliberately parked.**  A table from a name to a
 service, installed during boot and frozen before anything looks one up; a caller

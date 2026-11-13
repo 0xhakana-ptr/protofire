@@ -16,22 +16,28 @@
 //!
 //! ## What is here, today
 //!
-//! The Ethernet frame, ARP, IPv4, ICMP and UDP: the layout of each, a request
-//! this crate builds and a reply it reads.  ARP is the smallest exchange that
-//! proves a card in both directions, IPv4 is the packet the rest of the stack
-//! rides in with the one checksum three protocols share, ICMP is the round
-//! trip that proves a packet built by another machine parses, and UDP is the
-//! datagram whose refusal a peer answers with the datagram's own header.
+//! The Ethernet frame, ARP, IPv4, ICMP, UDP and TCP: the layout of each, a
+//! request this crate builds and a reply it reads.  ARP is the smallest
+//! exchange that proves a card in both directions, IPv4 is the packet the
+//! rest of the stack rides in with the one checksum three protocols share,
+//! ICMP is the round trip that proves a packet built by another machine
+//! parses, UDP is the datagram whose refusal a peer answers with the
+//! datagram's own header, and TCP is the stream a handshake opens and an
+//! orderly close shuts.
 //!
 //! ## What is not here yet
 //!
-//! TCP.  `docs/roadmap.md` carries the eight steps and what each is proved
-//! by.
+//! Nothing of the stack `docs/roadmap.md` Level 5 promised: the eight steps
+//! are the eight layers above the frame, and what each is proved by is the
+//! roadmap's own table.
 
 #![no_std]
+
+extern crate alloc;
 
 pub mod arp;
 pub mod ethernet;
 pub mod icmp;
 pub mod ipv4;
+pub mod tcp;
 pub mod udp;

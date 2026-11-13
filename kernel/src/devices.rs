@@ -782,7 +782,13 @@ pub fn exercise_network() -> bool {
     // The datagram: one UDP send to a port nothing owns, and the refusal
     // that comes back — the peer's proof that a datagram this stack built
     // arrived with its header intact.
-    send_udp_probe(&card, mac)
+    if !send_udp_probe(&card, mac) {
+        return false;
+    }
+
+    // The stream: a listener, a client, an echo, and the close that ends
+    // both ends — the whole of a TCP exchange, on loopback.
+    crate::net::tcp_probe()
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the
