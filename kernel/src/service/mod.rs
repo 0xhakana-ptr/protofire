@@ -7,12 +7,12 @@
 //! the table working end to end — not as the start of a list that should grow
 //! now.  `docs/status.md` says why, and what has to exist before it resumes.
 //!
-//! ## Why the boot installs and the crate does not
+//! ## Why the boot installs and the table does not
 //!
-//! `service` knows how to hold a table; only the boot knows which services this
-//! kernel has.  Keeping the list here means "what exists" is one file a reader
-//! can read, rather than an answer assembled from whatever crates happened to
-//! be linked.
+//! The table knows how to hold services; only the boot knows which services
+//! this kernel has.  Keeping the list here means "what exists" is one file a
+//! reader can read, rather than an answer assembled from whatever crates
+//! happened to be linked.
 //!
 //! ## The order, and why the freeze is the last line
 //!
@@ -22,6 +22,7 @@
 //! boot would fail loudly instead of being invisible.
 
 pub mod clock;
+pub mod table;
 
 #[cfg(target_os = "none")]
 use async_io::Request;
@@ -30,7 +31,7 @@ use async_io::RequestId;
 
 /// The name the clock answers to.
 ///
-/// `&'static str`, which is what `service_table::install` requires: a service's
+/// `&'static str`, which is what `table::install` requires: a service's
 /// name is part of this boot's code and not something built at run time.
 pub const CLOCK_NAME: &str = "clock";
 
@@ -53,14 +54,14 @@ pub fn install_all() -> usize {
         Err(error) => {
             arch::serial::write_str("protofire: clock service refused: ");
             arch::serial::write_str(match error {
-                service_table::InstallError::NameTaken => "the name is taken",
-                service_table::InstallError::TableFull => "the table is full",
-                service_table::InstallError::Frozen => "the table is frozen",
+                table::InstallError::NameTaken => "the name is taken",
+                table::InstallError::TableFull => "the table is full",
+                table::InstallError::Frozen => "the table is frozen",
             });
             arch::serial::write_str("\n");
         }
     }
-    service_table::freeze();
+    table::freeze();
     installed
 }
 
@@ -77,7 +78,7 @@ pub fn install_all() -> usize {
 #[cfg(target_os = "none")]
 pub fn read_the_clock() -> Option<usize> {
     let token = RequestId::new(1);
-    let completion = service_table::request(CLOCK_NAME, Request::pending(token), POLLS)?;
+    let completion = table::request(CLOCK_NAME, Request::pending(token), POLLS)?;
     if completion.id != token || !completion.is_ok() {
         return None;
     }

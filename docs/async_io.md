@@ -27,7 +27,7 @@ Two layers are named and neither exists yet:
   moving one onto this trait is the step that would test the idea instead of
   describing it.
 
-**One of the two layers has landed since this was written.**  `service_table/src/lib.rs`
+**One of the two layers has landed since this was written.**  `kernel/src/service/table.rs`
 is the registry: a name, a handle, and a freeze that closes the table after the
 boot installs what it has.  Its first occupant is a clock in the kernel, whose
 answer is the machine's own counter — so the shape is no longer only argued, it

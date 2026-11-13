@@ -94,9 +94,9 @@ what exists is the way this tree has gone wrong before.
 - `async_io` — a request/completion model with a `Service` trait, a bounded
   queue, and one real implementor (`kernel/src/service/clock.rs`).  It has never
   had a device behind it, so its *pending* half has never run.
-- `service_table` — a name-to-service table, installed at boot, frozen before
-  anything looks one up.  It has one entry (the clock) and no syscall reaches
-  it.
+- the service table (`kernel/src/service/table.rs`) — installed at boot, frozen
+  before anything looks one up.  It has one entry (the clock) and no syscall
+  reaches it.
 - `rights` — two constants and no consumer.  It sits at layer 0 for exactly the
   case where a handle carries rights.
 - `Descriptor` — a handle table that already distinguishes copy from transfer

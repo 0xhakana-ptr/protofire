@@ -1,11 +1,11 @@
-//! service_table/src/tests.rs
+//! kernel/src/service/table/tests.rs
 //!
 //! The table's tests: installation, lookup, the freeze, and the end-to-end
 //! submit-and-take through a name.
 //!
 //! ## Why each test builds its own table
 //!
-//! [`Table`] is a value with methods and [`SERVICES`](crate::SERVICES) is one
+//! [`Table`] is a value with methods and [`SERVICES`](super::SERVICES) is one
 //! instance of it, so a test makes the table it needs and the tests cannot see
 //! each other.  The first version of this file had the table reachable only as
 //! the global, and one test filling it made six others fail on `TableFull` in
@@ -15,8 +15,6 @@
 //! Exactly one test touches the global, because the global is what a boot uses
 //! and something has to prove the free functions reach the same code the tests
 //! exercise.
-
-extern crate std;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -28,10 +26,10 @@ use async_io::RequestId;
 use async_io::Service;
 use sync::Mutex;
 
-use crate::InstallError;
-use crate::MAX_SERVICES;
-use crate::Shared;
-use crate::Table;
+use super::InstallError;
+use super::MAX_SERVICES;
+use super::Shared;
+use super::Table;
 
 /// A service that answers every request in the call, with the argument word.
 ///
@@ -207,22 +205,22 @@ fn a_handle_from_the_table_answers_its_callers() {
 /// The end-to-end helper submits, polls a service that waits, and takes the
 /// completion — through the global, which is what a boot uses.
 ///
-/// The only test that touches [`crate::SERVICES`], and it installs before any
+/// The only test that touches [`super::SERVICES`], and it installs before any
 /// freeze: the freeze itself is tested on a value, so the global is never left
 /// frozen and no other test can be affected by it.
 #[test]
 fn the_global_table_answers_through_its_free_functions() {
-    crate::install("after-one-poll", after_one_poll()).expect("installed");
-    let completion = crate::request("after-one-poll", Request::pending(RequestId::new(5)), 4)
+    super::install("after-one-poll", after_one_poll()).expect("installed");
+    let completion = super::request("after-one-poll", Request::pending(RequestId::new(5)), 4)
         .expect("the poll found the completion");
     assert_eq!(completion.id, RequestId::new(5), "the token came back");
     assert_eq!(
-        crate::installed(),
+        super::installed(),
         1,
         "one service is installed in the global"
     );
     assert!(
-        crate::request(
+        super::request(
             "nobody-installed-this",
             Request::pending(RequestId::new(1)),
             4

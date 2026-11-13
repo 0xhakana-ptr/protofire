@@ -52,9 +52,6 @@ virtio_net = { path = "../drivers/virtio/net" }
 # `link` exists.
 net = { path = "../net" }
 link = { path = "../devices/link" }
-# The table a caller finds a service by name in, and the request/completion
-# model a service answers through.
-service_table = { path = "../service_table" }
 async_io = { path = "../async_io" }
 # The ciphers and hashes behind the random generator.  `crypto` is a layer-2
 # tool: it names `core`, `alloc` and `abi`, and knows nothing of this crate or

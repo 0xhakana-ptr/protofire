@@ -1,22 +1,22 @@
-//! service_table/src/lib.rs
+//! kernel/src/service/table.rs
 //!
 //! A table from a name to a service, and the rule that keeps it a table.
 //!
 //! ## Parked on purpose
 //!
-//! This crate is built and tested, and **nothing further should be added to it
+//! This module is built and tested, and **nothing further should be added to it
 //! without deciding it is time for "everything is a service"**.  That direction
 //! is for later; the table exists so it has a base when it is reached.  What
 //! makes that a decision rather than a note: no driver implements
 //! [`async_io::Service`], no syscall reaches this table, and the ring-3 half
-//! ([`apps/service_manager`](../../apps/service_manager)) is still a shell.
+//! ([`apps/service_manager`](../../../apps/service_manager)) is still a shell.
 //! `docs/status.md` carries the reasoning and the prerequisites.
 //!
 //! ## What a service is, here
 //!
 //! [`async_io::Service`]: a thing that accepts a request and completes it
 //! later.  A driver, a timer, a thread and a program are all describable that
-//! way, and this crate is the place a caller finds one by name instead of by
+//! way, and this module is the place a caller finds one by name instead of by
 //! knowing which crate implemented it.
 //!
 //! ## The three rules, and why each is here
@@ -31,7 +31,7 @@
 //! caller keeps: finding a service is one lookup, and using it afterwards is a
 //! function call rather than another lookup that could disagree with the first.
 //!
-//! **No persistence.**  The table is a `static` in this crate.  It is rebuilt
+//! **No persistence.**  The table is a `static` in this module.  It is rebuilt
 //! every boot from the services the boot installs, and a machine that changed
 //! its mind about what exists cannot leave a stale entry for the next boot to
 //! find.
@@ -56,10 +56,6 @@
 //! could be interrupted by a lookup is a lock taken twice on one CPU.  The lock
 //! is held for the length of one lookup or one installation and never across a
 //! call to a service.
-
-#![no_std]
-
-extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -107,7 +103,7 @@ impl Entry {
 
 /// The table itself.
 ///
-/// A value with methods, and the crate's global is one instance of it.  That
+/// A value with methods, and the module's global is one instance of it.  That
 /// shape is not decoration: a table that can only exist as one global cannot be
 /// tested without tests sharing it, and the first version of this file had
 /// exactly that defect — one test filled the table and the rest failed on

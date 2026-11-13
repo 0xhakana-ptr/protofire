@@ -64,7 +64,6 @@ profiler              312    2
 rights                 78    3
 security             1281   14
 service_manager        62    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
-service_table         564    7
 shell                 134    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 sound                   7    0
 sync                  356    3

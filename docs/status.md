@@ -259,14 +259,17 @@ test first:
   and the test for it is written over the trait object rather than a concrete
   type — a generic bound would have passed without the trait being usable.
 
-Three crates answer to the word "service", and they are not the same thing:
+Two halves of one crate and one ring-3 program answer to the word "service",
+and they are not the same thing:
 
-- **`service_table`** (layer 7) is the table: `install`, `lookup`, `freeze`, and
-  a value type so a test can build its own.  It knows how to hold a service and
-  nothing about which services exist.
-- **`kernel/src/service/`** is what this boot installs: `install_all` names the
-  clock, `clock.rs` implements it.  A kernel with a second service changes this
-  directory and not the table.
+- **`kernel/src/service/table.rs`** is the table: `install`, `lookup`, `freeze`,
+  and a value type so a test can build its own.  It knows how to hold a service
+  and nothing about which services exist.  It was a crate of its own (layer 7)
+  until its only consumer turned out to be the kernel module beside it, which
+  is why it is a module now.
+- **`kernel/src/service/` around it** is what this boot installs: `install_all`
+  names the clock, `clock.rs` implements it.  A kernel with a second service
+  changes this directory and not the table.
 - **`apps/service_manager`** is a ring-3 program, and it is where "everything is
   a service" is meant to end up: it supervises processes with lifecycle policies.
   Its own header still says it is a shell because supervising needs a restart
@@ -275,7 +278,8 @@ Three crates answer to the word "service", and they are not the same thing:
 
 The first two split for a reason worth keeping: the table is a mechanism, the
 list is this boot's content, the same division as `fs`'s `MountTable` and
-`kernel`'s `volume` module.
+`kernel`'s `volume` module — one the merge made a division inside the crate
+rather than between crates.
 
 What a service is **not**, yet: a device.  Every driver still submits through
 `block`'s `QueuedBlockDevice`, and the clock answers in the call and has no

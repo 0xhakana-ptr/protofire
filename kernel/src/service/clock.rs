@@ -35,6 +35,7 @@ use async_io::Service;
 use sync::Mutex;
 
 use crate::service::CLOCK_NAME;
+use crate::service::table;
 
 /// A service whose operation is "read the machine's counter".
 pub struct Clock;
@@ -100,8 +101,8 @@ impl Service for Clock {
 ///
 /// A refusal is printed by the caller rather than here, so one place in the
 /// boot owns the report and this function stays a call.
-pub fn install() -> Result<(), service_table::InstallError> {
-    service_table::install(CLOCK_NAME, Clock::shared())
+pub fn install() -> Result<(), table::InstallError> {
+    table::install(CLOCK_NAME, Clock::shared())
 }
 
 #[cfg(test)]

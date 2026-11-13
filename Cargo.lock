@@ -269,7 +269,6 @@ dependencies = [
  "paging",
  "pci",
  "security",
- "service_table",
  "spin",
  "sync",
  "syscall",
@@ -377,15 +376,6 @@ dependencies = [
 [[package]]
 name = "service_manager"
 version = "0.1.0"
-
-[[package]]
-name = "service_table"
-version = "0.1.0"
-dependencies = [
- "abi",
- "async_io",
- "sync",
-]
 
 [[package]]
 name = "shell"

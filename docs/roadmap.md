@@ -105,7 +105,7 @@ machine crates twice, inside `arch/` and on their own.
 | `fs` | the VFS, PyroFS, tmpfs, ISO 9660 |
 | `virtio_block` | the block driver |
 | `virtio_net` | the network card: two queues, ARP in and out |
-| `service_table` | a name-to-service table — **parked** |
+| `kernel/src/service/table.rs` | a name-to-service table — **parked** |
 | `allocator` | the TLSF heap |
 | `net`, `sound`, `e1000` | **empty placeholders**: a protocol stack, audio, and a card this tree does not boot with |
 | `virt` | a header and no code: which half of the guest/host question comes first, and why neither is written |
@@ -584,7 +584,7 @@ What the level would have to decide, in the order the decisions depend:
 So the intended shape of Level 10 is **not** a distributed bus in the kernel.
 It is: `abi` grows wire records and a numbering for capability transfer;
 `kernel` grows the transfer itself and nothing about what is transferred;
-`service_table` gains its first real consumer; `apps/service_manager` grows a
+the kernel's service table gains its first real consumer; `apps/service_manager` grows a
 body.  Whether a *distributed* layer ever exists on top of that is a later
 question, and the test of whether it can is whether `abi`'s records are stable
 enough that two implementations of them can talk — which is the same test the
