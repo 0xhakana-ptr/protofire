@@ -490,8 +490,55 @@ layering gate does not count as an edge.
 
 Verified by the lines above on every machine, by the gate's required lines
 for the spawn, the two waits and the suspend, and by `protofire: syscall
-table installed, 21 number(s) served` with the census at **39 of 195**
+table installed, 25 number(s) served` with the census at **43 of 195**
 reachable from ring 3.
+
+**The clock and the generator.**  `GetTimeOfDay` (70), `GetRandom` (75),
+`SystemInfo` (53) and `AbiInfo` (39) answer from three different places, and
+the boot says which of them it has: the machine's counter divided by the rate
+the machine reported, a ChaCha20 stream seeded from that counter, and the
+scheduler's own counts.  `init` reads the clock twice — a reading, then
+another after work, and the pair must not go backwards — draws two blocks of
+randomness that must differ, and reads both records back against the ABI's own
+constants.
+
+```
+protofire: time origin 0x22d9e808 at 2611 MHz
+protofire: random seeded, two reads differ
+protofire: process 1 read the clock, 16 byte(s)
+protofire: process 1 drew random bytes, 16 byte(s)
+protofire: process 1 asked the ABI, 24 byte(s)
+protofire: process 1 asked the system, 64 byte(s)
+```
+
+The time is an interval and not a date: the origin is the reading the boot
+saw, recorded once, and every answer is measured from it.  `CLOCK_REALTIME` is
+defined and refused with `Unsupported`, because a real-time clock needs a
+device driver this kernel does not have and a plausible timestamp nobody read
+is worse than an error a caller can act on.
+
+The generator's seed is **timing**, and `docs/roadmap.md` carries the honest
+sentence: there is no `RDRAND`/`RDR` probe here, so the bytes are fit for a
+nonce, a salt or a shuffle and not for a long-lived key an attacker is
+motivated to recover.  Six readings with a spin between them, hashed with the
+origin on the end; the stream re-keys from its own state every 1024 blocks, so
+an early output does not yield the later ones.
+
+Two defects the first ring-3 boot of this found:
+
+- `AbiInfo` names its record in `a0`, and the intercept read the record and
+  length from `a1`/`a2` — the pair every other call in the group uses because
+  they have a selector in front.  The length word was validated as an address,
+  the range check refused it, and the program exited 200, which is the status
+  `insist` uses for a refused call: indistinguishable in the log from a kernel
+  that serves nothing.  The refusal prints its own line now.
+- The `crypto` dependency the generator needs was absent from `kernel`'s
+  manifest, so the module compiled on the host — where `fill` is never called —
+  and failed only for a target.
+
+Verified by the six lines above on every machine, by the gate's required lines
+for all four calls, and by `protofire: syscall table installed, 25 number(s)
+served` with the census at **43 of 195**.
 
 Verified by the eight lines above on every machine, by `protofire: syscall
 table installed, 21 number(s) served`, and by the gate's required lines for
@@ -644,6 +691,39 @@ overwritten.  Masking the entry alone was not enough and measured 3 in 200;
 masking again after the dispatch, before the restore, measured **200 of 200
 clean**.  `eret` reloads `DAIF` from `SPSR_EL1`, so neither mask needs an
 unmask.
+
+**Open: a boot that stops between a signal and the wait that follows it.**
+With two CPUs and the signal exchange `init` runs — `SpawnProcess`, the child's
+announcement, the parent's delivery, the parent's `WaitProcessOf` — a boot
+sometimes stops after `a program waits for process N` and never reaches
+`every program exited`.  Measured at **1 boot in 12** after the two wake lines
+this tree was missing were added (before them, 3 in 6); a single-CPU boot stops
+at the same place **5 times in 5**, which is how the defect is confirmed to be
+in the wait/wake accounting rather than in the second core.
+
+QEMU's monitor at a stopped boot shows the shape, and it is the one the
+exclusion set exists to forbid: one core at `EL0t` at
+`0x8040000070` — a program's own address — while the scheduler reports
+`state=RFFF` with `running=[none, none]`.  So a core is executing a frame that
+belongs to a task the scheduler has already marked `Finished` and no longer
+holds.  `report_and_finish` then waits on that core's park, which never comes,
+or the other core reaches `report_and_finish` while this one has no reason to
+trap again.
+
+What was **ruled out**, each by measuring a change rather than by argument: a
+missing `sev` after the exit wake (fixed — it was real, see
+`kernel/src/scheduler/core/switch.rs` — and it is not the whole of it); the
+order of `idle_until_woken` and `switch_without_saving` in the
+`WaitProcessOf` park (removing the idle call made it worse, 5 in 6); the
+`has_runnable`-includes-blocked reading; an exit whose `running[cpu]` was
+already clear (a probe for it never fired); the tick's frequency (ten times
+faster, 3 in 5); and a guard in `preempt` for the case where `schedule`
+installs nothing (6 in 14 — waiting inside an interrupt made the ordinary
+preemption worse, and it was reverted).
+
+None of this is in the level-4 calls: the same boot stops at the same line on
+the commit before them, and the two wake lines that did help were landed
+separately.
 
 ## RISC-V 64
 

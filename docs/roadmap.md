@@ -27,13 +27,14 @@ grep -E '^[0-9]+ ' scripts/layering.txt
 
 As of the commit that added this file: **39 crates, 87,492 lines, 832 tests**,
 four machines booting, and **22 of 195 syscall numbers served**.  The number
-is re-taken by the census command above, not remembered: it reads **39 of
-195** now, after the memory, filesystem and process levels, and the boot's own line —
-`syscall table installed, 21 number(s) served` — counts the registry's half
-of that, the numbers whose handlers live in the table.  The rest are the
-calls `process.rs` serves itself, the pipe's and the scheduler's.  (The 22
-the file was written with was a narrower grep than the one above; the command
-is the method now, and this paragraph is the only number not re-taken by it.)
+is re-taken by the census command above, not remembered: it reads **43 of
+195** now, after the memory, filesystem, process and time levels, and the
+boot's own line — `syscall table installed, 25 number(s) served` — counts the
+registry's half of that, the numbers whose handlers live in the table.  The
+rest are the calls `process.rs` serves itself, the pipe's and the scheduler's.
+(The 22 the file was written with was a narrower grep than the one above; the
+command is the method now, and this paragraph is the only number not
+re-taken by it.)
 
 ---
 
@@ -203,11 +204,39 @@ not wiring.  Nor a wait that names a timeout: the tree's waits park until
 the thing they name happens, and a timed park is a scheduler feature the
 level did not need.
 
-### Level 4 — time and randomness
+### Level 4 — time and randomness — **done**
 
-`GetTimeOfDay`, `GetRandom`, and the system-information calls beside them.
-`arch::timer_counter` and `crypto`'s generators are the sources; the work is the
-syscall and the ABI shape of a time value.
+`GetTimeOfDay` (70), `GetRandom` (75), `SystemInfo` (53) and `AbiInfo` (39) are
+served and reachable from ring 3, and `init` reads the clock twice, draws two
+blocks of randomness that must differ, and reads both records back.  The
+sources are what this file said they were: the machine's counter divided by the
+rate it reports, and a ChaCha20 stream over that.  `docs/status.md` carries the
+lines.
+
+What the ABI grew, and why: a `TimeRecord` of two words — seconds and
+nanoseconds — because a counter reading is a number whose rate is the machine's
+and a program has no way to divide it; a `SystemInfo` of eight counters under
+one selector, refused for a selector this build does not serve rather than
+answered with zeros; and an `AbiInfo` of three constants, which is the one call
+a program can make before it trusts any other.
+
+What this level did **not** promise:
+
+- **Wall time.**  `CLOCK_REALTIME` is defined and answers `Unsupported`.  It
+  needs a real-time clock driver and this kernel has none; the old tree read
+  one from an RTC, and a number nobody read is worse than an error.
+- **Entropy that is not the clock.**  There is no `RDRAND`/`RDR`/`RDSEED`
+  probe, so the generator's seed is timing, and the bytes are fit for a nonce,
+  a salt or a shuffle rather than for a key an attacker is motivated to
+  recover.  A hardware source is its own level, and the generator is written so
+  that adding one changes `random::seed` and nothing else.
+- `Sleep`'s timed parks, `TimerFd`, `TimerCreate`, `ClockGetRes`: separate
+  numbers, and the first of them is a scheduler feature rather than a source.
+
+**Open, and not part of this level:** aarch64 stops on some boots between a
+signal and the wait that follows it.  `docs/status.md` has the measurement, the
+state QEMU's monitor shows, and the six explanations that were ruled out — two
+of them real defects that are now fixed and were not the whole of it.
 
 ### Level 5 — the network
 

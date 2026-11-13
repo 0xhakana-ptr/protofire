@@ -265,6 +265,25 @@ The calls a ring-3 program can make today, and the slots each carries.
 - **`SigReturn`** — `a0` the resume; `a1`-`a5` reserved zero.  The delivered
   handler's only exit: the kernel puts the interrupted context back and the
   interrupted flow resumes at `a0`.  Control does not come back.
+- **`GetTimeOfDay`** — `a0` the clock, `0` for `CLOCK_MONOTONIC` and `1` for
+  `CLOCK_REALTIME`; `a1` the record; `a2` its length, at least
+  `TIME_RECORD_SIZE`; `a3`-`a5` reserved zero.  Answers zero, with the record
+  filled — seconds then nanoseconds.  A clock this ABI does not define is
+  `InvalidArgument`; a clock it defines and this build cannot read is
+  `Unsupported`, which is what `CLOCK_REALTIME` gets until a real-time clock
+  driver exists.
+- **`GetRandom`** — `a0` the buffer; `a1` its length; `a2`-`a5` reserved zero.
+  Answers the bytes written, which is the length asked for.  A zero length
+  answers zero and writes nothing.
+- **`SystemInfo`** — `a0` the selector, `0` for the scheduler; `a1` the
+  record; `a2` its length, at least `SYSTEM_INFO_SIZE`; `a3`-`a5` reserved
+  zero.  Answers zero, with the record filled.  A selector this build does not
+  serve is `InvalidArgument` rather than a record of zeros, which would read
+  as an idle machine.
+- **`AbiInfo`** — `a0` the record; `a1` its length, at least `ABI_INFO_SIZE`;
+  `a2`-`a5` reserved zero.  Answers zero, with the version, the slot count and
+  the frozen boundary filled.  This is the one call a program can make before
+  it trusts any other, and every field is a constant of the build.
 
 A handled, unmasked signal is **delivered** rather than queued: the target's
 context is redirected to the handler at its next install, with the record in
@@ -284,6 +303,14 @@ the path is looked at.
 The four memory calls take **no pointer**: every argument is a value, which is
 why they are the first calls a program can make that change its own address
 space without the kernel copying anything in or out.
+
+The four information calls all write a record into the caller's memory, and
+their slots are not uniform: `GetTimeOfDay` and `SystemInfo` put a selector or
+a clock in `a0` and so carry the record and its length in `a1`/`a2`, while
+`GetRandom` and `AbiInfo` have no selector and carry them in `a0`/`a1`.  That
+difference is exactly the mistake the first ring-3 boot of these found — the
+entry path read `a1`/`a2` for all four, validated the length word as an
+address, and refused a call whose handler worked.
 
 `Read`'s buffer and length travel in slots because a ring-3 caller has no
 borrow to hand over; the kernel's own callers leave both zero and pass the
