@@ -1,4 +1,4 @@
-//! block/src/queue.rs
+//! devices/block/src/queue.rs
 //!
 //! The queued half of the block interface: a ticket, a request's state, and
 //! the methods that let a caller be ahead of a device.

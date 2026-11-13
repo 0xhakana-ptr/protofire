@@ -1,4 +1,4 @@
-//! block/src/block.rs
+//! devices/block/src/block.rs
 //!
 //! The block layer: the block-device interface, the in-memory devices that
 //! implement it, and the slot a driver publishes a newly found device through.

@@ -16,5 +16,5 @@ abi.workspace = true
 security.workspace = true
 sync = { path = "../libs/sync" }
 memory = { path = "../memory" }
-block = { path = "../block" }
+block = { path = "../devices/block" }
 unicode = { path = "../libs/unicode" }

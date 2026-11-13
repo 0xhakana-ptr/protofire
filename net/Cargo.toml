@@ -13,4 +13,4 @@ license.workspace = true
 # ARP is cannot be replaced by a second driver without copying the protocol.
 [dependencies]
 abi.workspace = true
-link = { path = "../link" }
+link = { path = "../devices/link" }

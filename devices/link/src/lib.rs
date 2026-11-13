@@ -1,4 +1,4 @@
-//! link/src/lib.rs
+//! devices/link/src/lib.rs
 //!
 //! What a network card is, as the layer above it needs one.
 //!

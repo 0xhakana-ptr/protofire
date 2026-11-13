@@ -1,4 +1,4 @@
-//! block/src/lib.rs
+//! devices/block/src/lib.rs
 //!
 //! The block-device interface: what a disk driver implements and what a
 //! filesystem reads.

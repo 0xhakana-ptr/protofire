@@ -13,6 +13,6 @@ license.workspace = true
 # interface, and the interface is what the filesystem names.
 [dependencies]
 abi.workspace = true
-block = { path = "../../../block" }
+block = { path = "../../../devices/block" }
 virtio_core = { path = "../core" }
 spin.workspace = true

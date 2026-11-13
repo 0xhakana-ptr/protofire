@@ -20,7 +20,7 @@ syscall.workspace = true
 # other two machines unbuildable from here.
 arch = { path = "../arch" }
 fs = { path = "../fs" }
-block = { path = "../block" }
+block = { path = "../devices/block" }
 # The page-table types and the walk arithmetic.  The kernel decides what its
 # address space maps; `paging` is what a table is.
 paging = { path = "../libs/paging" }
@@ -51,7 +51,7 @@ virtio_net = { path = "../drivers/virtio/net" }
 # `virtio_net` and `virtio_net` never sees `net`, which is the whole reason
 # `link` exists.
 net = { path = "../net" }
-link = { path = "../link" }
+link = { path = "../devices/link" }
 # The table a caller finds a service by name in, and the request/completion
 # model a service answers through.
 service_table = { path = "../service_table" }
