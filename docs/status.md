@@ -131,12 +131,19 @@ all four.  Measured on x86_64:
 ```
 protofire: virtio-net up, address 52:54:00:12:34:56, receive queue 256, transmit queue 256
 protofire: virtio-net arp reply 52:55:0a:00:02:02 holds 10.0.2.2, asked by 52:54:00:12:34:56 for 10.0.2.15
+protofire: arp cache holds 10.0.2.2 at 52:55:0a:00:02:02, the wire asked 1 time(s)
+protofire: arp cache answered 10.0.2.2 again without the wire
 ```
 
 The driver's reads of the reply are checked against the request it sent — the
 reply has to name this card's address and the address this boot asked about —
 so the line is evidence that a frame left, a frame arrived, and the frame that
-arrived answers the question.
+arrived answers the question.  The two lines after it are the answer's second
+half: the reply goes into `net`'s ARP cache, and the same question read back
+answers from the table — which is why every later consumer of the gateway's
+address resolves there first and the wire's ask count stays at one for the
+whole boot.  The gate requires both lines on all four machines, the second
+exact, because its tail is the one fact a lookup could not vary.
 
 Three defects were found by booting, and all three are recorded where they were
 found because each was invisible to a host test and to every register read-back:
@@ -227,7 +234,9 @@ whose device completes asynchronously, which QEMU's user-mode network is not.
 The count is what the message's own mechanism has for evidence, and it is
 required non-zero on the AIA machine.
 
-A network stack above this is a different project.
+A network stack above this is under construction: `net` carries Ethernet, ARP
+with its cache, and IPv4, and `docs/roadmap.md` Level 5 carries the steps and
+what each is proved by.
 
 **Services — built, and deliberately parked.**  A table from a name to a
 service, installed during boot and frozen before anything looks one up; a caller

@@ -746,7 +746,16 @@ pub fn exercise_network() -> bool {
     // hides the receive wait entirely — measured, the reply was already in the
     // ring by the time the send finished, so the receive loop took zero turns
     // and could not tell a working message from a poll that never needed one.
+    //
+    // The cache stands beside the exchange, because the point of the answer is
+    // that it is not asked for twice: every later consumer of the gateway's
+    // address resolves through this table first, and the wire is asked only
+    // what the table does not hold.  The count is the boot's own, incremented
+    // where the frame actually leaves.
+    let mut cache = net::arp::Cache::new();
+    let mut questions_asked = 0;
     let request = net::arp::request(mac, OUR_PROTOCOL, GATEWAY_PROTOCOL);
+    questions_asked += 1;
     if let Err(error) = card.submit_frame(&request) {
         arch::serial::write_str("protofire: virtio-net could not send the arp request: ");
         arch::serial::write_str(match error {
@@ -832,6 +841,25 @@ pub fn exercise_network() -> bool {
                 arch::serial::write_str(" for ");
                 write_ipv4(arp.target_protocol);
                 arch::serial::write_str("\n");
+                // The answer goes in the table, and the table is read back
+                // for the same question — the second resolve answers from the
+                // cache, which is the whole reason the answer was kept.  The
+                // wire was asked once, and stays asked once for the rest of
+                // the boot: the ping and the datagram that follow resolve
+                // here first.
+                cache.learn(arp.sender_protocol, arp.sender_hardware);
+                arch::serial::write_str("protofire: arp cache holds ");
+                write_ipv4(arp.sender_protocol);
+                arch::serial::write_str(" at ");
+                write_mac(arp.sender_hardware);
+                arch::serial::write_str(", the wire asked ");
+                arch::serial::write_u32(questions_asked as u32);
+                arch::serial::write_str(" time(s)\n");
+                if cache.hardware_for(GATEWAY_PROTOCOL) == Some(arp.sender_hardware) {
+                    arch::serial::write_str("protofire: arp cache answered ");
+                    write_ipv4(GATEWAY_PROTOCOL);
+                    arch::serial::write_str(" again without the wire\n");
+                }
                 // The reply has to be the answer to the question this boot
                 // asked, or it is a frame from somewhere else that happened to
                 // parse.  Checked rather than assumed: a card that received its

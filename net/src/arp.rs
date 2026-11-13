@@ -20,11 +20,15 @@
 //! the receive chain and the device's receive path — four things a bring-up
 //! cannot reach.
 //!
-//! ## What is not here yet
+//! ## The cache, and why it does not expire
 //!
-//! The cache.  This module builds a question and reads an answer; a table that
-//! remembers the answer, and a caller that asks once instead of every time, is
-//! step 5.2 in `docs/roadmap.md`.
+//! A question the wire answered once should not be asked again, which is what
+//! [`Cache`] is for: a fixed table from a protocol address to the hardware
+//! address that holds it.  It has no timer, deliberately — an entry that
+//! outlives its truth is a wrong delivery, but the conversations this stack
+//! carries are minutes long against a cache that lives for a boot, and an
+//! expiry the boot never reaches is a timer nobody checks.  A stack that runs
+//! for days is the change that adds one, and it adds it here.
 
 use crate::ethernet::BROADCAST;
 use crate::ethernet::ETHERTYPE_ARP;
@@ -139,10 +143,101 @@ pub fn parse(frame: &[u8]) -> Option<Arp> {
     })
 }
 
+/// How many answers the cache remembers.
+///
+/// Eight covers the peers one boot talks to — a gateway, a name server, the
+/// hosts a program dials — with room to spare, and a fixed table is one array
+/// rather than a growable structure: the cache is checked on every send, and
+/// one a caller could grow is one a caller could grow without bound.
+pub const CACHE_CAPACITY: usize = 8;
+
+/// One answer the wire gave: who holds a protocol address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Entry {
+    protocol: [u8; 4],
+    hardware: [u8; 6],
+}
+
+/// The answers the wire has given, so the wire is not asked again.
+///
+/// A pure table: it holds what `learn` was told and answers what it holds.
+/// The lock is the caller's, because a cache behind a stack is one field of a
+/// state the boot already serialises, and a second lock would be a second
+/// order to get wrong.
+pub struct Cache {
+    entries: [Option<Entry>; CACHE_CAPACITY],
+    /// Where the next answer lands when the table is full: the oldest entry's
+    /// slot, one past the last that was replaced.
+    cursor: usize,
+}
+
+impl Cache {
+    /// An empty cache: every question goes to the wire.
+    pub fn new() -> Self {
+        Self {
+            entries: [const { None }; CACHE_CAPACITY],
+            cursor: 0,
+        }
+    }
+
+    /// The hardware address that holds `protocol`, if the wire answered for
+    /// it before.
+    pub fn hardware_for(&self, protocol: [u8; 4]) -> Option<[u8; 6]> {
+        self.entries
+            .iter()
+            .flatten()
+            .find(|entry| entry.protocol == protocol)
+            .map(|entry| entry.hardware)
+    }
+
+    /// Record an answer the wire gave, replacing what it said before.
+    ///
+    /// A repeated answer for an address already held updates that entry in
+    /// place — a sender that changed its hardware address is a fact the cache
+    /// should follow, not a second entry for one address.  A full table
+    /// replaces the slot the cursor names and moves past it, which is the
+    /// oldest entry's slot by construction: every entry between the cursor
+    /// and the newest was written later than the one under it.
+    pub fn learn(&mut self, protocol: [u8; 4], hardware: [u8; 6]) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .flatten()
+            .find(|entry| entry.protocol == protocol)
+        {
+            entry.hardware = hardware;
+            return;
+        }
+        let slot = self
+            .entries
+            .get_mut(self.cursor)
+            .expect("the cursor stays inside the table");
+        *slot = Some(Entry { protocol, hardware });
+        self.cursor = (self.cursor + 1) % CACHE_CAPACITY;
+    }
+
+    /// How many answers the cache holds.
+    pub fn len(&self) -> usize {
+        self.entries.iter().flatten().count()
+    }
+
+    /// Whether the cache holds nothing.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Default for Cache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ARP_FRAME_LEN;
     use super::ARP_LEN;
+    use super::Cache;
     use super::OPER_REPLY;
     use super::OPER_REQUEST;
     use super::parse;
@@ -153,6 +248,7 @@ mod tests {
     const CARD: [u8; 6] = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];
     const US: [u8; 4] = [10, 0, 2, 15];
     const GATEWAY: [u8; 4] = [10, 0, 2, 2];
+    const GATEWAY_MAC: [u8; 6] = [0x52, 0x55, 0x0a, 0x00, 0x02, 0x02];
 
     /// The request is the bytes an ARP for the gateway is, at every offset a
     /// reader would check.
@@ -271,4 +367,63 @@ mod tests {
         let parsed = parse(&buffer).expect("the frame is at the start");
         assert_eq!(parsed.sender_protocol, US);
     }
+
+    /// An empty cache answers nothing, which is what sends the first
+    /// question to the wire.
+    #[test]
+    fn an_empty_cache_answers_nothing() {
+        let cache = Cache::new();
+        assert!(cache.is_empty());
+        assert_eq!(cache.hardware_for(GATEWAY), None);
+    }
+
+    /// An answer the wire gave is what the cache holds, and the second ask
+    /// never needs the wire.
+    #[test]
+    fn an_answered_question_is_not_asked_again() {
+        let mut cache = Cache::new();
+        assert_eq!(cache.hardware_for(GATEWAY), None, "the first ask misses");
+        cache.learn(GATEWAY, GATEWAY_MAC);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(
+            cache.hardware_for(GATEWAY),
+            Some(GATEWAY_MAC),
+            "the second ask answers from the table"
+        );
+    }
+
+    /// A new answer for an address already held replaces it, and leaves one
+    /// entry, not two.
+    #[test]
+    fn a_repeated_answer_replaces_its_entry() {
+        let mut cache = Cache::new();
+        cache.learn(GATEWAY, [0x11; 6]);
+        cache.learn(GATEWAY, GATEWAY_MAC);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.hardware_for(GATEWAY), Some(GATEWAY_MAC));
+    }
+
+    /// A full cache forgets its oldest answer, and keeps the rest.
+    ///
+    /// The table is fixed because it is checked on every send; the eviction
+    /// is the whole cost of that.  The cursor replaces in insertion order,
+    /// so the entry that has been there longest is the one that goes.
+    #[test]
+    fn a_full_cache_forgots_its_oldest_answer() {
+        let mut cache = Cache::new();
+        for index in 0..CACHE_CAPACITY_TEST as u32 {
+            cache.learn([10, 0, 2, index as u8], [index as u8; 6]);
+        }
+        assert_eq!(cache.len(), CACHE_CAPACITY_TEST);
+
+        // One more: the first address goes, the second stays.
+        cache.learn([10, 0, 2, 200], [0xEE; 6]);
+        assert_eq!(cache.len(), CACHE_CAPACITY_TEST, "the table does not grow");
+        assert_eq!(cache.hardware_for([10, 0, 2, 0]), None, "the oldest went");
+        assert_eq!(cache.hardware_for([10, 0, 2, 1]), Some([1_u8; 6]));
+        assert_eq!(cache.hardware_for([10, 0, 2, 200]), Some([0xEE; 6]));
+    }
+
+    /// The cache's capacity, spelled as a constant the tests compile against.
+    const CACHE_CAPACITY_TEST: usize = super::CACHE_CAPACITY;
 }

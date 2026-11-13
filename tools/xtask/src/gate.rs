@@ -455,6 +455,15 @@ impl Machine {
                 ("protofire: process 1 asked the system, 64 byte(s)", true),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
+                // The answer the reply left behind: the cache holding it, and
+                // the same question answered from the table without a second
+                // frame on the wire.  The second line is exact because its
+                // tail is the one fact a lookup could not vary.
+                ("protofire: arp cache holds ", false),
+                (
+                    "protofire: arp cache answered 10.0.2.2 again without the wire",
+                    true,
+                ),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
@@ -941,6 +950,13 @@ impl Machine {
                     ("protofire: process 1 asked the system, 64 byte(s)", true),
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
+                    // The cache, for the reason the x86_64 list states: the
+                    // answer is kept, and the second ask reads it back.
+                    ("protofire: arp cache holds ", false),
+                    (
+                        "protofire: arp cache answered 10.0.2.2 again without the wire",
+                        true,
+                    ),
                     ("protofire: virtio-blk wrote and read back sector ", false),
                     (
                         "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
@@ -1105,6 +1121,13 @@ impl Machine {
                 ("protofire: process 1 asked the system, 64 byte(s)", true),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
+                // The cache, for the reason the x86_64 list states: the
+                // answer is kept, and the second ask reads it back.
+                ("protofire: arp cache holds ", false),
+                (
+                    "protofire: arp cache answered 10.0.2.2 again without the wire",
+                    true,
+                ),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 // The completion-message report, which every machine prints
                 // and whose **number is the machine's**: a tree that names no
