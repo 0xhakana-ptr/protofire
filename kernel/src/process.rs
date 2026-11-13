@@ -1337,6 +1337,76 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // The time, randomness and the two information calls.  All four write a
+    // record into a buffer the caller named, so all four need the one thing
+    // only this file can do: turn a ring-3 address into a borrow, after
+    // checking the range.
+    //
+    // `GetRandom` is the one call in this group whose *length* arrives in the
+    // same slot its buffer does not: `a0` is the buffer and `a1` the length,
+    // which is the shape the ABI published for it and the shape the handler
+    // reads.  The other three take the record and its length in `a1`/`a2` (and
+    // `a0` is the clock or the selector), so the pair to validate is the second
+    // and third words rather than the first two.
+    if number == SyscallNumber::GetTimeOfDay as usize
+        || number == SyscallNumber::GetRandom as usize
+        || number == SyscallNumber::SystemInfo as usize
+        || number == SyscallNumber::AbiInfo as usize
+    {
+        // `GetRandom` names its buffer and its length in `a0`/`a1`.  `AbiInfo`
+        // names the record in `a0` and its length in `a1`, because it has no
+        // selector to make room for.  `GetTimeOfDay` and `SystemInfo` each have
+        // one, so their record and length are `a1`/`a2`.  Reading the wrong
+        // pair here validates an address that is not the buffer, and the
+        // refusal it produces looks exactly like a machine that does not serve
+        // the call.
+        let (record, length) = match number {
+            n if n == SyscallNumber::GetRandom as usize => (call.arguments[0], call.arguments[1]),
+            n if n == SyscallNumber::AbiInfo as usize => (call.arguments[0], call.arguments[1]),
+            _ => (call.arguments[1], call.arguments[2]),
+        };
+        if !crate::address_space::is_user_range(record, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handlers write the
+        // record and nothing past it, which is what their length check is for.
+        let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(destination));
+        // The evidence, printed by the kernel because a program has no way to
+        // print one.  The line names the call and the first word of what it
+        // answered, which is the part that cannot be a constant: a time's
+        // seconds move, and a random call's first word is bytes the generator
+        // produced.
+        //
+        // A refused call prints too.  Without that, a call the handler refused
+        // is indistinguishable in the log from one the program never made —
+        // which is exactly the ambiguity the first boot of this group had, and
+        // it cost a boot to find.
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(match number {
+                n if n == SyscallNumber::GetTimeOfDay as usize => " read the clock, ",
+                n if n == SyscallNumber::GetRandom as usize => " drew random bytes, ",
+                n if n == SyscallNumber::SystemInfo as usize => " asked the system, ",
+                _ => " asked the ABI, ",
+            });
+            arch::serial::write_u32(length as u32);
+            arch::serial::write_str(if refused {
+                " byte(s) asked, refused\n"
+            } else {
+                " byte(s)\n"
+            });
+        }
+        return outcome;
+    }
+
     // Everything else is a call this boot does not serve.  `encode_error` is
     // the ABI's own encoding, so the program reads the same word it would from
     // a handler that answered through the registry.

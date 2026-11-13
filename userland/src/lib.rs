@@ -82,6 +82,24 @@ pub const SYS_WAIT_PROCESS_OF: usize = 196;
 pub const SYS_MMAP: usize = 67;
 /// `Brk`, the program's break.
 pub const SYS_BRK: usize = 92;
+/// `AbiInfo`, what this build's interface is.
+pub const SYS_ABI_INFO: usize = 39;
+/// `SystemInfo`, what the machine has been doing.
+pub const SYS_SYSTEM_INFO: usize = 53;
+/// `GetTimeOfDay`, one clock's reading.
+pub const SYS_GET_TIME_OF_DAY: usize = 70;
+/// `GetRandom`, bytes from the kernel's generator.
+pub const SYS_GET_RANDOM: usize = 75;
+/// The machine's own counter, the only clock this build answers.
+pub const CLOCK_MONOTONIC: usize = 0;
+/// The selector `SystemInfo` serves.
+pub const SYSTEM_INFO_SCHEDULER: usize = 0;
+/// An `AbiInfo` record is three words.
+pub const ABI_INFO_BYTES: usize = 24;
+/// A `SystemInfo` record is eight words.
+pub const SYSTEM_INFO_BYTES: usize = 64;
+/// A `TimeRecord` is two words.
+pub const TIME_RECORD_BYTES: usize = 16;
 
 // The flags and values the wrappers' callers pass.
 
@@ -475,6 +493,87 @@ pub fn sys_brk(requested: usize) -> usize {
     syscall6(SYS_BRK, requested, 0, 0, 0, 0, 0)
 }
 
+/// `get_time_of_day(clock, record)`: zero, with the record filled.
+#[cfg(target_os = "none")]
+pub fn sys_get_time_of_day(clock: usize, record: &mut [u8; TIME_RECORD_BYTES]) -> usize {
+    syscall6(
+        SYS_GET_TIME_OF_DAY,
+        clock,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `get_random(buffer)`: how many bytes were written.
+#[cfg(target_os = "none")]
+pub fn sys_get_random(buffer: &mut [u8]) -> usize {
+    syscall6(
+        SYS_GET_RANDOM,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// `system_info(selector, record)`: zero, with the record filled.
+#[cfg(target_os = "none")]
+pub fn sys_system_info(selector: usize, record: &mut [u8; SYSTEM_INFO_BYTES]) -> usize {
+    syscall6(
+        SYS_SYSTEM_INFO,
+        selector,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `abi_info(record)`: zero, with the record filled.
+#[cfg(target_os = "none")]
+pub fn sys_abi_info(record: &mut [u8; ABI_INFO_BYTES]) -> usize {
+    syscall6(
+        SYS_ABI_INFO,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// The two words of a `TimeRecord`: seconds, then nanoseconds.
+#[cfg(target_os = "none")]
+pub fn time_words(record: &[u8; TIME_RECORD_BYTES]) -> (usize, usize) {
+    let mut seconds = [0u8; 8];
+    let mut nanoseconds = [0u8; 8];
+    seconds.copy_from_slice(&record[..8]);
+    nanoseconds.copy_from_slice(&record[8..]);
+    (
+        usize::from_le_bytes(seconds),
+        usize::from_le_bytes(nanoseconds),
+    )
+}
+
+/// The three words of an `AbiInfo`: version, slot count, frozen count.
+#[cfg(target_os = "none")]
+pub fn abi_words(record: &[u8; ABI_INFO_BYTES]) -> (usize, usize, usize) {
+    let mut words = [0usize; 3];
+    for (index, word) in words.iter_mut().enumerate() {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&record[index * 8..index * 8 + 8]);
+        *word = usize::from_le_bytes(bytes);
+    }
+    (words[0], words[1], words[2])
+}
+
 /// Whether a syscall's answer is the ABI's error encoding.
 ///
 /// The ABI encodes an error as a word with its high bit set, which is the one
@@ -544,9 +643,12 @@ mod tests {
     //! build carries: `cargo metadata` reports dev-dependencies to the
     //! layering gate, and the gate does not count one as an edge.
 
+    use super::SYS_ABI_INFO;
     use super::SYS_BRK;
     use super::SYS_CLOSE;
     use super::SYS_CREATE_DIR_AT;
+    use super::SYS_GET_RANDOM;
+    use super::SYS_GET_TIME_OF_DAY;
     use super::SYS_GETPPID;
     use super::SYS_MMAP;
     use super::SYS_OPEN;
@@ -563,6 +665,7 @@ mod tests {
     use super::SYS_SPAWN_PROCESS;
     use super::SYS_STAT;
     use super::SYS_STAT_AT;
+    use super::SYS_SYSTEM_INFO;
     use super::SYS_WAIT_PROCESS_OF;
     use super::SYS_WAIT_SIGNAL;
     use super::SYS_WRITE;
@@ -596,6 +699,10 @@ mod tests {
         assert_eq!(SYS_GETPPID, SyscallNumber::GetPpid as usize);
         assert_eq!(SYS_SPAWN_PROCESS, SyscallNumber::SpawnProcess as usize);
         assert_eq!(SYS_WAIT_PROCESS_OF, SyscallNumber::WaitProcessOf as usize);
+        assert_eq!(SYS_ABI_INFO, SyscallNumber::AbiInfo as usize);
+        assert_eq!(SYS_SYSTEM_INFO, SyscallNumber::SystemInfo as usize);
+        assert_eq!(SYS_GET_TIME_OF_DAY, SyscallNumber::GetTimeOfDay as usize);
+        assert_eq!(SYS_GET_RANDOM, SyscallNumber::GetRandom as usize);
     }
 
     /// The frozen range's boundary, from the program's side: a number a
