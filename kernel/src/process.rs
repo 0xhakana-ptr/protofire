@@ -1412,6 +1412,143 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // The datagram calls that answer at once: a bind, and a send.  The
+    // receive is the branch below, because it parks — a handler that cannot
+    // park does not hold a number whose caller may have to wait.
+    if number == SyscallNumber::BindUdp as usize || number == SyscallNumber::SendToUdp as usize {
+        // `SendToUdp` carries a buffer: `a2` the bytes, `a3` their length,
+        // the same shape a file write is.  `BindUdp` names no address at
+        // all, and its slots are the handler's to refuse.
+        let send_buffer = if number == SyscallNumber::SendToUdp as usize {
+            let buffer = call.arguments[2];
+            let length = call.arguments[3];
+            if !crate::address_space::is_user_range(buffer, length) {
+                return CallOutcome::Return(abi::syscall::encode_error(
+                    abi::Error::InvalidArgument,
+                ));
+            }
+            // SAFETY: the range is inside the user window and not empty,
+            // which `is_user_range` checked, and the pages behind it are the
+            // calling task's own mappings, installed on this CPU.  The
+            // handler reads the bytes; a copy-on-write page demoted by an
+            // earlier write faults into the resolver like any other access.
+            Some(unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) })
+        } else {
+            None
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, send_buffer);
+        // The evidence, printed by the kernel because a program has no way to
+        // print one: the port bound and the descriptor it became, or the
+        // datagram's own size beside the address and port it named.
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            if number == SyscallNumber::BindUdp as usize {
+                arch::serial::write_str(" bound port ");
+                arch::serial::write_u32(call.arguments[0] as u32);
+                arch::serial::write_str(" as descriptor ");
+                arch::serial::write_u32(answer as u32);
+            } else {
+                arch::serial::write_str(" sent ");
+                arch::serial::write_u32(call.arguments[3] as u32);
+                arch::serial::write_str(" byte(s) to ");
+                write_ipv4_word(call.arguments[1]);
+                arch::serial::write_str(" port ");
+                arch::serial::write_u32(call.arguments[4] as u32);
+            }
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
+    // The receive: one datagram from a bound socket, or a park until one
+    // arrives.
+    //
+    // The park is the pipe reader's shape, and for the same reason: between
+    // this call's own check and the park, a sender on another CPU can
+    // deliver, and the wake that fact sends can fire into the gap.  The
+    // re-check and the park are one critical section, so the delivery has
+    // exactly two orders to find — the datagram first, and this call
+    // answers it here, or the task parked first, and the delivery's wake
+    // ends the wait.
+    //
+    // Before both, the card's ring is drained: a frame the card is holding
+    // is a datagram in a queue rather than a wait that answers nothing.
+    if number == SyscallNumber::RecvFromUdp as usize {
+        let descriptor = call.arguments[0];
+        let buffer = call.arguments[1];
+        let length = call.arguments[2];
+        let sender_record = call.arguments[3];
+        let sender_len = call.arguments[4];
+        if !crate::address_space::is_user_range(buffer, length)
+            || !crate::address_space::is_user_range(sender_record, sender_len)
+            || sender_len < abi::network::UDP_SENDER_RECORD_SIZE
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let Some(socket) = crate::syscall::udp_socket_for(descriptor, caller) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        // SAFETY: both ranges are inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind them are the calling
+        // task's own mappings, installed on this CPU.  The receive writes the
+        // buffer and the sender record and nothing past them, which is what
+        // the record's length check is for.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let sender =
+            unsafe { core::slice::from_raw_parts_mut(sender_record as *mut u8, sender_len) };
+
+        crate::net::pump();
+        let mut answer = receive_datagram_answer(&socket, destination, sender);
+        if answer.is_none() {
+            answer = crate::scheduler::block_unless(frame, || {
+                receive_datagram_answer(&socket, destination, sender)
+            });
+        }
+        return match answer {
+            None => {
+                // Parked.  Resume something else; the frame was saved at the
+                // call, so a wake returns here and the call is retried, and
+                // the retry drains the card before it asks its question
+                // again.
+                arch::serial::write_str("protofire: a program blocks on a datagram socket\n");
+                if !crate::scheduler::has_selectable() {
+                    crate::scheduler::idle_until_woken();
+                }
+                crate::scheduler::switch_without_saving(frame)
+            }
+            Some(status) => {
+                if !abi::syscall::is_error_status(status) {
+                    // The sender the record now holds is the line's evidence:
+                    // a receive that answered names where its datagram came
+                    // from, which a caller can compare against the peer it
+                    // expected.
+                    let address = usize::from_le_bytes(
+                        sender[..8].try_into().expect("the record's address word"),
+                    );
+                    let port = usize::from_le_bytes(
+                        sender[8..16].try_into().expect("the record's port word"),
+                    );
+                    arch::serial::write_str("protofire: process ");
+                    arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                    arch::serial::write_str(" received ");
+                    arch::serial::write_u32(status as u32);
+                    arch::serial::write_str(" byte(s) from ");
+                    write_ipv4_word(address);
+                    arch::serial::write_str(" port ");
+                    arch::serial::write_u32(port as u32);
+                    arch::serial::write_str("\n");
+                }
+                CallOutcome::Return(status)
+            }
+        };
+    }
+
     // Everything else is a call this boot does not serve.  `encode_error` is
     // the ABI's own encoding, so the program reads the same word it would from
     // a handler that answered through the registry.
@@ -1466,6 +1603,48 @@ fn copy_user_path(path_ptr: usize, bytes: &mut [u8; OPEN_PATH_MAX]) -> Result<&s
         length += 1;
     }
     core::str::from_utf8(&bytes[..length]).map_err(|_| abi::Error::InvalidArgument)
+}
+
+/// Take one datagram from a bound socket, answering the call's status word.
+///
+/// `None` is "nothing arrived", which is the caller's signal to park;
+/// `Some` is the answer — the byte count, or an error encoded the ABI's way.
+/// The sender record is written here, because the receive that answers and
+/// the re-check under the park's lock must fill the same record the same
+/// way, and one writer is how that stays true.
+#[cfg(target_os = "none")]
+fn receive_datagram_answer(
+    socket: &alloc::sync::Arc<crate::net::UdpSocket>,
+    destination: &mut [u8],
+    sender: &mut [u8],
+) -> Option<usize> {
+    match socket.try_recv(destination) {
+        Err(error) => Some(abi::syscall::encode_error(error)),
+        Ok(None) => None,
+        Ok(Some((source, source_port, count))) => {
+            let record = abi::network::UdpSenderRecord {
+                address: abi::network::pack_address(source),
+                port: source_port as usize,
+            };
+            sender[..8].copy_from_slice(&record.address.to_le_bytes());
+            sender[8..16].copy_from_slice(&record.port.to_le_bytes());
+            Some(count)
+        }
+    }
+}
+
+/// Write four bytes as a dotted quad, from the word the ABI packs them in.
+///
+/// The same shape `devices.rs`'s writer is, one layer down: a byte per
+/// octet, through `write_str`, so the line stays one line.
+#[cfg(target_os = "none")]
+fn write_ipv4_word(word: usize) {
+    for (index, byte) in abi::network::unpack_address(word).iter().enumerate() {
+        if index != 0 {
+            arch::serial::write_str(".");
+        }
+        arch::serial::write_u32(*byte as u32);
+    }
 }
 
 /// The name a `Stat` evidence line prints for the ABI's kind word.

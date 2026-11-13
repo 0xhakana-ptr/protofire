@@ -61,6 +61,8 @@ use user_abi::is_error;
 #[cfg(target_os = "none")]
 use user_abi::sys_abi_info;
 #[cfg(target_os = "none")]
+use user_abi::sys_bind_udp;
+#[cfg(target_os = "none")]
 use user_abi::sys_brk;
 #[cfg(target_os = "none")]
 use user_abi::sys_close;
@@ -68,6 +70,8 @@ use user_abi::sys_close;
 use user_abi::sys_create_dir_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_exit;
+#[cfg(target_os = "none")]
+use user_abi::sys_fork;
 #[cfg(target_os = "none")]
 use user_abi::sys_get_random;
 #[cfg(target_os = "none")]
@@ -85,12 +89,16 @@ use user_abi::sys_read;
 #[cfg(target_os = "none")]
 use user_abi::sys_read_dir;
 #[cfg(target_os = "none")]
+use user_abi::sys_recv_from_udp;
+#[cfg(target_os = "none")]
 use user_abi::sys_remove_path_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_rename_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_send_signal;
 #[cfg(target_os = "none")]
+#[cfg(target_os = "none")]
+use user_abi::sys_send_to_udp;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_signal_mask;
 #[cfg(target_os = "none")]
@@ -152,6 +160,11 @@ static TMP_MOUNT: &[u8] = b"/tmp\0";
 /// The bytes written into the note file and read back after the rename.
 #[cfg(target_os = "none")]
 static NOTE_TEXT: &[u8] = b"protofire was here\n";
+
+/// The bytes the datagram exchange sends: the child's payload, the parent's
+/// expectation, and the child's exit status all name the same nine bytes.
+#[cfg(target_os = "none")]
+static DATAGRAM_TEXT: &[u8] = b"protofire";
 
 /// The read's buffer length: longer than the greeting, shorter than a page.
 #[cfg(target_os = "none")]
@@ -458,6 +471,49 @@ pub extern "C" fn _start() -> ! {
     {
         sys_exit(220);
     }
+
+    // The datagram exchange, between this process and a fork of it.  The
+    // parent binds a port and receives; the child binds another, sends one
+    // datagram to the parent's port, and exits with the length it sent as
+    // its status.  A datagram to this machine's own address is delivered
+    // through the kernel's demux — which is what loopback is — so the
+    // exchange proves the bind, the send, the receive, and the port the
+    // sender record names, all from ring 3.
+    let socket = insist(sys_bind_udp(8612));
+    let child = insist(sys_fork());
+    if child == 0 {
+        // The child's side: bind the port the parent's record will name,
+        // send the one datagram, and its status is the length it sent — a
+        // number only a completed send could have answered with.
+        let mine = insist(sys_bind_udp(8613));
+        let sent = insist(sys_send_to_udp(
+            mine,
+            user_abi::pack_address(protocol),
+            DATAGRAM_TEXT,
+            8612,
+        ));
+        sys_exit(sent);
+    }
+    // The parent's side.  The child may not have sent yet, so this receive
+    // may park; the child's send is what wakes it.
+    let mut datagram = [0u8; 16];
+    let mut sender = [0u8; user_abi::UDP_SENDER_RECORD_BYTES];
+    let count = insist(sys_recv_from_udp(socket, &mut datagram, &mut sender));
+    let (source, source_port) = user_abi::sender_record(&sender);
+    if count != DATAGRAM_TEXT.len()
+        || source != protocol
+        || source_port != 8613
+        || &datagram[..DATAGRAM_TEXT.len()] != DATAGRAM_TEXT
+    {
+        sys_exit(221);
+    }
+    // The child's exit is the exchange's other half: a send that completed
+    // is a child that exits with the length it sent.
+    let child_status = insist(sys_wait_process_of(child));
+    if child_status != DATAGRAM_TEXT.len() {
+        sys_exit(222);
+    }
+    insist(sys_close(socket));
 
     // The anchors are done with, and a slot closed is a slot the kernel got
     // back: the exit's release line reports what this program left open,

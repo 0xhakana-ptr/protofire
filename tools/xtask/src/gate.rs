@@ -475,6 +475,21 @@ impl Machine {
                 // original — the peer's proof that a datagram this stack
                 // built arrived with its header intact.
                 ("protofire: udp sent from port 40000, refused by ", false),
+                // The datagram exchange, from ring 3: a bind, a fork, the
+                // child's send, and the receive that answers it.  The send's
+                // and receive's lines are exact — the lengths are the
+                // program's own constant and the sender record is what the
+                // kernel filled — and the bind is a prefix because the
+                // descriptor number is the table's to hand out.
+                ("protofire: process 1 bound port 8612 as descriptor ", false),
+                (
+                    "protofire: process 7 sent 9 byte(s) to 10.0.2.15 port 8612",
+                    true,
+                ),
+                (
+                    "protofire: process 1 received 9 byte(s) from 10.0.2.15 port 8613",
+                    true,
+                ),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
@@ -536,7 +551,7 @@ impl Machine {
                 // the walk's scaffolding — three tables per space, fifteen on
                 // this boot — prints a smaller number and fails here.
                 (
-                    "protofire: address spaces reaped 6, 131072 frame(s) free",
+                    "protofire: address spaces reaped 7, 131072 frame(s) free",
                     true,
                 ),
                 // The invalidation's own account, as a whole line: three sends,
@@ -717,7 +732,7 @@ impl Machine {
                     // and produced 186 page faults in six boots of eight, which
                     // is why the count is here at the end rather than absent.
                     (
-                        "protofire: address spaces reaped 6, 16384 frame(s) free",
+                        "protofire: address spaces reaped 7, 16384 frame(s) free",
                         true,
                     ),
                     // One invalidation, acknowledged, and no wait ran out.
@@ -977,6 +992,19 @@ impl Machine {
                     // the port this stack sent from, out of the original
                     // datagram the error carries.
                     ("protofire: udp sent from port 40000, refused by ", false),
+                    // The exchange, for the reason the x86_64 list states:
+                    // the bind, the fork, the child's send, and the receive
+                    // that answers it, each line naming what only a
+                    // delivered datagram could have carried.
+                    ("protofire: process 1 bound port 8612 as descriptor ", false),
+                    (
+                        "protofire: process 7 sent 9 byte(s) to 10.0.2.15 port 8612",
+                        true,
+                    ),
+                    (
+                        "protofire: process 1 received 9 byte(s) from 10.0.2.15 port 8613",
+                        true,
+                    ),
                     ("protofire: virtio-blk wrote and read back sector ", false),
                     (
                         "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
@@ -1159,6 +1187,21 @@ impl Machine {
                 // original — the peer's proof that a datagram this stack
                 // built arrived with its header intact.
                 ("protofire: udp sent from port 40000, refused by ", false),
+                // The datagram exchange, from ring 3: a bind, a fork, the
+                // child's send, and the receive that answers it.  The send's
+                // and receive's lines are exact — the lengths are the
+                // program's own constant and the sender record is what the
+                // kernel filled — and the bind is a prefix because the
+                // descriptor number is the table's to hand out.
+                ("protofire: process 1 bound port 8612 as descriptor ", false),
+                (
+                    "protofire: process 7 sent 9 byte(s) to 10.0.2.15 port 8612",
+                    true,
+                ),
+                (
+                    "protofire: process 1 received 9 byte(s) from 10.0.2.15 port 8613",
+                    true,
+                ),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 // The completion-message report, which every machine prints
                 // and whose **number is the machine's**: a tree that names no
@@ -1263,7 +1306,7 @@ impl Machine {
                 // Every finished program's address space went back, as on the
                 // other two machines.
                 (
-                    "protofire: address spaces reaped 6, 16384 frame(s) free",
+                    "protofire: address spaces reaped 7, 16384 frame(s) free",
                     true,
                 ),
                 // No invalidation, and that is this machine's fact rather than

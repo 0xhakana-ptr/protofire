@@ -436,6 +436,12 @@ impl VirtioNet {
     /// rather than returned: the bytes after it are not the frame they look
     /// like, and a caller that was handed them would read a checksum it did not
     /// ask for.
+    ///
+    /// The buffer the frame came in is spent by the taking, so this posts
+    /// another: a stack that drains the ring in a loop is the caller this
+    /// driver has now, and a card whose ring empties drops the next frame on
+    /// the wire.  Posting here, where the buffer's death is visible, keeps
+    /// the ring full without every caller remembering to.
     pub fn receive_frame(&self, into: &mut [u8]) -> Result<Option<usize>> {
         self.drain_receive();
         let mut delivered = self.delivered.lock();
@@ -448,6 +454,10 @@ impl VirtioNet {
         let length = frame.len();
         into[..length].copy_from_slice(frame);
         delivered.remove(0);
+        drop(delivered);
+        // One buffer in, one buffer back: the posted count stays what the
+        // boot made it, whatever the caller's loop does.
+        let _ = self.post_receive_buffer();
         Ok(Some(length))
     }
 

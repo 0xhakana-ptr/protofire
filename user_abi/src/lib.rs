@@ -77,6 +77,8 @@ pub const SYS_SEND_SIGNAL: usize = SyscallNumber::SendSignal as usize;
 pub const SYS_WAIT_SIGNAL: usize = SyscallNumber::WaitSignal as usize;
 /// `SpawnProcess`, a new process running the program at a path.
 pub const SYS_SPAWN_PROCESS: usize = SyscallNumber::SpawnProcess as usize;
+/// `Fork`, a copy of the calling process, answered differently on each side.
+pub const SYS_FORK: usize = SyscallNumber::Fork as usize;
 /// `GetPpid`, the caller's parent.
 pub const SYS_GETPPID: usize = SyscallNumber::GetPpid as usize;
 /// `SIGUSR1`, the signal a program may use for anything of its own.
@@ -107,6 +109,12 @@ pub const SYS_GET_RANDOM: usize = SyscallNumber::GetRandom as usize;
 pub use abi::system::SYSTEM_INFO_SCHEDULER;
 /// `NetworkStatus`, what the machine's network is.
 pub const SYS_NETWORK_STATUS: usize = SyscallNumber::NetworkStatus as usize;
+/// `BindUdp`, a datagram socket on a port.
+pub const SYS_BIND_UDP: usize = SyscallNumber::BindUdp as usize;
+/// `SendToUdp`, one datagram out.
+pub const SYS_SEND_TO_UDP: usize = SyscallNumber::SendToUdp as usize;
+/// `RecvFromUdp`, one datagram in.
+pub const SYS_RECV_FROM_UDP: usize = SyscallNumber::RecvFromUdp as usize;
 /// A `NetworkStatus` record is a word of state and fourteen address bytes.
 pub const NETWORK_STATUS_BYTES: usize = core::mem::size_of::<abi::network::NetworkStatusRecord>();
 /// The state word for a card the kernel drives.
@@ -501,6 +509,12 @@ pub fn sys_spawn(path: usize) -> usize {
     syscall6(SYS_SPAWN_PROCESS, path, 0, 0, 0, 0, 0)
 }
 
+/// `fork()`: the child learns zero, the parent learns the child's pid.
+#[cfg(target_os = "none")]
+pub fn sys_fork() -> usize {
+    syscall6(SYS_FORK, 0, 0, 0, 0, 0, 0)
+}
+
 /// `wait_process_of(pid)`: that process's exit status.
 ///
 /// Blocks until the named process has ended; a pid that is not a process of
@@ -592,6 +606,73 @@ pub fn sys_network_status(record: &mut [u8; NETWORK_STATUS_BYTES]) -> usize {
         0,
     )
 }
+
+/// `bind_udp(port)`: the descriptor the datagram calls carry back.
+#[cfg(target_os = "none")]
+pub fn sys_bind_udp(port: usize) -> usize {
+    syscall6(SYS_BIND_UDP, port, 0, 0, 0, 0, 0)
+}
+
+/// `send_to_udp(descriptor, destination, buffer, port)`: the bytes accepted.
+///
+/// The destination is four bytes packed into one word by
+/// [`user_abi::pack_address`](abi::network::pack_address) — the wire's own
+/// byte order — because a syscall argument is a word, and an address that
+/// crossed as a pointer would be an address this program has no reason to
+/// hold.
+#[cfg(target_os = "none")]
+pub fn sys_send_to_udp(descriptor: usize, destination: usize, buffer: &[u8], port: usize) -> usize {
+    syscall6(
+        SYS_SEND_TO_UDP,
+        descriptor,
+        destination,
+        buffer.as_ptr() as usize,
+        buffer.len(),
+        port,
+        0,
+    )
+}
+
+/// `recv_from_udp(descriptor, buffer, sender)`: the bytes received, with
+/// `sender` filled by the sender record the ABI defines.  Blocks until a
+/// datagram arrives.
+#[cfg(target_os = "none")]
+pub fn sys_recv_from_udp(
+    descriptor: usize,
+    buffer: &mut [u8],
+    sender: &mut [u8; UDP_SENDER_RECORD_BYTES],
+) -> usize {
+    syscall6(
+        SYS_RECV_FROM_UDP,
+        descriptor,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        sender.as_mut_ptr() as usize,
+        sender.len(),
+        0,
+    )
+}
+
+/// A `UdpSenderRecord` is two words: the address, then the port.
+pub const UDP_SENDER_RECORD_BYTES: usize = core::mem::size_of::<abi::network::UdpSenderRecord>();
+
+/// A filled `UdpSenderRecord`, read back: where the datagram came from, as
+/// the four bytes the wire carries and the port they name.
+#[cfg(target_os = "none")]
+pub fn sender_record(record: &[u8; UDP_SENDER_RECORD_BYTES]) -> ([u8; 4], usize) {
+    let mut address = [0u8; 8];
+    let mut port = [0u8; 8];
+    address.copy_from_slice(&record[..8]);
+    port.copy_from_slice(&record[8..]);
+    (
+        abi::network::unpack_address(usize::from_le_bytes(address)),
+        usize::from_le_bytes(port),
+    )
+}
+
+/// An IPv4 address packed into one word, the first byte in the highest byte
+/// of the low word: `10.0.2.2` is `0x0A000202`.
+pub use abi::network::pack_address;
 
 /// A filled `NetworkStatus` record, read back: the state word, the card's
 /// hardware address, its protocol address, and the gateway.

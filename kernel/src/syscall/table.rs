@@ -144,6 +144,15 @@ pub(crate) enum Descriptor {
         /// The process that holds it, so its exit can close it.
         owner: u32,
     },
+    /// A bound datagram socket.  The socket lives behind an `Arc`, so a fork's
+    /// copy shares the one bound port and queue the way two descriptors on
+    /// one file share the node — and the port stops being routable when the
+    /// last descriptor goes, which is what the port table's `Weak` reads.
+    UdpSocket {
+        socket: Arc<crate::net::UdpSocket>,
+        /// The process that holds it, so its exit can close it.
+        owner: u32,
+    },
 }
 
 /// A descriptor copied into another process, with that process as its owner.
@@ -186,6 +195,10 @@ impl Descriptor {
             },
             Descriptor::Pipe { end, .. } => Descriptor::Pipe {
                 end: end.clone(),
+                owner,
+            },
+            Descriptor::UdpSocket { socket, .. } => Descriptor::UdpSocket {
+                socket: Arc::clone(socket),
                 owner,
             },
         }
@@ -244,9 +257,9 @@ impl SyscallTable {
     /// The process that holds a descriptor, if one does.
     pub(crate) fn owner_of(&self, descriptor: usize) -> Option<u32> {
         match self.descriptors.get(descriptor)? {
-            Some(Descriptor::File { owner, .. }) | Some(Descriptor::Pipe { owner, .. }) => {
-                Some(*owner)
-            }
+            Some(Descriptor::File { owner, .. })
+            | Some(Descriptor::Pipe { owner, .. })
+            | Some(Descriptor::UdpSocket { owner, .. }) => Some(*owner),
             None => None,
         }
     }
@@ -383,6 +396,20 @@ impl SyscallTable {
         self.insert(Descriptor::Pipe { end, owner })
     }
 
+    /// Register a bound datagram socket and answer its descriptor.
+    ///
+    /// The same table, the same first-free-slot rule, one numbering: a
+    /// socket a caller holds by descriptor 3 and a file a caller holds by
+    /// descriptor 3 cannot both exist, which is the property that makes a
+    /// descriptor a descriptor.
+    pub(crate) fn insert_udp_socket(
+        &mut self,
+        socket: Arc<crate::net::UdpSocket>,
+        owner: u32,
+    ) -> Result<usize> {
+        self.insert(Descriptor::UdpSocket { socket, owner })
+    }
+
     /// The pipe end a descriptor names, cloned, if it names one.
     ///
     /// A clone, because the table owns its entries and a caller that borrowed
@@ -393,6 +420,26 @@ impl SyscallTable {
         self.check_owner(descriptor, caller).ok()?;
         match self.descriptors.get(descriptor)? {
             Some(Descriptor::Pipe { end, .. }) => Some(end.clone()),
+            _ => None,
+        }
+    }
+
+    /// The datagram socket a descriptor names, cloned, if it names one and
+    /// the caller owns it.
+    ///
+    /// A clone, for the same reason [`Self::pipe_end`] is: the table owns its
+    /// entries, and a caller that borrowed one would hold the registry's
+    /// lock across a call that may block.  The `Arc` inside is what makes the
+    /// clone cheap and what keeps the socket's port routable while the
+    /// caller works.
+    pub(crate) fn udp_socket(
+        &self,
+        descriptor: usize,
+        caller: Option<u32>,
+    ) -> Option<Arc<crate::net::UdpSocket>> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::UdpSocket { socket, .. }) => Some(Arc::clone(socket)),
             _ => None,
         }
     }
@@ -413,7 +460,9 @@ impl SyscallTable {
         let mut inherited = alloc::vec::Vec::new();
         for slot in &self.descriptors {
             if let Some(descriptor) = slot
-                && let Descriptor::File { owner, .. } | Descriptor::Pipe { owner, .. } = descriptor
+                && let Descriptor::File { owner, .. }
+                | Descriptor::Pipe { owner, .. }
+                | Descriptor::UdpSocket { owner, .. } = descriptor
                 && *owner == parent
             {
                 inherited.push(descriptor.for_owner(child));
@@ -454,7 +503,8 @@ impl SyscallTable {
         for slot in &mut self.descriptors {
             let owned = match slot {
                 Some(Descriptor::File { owner: held, .. })
-                | Some(Descriptor::Pipe { owner: held, .. }) => *held == owner,
+                | Some(Descriptor::Pipe { owner: held, .. })
+                | Some(Descriptor::UdpSocket { owner: held, .. }) => *held == owner,
                 None => false,
             };
             if owned {
@@ -672,6 +722,18 @@ pub fn pipe_end(descriptor: usize) -> Option<pipe::End> {
 /// program sees does not tell it which slots exist.
 pub fn pipe_end_for(descriptor: usize, caller: u32) -> Option<pipe::End> {
     REGISTRY.lock().as_ref()?.pipe_end(descriptor, Some(caller))
+}
+
+/// The datagram socket a descriptor names, for a caller that must own it.
+///
+/// The ring-3 way in, the same shape [`pipe_end_for`] is: a program naming
+/// another process's descriptor gets `None`, the same answer as a number
+/// that names nothing.
+pub fn udp_socket_for(
+    descriptor: usize,
+    caller: Option<u32>,
+) -> Option<Arc<crate::net::UdpSocket>> {
+    REGISTRY.lock().as_ref()?.udp_socket(descriptor, caller)
 }
 
 pub fn has_registry() -> bool {

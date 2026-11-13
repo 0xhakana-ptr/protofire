@@ -290,6 +290,30 @@ The calls a ring-3 program can make today, and the slots each carries.
   protocol address and the gateway, packed as the wire carries them.  A
   machine with no card answers `NotFound` rather than a record: a record
   implies addresses, and a machine with no card has none.
+- **`BindUdp`** — `a0` the port; `a1`-`a5` reserved zero.  Answers the
+  descriptor the datagram calls carry back.  Port zero is refused: it is the
+  wire's "any port", and this kernel has no port allocator to answer it
+  with.  A port another socket holds answers `AlreadyExists` — a bound port
+  has one owner.  The socket is routable for exactly as long as some
+  descriptor holds it, which is what a fork's copy extends and a process's
+  exit ends.
+- **`SendToUdp`** — `a0` the descriptor; `a1` the destination's address,
+  packed by `pack_address` (`10.0.2.2` is `0x0A000202`); `a2` the buffer;
+  `a3` its length; `a4` the destination's port; `a5` reserved zero.  Answers
+  the bytes accepted, which is all a datagram send ever promises.  A
+  datagram addressed to this machine is delivered through the kernel's own
+  demux — that is what loopback is — and one for another machine leaves
+  through the gateway.
+- **`RecvFromUdp`** — `a0` the descriptor; `a1` the buffer; `a2` its length;
+  `a3` the sender record; `a4` its length, at least
+  `UDP_SENDER_RECORD_SIZE`; `a5` reserved zero.  **Blocks** until a datagram
+  answers, and this is why it has no registry handler: a handler that
+  cannot park does not hold a number whose caller may have to wait, so the
+  trap path serves it, parks the caller on the socket's queue, and the
+  delivery's wake retries the call.  The sender record is two words — the
+  address packed as `SendToUdp` carries it, then the port.  A datagram
+  longer than the buffer is refused with the datagram kept, because a take
+  that discarded the bytes would make the loss permanent.
 
 A handled, unmasked signal is **delivered** rather than queued: the target's
 context is redirected to the handler at its next install, with the record in

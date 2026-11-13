@@ -292,10 +292,18 @@ fn install_registry(namespace: fs::MountTable) {
     );
     table.register(::syscall::SyscallNumber::AbiInfo, crate::syscall::abi_info);
     // The network's first call, and the smallest: what the boot's exercise
-    // installed is what a program asks about here.
+    // installed is what a program asks about here.  The datagram calls
+    // beside it are the two that answer at once — the receive parks, and a
+    // handler that cannot park does not hold its number; its branch is in
+    // the trap path, where the scheduler's parking machinery is.
     table.register(
         ::syscall::SyscallNumber::NetworkStatus,
         crate::syscall::network_status,
+    );
+    table.register(::syscall::SyscallNumber::BindUdp, crate::syscall::bind_udp);
+    table.register(
+        ::syscall::SyscallNumber::SendToUdp,
+        crate::syscall::send_to_udp,
     );
     let served = table.served();
 

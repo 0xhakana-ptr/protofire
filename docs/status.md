@@ -273,6 +273,34 @@ by the line above on every machine, and by `init`'s own read-back, which
 checks the state word and that none of the three addresses is the zeros a
 boot with no card would have left.
 
+**The datagram calls are served, and the receive parks.**  `BindUdp` (58) and
+`SendToUdp` (59) answer through the registry; `RecvFromUdp` (60) is served by
+the trap path, because it parks — the pipe reader's shape, with the same
+re-check under the scheduler's lock.  `init` proves the whole of it with a
+fork: the parent binds port 8612 and receives, the child binds 8613, sends
+one datagram to the parent's port, and exits with the length it sent as its
+status.  Measured on x86_64:
+
+```
+protofire: process 1 bound port 8612 as descriptor 6
+protofire: a program blocks on a datagram socket
+protofire: a datagram for port 8612 woke 1 blocked task(s)
+protofire: process 7 sent 9 byte(s) to 10.0.2.15 port 8612
+protofire: process 1 received 9 byte(s) from 10.0.2.15 port 8613
+```
+
+The datagram never touched the card: its destination is this machine's own
+address, which is what loopback is — the sender's call and the receiver's
+answer meet at the kernel's port table, so the exchange runs identically on
+every machine the gate boots.  The wake line's count is a fact about the
+interleaving, the way a pipe write's is: the parent parked before the child
+sent in this boot, and a child that ran first would have found the datagram
+already in its queue, parked nothing, and printed `woke 0`.  The two lines
+the gate requires exact are the send's and the receive's — the lengths are
+the program's own constant, and the sender record's port came out of the
+datagram the kernel delivered, which only a delivered datagram could have
+carried.
+
 A network stack above this is under construction: `net` carries Ethernet, ARP
 with its cache, IPv4, ICMP and UDP, and `docs/roadmap.md` Level 5 carries the
 steps and what each is proved by.
@@ -347,8 +375,8 @@ be started without deciding it is time.  In particular:
 - **No driver implements `Service`.**  `VirtioBlock` stays on
   `QueuedBlockDevice`, which works and has a caller.
 - **No syscall reaches the table.**  No number names a service; 197 stays
-  unassigned, and the 44 numbers that are served are the memory, filesystem,
-  process, time, descriptor and network-status calls.
+  unassigned, and the 47 numbers that are served are the memory, filesystem,
+  process, time, descriptor and datagram calls.
 - **`apps/service_manager` stays a shell.**  It is the ring-3 half, and it is the
   half that matters when this direction is picked up.
 
@@ -367,7 +395,7 @@ than the list.
 |---|---|---|
 | the memory layer | **done** — `Mmap`, `Munmap`, `Brk`, `ReclaimPages` served | the `program memory call` lines below |
 | a process a program can start | **done** — `SpawnProcess` plus the six signal calls | `process 1 spawned /bin/shell as pid 5` |
-| a way to reach the table from ring 3 | **done** — 44 numbers reachable, the registry holding 26 of them | `syscall table installed, 26 number(s) served` |
+| a way to reach the table from ring 3 | **done** — 47 numbers reachable, the registry holding 28 of them | `syscall table installed, 28 number(s) served` |
 | **a handle that can be given away** | **not started** | `Descriptor` still has two variants, `File` and `Pipe` |
 
 The last one is the one that matters now, and the fourth line of the old list
@@ -547,7 +575,7 @@ side's build rather than drifting until a host test notices.
 
 Verified by the lines above on every machine, by the gate's required lines
 for the spawn, the two waits and the suspend, and by `protofire: syscall
-table installed, 26 number(s) served` with the census at **44 of 195**
+table installed, 28 number(s) served` with the census at **47 of 195**
 reachable from ring 3.
 
 **The clock and the generator.**  `GetTimeOfDay` (70), `GetRandom` (75),
@@ -595,7 +623,7 @@ Two defects the first ring-3 boot of this found:
 
 Verified by the six lines above on every machine, by the gate's required lines
 for all four calls, and by `protofire: syscall table installed, 25 number(s)
-served` with the census at **44 of 195**.
+served` with the census at **47 of 195**.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement

@@ -727,13 +727,13 @@ pub fn exercise_network() -> bool {
     arch::serial::write_u32(card.transmit_queue_size() as u32);
     arch::serial::write_str("\n");
 
-    // The interface, installed for the calls this boot's programs make later.
-    // The addresses are the configuration this boot runs its exchanges with —
-    // the card's own, the one it claims, and the gateway the user-mode
-    // network answers for — and installing them here is what makes the
-    // network calls answer from state rather than from constants a caller
-    // would have to guess.
+    // The card becomes the interface the kernel keeps, and the exchanges
+    // below fill its state: the ARP cache the wire's answers go into, the
+    // addresses the network calls read back.  Installing here — before the
+    // exchanges, not after — is what makes the exercise prove the same state
+    // a program's calls will read.
     crate::net::install(crate::net::Interface::new(
+        card.clone(),
         mac,
         OUR_PROTOCOL,
         GATEWAY_PROTOCOL,
@@ -767,8 +767,7 @@ pub fn exercise_network() -> bool {
     // cache keeps the answer: every later consumer of that address resolves
     // through the table first, and the wire is asked only what it does not
     // hold.  The ping that follows is the first such consumer.
-    let mut cache = net::arp::Cache::new();
-    if !arp_exchange(&card, mac, &mut cache) {
+    if !arp_exchange(&card, mac) {
         return false;
     }
 
@@ -776,14 +775,14 @@ pub fn exercise_network() -> bool {
     // that matches the request's identifier, sequence and data is a packet
     // another machine built — the round trip IPv4 can carry, on a wire that
     // answers without being configured.
-    if !ping_gateway(&card, mac, &cache) {
+    if !ping_gateway(&card, mac) {
         return false;
     }
 
     // The datagram: one UDP send to a port nothing owns, and the refusal
     // that comes back — the peer's proof that a datagram this stack built
     // arrived with its header intact.
-    send_udp_probe(&card, mac, &cache)
+    send_udp_probe(&card, mac)
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the
@@ -794,7 +793,7 @@ pub fn exercise_network() -> bool {
 /// device's receive path.  The evidence is the reply's line, and every field
 /// on it came out of the reply's bytes.
 #[cfg(target_os = "none")]
-fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &mut net::arp::Cache) -> bool {
+fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
     // **Submitted, not completed.**  The request goes out and this boot does
     // not wait for the transmit queue to retire it, because the reply is what
     // it wants and the two travel independently: waiting for the send first
@@ -857,7 +856,7 @@ fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &mut net::arp
                 // wire was asked once, and stays asked once for the rest of
                 // the boot: the ping and the datagram that follow resolve
                 // here first.
-                cache.learn(arp.sender_protocol, arp.sender_hardware);
+                crate::net::arp_learn(arp.sender_protocol, arp.sender_hardware);
                 arch::serial::write_str("protofire: arp cache holds ");
                 write_ipv4(arp.sender_protocol);
                 arch::serial::write_str(" at ");
@@ -865,7 +864,7 @@ fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &mut net::arp
                 arch::serial::write_str(", the wire asked ");
                 arch::serial::write_u32(questions_asked as u32);
                 arch::serial::write_str(" time(s)\n");
-                if cache.hardware_for(GATEWAY_PROTOCOL) == Some(arp.sender_hardware) {
+                if crate::net::arp_hardware_for(GATEWAY_PROTOCOL) == Some(arp.sender_hardware) {
                     arch::serial::write_str("protofire: arp cache answered ");
                     write_ipv4(GATEWAY_PROTOCOL);
                     arch::serial::write_str(" again without the wire\n");
@@ -914,12 +913,12 @@ fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &mut net::arp
 /// the wait for ever on a turn count.  The timer's interrupt is the one that
 /// ends a turn where the card's never comes.
 #[cfg(target_os = "none")]
-fn ping_gateway(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &net::arp::Cache) -> bool {
+fn ping_gateway(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
     // The gateway's hardware address, from the cache: the exchange's answer
     // being reused, which is the reason it was kept.  A boot that reaches the
     // ping without an ARP reply has no address to send to, and the line says
     // that rather than sending to nobody.
-    let Some(gateway_hardware) = cache.hardware_for(GATEWAY_PROTOCOL) else {
+    let Some(gateway_hardware) = crate::net::arp_hardware_for(GATEWAY_PROTOCOL) else {
         arch::serial::write_str("protofire: icmp has no gateway address to ping\n");
         return false;
     };
@@ -1053,8 +1052,8 @@ fn ping_gateway(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &net::arp::Ca
 /// user-mode network, and the port it names on the line came out of the
 /// embedded original, not out of this boot's own constants alone.
 #[cfg(target_os = "none")]
-fn send_udp_probe(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &net::arp::Cache) -> bool {
-    let Some(gateway_hardware) = cache.hardware_for(GATEWAY_PROTOCOL) else {
+fn send_udp_probe(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
+    let Some(gateway_hardware) = crate::net::arp_hardware_for(GATEWAY_PROTOCOL) else {
         arch::serial::write_str("protofire: udp has no gateway address to send to\n");
         return false;
     };

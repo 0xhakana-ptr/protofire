@@ -920,6 +920,69 @@ pub fn abi_info(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Res
 /// two together.
 pub(crate) const FROZEN_SYSCALL_COUNT: usize = 121;
 
+/// Bind a datagram socket to a port, and answer the descriptor.
+///
+/// Arguments: the port, then five reserved slots that must be zero.  Answers
+/// the descriptor, which the datagram calls carry back.  Port zero is
+/// refused: it is the wire's "any port", and this stack has no port
+/// allocator to answer it with — a caller that wants a port names one.  A
+/// port another socket holds answers `AlreadyExists`, which is the wire's
+/// own rule that a bound port has one owner.
+pub fn bind_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let port = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if port == 0 || port > u16::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let socket = crate::net::bind_udp(port as u16)?;
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let descriptor = table.insert_udp_socket(socket, owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Send one datagram from a bound socket to an address and a port.
+///
+/// Arguments: the descriptor; the destination's address, packed by the
+/// ABI's own [`abi::network::pack_address`]; the buffer; its length; the
+/// destination's port; one reserved slot that must be zero.  Answers the
+/// bytes accepted — which is all a datagram send ever promises.  A datagram
+/// for this machine is delivered through the demux rather than the card,
+/// which is what loopback is.
+///
+/// The source port is the socket's own bound port, which is what makes the
+/// sender an answerable peer: the datagram's header names a port the wire
+/// can send an error back to.
+pub fn send_to_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let destination = arguments.context.arg(1);
+    let destination_port = arguments.context.arg(4);
+    validate_zeroed_args(arguments.context, 5)?;
+    if destination > u32::MAX as usize
+        || destination_port == 0
+        || destination_port > u16::MAX as usize
+    {
+        return Err(Error::InvalidArgument);
+    }
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if buffer.len() > crate::net::MAX_DATAGRAM_BYTES {
+        return Err(Error::InvalidArgument);
+    }
+    let socket = table
+        .udp_socket(descriptor, arguments.context.caller_pid)
+        .ok_or(Error::InvalidArgument)?;
+
+    crate::net::send_datagram(
+        abi::network::unpack_address(destination),
+        destination_port as u16,
+        socket.port(),
+        buffer,
+    )?;
+    Ok(Dispatch::complete(buffer.len()))
+}
+
 /// What the network is, on this machine.
 ///
 /// Arguments: the record, its length, then four reserved slots that must be
