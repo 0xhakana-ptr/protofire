@@ -464,6 +464,11 @@ impl Machine {
                     "protofire: arp cache answered 10.0.2.2 again without the wire",
                     true,
                 ),
+                // The ping: the echo reply is a packet QEMU's user-mode
+                // network built, matched against the identifier, sequence and
+                // data the request sent — the round trip IPv4 can carry, on
+                // every machine this gate boots.
+                ("protofire: icmp echo reply from 10.0.2.2, ", false),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
@@ -957,6 +962,10 @@ impl Machine {
                         "protofire: arp cache answered 10.0.2.2 again without the wire",
                         true,
                     ),
+                    // The ping, for the reason the x86_64 list states: the
+                    // reply is a packet another machine built, matched
+                    // against what the request sent.
+                    ("protofire: icmp echo reply from 10.0.2.2, ", false),
                     ("protofire: virtio-blk wrote and read back sector ", false),
                     (
                         "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
@@ -1128,6 +1137,11 @@ impl Machine {
                     "protofire: arp cache answered 10.0.2.2 again without the wire",
                     true,
                 ),
+                // The ping: the echo reply is a packet QEMU's user-mode
+                // network built, matched against the identifier, sequence and
+                // data the request sent — the round trip IPv4 can carry, on
+                // every machine this gate boots.
+                ("protofire: icmp echo reply from 10.0.2.2, ", false),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 // The completion-message report, which every machine prints
                 // and whose **number is the machine's**: a tree that names no

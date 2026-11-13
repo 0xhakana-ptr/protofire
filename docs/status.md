@@ -133,6 +133,7 @@ protofire: virtio-net up, address 52:54:00:12:34:56, receive queue 256, transmit
 protofire: virtio-net arp reply 52:55:0a:00:02:02 holds 10.0.2.2, asked by 52:54:00:12:34:56 for 10.0.2.15
 protofire: arp cache holds 10.0.2.2 at 52:55:0a:00:02:02, the wire asked 1 time(s)
 protofire: arp cache answered 10.0.2.2 again without the wire
+protofire: icmp echo reply from 10.0.2.2, 17 byte(s), waited 1 time(s)
 ```
 
 The driver's reads of the reply are checked against the request it sent — the
@@ -144,6 +145,16 @@ answers from the table — which is why every later consumer of the gateway's
 address resolves there first and the wire's ask count stays at one for the
 whole boot.  The gate requires both lines on all four machines, the second
 exact, because its tail is the one fact a lookup could not vary.
+
+The last line is the ping: an echo request to the gateway, and a reply QEMU's
+user-mode network built.  The boot matches the reply's identifier, sequence
+and echoed bytes against the request it sent, so the line is evidence that a
+packet another machine built parsed through `net`'s IPv4 and ICMP layers —
+checksum verified on the way in, which a packet this boot had written itself
+could never prove.  A frame that is not the reply is skipped rather than
+matched, because the wire carries strangers' frames and a match that could
+not refuse one would claim the first thing that parsed.  The gate requires
+the line on all four machines.
 
 Three defects were found by booting, and all three are recorded where they were
 found because each was invisible to a host test and to every register read-back:

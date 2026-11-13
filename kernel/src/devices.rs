@@ -665,6 +665,17 @@ const GATEWAY_PROTOCOL: [u8; 4] = [10, 0, 2, 2];
 #[cfg(target_os = "none")]
 const OUR_PROTOCOL: [u8; 4] = [10, 0, 2, 15];
 
+/// How long one bounded wait's slice is, and how many of them a probe spends
+/// before it reports its request unanswered.
+///
+/// Two seconds in slices of a twentieth of a second: enough for QEMU's
+/// user-mode network, and short enough that a card that will never answer
+/// ends the boot with a line instead of a checker's timeout.
+#[cfg(target_os = "none")]
+const TURN_US: u64 = 50_000;
+#[cfg(target_os = "none")]
+const TURNS: u32 = 40;
+
 /// Ask the gateway who it is, and print the answer.
 ///
 /// This is the self-test the frame path exists for.  It exercises four things a
@@ -740,19 +751,37 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The ARP exchange asks the wire who holds the gateway's address, and the
+    // cache keeps the answer: every later consumer of that address resolves
+    // through the table first, and the wire is asked only what it does not
+    // hold.  The ping that follows is the first such consumer.
+    let mut cache = net::arp::Cache::new();
+    if !arp_exchange(&card, mac, &mut cache) {
+        return false;
+    }
+
+    // The ping: an echo request to the gateway, and the reply parsed.  A reply
+    // that matches the request's identifier, sequence and data is a packet
+    // another machine built — the round trip IPv4 can carry, on a wire that
+    // answers without being configured.
+    ping_gateway(&card, mac, &cache)
+}
+
+/// Ask the wire who holds the gateway's address, and put the answer in the
+/// cache.
+///
+/// This is the exchange the frame path exists for: the transmit chain with a
+/// real frame in it, the device's send path, the receive chain, and the
+/// device's receive path.  The evidence is the reply's line, and every field
+/// on it came out of the reply's bytes.
+#[cfg(target_os = "none")]
+fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &mut net::arp::Cache) -> bool {
     // **Submitted, not completed.**  The request goes out and this boot does
     // not wait for the transmit queue to retire it, because the reply is what
     // it wants and the two travel independently: waiting for the send first
     // hides the receive wait entirely — measured, the reply was already in the
     // ring by the time the send finished, so the receive loop took zero turns
     // and could not tell a working message from a poll that never needed one.
-    //
-    // The cache stands beside the exchange, because the point of the answer is
-    // that it is not asked for twice: every later consumer of the gateway's
-    // address resolves through this table first, and the wire is asked only
-    // what the table does not hold.  The count is the boot's own, incremented
-    // where the frame actually leaves.
-    let mut cache = net::arp::Cache::new();
     let mut questions_asked = 0;
     let request = net::arp::request(mac, OUR_PROTOCOL, GATEWAY_PROTOCOL);
     questions_asked += 1;
@@ -768,45 +797,7 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
-    // The reply is waited for on the card's own message, with a bound.
-    //
-    // ## Why this is a wait and not a spin
-    //
-    // It was a `spin_loop` poll with a fifty-million-turn bound, which works
-    // and is the reason the exchange passed while the card's message was
-    // counted and never consumed: the trap arrived, incremented a counter, and
-    // changed nothing, because the loop never asked what the counter meant.
-    // A driver that spins is a driver that would run a whole core flat on a
-    // machine whose card is quiet, and the message it was wired for bought
-    // nothing.
-    //
-    // So the loop asks twice per turn: has the driver got a frame, and if not,
-    // stop this core until an interrupt arrives.  The handler wakes the blocked
-    // set, and on this path nothing is blocked — the boot is not a task — so
-    // the wake that ends the wait is the machine's, which is what
-    // `arch::wait_for_a_wakeup` is: `sti; hlt` on one machine, `wfe` on
-    // another, `wfi` with the mask lifted on the third.
-    //
-    // ## Why the bound is a timer and not a turn count
-    //
-    // The first version of this counted turns and stopped after a
-    // `WAIT_LIMIT` of them, which is not a bound at all: `wait_for_a_wakeup`
-    // does not return until an interrupt arrives, so a card that never sent one
-    // left the count at 1 and the boot in the wait for ever.  Measured — with
-    // the card's vector removed, the boot printed nothing more until the
-    // checker's own timeout killed it.
-    //
-    // So the wait is bounded by the machine's own timer: each turn arms it for
-    // a slice, and the interrupt that ends `wait_for_a_wakeup` is then either
-    // the card's — which is the one that matters — or the timer's, which is a
-    // turn spent and nothing more.  The bound is real because something
-    // guaranteed to fire is what ends each wait.
     let mut frame = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
-    // Two seconds in slices of a twentieth of a second: enough for QEMU's
-    // user-mode network, and short enough that a card that will never answer
-    // ends the boot with a line instead of a checker's timeout.
-    const TURN_US: u64 = 50_000;
-    const TURNS: u32 = 40;
     let mut waits = 0;
     // SAFETY: the timer's line is enabled by `tick::bring_up`, which the boot
     // ran before this.
@@ -878,19 +869,7 @@ pub fn exercise_network() -> bool {
                     arch::serial::write_str(" turn(s)\n");
                     return false;
                 }
-                // A deadline **before** the wait, so the wait cannot be
-                // endless: the same interrupt that ends it is the one this
-                // turn is bounded by.
-                if let Some(frequency) = frequency {
-                    // SAFETY: the timer's line is enabled, which is
-                    // `arm_timer`'s contract.
-                    unsafe { arch::arm_timer(frequency, TURN_US) };
-                }
-                // The core stops here until an interrupt arrives; the one that
-                // matters is the card's, and the loop re-checks the ring after
-                // every wake, so a wake from the timer or an IPI costs a turn
-                // and nothing else.
-                arch::wait_for_a_wakeup();
+                wait_one_turn(frequency);
             }
             Err(_) => {
                 arch::serial::write_str("protofire: virtio-net receive buffer too small\n");
@@ -898,6 +877,175 @@ pub fn exercise_network() -> bool {
             }
         }
     }
+}
+
+/// Ping the gateway: one echo request out, and the reply parsed and matched.
+///
+/// The exchange proves the IPv4 layer on a machine, which no host test can:
+/// the request is built through `net`'s own writers, and the reply that comes
+/// back was built by QEMU's user-mode network — a checksum it verified, an
+/// identifier and sequence it carried back, and the data it echoed.  A reply
+/// that does not match all three is somebody else's packet, and the boot says
+/// so instead of claiming the round trip.
+///
+/// ## Why the wait is bounded the way the ARP exchange's is
+///
+/// By the machine's own timer, one slice per turn: `wait_for_a_wakeup` does
+/// not return without an interrupt, so a card that never answers would sit in
+/// the wait for ever on a turn count.  The timer's interrupt is the one that
+/// ends a turn where the card's never comes.
+#[cfg(target_os = "none")]
+fn ping_gateway(card: &virtio_net::VirtioNet, mac: [u8; 6], cache: &net::arp::Cache) -> bool {
+    // The gateway's hardware address, from the cache: the exchange's answer
+    // being reused, which is the reason it was kept.  A boot that reaches the
+    // ping without an ARP reply has no address to send to, and the line says
+    // that rather than sending to nobody.
+    let Some(gateway_hardware) = cache.hardware_for(GATEWAY_PROTOCOL) else {
+        arch::serial::write_str("protofire: icmp has no gateway address to ping\n");
+        return false;
+    };
+
+    const PAYLOAD: &[u8] = b"protofire";
+    const IDENTIFIER: u16 = 1;
+    const SEQUENCE: u16 = 1;
+    let icmp_len = net::icmp::echo_len(PAYLOAD.len());
+    let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + icmp_len;
+
+    // The request: an Ethernet header to the gateway, an IPv4 header to its
+    // address, and the echo message in the payload — each layer written at
+    // the offset the one before it ended at, which is the wire's own order.
+    let mut frame = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
+    net::ethernet::write_header(
+        &mut frame,
+        gateway_hardware,
+        mac,
+        net::ethernet::ETHERTYPE_IPV4,
+    );
+    net::ipv4::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        OUR_PROTOCOL,
+        GATEWAY_PROTOCOL,
+        net::ipv4::PROTOCOL_ICMP,
+        icmp_len,
+    );
+    net::icmp::write_echo_request(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+        IDENTIFIER,
+        SEQUENCE,
+        PAYLOAD,
+    );
+
+    // A buffer posted **before** the request goes out, for the reason the
+    // ARP exchange's was: a real card drops a frame it has nowhere to put,
+    // and the reply is the whole point of the send.
+    if card.post_receive_buffer().is_err() {
+        arch::serial::write_str("protofire: icmp could not post a receive buffer\n");
+        return false;
+    }
+    if let Err(error) = card.submit_frame(&frame[..packet_len]) {
+        arch::serial::write_str("protofire: icmp could not send the echo request: ");
+        arch::serial::write_str(match error {
+            abi::Error::TimedOut => "timed out",
+            abi::Error::Busy => "busy",
+            abi::Error::DeviceError => "device error",
+            _ => "error",
+        });
+        arch::serial::write_str("\n");
+        return false;
+    }
+
+    let mut waits = 0;
+    // SAFETY: the timer's line is enabled by `tick::bring_up`, which the boot
+    // ran before this.
+    let frequency = unsafe { arch::timer_frequency() };
+    loop {
+        match card.receive_frame(&mut frame) {
+            Ok(Some(length)) => {
+                // The buffer the frame came in is spent; the next one to
+                // arrive needs another, which is what re-posting here is for.
+                let _ = card.post_receive_buffer();
+                let frame = &frame[..length];
+                // Demux by what the frame says, not by what this loop wants:
+                // a frame that is not an IPv4 echo reply is skipped, because
+                // the wire carries strangers' frames too and a match that
+                // could not refuse one would claim the first thing that
+                // parsed.
+                if netdev::ethertype(frame) != Some(net::ethernet::ETHERTYPE_IPV4) {
+                    continue;
+                }
+                let Some(packet) = net::ipv4::parse(&frame[netdev::ETHERNET_HEADER_LEN..]) else {
+                    continue;
+                };
+                if packet.header.protocol != net::ipv4::PROTOCOL_ICMP {
+                    continue;
+                }
+                let at = netdev::ETHERNET_HEADER_LEN + packet.payload_at;
+                let icmp = &frame[at..at + packet.payload_len];
+                let Some(echo) = net::icmp::parse(icmp) else {
+                    continue;
+                };
+                if echo.kind != net::icmp::ECHO_REPLY
+                    || echo.identifier != IDENTIFIER
+                    || echo.sequence != SEQUENCE
+                {
+                    continue;
+                }
+                if icmp[net::icmp::HEADER_LEN..] != *PAYLOAD {
+                    continue;
+                }
+                // The line is the evidence, and every number on it came out
+                // of the reply: the address it names, the length it echoed,
+                // and the wait that says how the frame got here.
+                arch::serial::write_str("protofire: icmp echo reply from ");
+                write_ipv4(packet.header.source);
+                arch::serial::write_str(", ");
+                arch::serial::write_u32(packet.payload_len as u32);
+                arch::serial::write_str(" byte(s), waited ");
+                arch::serial::write_u32(waits);
+                arch::serial::write_str(" time(s)\n");
+                return true;
+            }
+            Ok(None) => {
+                waits += 1;
+                if waits > TURNS {
+                    arch::serial::write_str("protofire: icmp echo request went unanswered after ");
+                    arch::serial::write_u32(waits);
+                    arch::serial::write_str(" turn(s)\n");
+                    return false;
+                }
+                wait_one_turn(frequency);
+            }
+            Err(_) => {
+                arch::serial::write_str("protofire: icmp receive buffer too small\n");
+                return false;
+            }
+        }
+    }
+}
+
+/// Spend one bounded turn waiting for a frame: arm the machine's timer for a
+/// slice, then stop this core until an interrupt ends it.
+///
+/// ## Why the wait is bounded this way at all
+///
+/// The first version of the ARP exchange counted turns and stopped after a
+/// `WAIT_LIMIT` of them, which is not a bound at all: `wait_for_a_wakeup`
+/// does not return until an interrupt arrives, so a card that never sent one
+/// left the count at 1 and the boot in the wait for ever — measured, the
+/// checker's own timeout was what ended that boot.  So the bound is the
+/// machine's timer: each turn arms it for a slice, and the interrupt that
+/// ends the wait is either the card's — which is the one that matters — or
+/// the timer's, which is a turn spent and nothing more.  The loop re-checks
+/// the ring after every wake, so a wake from the timer or an IPI costs a
+/// turn and nothing else.
+#[cfg(target_os = "none")]
+fn wait_one_turn(frequency: Option<u64>) {
+    if let Some(frequency) = frequency {
+        // SAFETY: the timer's line is enabled, which is `arm_timer`'s
+        // contract; the boot brought the timer up before this ran.
+        unsafe { arch::arm_timer(frequency, TURN_US) };
+    }
+    arch::wait_for_a_wakeup();
 }
 
 /// Write six bytes as an address a reader recognizes.
