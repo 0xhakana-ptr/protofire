@@ -134,6 +134,7 @@ protofire: virtio-net arp reply 52:55:0a:00:02:02 holds 10.0.2.2, asked by 52:54
 protofire: arp cache holds 10.0.2.2 at 52:55:0a:00:02:02, the wire asked 1 time(s)
 protofire: arp cache answered 10.0.2.2 again without the wire
 protofire: icmp echo reply from 10.0.2.2, 17 byte(s), waited 1 time(s)
+protofire: udp sent from port 40000, refused by 127.0.0.1: port unreachable, waited 1 time(s)
 ```
 
 The driver's reads of the reply are checked against the request it sent — the
@@ -155,6 +156,17 @@ could never prove.  A frame that is not the reply is skipped rather than
 matched, because the wire carries strangers' frames and a match that could
 not refuse one would claim the first thing that parsed.  The gate requires
 the line on all four machines.
+
+The last line is the datagram: one UDP send to a port on the gateway nothing
+owns, and the refusal that comes back.  A port nothing listens on is the one
+datagram a peer is guaranteed to answer — ICMP's port unreachable, carrying
+the original datagram's first bytes.  The boot parses the embedded original
+and reads its UDP header, so the port on the line came out of what the peer
+echoed, not out of this boot's own constants: a datagram this stack built
+was received, its header parsed, and its source port named back.  The
+refusal's source address is `127.0.0.1`, which is the gateway's host side —
+QEMU's user-mode network speaking as the host it proxies to.  The gate
+requires the line on all four machines.
 
 Three defects were found by booting, and all three are recorded where they were
 found because each was invisible to a host test and to every register read-back:

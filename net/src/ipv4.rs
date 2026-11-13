@@ -78,14 +78,41 @@ const TIME_TO_LIVE: u8 = 64;
 /// word.  The checksum of a message with its own checksum included is zero,
 /// which is how a reader verifies without recomputing what the writer wrote.
 pub fn checksum(bytes: &[u8]) -> u16 {
+    checksum_of(&[bytes])
+}
+
+/// The Internet checksum over pieces summed as one message.
+///
+/// UDP's checksum runs over a pseudo-header and the datagram after it, which
+/// live in different buffers — and summing them separately is not the same as
+/// summing their concatenation when a piece's length is odd, because the
+/// lone byte at a boundary is the high half of a word that spans the two.
+/// So the words run across the pieces here, in order, with one padding rule
+/// at the very end.
+pub fn checksum_of(slices: &[&[u8]]) -> u16 {
     let mut sum = 0_u32;
-    let mut index = 0;
-    while index + 1 < bytes.len() {
-        sum += u16::from_be_bytes([bytes[index], bytes[index + 1]]) as u32;
-        index += 2;
+    let mut high: Option<u8> = None;
+    for slice in slices {
+        let mut index = 0;
+        // A lone byte left over from the piece before pairs with this one's
+        // first byte, which is the word that spans the boundary.
+        if let Some(pending) = high
+            && let Some(&byte) = slice.first()
+        {
+            sum += u16::from_be_bytes([pending, byte]) as u32;
+            high = None;
+            index = 1;
+        }
+        while index + 1 < slice.len() {
+            sum += u16::from_be_bytes([slice[index], slice[index + 1]]) as u32;
+            index += 2;
+        }
+        if index < slice.len() {
+            high = Some(slice[index]);
+        }
     }
-    if index < bytes.len() {
-        sum += (bytes[index] as u32) << 8;
+    if let Some(pending) = high {
+        sum += (pending as u32) << 8;
     }
     while sum >> 16 != 0 {
         sum = (sum & 0xFFFF) + (sum >> 16);
@@ -218,6 +245,7 @@ mod tests {
     use super::PROTOCOL_UDP;
     use super::Packet;
     use super::checksum;
+    use super::checksum_of;
     use super::is_for;
     use super::parse;
     use super::write_header;
@@ -305,6 +333,26 @@ mod tests {
             checksum(&padded),
             "the pad changes nothing"
         );
+    }
+
+    /// Pieces summed as one message give the same answer as their
+    /// concatenation, at every split point.
+    ///
+    /// The odd split is the one that matters: a lone byte at the boundary is
+    /// the high half of a word that spans the two pieces, and a caller that
+    /// summed them separately would lose that word's pairing.  UDP's
+    /// checksum is the caller — its pseudo-header and its datagram are
+    /// summed across exactly this kind of boundary.
+    #[test]
+    fn pieces_sum_as_one_message_at_every_split() {
+        let message = &ECHO_REQUEST[..];
+        for split in 0..=message.len() {
+            assert_eq!(
+                checksum_of(&[&message[..split], &message[split..]]),
+                checksum(message),
+                "the split at {split} changed the sum"
+            );
+        }
     }
 
     /// The writer produces the bytes the wire carries, payload excluded.

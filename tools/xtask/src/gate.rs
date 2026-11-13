@@ -469,6 +469,11 @@ impl Machine {
                 // data the request sent — the round trip IPv4 can carry, on
                 // every machine this gate boots.
                 ("protofire: icmp echo reply from 10.0.2.2, ", false),
+                // The datagram: one UDP send to a port nothing owns, and
+                // the port-unreachable refusal that comes back carrying the
+                // original — the peer's proof that a datagram this stack
+                // built arrived with its header intact.
+                ("protofire: udp sent from port 40000, refused by ", false),
                 (
                     "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                     true,
@@ -966,6 +971,10 @@ impl Machine {
                     // reply is a packet another machine built, matched
                     // against what the request sent.
                     ("protofire: icmp echo reply from 10.0.2.2, ", false),
+                    // The datagram, for the same reason: the refusal names
+                    // the port this stack sent from, out of the original
+                    // datagram the error carries.
+                    ("protofire: udp sent from port 40000, refused by ", false),
                     ("protofire: virtio-blk wrote and read back sector ", false),
                     (
                         "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
@@ -1142,6 +1151,11 @@ impl Machine {
                 // data the request sent — the round trip IPv4 can carry, on
                 // every machine this gate boots.
                 ("protofire: icmp echo reply from 10.0.2.2, ", false),
+                // The datagram: one UDP send to a port nothing owns, and
+                // the port-unreachable refusal that comes back carrying the
+                // original — the peer's proof that a datagram this stack
+                // built arrived with its header intact.
+                ("protofire: udp sent from port 40000, refused by ", false),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 // The completion-message report, which every machine prints
                 // and whose **number is the machine's**: a tree that names no

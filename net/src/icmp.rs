@@ -43,6 +43,23 @@ pub const ECHO_REQUEST: u8 = 8;
 /// `type` value 0: an echo reply, the answer to one.
 pub const ECHO_REPLY: u8 = 0;
 
+/// `type` value 3: destination unreachable — the datagram did not get where
+/// it was going, and the message says why in its code.
+pub const DESTINATION_UNREACHABLE: u8 = 3;
+
+/// `code` value 3 under [`DESTINATION_UNREACHABLE`]: the port nothing owns.
+///
+/// This is the one error a UDP sender is guaranteed to be able to provoke —
+/// send a datagram to a port nothing listens on, and the peer answers with
+/// it — which is what makes it the proof a datagram left and a peer parsed
+/// it.
+pub const PORT_UNREACHABLE: u8 = 3;
+
+/// Where an error message holds the original datagram it is about: after the
+/// eight bytes every ICMP message begins with, four of which an error leaves
+/// unused.
+pub const ORIGINAL_DATAGRAM_AT: usize = 8;
+
 /// How long an echo message is, header and data.
 pub const fn echo_len(data_len: usize) -> usize {
     HEADER_LEN + data_len
@@ -114,9 +131,12 @@ pub fn parse(message: &[u8]) -> Option<Echo> {
 
 #[cfg(test)]
 mod tests {
+    use super::DESTINATION_UNREACHABLE;
     use super::ECHO_REPLY;
     use super::ECHO_REQUEST;
     use super::HEADER_LEN;
+    use super::ORIGINAL_DATAGRAM_AT;
+    use super::PORT_UNREACHABLE;
     use super::echo_len;
     use super::parse;
     use super::write_echo_request;
@@ -180,6 +200,39 @@ mod tests {
         assert_eq!(echo_len(9), 17);
         assert_eq!(REQUEST.len(), echo_len(9));
         assert_eq!(REPLY.len(), echo_len(9));
+    }
+
+    /// A destination-unreachable message about the datagram `udp.rs`'s
+    /// vector holds, exactly as a peer writes it: type 3, code 3, four
+    /// unused bytes, and the original datagram — its IPv4 header and its
+    /// UDP header — after them.
+    ///
+    /// The checksum is `0x32f0` by hand over the message and its embedded
+    /// original together; the embedded header carries its own checksum,
+    /// which this layer does not verify — the error's message is what is
+    /// read here, and the embedded bytes are what the caller slices.
+    const UNREACHABLE: [u8; 36] = [
+        0x03, 0x03, 0x32, 0xf0, // type 3, code 3, checksum
+        0x00, 0x00, 0x00, 0x00, // unused
+        // The original datagram: an IPv4 header to this stack, then the
+        // refused datagram's own header — source port 40000.
+        0x45, 0x00, 0x00, 0x25, 0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x62, 0xb8, 0x0a, 0x00, 0x02,
+        0x02, 0x0a, 0x00, 0x02, 0x0f, 0x9c, 0x40, 0x21, 0xa4, 0x00, 0x11, 0x0c, 0x17,
+    ];
+
+    /// An error message parses with its own kind and code, and the original
+    /// datagram sits where every error message holds it.
+    #[test]
+    fn an_unreachable_names_the_datagram_it_is_about() {
+        let message = parse(&UNREACHABLE).expect("an error message");
+        assert_eq!(message.kind, DESTINATION_UNREACHABLE);
+        assert_eq!(message.code, PORT_UNREACHABLE);
+
+        // The embedded UDP header's source port is what tells the caller
+        // which of its datagrams was refused; the slice is the caller's to
+        // read, and the port is the one `udp.rs`'s vector was written with.
+        let original = &UNREACHABLE[ORIGINAL_DATAGRAM_AT + 20..ORIGINAL_DATAGRAM_AT + 22];
+        assert_eq!(original, &[0x9c, 0x40], "source port 40000, big-endian");
     }
 
     /// A corrupted byte refuses the message: the checksum is over the data

@@ -16,16 +16,17 @@
 //!
 //! ## What is here, today
 //!
-//! The Ethernet frame, ARP, IPv4 and ICMP: the layout of each, a request this
-//! crate builds and a reply it reads.  ARP is the smallest exchange that
+//! The Ethernet frame, ARP, IPv4, ICMP and UDP: the layout of each, a request
+//! this crate builds and a reply it reads.  ARP is the smallest exchange that
 //! proves a card in both directions, IPv4 is the packet the rest of the stack
-//! rides in with the one checksum three protocols share, and ICMP is the
-//! round trip that proves a packet built by another machine parses.
+//! rides in with the one checksum three protocols share, ICMP is the round
+//! trip that proves a packet built by another machine parses, and UDP is the
+//! datagram whose refusal a peer answers with the datagram's own header.
 //!
 //! ## What is not here yet
 //!
-//! UDP and TCP, in that order.  `docs/roadmap.md` carries the eight steps and
-//! what each is proved by.
+//! TCP.  `docs/roadmap.md` carries the eight steps and what each is proved
+//! by.
 
 #![no_std]
 
@@ -33,3 +34,4 @@ pub mod arp;
 pub mod ethernet;
 pub mod icmp;
 pub mod ipv4;
+pub mod udp;
