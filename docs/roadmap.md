@@ -182,8 +182,15 @@ rather than the total alone.
 
 ## The order
 
-Each level depends on the one above it.  Nothing here is scheduled; the order is
-what the dependencies say, not a plan of work.
+Most levels depend on the one above them, and where that is true the dependency
+is the reason for the position.  Where it is not true, the position is a
+choice, and this file says so rather than pretending otherwise.
+
+**Levels 5 and 6 do not depend on each other.**  `net`'s manifest names no
+crate and nothing in `fs/src/` mentions it; a filesystem needs `block`, and a
+network stack needs `virtio_net`.  The network is first because it is smaller
+and because the four layers it starts with are proved on the host without a
+syscall, not because a filesystem would be wrong to come first.
 
 ### Level 1 — memory — **done**
 
@@ -403,33 +410,67 @@ Ten filesystems the old tree read and this one does not: `ext4`, `fat32`,
 `exfat`, `ntfs`, `btrfs`, `xfs`, `f2fs`, `erofs`, `squashfs`, and the old
 `fuse` client.
 
+**The goal is that all ten can write, not that they can read.**  That is what
+the previous kernel's roadmap said it was working toward — "the read-only
+drivers move toward read-write, matching ext4 / F2FS / XFS / exFAT / FAT32" —
+and its code shows how far it got: `ext4` has 115 write operations and a
+journal, `f2fs` 48, `xfs` 21, while `fat32`, `exfat`, `ntfs`, `btrfs`,
+`squashfs`, `erofs` and `iso9660` all answered `PermissionDenied`.  Two RFCs
+were written toward the rest, one for ISO 9660 and one for NTFS.
+
+So this level has three batches, by how much of a write path exists to copy:
+
+| batch | formats | what the old tree had |
+|---|---|---|
+| **already writable** | `ext4`, `f2fs`, `xfs` | a full write path and, for `ext4`, a journal |
+| **designed, partly built** | `iso9660`, `ntfs` | RFC 0011 had taken an ISO 9660 file's data, length, space and record; RFC 0012 had fixed a fixture and found five format bugs in the NTFS reader |
+| **read-only** | `fat32`, `exfat`, `btrfs`, `squashfs`, `erofs` | `PermissionDenied` everywhere |
+
+`ReadOnlyFileSystem` in `fs/src/filesystem.rs` is the blanket impl a read-only
+format gets for free: it supplies every mutation as `PermissionDenied`, so a
+view has nowhere to declare one.  It is the right starting shape for the third
+batch — and the wrong final one, which is why each of them graduates to
+`FileSystem` when its write path lands.
+
 This is one level and not ten, because they share one thing worth deciding
-once: **a filesystem in this tree is a crate that implements `VNode` and
-`FileSystem`** (`fs/src/filesystem.rs`, `fs/src/vnode.rs`) and brings its own
-on-disk parser.  The first one built sets the pattern — how a crate's tests get
-a real image, how a parse error becomes `abi::Error`, how the mount table names
-it — and the rest follow it.
+once: **a filesystem in this tree is a module inside `fs` that implements
+`VNode` and `FileSystem`** (`fs/src/filesystem.rs`, `fs/src/vnode.rs`) and
+brings its own on-disk parser.  `fs/src/pyrofs/` is the shape — 18 files, its
+own `format_io`, `superblock`, `dir_ops`, `file_io`, `tests` — and
+`fs/src/iso9660/` is the smaller one a read-only format needs.
 
 Ordered by what each proves:
 
-1. **`ext4`** first.  It is the format most likely to be on a disk a person
-   actually has, and its extent tree is the hardest arithmetic in the set, so it
-   is the one whose pattern is worth having first.
-2. **`fat32`**, then **`exfat`**.  Simpler, and together they are what a
-   removable medium is.
-3. **`squashfs`** and **`erofs`**, the two read-only compressed formats.  Both
-   are read-only by construction, which makes them the cheapest to finish and
-   the most useful for an image.
-4. **`ntfs`** and **`xfs`**, read-only.  Read-write for either is a project of
-   its own and neither is promised here.
-5. **`btrfs`** and **`f2fs`**, read-only.  Same reason.
-6. **A FUSE client** last, because it is not a format: it is a protocol, and it
+1. **`ext4`** first, and the reason is the opposite of "it is easiest".  It is
+   the only format in the old tree with a complete write path *and* a journal,
+   so it is the template every write path after it is read against.  Reading a
+   format can be attempted in any order; writing one needs a worked example, and
+   this is the only one with crash consistency in it.
+2. **`f2fs`**, then **`xfs`** — the other two that already wrote.  Together with
+   `ext4` they are batch one, and each proves the template against a second and
+   third set of on-disk structures.
+3. **`fat32`**, then **`exfat`**.  Simple enough that the write path is
+   arithmetic rather than a journal, and together they are what a removable
+   medium is.
+4. **`iso9660`** — already in this tree as a reader; RFC 0011's write path
+   comes next, in the order it took: a file's data, then its length, then space
+   from the allocator, then its record, then directories, then rename.
+5. **`ntfs`** — RFC 0012's fixture is the first thing, because it is what found
+   five reader bugs before a single write existed.
+6. **`squashfs`** and **`erofs`** — the two compressed formats, and the last to
+   be written, because a write has to update the compression as well as the
+   allocation.
+7. **`btrfs`** — read-write last of the ten: a copy-on-write tree with checksums
+   at every level is a project of its own, and doing it before the nine simpler
+   write paths exist would mean discovering its shape twice.
+8. **A FUSE client** last, because it is not a format: it is a protocol, and it
    needs a program on the other side.
 
-What this level does not promise: **write support** for anything but the
-formats this tree already writes (PyroFS, tmpfs), and **compression codecs** as
-a shared abstraction — `squashfs`'s and `erofs`'s both belong to their crates
-until a third user appears.
+What this level does not promise: **compression codecs as a shared
+abstraction** — `squashfs`'s and `erofs`'s both belong to their crates until a
+third user appears; and **a journal for the formats that need none**.  `ext4`'s
+journal is the template because it is the hardest case, not because every
+filesystem has to grow one.
 
 ### Level 7 — the drivers
 

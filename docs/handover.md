@@ -49,14 +49,19 @@ several sessions.
 
 ## What is open
 
-The road from here, in dependency order.  Levels 6 onward are a **rewrite**, not
-a migration: the two trees do not share an architecture, so nothing is carried
-across unchanged.  `docs/roadmap.md` carries each level.
+The road from here.  Levels 6 onward are a **rewrite**, not a migration: the two
+trees do not share an architecture, so nothing is carried across unchanged.
+`docs/roadmap.md` carries each level.
+
+Levels 5 and 6 do **not** depend on each other — `net` names no crate and
+nothing in `fs/src/` mentions it.  The network is first because it is smaller
+and because its first four layers are proved on the host without a syscall, not
+because a filesystem would be wrong to come first.
 
 | level | subject | why here |
 |---|---|---|
 | **5** | the network, eight steps | the ABI's largest unserved family, and the only one whose first four steps need no kernel change |
-| **6** | ten filesystems | the largest gap; a format is proveable against a real image |
+| **6** | ten filesystems, **all ten read-write** | the largest gap; a format is proveable against a real image, and `ext4` is first because it is the only complete write path with a journal in the old tree |
 | **7** | the drivers | NVMe, AHCI, the framebuffer console, USB, virtio-gpu/input |
 | **8** | the ~20 mechanisms the numbers name | shared memory, futex, timers, epoll, message queues, identity, introspection |
 | **9** | the programs | a shell a person can use, and `service_manager` with a body |
