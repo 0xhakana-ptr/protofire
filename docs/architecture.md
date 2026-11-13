@@ -69,13 +69,16 @@ cost the whole tree pays.
 by the heap, by an architecture crate and by the kernel.  `profiler` is operation
 counters whose whole design is that they cost nothing when off, a claim checked
 by a test rather than stated.  `unicode` is character conversion and
-normalisation; `rights` is two constants four layers name; `audit` is the record
+normalisation; `rights` is two constants nothing names yet; `audit` is the record
 and its ring buffer.
 
 `rights` deserves a sentence because sixteen lines is an odd size for a crate.
-The flags are read by the filesystem, by device descriptors, by the audit log and
-by the handle table.  As a module under any one of them, the other three would
-have to depend on it.  As a crate at layer 0, they all depend on a leaf.
+The flags are what a handle will carry when handles carry rights — the
+filesystem's check on a read, the device descriptor's declaration, the audit
+log's own open, the handle table's stored set — and no layer reads them yet.
+The definition sits at layer 0 so that the day one does is a dependency on a
+leaf rather than a convention to copy: a value several layers will name cannot
+be a private detail of any one of them.
 
 `user_abi` is here for a reason its name states: it is the program's half of the
 ABI — the numbering under call-site names, one call gate per machine, and the

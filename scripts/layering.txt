@@ -34,6 +34,12 @@
 # what lets the half that persists to a file move with the filesystem instead.
 0 audit
 0 unicode
+
+# `rights` is the flags a handle will carry when handles carry rights, defined
+# at the bottom so that the layers which will check them name one definition.
+# No layer names them yet; the row is a reserved plot like `sound`'s and
+# `virt`'s, and the change that gives the flags a consumer is the one that
+# argues it here.
 0 rights
 
 # ── Layer 1: the wire format ────────────────────────────────────────────────
