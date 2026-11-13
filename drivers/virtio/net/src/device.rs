@@ -560,7 +560,7 @@ impl VirtioNet {
 
 /// The card, as the protocol stack above it sees one.
 ///
-/// The trait is `link`'s, and this is the only place a card's own vocabulary
+/// The trait is `netdev`'s, and this is the only place a card's own vocabulary
 /// meets it.  Three of the four methods are the driver's own under a name the
 /// stack knows: the address the device published, a frame on the transmit
 /// queue, the next frame off the receive queue.  The fourth is new, and it is
@@ -571,7 +571,7 @@ impl VirtioNet {
 /// answers a [`Ticket`], because its caller wants to know when the transmit
 /// queue retired the request; a stack does not.  So this blocks until the
 /// device has taken the frame, and reports the failure the ticket would have.
-impl link::LinkDevice for VirtioNet {
+impl netdev::LinkDevice for VirtioNet {
     fn hardware_address(&self) -> [u8; 6] {
         self.mac()
     }

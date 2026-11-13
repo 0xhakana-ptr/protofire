@@ -8,12 +8,12 @@ license.workspace = true
 # The virtio network card: two queues, the address the device publishes, and the
 # frame path in both directions.
 #
-# It names `virtio_core` for the queue and the transport, `link` for the trait a
+# It names `virtio_core` for the queue and the transport, `netdev` for the trait a
 # card implements, and `abi` for the errors it answers with.  It names no
 # protocol: ARP used to be here and left, because a driver that knows what an
 # ARP is cannot be replaced by a second driver without copying the protocol.
 [dependencies]
 abi.workspace = true
-link = { path = "../../../devices/link" }
+netdev = { path = "../../../devices/netdev" }
 virtio_core = { path = "../core" }
 spin.workspace = true

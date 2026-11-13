@@ -11,7 +11,7 @@ members = [
     "devices/block",
     "fs",
     "kernel",
-    "devices/link",
+    "devices/netdev",
     "memory",
     "net",
     "power",

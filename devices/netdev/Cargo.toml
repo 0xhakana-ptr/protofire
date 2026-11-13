@@ -1,5 +1,5 @@
 [package]
-name = "link"
+name = "netdev"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

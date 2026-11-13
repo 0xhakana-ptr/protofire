@@ -32,7 +32,7 @@ use crate::ethernet::ETHERTYPE_IPV4;
 use crate::ethernet::get_u16;
 use crate::ethernet::put_u16;
 use crate::ethernet::write_header;
-use link::ETHERNET_HEADER_LEN;
+use netdev::ETHERNET_HEADER_LEN;
 
 /// The ARP message's length, for an Ethernet and IPv4 pair.
 pub const ARP_LEN: usize = 28;
@@ -148,7 +148,7 @@ mod tests {
     use super::parse;
     use super::request;
     use crate::ethernet::BROADCAST;
-    use link::ETHERNET_HEADER_LEN;
+    use netdev::ETHERNET_HEADER_LEN;
 
     const CARD: [u8; 6] = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];
     const US: [u8; 4] = [10, 0, 2, 15];

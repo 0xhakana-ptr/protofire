@@ -15,14 +15,14 @@
 //! `0x01000000` instead of `10.0.0.1`, and a network that answers nothing looks
 //! exactly like a card that does not send.
 //!
-//! ## Why the header length lives in `link`
+//! ## Why the header length lives in `netdev`
 //!
-//! [`link::ETHERNET_HEADER_LEN`] is there because a receive buffer is sized
+//! [`netdev::ETHERNET_HEADER_LEN`] is there because a receive buffer is sized
 //! from it and because the ethertype reader is the one function both crates
 //! use. What is here is the frame's own vocabulary: the type numbers, the
 //! broadcast address, and the two writers a protocol needs.
 
-use link::ETHERNET_HEADER_LEN;
+use netdev::ETHERNET_HEADER_LEN;
 
 /// `0x0806`: ARP.
 pub const ETHERTYPE_ARP: u16 = 0x0806;
@@ -112,7 +112,7 @@ mod tests {
     use super::parse_header;
     use super::put_u16;
     use super::write_header;
-    use link::ETHERNET_HEADER_LEN;
+    use netdev::ETHERNET_HEADER_LEN;
 
     const CARD: [u8; 6] = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];
     const PEER: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];

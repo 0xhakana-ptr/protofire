@@ -54,7 +54,7 @@ init                  493    0 # exempt: entry symbols, a panic handler and an e
 ipc                   344    9
 irq                   463   12
 kernel              18930  134 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
-link                  137    3
+netdev                  137    3
 memory               2289   36
 net                   498   11
 paging                779   13

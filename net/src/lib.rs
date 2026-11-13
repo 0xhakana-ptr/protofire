@@ -5,7 +5,7 @@
 //! ## What this crate is, and what it is not
 //!
 //! It is the layer that reads and writes the protocols a network runs on.  It
-//! is not a driver: it sends and receives frames through [`link::LinkDevice`]
+//! is not a driver: it sends and receives frames through [`netdev::LinkDevice`]
 //! and never names a card, which is why a second network device is a second
 //! implementation of that trait and not a second stack.
 //!

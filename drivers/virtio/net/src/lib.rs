@@ -21,8 +21,8 @@
 //! [`VirtioNet::submit_frame`] puts a driver-readable header and a frame on the
 //! transmit queue, [`VirtioNet::post_receive_buffer`] posts a device-writable
 //! buffer that [`VirtioNet::receive_frame`] drains, and
-//! [`link::LinkDevice::maximum_frame_len`] says how large a receive buffer has
-//! to be.
+//! [`netdev::LinkDevice::maximum_frame_len`] says how large a receive buffer
+//! has to be.
 //!
 //! ## What is not here, and why it left
 //!
@@ -30,9 +30,9 @@
 //! and ARP layouts beside them, which made this a driver that knew what an ARP
 //! is: a second network card would have had to copy the protocol to compile,
 //! and the protocol would then exist twice.  It lives in `net` now, above the
-//! [`link::LinkDevice`] trait this crate implements — the same division `block`
-//! makes for disks, where `virtio_block` implements `QueuedBlockDevice` and
-//! `fs` reads through it.
+//! [`netdev::LinkDevice`] trait this crate implements — the same division
+//! `block` makes for disks, where `virtio_block` implements `QueuedBlockDevice`
+//! and `fs` reads through it.
 //!
 //! ## The specification
 //!
