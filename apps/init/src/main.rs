@@ -49,6 +49,8 @@ use userland::OPEN_WRITE_CREATE;
 #[cfg(target_os = "none")]
 use userland::PROT_READ_WRITE;
 #[cfg(target_os = "none")]
+use userland::SIGUSR1;
+#[cfg(target_os = "none")]
 use userland::insist;
 #[cfg(target_os = "none")]
 use userland::is_error;
@@ -79,9 +81,14 @@ use userland::sys_spawn;
 #[cfg(target_os = "none")]
 use userland::sys_stat;
 #[cfg(target_os = "none")]
+#[cfg(target_os = "none")]
 use userland::sys_stat_at;
 #[cfg(target_os = "none")]
+#[cfg(target_os = "none")]
 use userland::sys_wait_process_of;
+#[cfg(target_os = "none")]
+#[cfg(target_os = "none")]
+use userland::sys_wait_signal;
 #[cfg(target_os = "none")]
 use userland::sys_write;
 
@@ -311,6 +318,17 @@ pub extern "C" fn _start() -> ! {
     // the wire because the kernel loaded a second image from the filesystem
     // and ran it, which is the whole of what this pair of calls proves.
     let shell = insist(sys_spawn(SHELL_PATH.as_ptr() as usize));
+
+    // The signal: the child speaks before it exits, and this is the ear.
+    // The record's three words — signal, sender, payload — are the child's
+    // own reading of who spoke and why; a wrong one is a step that lied.
+    let mut record = [0u8; 24];
+    insist(sys_wait_signal(&mut record));
+    let (signal, sender, payload) = userland::signal_words(&record);
+    if signal != SIGUSR1 || sender != shell || payload != 0x5348 {
+        sys_exit(209);
+    }
+
     let status = insist(sys_wait_process_of(shell));
     if status != SHELL_STATUS {
         sys_exit(208);

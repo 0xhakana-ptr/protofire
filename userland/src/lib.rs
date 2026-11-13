@@ -58,8 +58,16 @@ pub const SYS_RENAME_AT: usize = 34;
 pub const SYS_CREATE_DIR_AT: usize = 35;
 /// `RemovePathAt`, relative to a descriptor.
 pub const SYS_REMOVE_PATH_AT: usize = 36;
+/// `SendSignal`, a signal to one process.
+pub const SYS_SEND_SIGNAL: usize = 40;
+/// `WaitSignal`, one pending signal's record.
+pub const SYS_WAIT_SIGNAL: usize = 41;
 /// `SpawnProcess`, a new process running the program at a path.
 pub const SYS_SPAWN_PROCESS: usize = 25;
+/// `GetPpid`, the caller's parent.
+pub const SYS_GETPPID: usize = 82;
+/// `SIGUSR1`, the signal a program may use for anything of its own.
+pub const SIGUSR1: usize = 10;
 /// `WaitProcessOf`, one named process's exit status.
 pub const SYS_WAIT_PROCESS_OF: usize = 196;
 /// `Mmap`, anonymous private memory.
@@ -358,6 +366,33 @@ pub fn sys_remove_path_at(dirfd: usize, path: usize) -> usize {
     syscall6(SYS_REMOVE_PATH_AT, dirfd, path, 0, 0, 0, 0)
 }
 
+/// `send_signal(pid, signal, payload)`: zero, or the error encoding.
+#[cfg(target_os = "none")]
+pub fn sys_send_signal(pid: usize, signal: usize, payload: usize) -> usize {
+    syscall6(SYS_SEND_SIGNAL, pid, signal, payload, 0, 0, 0)
+}
+
+/// `wait_signal(record)`: zero, with the record filled — the signal, its
+/// sender, and the sender's payload.  Blocks until a signal arrives.
+#[cfg(target_os = "none")]
+pub fn sys_wait_signal(record: &mut [u8; 24]) -> usize {
+    syscall6(
+        SYS_WAIT_SIGNAL,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// `get_ppid()`: the caller's parent's pid.
+#[cfg(target_os = "none")]
+pub fn sys_get_ppid() -> usize {
+    syscall6(SYS_GETPPID, 0, 0, 0, 0, 0, 0)
+}
+
 /// `spawn_process(path)`: the new process's pid, or the error encoding.
 ///
 /// The caller becomes the parent, which is what makes the pid worth
@@ -414,6 +449,24 @@ pub fn insist(answer: usize) -> usize {
     answer
 }
 
+/// The three words of a filled `ProcessSignalRecord`: the signal, its
+/// sender, and the sender's payload — the read-back side of what
+/// `wait_signal` fills.
+#[cfg(target_os = "none")]
+pub fn signal_words(record: &[u8; 24]) -> (usize, usize, usize) {
+    let mut signal = [0u8; 8];
+    let mut sender = [0u8; 8];
+    let mut payload = [0u8; 8];
+    signal.copy_from_slice(&record[..8]);
+    sender.copy_from_slice(&record[8..16]);
+    payload.copy_from_slice(&record[16..]);
+    (
+        usize::from_le_bytes(signal),
+        usize::from_le_bytes(sender),
+        usize::from_le_bytes(payload),
+    )
+}
+
 /// The two words of a filled `FileStat` record, as the ABI lays them out.
 #[cfg(target_os = "none")]
 pub fn stat_words(record: &[u8; 16]) -> (usize, usize) {
@@ -442,6 +495,7 @@ mod tests {
     use super::SYS_BRK;
     use super::SYS_CLOSE;
     use super::SYS_CREATE_DIR_AT;
+    use super::SYS_GETPPID;
     use super::SYS_MMAP;
     use super::SYS_OPEN;
     use super::SYS_OPEN_AT;
@@ -449,10 +503,12 @@ mod tests {
     use super::SYS_READ_DIR;
     use super::SYS_REMOVE_PATH_AT;
     use super::SYS_RENAME_AT;
+    use super::SYS_SEND_SIGNAL;
     use super::SYS_SPAWN_PROCESS;
     use super::SYS_STAT;
     use super::SYS_STAT_AT;
     use super::SYS_WAIT_PROCESS_OF;
+    use super::SYS_WAIT_SIGNAL;
     use super::SYS_WRITE;
 
     /// Every number this crate names is the ABI's own, by value.
@@ -472,6 +528,9 @@ mod tests {
         assert_eq!(SYS_REMOVE_PATH_AT, SyscallNumber::RemovePathAt as usize);
         assert_eq!(SYS_MMAP, SyscallNumber::Mmap as usize);
         assert_eq!(SYS_BRK, SyscallNumber::Brk as usize);
+        assert_eq!(SYS_SEND_SIGNAL, SyscallNumber::SendSignal as usize);
+        assert_eq!(SYS_WAIT_SIGNAL, SyscallNumber::WaitSignal as usize);
+        assert_eq!(SYS_GETPPID, SyscallNumber::GetPpid as usize);
         assert_eq!(SYS_SPAWN_PROCESS, SyscallNumber::SpawnProcess as usize);
         assert_eq!(SYS_WAIT_PROCESS_OF, SyscallNumber::WaitProcessOf as usize);
     }

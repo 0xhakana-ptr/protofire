@@ -176,6 +176,57 @@ impl Scheduler {
         answer
     }
 
+    /// Queue a signal for `pid`, from `sender_pid`, and wake what waits.
+    ///
+    /// The target must exist — an unknown pid is `NotFound`, the answer a
+    /// caller checks its own argument against — and a full ring is `Busy`,
+    /// which is the target saying it is not consuming rather than the
+    /// kernel losing what it was sent.  The wake is the pipe write's: the
+    /// waiter retries under the wake, so a signal that arrives while the
+    /// waiter is deciding to park finds the task in the blocked set.
+    pub fn send_signal_to(
+        &mut self,
+        sender_pid: u32,
+        pid: u32,
+        signal: usize,
+        payload: usize,
+    ) -> Result<(), abi::Error> {
+        let target = self
+            .tasks
+            .iter_mut()
+            .find(|task| task.pid == pid)
+            .ok_or(abi::Error::NotFound)?;
+        target.queue_signal(signal, sender_pid, payload)?;
+        self.wake_blocked();
+        Ok(())
+    }
+
+    /// Take this task's oldest pending signal, or park it until one arrives.
+    ///
+    /// The same discipline as [`Self::block_unless_exit`]: the caller's own
+    /// check — is a signal here? — and the park have a gap, and a signal
+    /// sent inside that gap wakes the blocked set, which is why the send
+    /// wakes.  The record travels as the three fields the ABI's
+    /// `ProcessSignalRecord` carries.
+    pub fn wait_signal_current(
+        &mut self,
+        cpu: usize,
+        frame: &Context,
+    ) -> Option<(usize, u32, usize)> {
+        let answer = self
+            .running
+            .get(cpu)
+            .copied()
+            .flatten()
+            .and_then(|index| self.tasks.get_mut(index))
+            .and_then(|task| task.take_signal())
+            .map(|pending| (pending.signal, pending.sender_pid, pending.payload));
+        if answer.is_none() {
+            self.block(cpu, frame);
+        }
+        answer
+    }
+
     /// Wake every blocked task, answering how many.
     ///
     /// Every blocked task wakes, because a wait queue would record *which*

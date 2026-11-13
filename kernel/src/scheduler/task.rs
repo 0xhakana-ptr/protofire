@@ -128,9 +128,62 @@ pub struct Task {
     /// printed `parallel, programs ended on 0`, both truthfully, because the
     /// program's last instruction happened to run on the other CPU.
     pub(crate) ran_off_boot_cpu: usize,
+    /// The signals other processes have sent this one and not been taken.
+    ///
+    /// A fixed ring rather than a growable list: a sender that fills it has
+    /// a target that is not consuming, and `Busy` is the answer that says so
+    /// — an unbounded queue would be one process's runaway loop holding
+    /// every other task's memory.  The depth is eight, which is what a boot
+    /// whose programs exchange one signal needs and far short of a heap's
+    /// worth.
+    pub(crate) signals: [Option<PendingSignal>; TASK_SIGNAL_QUEUE],
 }
 
+/// A signal one process sent another, waiting to be taken.
+///
+/// The sender travels **with** the signal: a signal without a sender is one
+/// the receiver cannot blame, and the record `WaitSignal` answers is the
+/// three of these fields, not a number alone.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PendingSignal {
+    /// Which signal, `1..=31` — the range the ABI validates at the call.
+    pub(crate) signal: usize,
+    /// The process that sent it.
+    pub(crate) sender_pid: u32,
+    /// One word the sender chose, and the kernel never reads.
+    pub(crate) payload: usize,
+}
+
+/// How many unsent signals one task holds.
+pub(crate) const TASK_SIGNAL_QUEUE: usize = 8;
+
 impl Task {
+    /// Take the oldest pending signal, answering it.
+    pub(crate) fn take_signal(&mut self) -> Option<PendingSignal> {
+        let taken = self.signals.iter_mut().find(|slot| slot.is_some());
+        taken.and_then(|slot| slot.take())
+    }
+
+    /// Queue a signal another process sent, or refuse when the ring is full.
+    pub(crate) fn queue_signal(
+        &mut self,
+        signal: usize,
+        sender_pid: u32,
+        payload: usize,
+    ) -> Result<(), abi::Error> {
+        let slot = self
+            .signals
+            .iter_mut()
+            .find(|slot| slot.is_none())
+            .ok_or(abi::Error::Busy)?;
+        *slot = Some(PendingSignal {
+            signal,
+            sender_pid,
+            payload,
+        });
+        Ok(())
+    }
+
     /// A task that starts at `entry`, with its stack at `stack_top`, in
     /// `space`.
     #[cfg(target_os = "none")]
@@ -146,6 +199,7 @@ impl Task {
             handler: None,
             last_cpu: usize::MAX,
             ran_off_boot_cpu: usize::MAX,
+            signals: [const { None }; TASK_SIGNAL_QUEUE],
         }
     }
 
@@ -166,6 +220,7 @@ impl Task {
             handler: None,
             last_cpu: usize::MAX,
             ran_off_boot_cpu: usize::MAX,
+            signals: [const { None }; TASK_SIGNAL_QUEUE],
         }
     }
 

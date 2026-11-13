@@ -29,15 +29,21 @@ use core::panic::PanicInfo;
 #[cfg(target_os = "none")]
 use userland::OPEN_READ;
 #[cfg(target_os = "none")]
+use userland::SIGUSR1;
+#[cfg(target_os = "none")]
 use userland::insist;
 #[cfg(target_os = "none")]
 use userland::sys_close;
 #[cfg(target_os = "none")]
 use userland::sys_exit;
 #[cfg(target_os = "none")]
+use userland::sys_get_ppid;
+#[cfg(target_os = "none")]
 use userland::sys_open;
 #[cfg(target_os = "none")]
 use userland::sys_read;
+#[cfg(target_os = "none")]
+use userland::sys_send_signal;
 
 /// The path the shell reads, NUL-terminated in its own `.rodata`: the same
 /// file `init` reads, which is what makes the two statuses comparable — the
@@ -77,5 +83,12 @@ pub extern "C" fn _start() -> ! {
     if read == 0 {
         sys_exit(1);
     }
+
+    // The signal: one to the parent that started this process, carrying a
+    // payload that names the sender — `0x5348` is "SH" in the hex the
+    // kernel's log prints.  A signal is how a child speaks before it exits,
+    // and the parent's wait is the ear.
+    let parent = insist(sys_get_ppid());
+    insist(sys_send_signal(parent, SIGUSR1, 0x5348));
     sys_exit(read)
 }

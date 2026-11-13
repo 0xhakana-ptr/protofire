@@ -1051,6 +1051,55 @@ pub fn spawn_process(_path: &str) -> Option<u32> {
     None
 }
 
+/// Queue a signal for `pid`, from the running process, and wake what waits.
+///
+/// A process signalling itself crosses no boundary and is not refused; the
+/// answer is `NotFound` for a pid no task carries and `Busy` for a target
+/// whose ring is full.
+#[cfg(target_os = "none")]
+pub fn send_signal(
+    sender_pid: u32,
+    pid: u32,
+    signal: usize,
+    payload: usize,
+) -> Result<(), abi::Error> {
+    let mut answer = Err(abi::Error::NotImplemented);
+    with_scheduler(|scheduler| {
+        if let Some(scheduler) = scheduler.as_mut() {
+            answer = scheduler.send_signal_to(sender_pid, pid, signal, payload);
+        }
+    });
+    answer
+}
+
+/// A host has no processes to signal.
+#[cfg(not(target_os = "none"))]
+pub fn send_signal(
+    _sender_pid: u32,
+    _pid: u32,
+    _signal: usize,
+    _payload: usize,
+) -> Result<(), abi::Error> {
+    Err(abi::Error::NotImplemented)
+}
+
+/// Take the running process's oldest pending signal, or park it until one
+/// arrives.
+///
+/// The record is `(signal, sender_pid, payload)`; `None` is a parked task,
+/// whose wake resumes the call for a retry.
+#[cfg(target_os = "none")]
+pub fn wait_signal(frame: &arch::Context) -> Option<(usize, u32, usize)> {
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| scheduler.as_mut()?.wait_signal_current(cpu, frame))
+}
+
+/// A host has no signals to wait for.
+#[cfg(not(target_os = "none"))]
+pub fn wait_signal(_frame: &arch::Context) -> Option<(usize, u32, usize)> {
+    None
+}
+
 /// The process id of the running task, if a scheduler is installed.
 pub fn current_pid() -> Option<u32> {
     let cpu = this_cpu();
@@ -1749,6 +1798,100 @@ mod tests {
         assert!(
             scheduler.has_other_unfinished(0),
             "but the sleeper will wake and exit, which is what a wait waits for"
+        );
+    }
+
+    /// A signal sent to a process queues, and the oldest comes out first.
+    ///
+    /// The ring is FIFO on purpose: a sender that sent two signals and a
+    /// receiver that answers them in the order they were sent is the reading
+    /// a caller can reason about, and a ring that answered the newest first
+    /// would make two signals race.
+    #[test]
+    fn a_signal_queues_and_the_oldest_comes_out_first() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add(Task::without_space("target"));
+        scheduler.tasks[0].identify(1, 7);
+        // The receiver is the running task: a wait takes the ring of the
+        // task this CPU runs, which is what `wait_signal_current` reads.
+        assert_eq!(scheduler.claim(0), Claim::Took(0));
+
+        scheduler
+            .send_signal_to(7, 1, 10, 0xfeed)
+            .expect("send to a real pid");
+        scheduler
+            .send_signal_to(7, 1, 12, 0xbeef)
+            .expect("a second signal queues beside the first");
+
+        let taken = scheduler.wait_signal_current(0, &starting_context(0, 0));
+        assert_eq!(taken, Some((10, 7, 0xfeed)), "the oldest first");
+        let taken = scheduler.wait_signal_current(0, &starting_context(0, 0));
+        assert_eq!(taken, Some((12, 7, 0xbeef)));
+        assert_eq!(
+            scheduler.wait_signal_current(0, &starting_context(0, 0)),
+            None
+        );
+    }
+
+    /// A signal to a pid no task carries is `NotFound`, and a full ring is
+    /// `Busy` — the two refusals a sender can act on.
+    #[test]
+    fn a_signal_to_no_one_is_not_found_and_a_full_ring_is_busy() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add(Task::without_space("target"));
+        scheduler.tasks[0].identify(1, 7);
+        assert_eq!(scheduler.claim(0), Claim::Took(0));
+
+        assert_eq!(
+            scheduler.send_signal_to(7, 99, 10, 0),
+            Err(abi::Error::NotFound),
+            "no task carries that pid"
+        );
+
+        for _ in 0..super::task::TASK_SIGNAL_QUEUE {
+            scheduler.send_signal_to(7, 1, 10, 0).expect("room");
+        }
+        assert_eq!(
+            scheduler.send_signal_to(7, 1, 10, 0),
+            Err(abi::Error::Busy),
+            "the target is not consuming"
+        );
+        // And taking one makes room: the refusal is about the ring, not the
+        // target.
+        assert!(
+            scheduler
+                .wait_signal_current(0, &starting_context(0, 0))
+                .is_some()
+        );
+        scheduler.send_signal_to(7, 1, 10, 0).expect("room again");
+    }
+
+    /// A signal sent to a task that is not running still queues, and the
+    /// task that owns the ring is the one whose take answers.
+    ///
+    /// The send is addressed to a **pid**, and two tasks in the scheduler
+    /// have separate rings: a signal for one must never surface in the
+    /// other's wait.
+    #[test]
+    fn a_signal_surfaces_in_the_target_s_wait_and_no_one_else_s() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add(Task::without_space("first"));
+        scheduler.add(Task::without_space("second"));
+        scheduler.tasks[0].identify(1, 9);
+        scheduler.tasks[1].identify(2, 9);
+
+        scheduler.send_signal_to(9, 2, 15, 0x77).expect("send");
+
+        // The first task's wait — the cpu slot that is not running anything
+        // in this test — takes nothing: the ring belongs to pid 2.
+        let mut answer = None;
+        if let Some(task) = scheduler.tasks.get_mut(0) {
+            answer = task.take_signal();
+        }
+        assert!(answer.is_none(), "the signal is not the first task's");
+        assert!(
+            scheduler.tasks[1].take_signal().is_some(),
+            "it is the second's"
         );
     }
 

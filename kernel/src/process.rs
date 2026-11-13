@@ -717,6 +717,81 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         }
     }
 
+    // Sending a signal: the target's ring takes the record and the wake
+    // runs.  The signal's range and the flags are the ABI's, and a process
+    // signalling itself is allowed — the shell does exactly that.
+    if number == SyscallNumber::SendSignal as usize {
+        let pid = call.arguments[0] as u32;
+        let signal = call.arguments[1];
+        let payload = call.arguments[2];
+        if !abi::process::is_valid_process_signal(signal) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        if syscall::validate_known_flags(
+            call.arguments[3],
+            abi::process::PROCESS_SIGNAL_KNOWN_FLAGS,
+        )
+        .is_err()
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let sender = crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS);
+        match crate::scheduler::send_signal(sender, pid, signal, payload) {
+            Ok(()) => {
+                arch::serial::write_str("protofire: process ");
+                arch::serial::write_u32(sender);
+                arch::serial::write_str(" sent signal ");
+                arch::serial::write_u32(signal as u32);
+                arch::serial::write_str(" to process ");
+                arch::serial::write_u32(pid);
+                arch::serial::write_str("\n");
+                return CallOutcome::Return(0);
+            }
+            Err(error) => {
+                return CallOutcome::Return(abi::syscall::encode_error(error));
+            }
+        }
+    }
+
+    if number == SyscallNumber::WaitSignal as usize {
+        // Waiting for one: the record is where the kernel writes the ABI's
+        // `ProcessSignalRecord` — signal, sender, payload — and the wait
+        // parks on the ring, woken by the send that fills it.  The retry is
+        // the WaitProcess shape: the parked call resumes at the call, and
+        // the retry asks the ring again.
+        let record = call.arguments[0];
+        let length = call.arguments[1];
+        if length < SIGNAL_RECORD_BYTES {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        if !crate::address_space::is_user_range(record, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handler writes
+        // the record and nothing past it.
+        let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        match crate::scheduler::wait_signal(frame) {
+            Some((signal, sender_pid, payload)) => {
+                write_signal_record(destination, signal, sender_pid, payload);
+                arch::serial::write_str("protofire: a signal wait answered signal ");
+                arch::serial::write_u32(signal as u32);
+                arch::serial::write_str(" from process ");
+                arch::serial::write_u32(sender_pid);
+                arch::serial::write_str("\n");
+                return CallOutcome::Return(0);
+            }
+            // Parked: the send's wake resumes the call for a retry.
+            None => {
+                if !crate::scheduler::has_selectable() {
+                    crate::scheduler::idle_until_woken();
+                }
+                return crate::scheduler::switch_without_saving(frame);
+            }
+        }
+    }
+
     if number == SyscallNumber::Pipe as usize {
         // `Pipe()`: make one and answer the read end's descriptor.  The write
         // end is the next number, because a call answers one word and two
@@ -1177,6 +1252,20 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // the ABI's own encoding, so the program reads the same word it would from
     // a handler that answered through the registry.
     CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented))
+}
+
+/// The byte length of the ABI's `ProcessSignalRecord`, the record `WaitSignal`
+/// answers with: three words — signal, sender, payload.
+#[cfg(target_os = "none")]
+const SIGNAL_RECORD_BYTES: usize = 24;
+
+/// Write a `ProcessSignalRecord` into the caller's memory, little-endian word
+/// by word — the same layout rule `Stat`'s record keeps.
+#[cfg(target_os = "none")]
+fn write_signal_record(buffer: &mut [u8], signal: usize, sender_pid: u32, payload: usize) {
+    buffer[..8].copy_from_slice(&signal.to_le_bytes());
+    buffer[8..16].copy_from_slice(&(sender_pid as usize).to_le_bytes());
+    buffer[16..24].copy_from_slice(&payload.to_le_bytes());
 }
 
 /// Copy a NUL-terminated path out of the caller's memory, answering it as a
