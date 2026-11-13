@@ -110,6 +110,19 @@
 # and hands bytes to this ring, which never learns what a thread is.
 2 ipc
 
+# `userland` is the crate the programs compile against: the numbering, one call
+# gate per machine, and the wrappers above them, so the gate is spelled once
+# and not once per program.  It names `abi` and nothing else of this tree — the
+# numbering is the one thing both sides of the privilege boundary name, which
+# is what this band is for — and every number here is derived from abi's own
+# value, so a number that moves in `abi` breaks this crate's build instead of
+# drifting.  It was layer 0 for naming "nothing of this tree"; the premise was
+# the previous tree's, where `abi` carried the kernel and a program-side copy
+# was the price of the boundary.  This tree's `abi` carries nothing of the
+# kernel, so the copy is gone and the layer is the one its one dependency
+# states.  Everything at layer 10 may name it, and nothing else does.
+2 userland
+
 # ── Layer 3: the machine ────────────────────────────────────────────────────
 #
 # `arch_*` are the three implementations, each a crate of its own so a missing
@@ -298,23 +311,15 @@
 # ── Layer 10: programs ──────────────────────────────────────────────────────
 #
 # A program is not a crate of the kernel: it reaches everything through
-# syscalls, so it names nothing below it and nothing below it names it — even
-# its manifests carry no dependency today, because nothing it compiles against
-# yet ships a type it can name.  The layer is the top one because that is what
-# "a caller and not a callee" is — the same reason the tests and the build
-# tool are here.
+# syscalls, so the one thing of this tree it names is `userland` (layer 2),
+# the stub its calls go through, and nothing below names a program.  The layer
+# is the top one because that is what "a caller and not a callee" is — the same
+# reason the tests and the build tool are here.
 #
 # They are at layer 10 rather than 9 because a shipped program is compiled by
 # the same workspace and must not be mistaken for something the kernel links.
 # Nothing below depends on them; when one is embedded as an image, the build
 # step that embeds it is what gives it a place, not a manifest edge.
-#
-# `userland` is the crate the programs compile against — the numbering, one
-# call gate per machine, and the wrappers above them — so the gate is spelled
-# once and not once per program.  It names nothing of this tree, which is why
-# it is layer 0: it is values and the two pieces of assembly a program's
-# machine speaks, and everything at layer 10 may name it.
-0 userland
 10 init
 10 shell
 10 service_manager

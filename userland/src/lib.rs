@@ -8,11 +8,21 @@
 //! `docs/fmts/syscall-abi.md` §8 records the convention and the reason: a
 //! program carries no kernel crate, so without a crate both sides compile
 //! against, every program spells the gate itself — and two programs that each
-//! spell it are two places for one fact to drift.  This is that crate.  It
-//! names nothing of the tree: the numbering is spelled here as constants,
-//! because a program compiles against the numbering, not against the kernel's
-//! `abi` crate, and a dependency that carried the numbers would be a
-//! dependency that carried the kernel.
+//! spell it are two places for one fact to drift.  This is that crate.
+//!
+//! ## Where the numbering lives
+//!
+//! In `abi`, beside the records and the flags it names with it.  The numbers
+//! are the one thing of this tree both sides of the privilege boundary name,
+//! and this tree's `abi` carries nothing of the kernel that a program would
+//! inherit by naming it — so every constant here is derived from abi's own
+//! value, and a number that moves in `abi` breaks this crate's build instead
+//! of drifting until a host test notices.  (The literal copy this crate used
+//! to carry, and its justification — "a program compiles against the
+//! numbering, not against the kernel's `abi` crate" — were the previous
+//! tree's, where `abi` did carry the kernel.)  The call-site names stay this
+//! crate's: a program writes `SYS_OPEN`, and the enum keeps the wire's own
+//! spelling.
 //!
 //! ## The shape
 //!
@@ -32,90 +42,95 @@
 #[cfg(target_os = "none")]
 use core::arch::asm;
 
-// The numbering, spelled here because a program compiles against it.
+// The numbering, taken from `abi`: each constant here is the call-site
+// spelling of one of the ABI's own values.
+
+use abi::SyscallNumber;
 
 /// `Open`, and the rest of the file interface.
-pub const SYS_OPEN: usize = 2;
+pub const SYS_OPEN: usize = SyscallNumber::Open as usize;
 /// `Exit`.
-pub const SYS_EXIT: usize = 3;
+pub const SYS_EXIT: usize = SyscallNumber::Exit as usize;
 /// `Read`, from a descriptor.
-pub const SYS_READ: usize = 5;
+pub const SYS_READ: usize = SyscallNumber::Read as usize;
 /// `Write`, to a file or a pipe.
-pub const SYS_WRITE: usize = 6;
+pub const SYS_WRITE: usize = SyscallNumber::Write as usize;
 /// `Close`.
-pub const SYS_CLOSE: usize = 7;
+pub const SYS_CLOSE: usize = SyscallNumber::Close as usize;
 /// `Stat`, by path.
-pub const SYS_STAT: usize = 27;
+pub const SYS_STAT: usize = SyscallNumber::Stat as usize;
 /// `ReadDir`, by path and index.
-pub const SYS_READ_DIR: usize = 28;
+pub const SYS_READ_DIR: usize = SyscallNumber::ReadDir as usize;
 /// `OpenAt`, relative to a descriptor.
-pub const SYS_OPEN_AT: usize = 32;
+pub const SYS_OPEN_AT: usize = SyscallNumber::OpenAt as usize;
 /// `StatAt`, relative to a descriptor.
-pub const SYS_STAT_AT: usize = 33;
+pub const SYS_STAT_AT: usize = SyscallNumber::StatAt as usize;
 /// `RenameAt`, each side anchored at its own descriptor.
-pub const SYS_RENAME_AT: usize = 34;
+pub const SYS_RENAME_AT: usize = SyscallNumber::RenameAt as usize;
 /// `CreateDirAt`, relative to a descriptor.
-pub const SYS_CREATE_DIR_AT: usize = 35;
+pub const SYS_CREATE_DIR_AT: usize = SyscallNumber::CreateDirAt as usize;
 /// `RemovePathAt`, relative to a descriptor.
-pub const SYS_REMOVE_PATH_AT: usize = 36;
+pub const SYS_REMOVE_PATH_AT: usize = SyscallNumber::RemovePathAt as usize;
 /// `SendSignal`, a signal to one process.
-pub const SYS_SEND_SIGNAL: usize = 40;
+pub const SYS_SEND_SIGNAL: usize = SyscallNumber::SendSignal as usize;
 /// `WaitSignal`, one pending signal's record.
-pub const SYS_WAIT_SIGNAL: usize = 41;
+pub const SYS_WAIT_SIGNAL: usize = SyscallNumber::WaitSignal as usize;
 /// `SpawnProcess`, a new process running the program at a path.
-pub const SYS_SPAWN_PROCESS: usize = 25;
+pub const SYS_SPAWN_PROCESS: usize = SyscallNumber::SpawnProcess as usize;
 /// `GetPpid`, the caller's parent.
-pub const SYS_GETPPID: usize = 82;
+pub const SYS_GETPPID: usize = SyscallNumber::GetPpid as usize;
 /// `SIGUSR1`, the signal a program may use for anything of its own.
-pub const SIGUSR1: usize = 10;
+pub use abi::process::SIGUSR1;
 /// `SetSignalMask`, the caller's block set.
-pub const SYS_SET_SIGNAL_MASK: usize = 94;
+pub const SYS_SET_SIGNAL_MASK: usize = SyscallNumber::SetSignalMask as usize;
 /// `SigSuspend`, a ring run under a mask until an unblocked signal answers.
-pub const SYS_SIGSUSPEND: usize = 135;
+pub const SYS_SIGSUSPEND: usize = SyscallNumber::SigSuspend as usize;
 /// `SetSignalHandler`, the program's own code for one signal.
-pub const SYS_SET_SIGNAL_HANDLER: usize = 104;
+pub const SYS_SET_SIGNAL_HANDLER: usize = SyscallNumber::SetSignalHandler as usize;
 /// `SigReturn`, the resume a delivered signal's handler exits through.
-pub const SYS_SIGRETURN: usize = 134;
+pub const SYS_SIGRETURN: usize = SyscallNumber::SigReturn as usize;
 /// `WaitProcessOf`, one named process's exit status.
-pub const SYS_WAIT_PROCESS_OF: usize = 196;
+pub const SYS_WAIT_PROCESS_OF: usize = SyscallNumber::WaitProcessOf as usize;
 /// `Mmap`, anonymous private memory.
-pub const SYS_MMAP: usize = 67;
+pub const SYS_MMAP: usize = SyscallNumber::Mmap as usize;
 /// `Brk`, the program's break.
-pub const SYS_BRK: usize = 92;
+pub const SYS_BRK: usize = SyscallNumber::Brk as usize;
 /// `AbiInfo`, what this build's interface is.
-pub const SYS_ABI_INFO: usize = 39;
+pub const SYS_ABI_INFO: usize = SyscallNumber::AbiInfo as usize;
 /// `SystemInfo`, what the machine has been doing.
-pub const SYS_SYSTEM_INFO: usize = 53;
+pub const SYS_SYSTEM_INFO: usize = SyscallNumber::SystemInfo as usize;
 /// `GetTimeOfDay`, one clock's reading.
-pub const SYS_GET_TIME_OF_DAY: usize = 70;
+pub const SYS_GET_TIME_OF_DAY: usize = SyscallNumber::GetTimeOfDay as usize;
 /// `GetRandom`, bytes from the kernel's generator.
-pub const SYS_GET_RANDOM: usize = 75;
-/// The machine's own counter, the only clock this build answers.
-pub const CLOCK_MONOTONIC: usize = 0;
+pub const SYS_GET_RANDOM: usize = SyscallNumber::GetRandom as usize;
 /// The selector `SystemInfo` serves.
-pub const SYSTEM_INFO_SCHEDULER: usize = 0;
+pub use abi::system::SYSTEM_INFO_SCHEDULER;
+/// The machine's own counter, the only clock this build answers.
+pub use abi::time::CLOCK_MONOTONIC;
 /// An `AbiInfo` record is three words.
-pub const ABI_INFO_BYTES: usize = 24;
+pub const ABI_INFO_BYTES: usize = core::mem::size_of::<abi::AbiInfo>();
 /// A `SystemInfo` record is eight words.
-pub const SYSTEM_INFO_BYTES: usize = 64;
+pub const SYSTEM_INFO_BYTES: usize = core::mem::size_of::<abi::SystemInfo>();
 /// A `TimeRecord` is two words.
-pub const TIME_RECORD_BYTES: usize = 16;
+pub const TIME_RECORD_BYTES: usize = core::mem::size_of::<abi::time::TimeRecord>();
 
-// The flags and values the wrappers' callers pass.
+// The flags and values the wrappers' callers pass, taken from `abi` where abi
+// names them.  `MMAP_BYTES` is the one literal: it is a call-site convenience —
+// one page, the smallest mapping worth asking for — and not a wire value.
 
 /// Open for reading only.
-pub const OPEN_READ: usize = 1;
+pub const OPEN_READ: usize = abi::fs::OPEN_FLAG_READ;
 /// Open for writing, creating the file when it is not there.
-pub const OPEN_WRITE_CREATE: usize = 2 | 4;
+pub const OPEN_WRITE_CREATE: usize = abi::fs::OPEN_FLAG_WRITE | abi::fs::OPEN_FLAG_CREATE;
 /// Readable and writable, and not executable: the kernel refuses
 /// write-xor-execute together, and a page of data is not a page of code.
-pub const PROT_READ_WRITE: usize = 1 | 2;
+pub const PROT_READ_WRITE: usize = abi::memory::PROT_READ | abi::memory::PROT_WRITE;
 /// Anonymous private memory: the only kind this kernel maps.
-pub const MAP_ANONYMOUS_PRIVATE: usize = 0x20 | 0x02;
+pub const MAP_ANONYMOUS_PRIVATE: usize = abi::memory::MAP_ANONYMOUS | abi::memory::MAP_PRIVATE;
 /// One page, the smallest mapping worth asking for.
 pub const MMAP_BYTES: usize = 4096;
 /// The descriptor value that means "resolve from the caller's own base".
-pub const AT_FDCWD: usize = (-100_isize) as usize;
+pub use abi::fs::AT_FDCWD;
 
 // The gate, one per machine.
 //
@@ -454,7 +469,15 @@ pub fn sys_sigreturn(resume: usize) -> usize {
 /// call's answer; control does not come back to the handler.
 #[cfg(target_os = "none")]
 pub fn sys_return_from_exception(resume: usize, value: usize) -> usize {
-    syscall6(23, resume, value, 0, 0, 0, 0)
+    syscall6(
+        SyscallNumber::ReturnFromException as usize,
+        resume,
+        value,
+        0,
+        0,
+        0,
+        0,
+    )
 }
 
 /// `get_ppid()`: the caller's parent's pid.
@@ -633,89 +656,32 @@ pub fn stat_words(record: &[u8; 16]) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    //! The program-side numbering, pinned to the ABI's own enum.
+    //! The frozen numbers, from the program's side.
     //!
-    //! The constants above are a copy of `abi`'s numbers — a program cannot
-    //! depend on the kernel's crate, so the copy is the price of the layer,
-    //! and a copy without a test is a second place for one fact to drift,
-    //! which is the failure this crate exists to prevent.  The
-    //! dev-dependency that makes these tests possible is one no program
-    //! build carries: `cargo metadata` reports dev-dependencies to the
-    //! layering gate, and the gate does not count one as an edge.
+    //! Deriving the constants from `abi` makes a rename there a compile error
+    //! here; what a derivation cannot pin is the *value*.  A number a program
+    //! hard-codes is a number these constants have to keep being — the frozen
+    //! range's own rule, `0..=120` (`docs/fmts/syscall-abi.md`) — and these
+    //! literals are the guard.  `cargo test -p userland` runs them on a host,
+    //! with no kernel involved.
 
-    use super::SYS_ABI_INFO;
     use super::SYS_BRK;
     use super::SYS_CLOSE;
-    use super::SYS_CREATE_DIR_AT;
-    use super::SYS_GET_RANDOM;
-    use super::SYS_GET_TIME_OF_DAY;
-    use super::SYS_GETPPID;
     use super::SYS_MMAP;
     use super::SYS_OPEN;
-    use super::SYS_OPEN_AT;
     use super::SYS_READ;
-    use super::SYS_READ_DIR;
-    use super::SYS_REMOVE_PATH_AT;
-    use super::SYS_RENAME_AT;
-    use super::SYS_SEND_SIGNAL;
-    use super::SYS_SET_SIGNAL_HANDLER;
-    use super::SYS_SET_SIGNAL_MASK;
-    use super::SYS_SIGRETURN;
-    use super::SYS_SIGSUSPEND;
-    use super::SYS_SPAWN_PROCESS;
-    use super::SYS_STAT;
-    use super::SYS_STAT_AT;
-    use super::SYS_SYSTEM_INFO;
-    use super::SYS_WAIT_PROCESS_OF;
-    use super::SYS_WAIT_SIGNAL;
     use super::SYS_WRITE;
-
-    /// Every number this crate names is the ABI's own, by value.
-    #[test]
-    fn the_program_side_numbers_are_the_abi_s_own() {
-        use abi::SyscallNumber;
-        assert_eq!(SYS_OPEN, SyscallNumber::Open as usize);
-        assert_eq!(SYS_READ, SyscallNumber::Read as usize);
-        assert_eq!(SYS_WRITE, SyscallNumber::Write as usize);
-        assert_eq!(SYS_CLOSE, SyscallNumber::Close as usize);
-        assert_eq!(SYS_STAT, SyscallNumber::Stat as usize);
-        assert_eq!(SYS_READ_DIR, SyscallNumber::ReadDir as usize);
-        assert_eq!(SYS_OPEN_AT, SyscallNumber::OpenAt as usize);
-        assert_eq!(SYS_STAT_AT, SyscallNumber::StatAt as usize);
-        assert_eq!(SYS_RENAME_AT, SyscallNumber::RenameAt as usize);
-        assert_eq!(SYS_CREATE_DIR_AT, SyscallNumber::CreateDirAt as usize);
-        assert_eq!(SYS_REMOVE_PATH_AT, SyscallNumber::RemovePathAt as usize);
-        assert_eq!(SYS_MMAP, SyscallNumber::Mmap as usize);
-        assert_eq!(SYS_BRK, SyscallNumber::Brk as usize);
-        assert_eq!(SYS_SEND_SIGNAL, SyscallNumber::SendSignal as usize);
-        assert_eq!(
-            SYS_SET_SIGNAL_HANDLER,
-            SyscallNumber::SetSignalHandler as usize
-        );
-        assert_eq!(SYS_SIGRETURN, SyscallNumber::SigReturn as usize);
-        assert_eq!(SYS_SET_SIGNAL_MASK, SyscallNumber::SetSignalMask as usize);
-        assert_eq!(SYS_SIGSUSPEND, SyscallNumber::SigSuspend as usize);
-        assert_eq!(SYS_WAIT_SIGNAL, SyscallNumber::WaitSignal as usize);
-        assert_eq!(SYS_GETPPID, SyscallNumber::GetPpid as usize);
-        assert_eq!(SYS_SPAWN_PROCESS, SyscallNumber::SpawnProcess as usize);
-        assert_eq!(SYS_WAIT_PROCESS_OF, SyscallNumber::WaitProcessOf as usize);
-        assert_eq!(SYS_ABI_INFO, SyscallNumber::AbiInfo as usize);
-        assert_eq!(SYS_SYSTEM_INFO, SyscallNumber::SystemInfo as usize);
-        assert_eq!(SYS_GET_TIME_OF_DAY, SyscallNumber::GetTimeOfDay as usize);
-        assert_eq!(SYS_GET_RANDOM, SyscallNumber::GetRandom as usize);
-    }
 
     /// The frozen range's boundary, from the program's side: a number a
     /// program hard-codes is a number these constants have to keep being.
     #[test]
     fn the_frozen_numbers_this_crate_carries_have_not_moved() {
-        use abi::SyscallNumber;
         assert_eq!(SYS_OPEN, 2);
         assert_eq!(SYS_READ, 5);
         assert_eq!(SYS_WRITE, 6);
         assert_eq!(SYS_CLOSE, 7);
         assert_eq!(SYS_MMAP, 67);
         assert_eq!(SYS_BRK, 92);
-        assert_eq!(SyscallNumber::EpollWait as usize, 120);
+        assert_eq!(abi::SyscallNumber::EpollWait as usize, 120);
     }
 }

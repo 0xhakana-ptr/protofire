@@ -69,7 +69,7 @@ sound                   7    0
 sync                  356    3
 syscall               291    4
 unicode              4628   31
-userland              722    2
+userland              687    1 # fell from 2 in the change that derives the numbering from `abi`: the identity test became a compile error there, and the frozen literals are the one test left
 virt                   62    0 # exempt: a design argument and no code; the day it has a value to assert, this row loses the note
 virtio_block         1253   15
 virtio_core          2101   25

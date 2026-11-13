@@ -6,6 +6,4 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-
-[dev-dependencies]
-abi = { path = "../abi" }
+abi.workspace = true
