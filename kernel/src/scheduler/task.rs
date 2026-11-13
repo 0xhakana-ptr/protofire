@@ -152,6 +152,56 @@ pub struct Task {
     /// original would be lost to the suspend's own.  `None` is a task not
     /// inside a suspend.
     pub(crate) suspend_restore: Option<u32>,
+    /// The handlers a program installed, by signal number.
+    ///
+    /// An installed handler changes what a send **does**: the signal is
+    /// delivered — the program's context redirected to the handler with the
+    /// record in its argument registers — rather than queued for a wait.
+    /// `None` is the default, which is the queue.
+    pub(crate) signal_handlers: [Option<usize>; SIGNAL_COUNT],
+    /// A signal waiting to be delivered, on the task's next install.
+    ///
+    /// The task that owns this may be running on another CPU, whose trap
+    /// frame is live — a context the kernel must not reach into mid-flight.
+    /// So the send only records, and the one place that copies this task's
+    /// context into a frame the epilogue is about to resume is where the
+    /// redirection happens.
+    pub(crate) delivery: Option<PendingSignal>,
+    /// The **whole context** a delivery displaced, waiting for the handler's
+    /// `SigReturn`.
+    ///
+    /// The delivery redirects the program's registers to the record, and the
+    /// program was interrupted between two instructions that were budgeting
+    /// **no call at all** — an address computed into a register with its load
+    /// one instruction ahead is the measured case, and a handler that runs on
+    /// the interrupted registers destroys exactly such a value by every rule
+    /// of its own calling convention.  Six words saved here would cover the
+    /// argument registers and nothing else; the whole context is what makes
+    /// the delivery transparent, and the task already stores one for a
+    /// preemption, so the shape costs nothing new.  `SigReturn` is the only
+    /// thing that takes it out.
+    pub(crate) delivery_saved: Option<Context>,
+}
+
+/// How many signals the ABI defines, `1..=31` — and therefore the width of
+/// a handler table indexed by signal.
+pub(crate) const SIGNAL_COUNT: usize = 32;
+
+impl Task {
+    /// The handler a program installed for `signal`, if it did.
+    pub(crate) fn signal_handler_for(&self, signal: usize) -> Option<usize> {
+        self.signal_handlers.get(signal).copied().flatten()
+    }
+
+    /// Install (or withdraw, with `None`) the handler for one signal.
+    pub(crate) fn set_signal_handler(&mut self, signal: usize, handler: Option<usize>) {
+        self.signal_handlers[signal] = handler;
+    }
+
+    /// Take a pending delivery, if the task has one.
+    pub(crate) fn take_delivery(&mut self) -> Option<PendingSignal> {
+        self.delivery.take()
+    }
 }
 
 /// A signal one process sent another, waiting to be taken.
@@ -225,6 +275,9 @@ impl Task {
             signals: [const { None }; TASK_SIGNAL_QUEUE],
             signal_mask: 0,
             suspend_restore: None,
+            signal_handlers: [const { None }; SIGNAL_COUNT],
+            delivery: None,
+            delivery_saved: None,
         }
     }
 
@@ -248,6 +301,9 @@ impl Task {
             signals: [const { None }; TASK_SIGNAL_QUEUE],
             signal_mask: 0,
             suspend_restore: None,
+            signal_handlers: [const { None }; SIGNAL_COUNT],
+            delivery: None,
+            delivery_saved: None,
         }
     }
 

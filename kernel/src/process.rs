@@ -846,6 +846,41 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         }
     }
 
+    // Arming, and disarming, the handler a program's own code provides for
+    // one signal.  The contract is the exception handler's, which is why the
+    // address needs no trust the fault path did not already extend: the
+    // handler runs in the program, on the program's stack, and its way out
+    // is `ReturnFromException`.
+    if number == SyscallNumber::SetSignalHandler as usize {
+        let signal = call.arguments[0];
+        let action = call.arguments[1];
+        let handler = call.arguments[2];
+        let taken = action <= 1
+            && syscall::validate_known_flags(
+                call.arguments[3],
+                abi::process::PROCESS_SIGNAL_KNOWN_FLAGS,
+            )
+            .is_ok()
+            && crate::scheduler::set_signal_handler(signal, action, handler);
+        if taken {
+            return CallOutcome::Return(0);
+        }
+        return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+    }
+
+    if number == SyscallNumber::SigReturn as usize {
+        // The delivered-signal handler's exit, and the half that makes the
+        // delivery **transparent**: the delivery displaced the program's
+        // argument registers for its record, and only the kernel kept them.
+        // They go back here, and the interrupted flow resumes at `a0` — the
+        // resume the delivery handed the handler — with the registers it
+        // would have had had the signal never arrived.
+        if !crate::scheduler::signal_return(frame, call.arguments[0]) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        return CallOutcome::Exit;
+    }
+
     if number == SyscallNumber::Pipe as usize {
         // `Pipe()`: make one and answer the read end's descriptor.  The write
         // end is the next number, because a call answers one word and two

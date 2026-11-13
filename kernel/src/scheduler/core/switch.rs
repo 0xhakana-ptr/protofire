@@ -176,6 +176,15 @@ impl Scheduler {
             *frame = task.context;
         }
 
+        // A delivered signal, taken at the one moment it is safe to take it:
+        // the frame this epilogue is about to resume is copied from the task,
+        // the task is not running anywhere else, and the redirection below
+        // touches registers the program has not yet read.  Before the
+        // install, the target may have been mid-flight on another CPU; after
+        // it, the registers are the program's again.
+        //
+        self.deliver_pending(next, frame);
+
         // The frame and the root go together, and both are `next`'s.
         //
         // Reading the root from `next` rather than back from `running[cpu]`
@@ -256,6 +265,47 @@ impl Scheduler {
     /// a CPU that has to steal reads the array in rotation so no task before it
     /// is starved.
     ///
+    /// Deliver the task's pending signal into the frame about to be resumed,
+    /// answering whether one was.
+    ///
+    /// The record travels in the **argument registers** — signal, sender,
+    /// payload, and the fourth is where the program was — because the handler
+    /// is the program's own `extern "C"` code and reads them the ABI names.
+    /// A machine whose answer register is not its first argument register
+    /// would otherwise hand a Rust handler its signal in a register the
+    /// prologue never reads, which is measured: the shell's handler on
+    /// x86_64 spun forever on a check against a register the record never
+    /// reached.
+    pub(crate) fn deliver_pending(&mut self, index: usize, frame: &mut Context) -> bool {
+        let Some(delivery) = self
+            .tasks
+            .get_mut(index)
+            .and_then(|task| task.take_delivery())
+        else {
+            return false;
+        };
+        // The displaced **context** goes into the task, for the `SigReturn`
+        // the handler ends with: the delivery is transparent or it is a
+        // corruption, and the difference is the whole of this frame.
+        if let Some(task) = self.tasks.get_mut(index) {
+            task.delivery_saved = Some(*frame);
+        }
+        let resume = arch::resume_address(frame);
+        arch::set_argument(frame, 0, delivery.signal);
+        arch::set_argument(frame, 1, delivery.sender_pid as usize);
+        arch::set_argument(frame, 2, delivery.payload);
+        arch::set_argument(frame, 3, resume);
+        if let Some(handler) = self
+            .tasks
+            .get(index)
+            .and_then(|task| task.signal_handler_for(delivery.signal))
+        {
+            arch::set_resume_address(frame, handler);
+        }
+        self.delivered_signals += 1;
+        true
+    }
+
     /// Both scans cover every task, so a CPU whose only runnable task is the
     /// one it holds comes back to it, which is what a preemption with one task
     /// must do.

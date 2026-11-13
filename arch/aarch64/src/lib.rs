@@ -61,6 +61,7 @@ pub use program::program_bytes;
 pub use trap::CallFrame;
 pub use trap::CallOutcome;
 pub use trap::Context;
+pub use trap::context::argument;
 #[cfg(target_os = "none")]
 pub use trap::install_context;
 pub use trap::is_user_context;

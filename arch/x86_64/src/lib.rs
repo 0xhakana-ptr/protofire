@@ -74,6 +74,7 @@ pub use context::PIPE_READER;
 pub use context::PIPE_WRITER;
 pub use context::PROGRAM_LEN;
 pub use context::SLEEP_MICROSECONDS;
+pub use context::argument;
 pub use context::install_context;
 pub use context::is_user_context;
 pub use context::program_bytes;

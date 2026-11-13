@@ -44,6 +44,10 @@ use userland::sys_open;
 use userland::sys_read;
 #[cfg(target_os = "none")]
 use userland::sys_send_signal;
+#[cfg(target_os = "none")]
+use userland::sys_set_signal_handler;
+#[cfg(target_os = "none")]
+use userland::sys_sigreturn;
 
 /// The path the shell reads, NUL-terminated in its own `.rodata`: the same
 /// file `init` reads, which is what makes the two statuses comparable — the
@@ -84,11 +88,46 @@ pub extern "C" fn _start() -> ! {
         sys_exit(1);
     }
 
-    // The signal: one to the parent that started this process, carrying a
-    // payload that names the sender — `0x5348` is "SH" in the hex the
-    // kernel's log prints.  A signal is how a child speaks before it exits,
-    // and the parent's wait is the ear.
+    // The signal, in both directions.  First this process arms its own
+    // handler — the address is its own code, and the contract is the fault
+    // handler's: the record arrives in the argument registers, and the way
+    // out is `ReturnFromException(resume, value)`.  Then it tells the
+    // parent it is ready, and spins for the delivery, which the kernel
+    // makes at the next install of this context — the first tick after the
+    // parent's send, not the send itself, because a context mid-flight on
+    // another CPU is the kernel's to leave alone.
+    let handler = signal_handler as usize;
+    insist(sys_set_signal_handler(SIGUSR1, 1, handler));
     let parent = insist(sys_get_ppid());
     insist(sys_send_signal(parent, SIGUSR1, 0x5348));
+    while DELIVERED.load(core::sync::atomic::Ordering::Acquire) == 0 {
+        core::hint::spin_loop();
+    }
     sys_exit(read)
+}
+
+/// Whether the handler has run: the spin above waits for exactly this.
+#[cfg(target_os = "none")]
+static DELIVERED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// The signal handler, in the contract the kernel delivers under: the
+/// signal in the answer register, the sender and its payload beside it, and
+/// the interrupted resume as the fourth word.
+///
+/// The checks are the program's own reading of who spoke and why — a record
+/// that disagrees is a delivery this process refuses to count — and the way
+/// out is the same `ReturnFromException` the fault handler exits through:
+/// the interrupted flow resumes at the address the kernel supplied, reading
+/// zero as the answer.  Control does not come back here.
+#[cfg(target_os = "none")]
+#[unsafe(no_mangle)]
+extern "C" fn signal_handler(signal: usize, sender: usize, payload: usize, resume: usize) -> ! {
+    if signal == SIGUSR1 && payload == 0x4944 {
+        DELIVERED.store(1, core::sync::atomic::Ordering::Release);
+    }
+    let _ = sender;
+    sys_sigreturn(resume);
+    loop {
+        core::hint::spin_loop();
+    }
 }

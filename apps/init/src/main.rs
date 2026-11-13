@@ -77,6 +77,8 @@ use userland::sys_remove_path_at;
 #[cfg(target_os = "none")]
 use userland::sys_rename_at;
 #[cfg(target_os = "none")]
+use userland::sys_send_signal;
+#[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use userland::sys_set_signal_mask;
 #[cfg(target_os = "none")]
@@ -323,43 +325,46 @@ pub extern "C" fn _start() -> ! {
     // and ran it, which is the whole of what this pair of calls proves.
     let shell = insist(sys_spawn(SHELL_PATH.as_ptr() as usize));
 
-    // The signal: the child speaks before it exits, and this is the ear.
-    // The record's three words — signal, sender, payload — are the child's
-    // own reading of who spoke and why; a wrong one is a step that lied.
+    // The signal: the child arms its own handler, announces itself, and
+    // spins for the delivery.  This process's part is the **send** — the
+    // payload names the delivery, "ID", and the child's handler checks it
+    // before counting it — and the wait for the child's exit is the proof
+    // the delivery landed: a handler that never ran leaves a child that
+    // never stops spinning.
     let mut record = [0u8; 24];
     insist(sys_wait_signal(&mut record));
     let (signal, sender, payload) = userland::signal_words(&record);
     if signal != SIGUSR1 || sender != shell || payload != 0x5348 {
         sys_exit(209);
     }
-
+    insist(sys_send_signal(shell, SIGUSR1, 0x4944));
     let status = insist(sys_wait_process_of(shell));
     if status != SHELL_STATUS {
         sys_exit(208);
     }
 
-    // The mask: this process blocks the signal, starts another child, and
-    // lets that child speak anyway — the send queues, the wait does not
-    // take it, and the child's exit still answers, because an exit is not
-    // a signal.  The suspend then runs the ring with everything unblocked,
-    // the queued signal answers, and the mask this process had goes back.
-    let previous = insist(sys_set_signal_mask(1 << SIGUSR1));
+    // The mask: the same exchange under a blocked signal.  The child's
+    // announcement queues — this process's wait would skip it — and the
+    // suspend runs the ring with everything unblocked, answers with the
+    // queued record, and puts this process's mask back.  The delivery and
+    // the exit follow as they did above.
+    let _previous = insist(sys_set_signal_mask(1 << SIGUSR1));
     let second = insist(sys_spawn(SHELL_PATH.as_ptr() as usize));
-    let status = insist(sys_wait_process_of(second));
-    if status != SHELL_STATUS {
-        sys_exit(210);
-    }
     let mut record = [0u8; 24];
     insist(sys_sigsuspend(0, &mut record));
     let (signal, sender, payload) = userland::signal_words(&record);
     if signal != SIGUSR1 || sender != second || payload != 0x5348 {
         sys_exit(211);
     }
+    insist(sys_send_signal(second, SIGUSR1, 0x4944));
+    let status = insist(sys_wait_process_of(second));
+    if status != SHELL_STATUS {
+        sys_exit(210);
+    }
     let restored = insist(sys_set_signal_mask(0));
     if restored != (1 << SIGUSR1) {
         sys_exit(212);
     }
-    let _ = previous;
 
     // The anchors are done with, and a slot closed is a slot the kernel got
     // back: the exit's release line reports what this program left open,

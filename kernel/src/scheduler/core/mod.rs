@@ -57,6 +57,9 @@ pub struct Scheduler {
     pub(crate) running: [Option<usize>; crate::per_cpu::MAX_CPUS],
     /// How many switches have happened, which the boot line reports.
     pub(crate) switches: usize,
+    /// How many signal deliveries the install path has made, which the boot
+    /// line reports beside the switches it interrupted.
+    pub(crate) delivered_signals: usize,
     /// Programs that have exited.
     pub(crate) exited: usize,
     /// The next process id this scheduler will hand out.
@@ -162,6 +165,7 @@ impl Scheduler {
             tasks: Vec::new(),
             running: [None; crate::per_cpu::MAX_CPUS],
             switches: 0,
+            delivered_signals: 0,
             exited: 0,
             next_pid: 1,
             migrations: 0,

@@ -252,6 +252,16 @@ pub fn set_argument(context: &mut Context, index: usize, value: usize) {
     context.registers[register] = value as u64;
 }
 
+/// The value in the register argument `index` travels in.
+///
+/// The read side of [`set_argument`], for a kernel that must **keep** what a
+/// redirection displaces — a signal delivery takes the argument registers
+/// for its record and puts the program's own back on the way out.
+pub fn argument(context: &Context, index: usize) -> usize {
+    const ARGUMENTS: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
+    context.registers[ARGUMENTS[index]] as usize
+}
+
 pub fn is_user_context(context: &Context) -> bool {
     context.is_user()
 }

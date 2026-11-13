@@ -510,13 +510,18 @@ pub fn reap_address_spaces() -> usize {
     0
 }
 
-/// How many switches and exits the installed scheduler has seen.
+/// How many switches, exits and signal deliveries the installed scheduler
+/// has seen.
 ///
-/// `(switches, exited)`, or `(0, 0)` when nothing ran.
-pub fn statistics() -> (usize, usize) {
+/// `(switches, exited, delivered)`, or zeros when nothing ran.
+pub fn statistics() -> (usize, usize, usize) {
     with_scheduler(|scheduler| {
-        scheduler.as_ref().map_or((0, 0), |scheduler| {
-            (scheduler.switches(), scheduler.exited())
+        scheduler.as_ref().map_or((0, 0, 0), |scheduler| {
+            (
+                scheduler.switches(),
+                scheduler.exited(),
+                scheduler.delivered_signals,
+            )
         })
     })
 }
@@ -596,7 +601,17 @@ pub fn preempt(frame: &mut arch::Context) {
         let Some(scheduler) = scheduler else {
             return;
         };
+        // No switch is not no work: a signal the running program armed for
+        // is one it does not read on a wait, and the tick that finds no one
+        // to switch to is still the one moment the running task's frame can
+        // be redirected — it is saved, owned by this CPU, and about to be
+        // resumed.  A timer in a system with one runnable task stays a
+        // timer — the switch count does not move — and the delivery moves,
+        // because it is the signal's arrival, not a scheduling decision.
         if !scheduler.has_other_runnable(cpu) {
+            if let Some(index) = scheduler.running.get(cpu).copied().flatten() {
+                scheduler.deliver_pending(index, frame);
+            }
             return;
         }
         let _ = scheduler.schedule(cpu, frame, false);
@@ -1129,6 +1144,62 @@ pub fn sigsuspend(frame: &arch::Context, mask: u32) -> Option<(usize, u32, usize
 #[cfg(not(target_os = "none"))]
 pub fn sigsuspend(_frame: &arch::Context, _mask: u32) -> Option<(usize, u32, usize)> {
     None
+}
+
+/// Install (action `1`) or withdraw (action `0`) a program's handler for one
+/// signal, answering whether the action was taken.
+#[cfg(target_os = "none")]
+pub fn set_signal_handler(signal: usize, action: usize, handler: usize) -> bool {
+    let cpu = this_cpu();
+    let mut answer = false;
+    with_scheduler(|scheduler| {
+        if let Some(scheduler) = scheduler.as_mut() {
+            answer = scheduler.set_signal_handler_current(cpu, signal, action, handler);
+        }
+    });
+    answer
+}
+
+/// A host has no programs to arm.
+#[cfg(not(target_os = "none"))]
+pub fn set_signal_handler(_signal: usize, _action: usize, _handler: usize) -> bool {
+    false
+}
+
+/// The delivered-signal handler's exit: the displaced registers go back into
+/// the frame, the interrupted flow resumes at `resume`, and nothing comes
+/// back to the handler.
+#[cfg(target_os = "none")]
+pub fn signal_return(frame: &mut arch::Context, resume: usize) -> bool {
+    let _ = resume;
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| {
+        let Some(scheduler) = scheduler.as_mut() else {
+            return false;
+        };
+        let Some(index) = scheduler.running.get(cpu).copied().flatten() else {
+            return false;
+        };
+        let Some(saved) = scheduler
+            .tasks
+            .get_mut(index)
+            .and_then(|task| task.delivery_saved.take())
+        else {
+            return false;
+        };
+        // The whole context comes home — the registers, and the resume the
+        // delivery stashed with them, which is the interrupted instruction
+        // itself.  The handler's `resume` argument is the same address and
+        // is not needed: the context is the truth the kernel kept.
+        *frame = saved;
+        true
+    })
+}
+
+/// A host has no delivered signal to return from.
+#[cfg(not(target_os = "none"))]
+pub fn signal_return(_frame: &mut arch::Context, _resume: usize) -> bool {
+    false
 }
 
 /// The process id of the running task, if a scheduler is installed.

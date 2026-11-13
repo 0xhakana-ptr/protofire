@@ -72,6 +72,10 @@ pub const SIGUSR1: usize = 10;
 pub const SYS_SET_SIGNAL_MASK: usize = 94;
 /// `SigSuspend`, a ring run under a mask until an unblocked signal answers.
 pub const SYS_SIGSUSPEND: usize = 135;
+/// `SetSignalHandler`, the program's own code for one signal.
+pub const SYS_SET_SIGNAL_HANDLER: usize = 104;
+/// `SigReturn`, the resume a delivered signal's handler exits through.
+pub const SYS_SIGRETURN: usize = 134;
 /// `WaitProcessOf`, one named process's exit status.
 pub const SYS_WAIT_PROCESS_OF: usize = 196;
 /// `Mmap`, anonymous private memory.
@@ -412,6 +416,29 @@ pub fn sys_sigsuspend(mask: usize, record: &mut [u8; 24]) -> usize {
     )
 }
 
+/// `set_signal_handler(signal, action, handler)`: zero when the action was
+/// taken.  Action `1` installs, `0` withdraws.
+#[cfg(target_os = "none")]
+pub fn sys_set_signal_handler(signal: usize, action: usize, handler: usize) -> usize {
+    syscall6(SYS_SET_SIGNAL_HANDLER, signal, action, handler, 0, 0, 0)
+}
+
+/// `sigreturn(resume)`: the delivered-signal handler's way out.  The kernel
+/// puts the displaced registers back and the interrupted flow resumes at
+/// `resume`; control does not come back to the handler.
+#[cfg(target_os = "none")]
+pub fn sys_sigreturn(resume: usize) -> usize {
+    syscall6(SYS_SIGRETURN, resume, 0, 0, 0, 0, 0)
+}
+
+/// `return_from_exception(resume, value)`: the handler's way out.  The
+/// interrupted flow resumes at `resume`, reading `value` as the interrupted
+/// call's answer; control does not come back to the handler.
+#[cfg(target_os = "none")]
+pub fn sys_return_from_exception(resume: usize, value: usize) -> usize {
+    syscall6(23, resume, value, 0, 0, 0, 0)
+}
+
 /// `get_ppid()`: the caller's parent's pid.
 #[cfg(target_os = "none")]
 pub fn sys_get_ppid() -> usize {
@@ -529,7 +556,9 @@ mod tests {
     use super::SYS_REMOVE_PATH_AT;
     use super::SYS_RENAME_AT;
     use super::SYS_SEND_SIGNAL;
+    use super::SYS_SET_SIGNAL_HANDLER;
     use super::SYS_SET_SIGNAL_MASK;
+    use super::SYS_SIGRETURN;
     use super::SYS_SIGSUSPEND;
     use super::SYS_SPAWN_PROCESS;
     use super::SYS_STAT;
@@ -556,6 +585,11 @@ mod tests {
         assert_eq!(SYS_MMAP, SyscallNumber::Mmap as usize);
         assert_eq!(SYS_BRK, SyscallNumber::Brk as usize);
         assert_eq!(SYS_SEND_SIGNAL, SyscallNumber::SendSignal as usize);
+        assert_eq!(
+            SYS_SET_SIGNAL_HANDLER,
+            SyscallNumber::SetSignalHandler as usize
+        );
+        assert_eq!(SYS_SIGRETURN, SyscallNumber::SigReturn as usize);
         assert_eq!(SYS_SET_SIGNAL_MASK, SyscallNumber::SetSignalMask as usize);
         assert_eq!(SYS_SIGSUSPEND, SyscallNumber::SigSuspend as usize);
         assert_eq!(SYS_WAIT_SIGNAL, SyscallNumber::WaitSignal as usize);

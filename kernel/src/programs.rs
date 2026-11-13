@@ -588,7 +588,7 @@ pub fn report_and_finish() -> ! {
     // race, which is the trade this boot's programs cannot observe.
     let reaped = crate::scheduler::reap_address_spaces();
 
-    let (switches, exited) = crate::scheduler::statistics();
+    let (switches, exited, delivered) = crate::scheduler::statistics();
     let ticks = crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Acquire) as u32;
     arch::serial::write_str("protofire: every program exited, ");
     arch::serial::write_u32(exited as u32);
@@ -596,7 +596,9 @@ pub fn report_and_finish() -> ! {
     arch::serial::write_u32(ticks);
     arch::serial::write_str(" tick(s), ");
     arch::serial::write_u32(switches as u32);
-    arch::serial::write_str(" switch(es)\n");
+    arch::serial::write_str(" switch(es), ");
+    arch::serial::write_u32(delivered as u32);
+    arch::serial::write_str(" signal delivery(ies)\n");
 
     // The process tree, as the exits recorded it.  The announcing program's
     // status is its own pid because it asks `GetPid` and exits with the answer;

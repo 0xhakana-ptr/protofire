@@ -196,7 +196,29 @@ impl Scheduler {
             .iter_mut()
             .find(|task| task.pid == pid)
             .ok_or(abi::Error::NotFound)?;
-        target.queue_signal(signal, sender_pid, payload)?;
+        // A signal with an installed handler, and unblocked, is **delivered**
+        // rather than queued: the target's context is redirected at its next
+        // install, which is the POSIX reading of "a handled signal does not
+        // wait for a wait".  The delivery slot holds one; a second arrives
+        // while the first is undelivered and queues beside it, because a
+        // slot overwritten is a signal lost.
+        let delivered = target.signal_mask & (1 << signal) == 0
+            && target.signal_handler_for(signal).is_some()
+            && {
+                if target.delivery.is_none() {
+                    target.delivery = Some(crate::scheduler::task::PendingSignal {
+                        signal,
+                        sender_pid,
+                        payload,
+                    });
+                    true
+                } else {
+                    false
+                }
+            };
+        if !delivered {
+            target.queue_signal(signal, sender_pid, payload)?;
+        }
         self.wake_blocked();
         Ok(())
     }
@@ -290,6 +312,35 @@ impl Scheduler {
                 None
             }
         }
+    }
+
+    /// Install or withdraw the running task's handler for one signal.
+    ///
+    /// The address is the program's own code, in its own space — the same
+    /// trust an exception handler's install already extends, and the reason
+    /// the address means nothing until the task's next install names it.
+    pub fn set_signal_handler_current(
+        &mut self,
+        cpu: usize,
+        signal: usize,
+        action: usize,
+        handler: usize,
+    ) -> bool {
+        let Some(index) = self.running.get(cpu).copied().flatten() else {
+            return false;
+        };
+        let Some(task) = self.tasks.get_mut(index) else {
+            return false;
+        };
+        if !abi::process::is_valid_process_signal(signal) {
+            return false;
+        }
+        match action {
+            0 => task.set_signal_handler(signal, None),
+            1 if handler != 0 => task.set_signal_handler(signal, Some(handler)),
+            _ => return false,
+        }
+        true
     }
 
     /// Wake every blocked task, answering how many.
