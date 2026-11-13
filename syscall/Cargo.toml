@@ -1,4 +1,5 @@
 [package]
+description = "what a call carries: the context, the argument validators, the actions"
 name = "syscall"
 version.workspace = true
 edition.workspace = true

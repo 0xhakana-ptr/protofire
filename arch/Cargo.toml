@@ -1,4 +1,5 @@
 [package]
+description = "what the kernel asks the machine, routed to the target"
 name = "arch"
 version.workspace = true
 edition.workspace = true

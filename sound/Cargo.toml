@@ -1,4 +1,5 @@
 [package]
+description = "reserved for the audio subsystem"
 name = "sound"
 version.workspace = true
 edition.workspace = true

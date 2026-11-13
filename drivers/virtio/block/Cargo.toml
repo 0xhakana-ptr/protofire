@@ -1,4 +1,5 @@
 [package]
+description = "the block device on the virtio framework"
 name = "virtio_block"
 version.workspace = true
 edition.workspace = true

@@ -1,4 +1,5 @@
 [package]
+description = "reserved for the e1000 card this tree does not boot with"
 name = "e1000"
 version.workspace = true
 edition.workspace = true

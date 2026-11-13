@@ -1,4 +1,5 @@
 [package]
+description = "starting, stopping and supervising services, as a ring-3 program"
 name = "service_manager"
 version.workspace = true
 edition.workspace = true

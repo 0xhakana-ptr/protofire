@@ -1,4 +1,5 @@
 [package]
+description = "the flattened device tree: the parser and its walks"
 name = "fdt"
 version.workspace = true
 edition.workspace = true
