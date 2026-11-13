@@ -16,18 +16,18 @@
 //!
 //! ## What is here, today
 //!
-//! The Ethernet frame and ARP: the layout of both, a request this crate builds
-//! and a reply it reads.  That is the smallest exchange that proves a card in
-//! both directions, and it is the first layer of the stack rather than a test
-//! of the driver — which is what it was when it lived in `virtio_net`, where a
-//! driver had to know what an ARP is.
+//! The Ethernet frame, ARP, and IPv4: the layout of each, a request this crate
+//! builds and a reply it reads.  ARP is the smallest exchange that proves a
+//! card in both directions, and IPv4 is the packet the rest of the stack rides
+//! in, with the one checksum three protocols share.
 //!
 //! ## What is not here yet
 //!
-//! IPv4, ICMP, UDP and TCP, in that order.  `docs/roadmap.md` carries the eight
+//! ICMP, UDP and TCP, in that order.  `docs/roadmap.md` carries the eight
 //! steps and what each is proved by.
 
 #![no_std]
 
 pub mod arp;
 pub mod ethernet;
+pub mod ipv4;

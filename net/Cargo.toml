@@ -1,5 +1,5 @@
 [package]
-description = "the protocol stack above the frames: Ethernet and ARP today"
+description = "the protocol stack above the frames: Ethernet, ARP and IPv4 today"
 name = "net"
 version.workspace = true
 edition.workspace = true

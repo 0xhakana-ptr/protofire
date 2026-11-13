@@ -1,0 +1,400 @@
+//! net/src/ipv4.rs
+//!
+//! IPv4: the packet every protocol above the frame rides in, and the checksum
+//! that says its bytes survived the wire.
+//!
+//! ## The layout
+//!
+//! ```text
+//! Ethernet  dst[6] src[6] ethertype=0x0800        14 bytes
+//! IPv4      ver|ihl[1] tos[1] total_length[2]
+//!           identification[2] flags|fragment[2]
+//!           ttl[1] protocol[1] checksum[2]
+//!           source[4] destination[4]              20 bytes
+//! payload                                        what the protocol names
+//! ```
+//!
+//! ## Why the checksum is here and not beside each protocol
+//!
+//! It is one algorithm — sum the sixteen-bit words, fold the carries, take the
+//! one's complement — and three protocols use it: this header over itself, and
+//! UDP's and TCP's over a pseudo-header plus their own bytes.  One function in
+//! one file is what keeps three protocols from carrying three copies that
+//! drift, and a test vector here is a test vector for all of them.
+//!
+//! ## Why the reader trusts `total_length` and not the frame
+//!
+//! Ethernet pads short frames to sixty bytes, so the bytes after an IPv4 packet
+//! are usually the sender's padding and never its payload.  A parser that sized
+//! the payload from the frame would hand a protocol bytes that mean nothing,
+//! and a parser that sized it from `total_length` hands it exactly what was
+//! sent — which is why [`parse`] answers a payload length and leaves the
+//! reading to the protocol that knows what its own bytes mean.
+//!
+//! ## What is deliberately not here
+//!
+//! Fragmentation.  Every packet this stack sends fits one frame, and a packet
+//! that arrives in pieces is one this stack drops rather than reassembles —
+//! a fragmented packet asks for a reassembly buffer keyed on a sender's
+//! identification field, and nothing above this layer has asked yet.  The
+//! flags word is written with the don't-fragment bit set so a sender downstream
+//! refuses with an ICMP message rather than delivering a packet this stack
+//! would not reassemble.
+
+use crate::ethernet::get_u16;
+use crate::ethernet::put_u16;
+
+/// The IPv4 header's length, with no options.
+pub const HEADER_LEN: usize = 20;
+
+/// `protocol` value 1: ICMP.
+pub const PROTOCOL_ICMP: u8 = 1;
+
+/// `protocol` value 6: TCP.
+pub const PROTOCOL_TCP: u8 = 6;
+
+/// `protocol` value 17: UDP.
+pub const PROTOCOL_UDP: u8 = 17;
+
+/// The don't-fragment flag, set on every packet this stack sends.
+///
+/// A packet this stack sends fits one frame; asking a router to split one
+/// would produce pieces nothing here reassembles.
+const FLAGS_DONT_FRAGMENT: u16 = 0x4000;
+
+/// The time-to-live this stack sends with.
+///
+/// Sixty-four hops is the convention every general-purpose stack shares; a
+/// packet this stack sends crosses at most one — the gateway — so any value
+/// above one would do, and the conventional one is the one a peer's log reads
+/// without surprise.
+const TIME_TO_LIVE: u8 = 64;
+
+/// The Internet checksum over `bytes`: the sum of its sixteen-bit words with
+/// end-around carry, one's-complemented.
+///
+/// An odd length is padded with a zero byte on the right, which is the rule
+/// RFC 1071 states: the last lone byte counts as the high byte of the final
+/// word.  The checksum of a message with its own checksum included is zero,
+/// which is how a reader verifies without recomputing what the writer wrote.
+pub fn checksum(bytes: &[u8]) -> u16 {
+    let mut sum = 0_u32;
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        sum += u16::from_be_bytes([bytes[index], bytes[index + 1]]) as u32;
+        index += 2;
+    }
+    if index < bytes.len() {
+        sum += (bytes[index] as u32) << 8;
+    }
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+/// An IPv4 header, as this stack reads one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Header {
+    /// The address the packet claims to come from.
+    pub source: [u8; 4],
+    /// The address the packet is going to.
+    pub destination: [u8; 4],
+    /// The protocol the payload speaks: [`PROTOCOL_ICMP`], [`PROTOCOL_TCP`],
+    /// [`PROTOCOL_UDP`].
+    pub protocol: u8,
+}
+
+/// A parsed packet: the header's fields, and where the payload starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Packet {
+    pub header: Header,
+    /// Where the payload begins: past the header, including its options when
+    /// the sender wrote any.
+    pub payload_at: usize,
+    /// How many payload bytes the sender claimed.  The frame may hold more —
+    /// Ethernet's padding — and the claim is the one to trust.
+    pub payload_len: usize,
+}
+
+/// Write the twenty bytes that carry `payload_len` bytes of `protocol` from
+/// `source` to `destination`.
+///
+/// The payload is not written: a caller that already has its bytes wants the
+/// header in front of what it is about to write, the same arrangement the
+/// Ethernet header's writer makes.  The checksum is computed here, over the
+/// header this call just wrote, because the two facts it depends on — the
+/// total length and a zeroed checksum field — are both settled by the time
+/// the last field lands.
+pub fn write_header(
+    packet: &mut [u8],
+    source: [u8; 4],
+    destination: [u8; 4],
+    protocol: u8,
+    payload_len: usize,
+) {
+    let total_len = (HEADER_LEN + payload_len) as u16;
+    // Version 4, header length five words: twenty bytes, no options.
+    packet[0] = 0x45;
+    packet[1] = 0;
+    put_u16(packet, 2, total_len);
+    // One sender, one packet: this stack sends nothing fragmented, so nothing
+    // here needs to tell two packets of one datagram apart.
+    put_u16(packet, 4, 0);
+    put_u16(packet, 6, FLAGS_DONT_FRAGMENT);
+    packet[8] = TIME_TO_LIVE;
+    packet[9] = protocol;
+    // The checksum field reads zero while it is being computed, which is the
+    // definition of the computation.
+    put_u16(packet, 10, 0);
+    packet[12..16].copy_from_slice(&source);
+    packet[16..20].copy_from_slice(&destination);
+    put_u16(packet, 10, checksum(&packet[..HEADER_LEN]));
+}
+
+/// Read the packet at the start of a frame, or `None` when it is not one this
+/// stack can interpret.
+///
+/// Four things are refused, each because reading past it would be reading
+/// bytes that mean something else: a frame shorter than a header, a version
+/// that is not 4, a header shorter than five words, and a checksum that does
+/// not verify.  The length fields are cross-checked against the frame — a
+/// `total_length` larger than the frame names bytes the sender never put on
+/// the wire, and one smaller than the header names a packet that overlaps
+/// itself.
+pub fn parse(frame: &[u8]) -> Option<Packet> {
+    if frame.len() < HEADER_LEN {
+        return None;
+    }
+    if frame[0] >> 4 != 4 {
+        return None;
+    }
+    let header_len = (frame[0] & 0x0F) as usize * 4;
+    if header_len < HEADER_LEN || header_len > frame.len() {
+        return None;
+    }
+    let total_len = get_u16(frame, 2) as usize;
+    if total_len < header_len || total_len > frame.len() {
+        return None;
+    }
+    // The checksum verifies over the header with its own field included: a
+    // correct header sums to all ones, which is zero after the complement.
+    if checksum(&frame[..header_len]) != 0 {
+        return None;
+    }
+
+    let mut source = [0_u8; 4];
+    source.copy_from_slice(&frame[12..16]);
+    let mut destination = [0_u8; 4];
+    destination.copy_from_slice(&frame[16..20]);
+
+    Some(Packet {
+        header: Header {
+            source,
+            destination,
+            protocol: frame[9],
+        },
+        payload_at: header_len,
+        payload_len: total_len - header_len,
+    })
+}
+
+/// Whether the packet was sent to `address`, or to everyone on the wire.
+///
+/// The two broadcast forms are both accepted because both are real: the
+/// limited broadcast (`255.255.255.255`) is what a sender uses before it knows
+/// its own network, and the directed form (`10.0.2.255`) names this one.  A
+/// packet addressed to another machine is another machine's conversation.
+pub fn is_for(packet: &Packet, address: [u8; 4]) -> bool {
+    packet.header.destination == address
+        || packet.header.destination == [255, 255, 255, 255]
+        || packet.header.destination == [address[0], address[1], address[2], 255]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HEADER_LEN;
+    use super::PROTOCOL_ICMP;
+    use super::PROTOCOL_UDP;
+    use super::Packet;
+    use super::checksum;
+    use super::is_for;
+    use super::parse;
+    use super::write_header;
+
+    const US: [u8; 4] = [10, 0, 2, 15];
+    const GATEWAY: [u8; 4] = [10, 0, 2, 2];
+
+    /// An ICMP echo request to the gateway, header and payload, exactly as
+    /// the wire carries it.
+    ///
+    /// Both checksums were computed by hand and are compared whole: a writer
+    /// that summed in the host's order produces a frame whose checksum
+    /// verifies against itself and still says nothing to a peer.  The payload
+    /// is nine bytes — an odd length — so the vector also pins the padding
+    /// rule the checksum's last lone byte follows.
+    const ECHO_REQUEST: [u8; 37] = [
+        0x45, 0x00, 0x00, 0x25, // version|ihl, tos, total length = 37
+        0x00, 0x00, 0x40, 0x00, // identification, flags: don't fragment
+        0x40, 0x01, 0x22, 0xc8, // ttl 64, protocol ICMP, checksum
+        0x0a, 0x00, 0x02, 0x0f, // source 10.0.2.15
+        0x0a, 0x00, 0x02, 0x02, // destination 10.0.2.2
+        // The payload: an ICMP echo request, "protofire" — seventeen bytes.
+        0x08, 0x00, 0xda, 0x3d, 0x00, 0x01, 0x00, 0x01, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x66, 0x69,
+        0x72, 0x65,
+    ];
+
+    /// The checksum's arithmetic is the one's-complement sum, on a vector with
+    /// its carries known by hand.
+    ///
+    /// The words are `0x4500 + 0x0025 + 0x4000 + … = 0xdd37`, and the
+    /// complement is `0x22c8`; a fold that lost a carry would answer `0x22c9`,
+    /// which is one bit off and verifies against nothing.  The field reads
+    /// zero here, because that is the input the writer's own call computes
+    /// over.
+    #[test]
+    fn the_checksum_of_the_echo_request_header_is_the_hand_computed_one() {
+        let mut zeroed = ECHO_REQUEST;
+        zeroed[10] = 0;
+        zeroed[11] = 0;
+        assert_eq!(checksum(&zeroed[..HEADER_LEN]), 0x22c8);
+    }
+
+    /// A message with its own checksum included sums to zero, which is how a
+    /// reader verifies.
+    ///
+    /// The payload's checksum is on the vector too, so this is the claim for
+    /// both halves of the packet and for the odd-length padding in one.
+    #[test]
+    fn a_checksum_included_sums_to_zero() {
+        assert_eq!(checksum(&ECHO_REQUEST[..HEADER_LEN]), 0, "the header");
+        assert_eq!(checksum(&ECHO_REQUEST[HEADER_LEN..]), 0, "the payload");
+    }
+
+    /// Every single-byte corruption of the header changes the checksum.
+    ///
+    /// A sum that ignored a field would agree with the corrupt frame, and the
+    /// field it ignored would be a field the wire could flip unseen.  The one
+    /// exception the algorithm allows — corrupting two bytes so their errors
+    /// cancel — is not reachable by changing one byte.
+    #[test]
+    fn any_single_corrupted_byte_changes_the_checksum() {
+        for index in 0..HEADER_LEN {
+            let mut corrupt = ECHO_REQUEST;
+            corrupt[index] = !corrupt[index];
+            assert_ne!(
+                checksum(&corrupt[..HEADER_LEN]),
+                checksum(&ECHO_REQUEST[..HEADER_LEN]),
+                "byte {index} is invisible to the checksum"
+            );
+        }
+    }
+
+    /// An odd-length message is checksummed as if padded with one zero byte:
+    /// the lone last byte counts as the high byte of its final word.
+    ///
+    /// Checked against the value the padded form gives, which is the rule
+    /// stated rather than assumed.
+    #[test]
+    fn an_odd_length_pads_with_a_zero_byte() {
+        const PAYLOAD_LEN: usize = ECHO_REQUEST.len() - HEADER_LEN;
+        let mut padded = [0_u8; PAYLOAD_LEN + 1];
+        padded[..PAYLOAD_LEN].copy_from_slice(&ECHO_REQUEST[HEADER_LEN..]);
+        assert_eq!(
+            checksum(&ECHO_REQUEST[HEADER_LEN..]),
+            checksum(&padded),
+            "the pad changes nothing"
+        );
+    }
+
+    /// The writer produces the bytes the wire carries, payload excluded.
+    #[test]
+    fn the_writer_produces_the_frame_the_vector_carries() {
+        let mut packet = [0_u8; ECHO_REQUEST.len()];
+        write_header(&mut packet, US, GATEWAY, PROTOCOL_ICMP, 17);
+        assert_eq!(&packet[..HEADER_LEN], &ECHO_REQUEST[..HEADER_LEN]);
+        // The payload is not the writer's: the caller's bytes, untouched.
+        packet[HEADER_LEN..].copy_from_slice(&ECHO_REQUEST[HEADER_LEN..]);
+        assert_eq!(packet, ECHO_REQUEST);
+    }
+
+    /// A written packet reads back as the fields it was written with.
+    #[test]
+    fn a_written_packet_round_trips() {
+        let mut packet = [0_u8; 40];
+        write_header(&mut packet, US, GATEWAY, PROTOCOL_UDP, 20);
+
+        let parsed = parse(&packet).expect("a packet");
+        assert_eq!(parsed.header.source, US);
+        assert_eq!(parsed.header.destination, GATEWAY);
+        assert_eq!(parsed.header.protocol, PROTOCOL_UDP);
+        assert_eq!(parsed.payload_at, HEADER_LEN, "no options");
+        assert_eq!(parsed.payload_len, 20);
+    }
+
+    /// A packet the frame holds more of parses to the length the sender
+    /// claimed: Ethernet pads, and the padding is not payload.
+    #[test]
+    fn the_padding_past_total_length_is_not_payload() {
+        let mut frame = [0xEE_u8; 60];
+        frame[..ECHO_REQUEST.len()].copy_from_slice(&ECHO_REQUEST);
+
+        let parsed = parse(&frame).expect("a packet");
+        assert_eq!(parsed.payload_len, 17, "the sender's claim, not the frame");
+        assert_eq!(parsed.payload_at, HEADER_LEN);
+    }
+
+    /// A packet this stack cannot interpret is refused rather than read at
+    /// the wrong offsets.
+    #[test]
+    fn a_packet_that_is_not_ours_is_refused() {
+        assert!(parse(&[]).is_none(), "empty");
+        assert!(parse(&ECHO_REQUEST[..HEADER_LEN - 1]).is_none(), "short");
+
+        let mut wrong_version = ECHO_REQUEST;
+        wrong_version[0] = 0x65;
+        assert!(parse(&wrong_version).is_none(), "not IPv4");
+
+        let mut short_header = ECHO_REQUEST;
+        short_header[0] = 0x43;
+        assert!(parse(&short_header).is_none(), "a header below five words");
+
+        let mut bad_checksum = ECHO_REQUEST;
+        bad_checksum[10] = !bad_checksum[10];
+        assert!(parse(&bad_checksum).is_none(), "the sum does not verify");
+
+        let mut overlong = ECHO_REQUEST;
+        overlong[2] = 0x40;
+        assert!(
+            parse(&overlong).is_none(),
+            "a total length past the frame's end"
+        );
+
+        let mut underlength = ECHO_REQUEST;
+        underlength[3] = 0x10;
+        assert!(
+            parse(&underlength).is_none(),
+            "a total length shorter than the header"
+        );
+    }
+
+    /// A packet addressed to this stack, or to everyone, is for it; one
+    /// addressed to another machine is not.
+    #[test]
+    fn a_packet_is_for_this_stack_when_addressed_to_it_or_to_everyone() {
+        let mut packet = [0_u8; HEADER_LEN];
+        write_header(&mut packet, GATEWAY, US, PROTOCOL_ICMP, 0);
+        assert!(is_for(&parse(&packet).expect("a packet"), US));
+
+        // The limited broadcast, and the directed broadcast for this network.
+        for broadcast in [[255, 255, 255, 255], [10, 0, 2, 255]] {
+            write_header(&mut packet, GATEWAY, broadcast, PROTOCOL_ICMP, 0);
+            let parsed = parse(&packet).expect("a packet");
+            assert!(is_for(&parsed, US), "broadcast is for everyone");
+        }
+
+        write_header(&mut packet, GATEWAY, [10, 0, 2, 3], PROTOCOL_ICMP, 0);
+        let parsed: Packet = parse(&packet).expect("a packet");
+        assert!(!is_for(&parsed, US), "another machine's conversation");
+    }
+}
