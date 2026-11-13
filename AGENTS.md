@@ -14,6 +14,8 @@ healthy `AGENTS.md` gets shorter as the gates get stronger.
 - **Why is the tree shaped this way, and which crate may name which?** —
   [`docs/architecture.md`](docs/architecture.md) and
   [`scripts/layering.txt`](scripts/layering.txt).
+- **What is each directory, grouped by what it is for?** —
+  [`docs/tree.md`](docs/tree.md).
 - **What is here, and why does it have the shape it has?** —
   [`docs/migration.md`](docs/migration.md).
 - **What exists, and what is missing, on each machine?** —
