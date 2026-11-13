@@ -100,7 +100,15 @@ impl super::super::filesystem::FileSystem for Ext4Volume {
         if dir_inode.kind() != NodeKind::Directory {
             return Err(Error::InvalidArgument);
         }
-        let entries = self.fs.read_dir_entries(&dir_inode)?;
+        // The dot entries are the format's bookkeeping, not children: a
+        // listing answers the names a caller made, which is the convention
+        // every other backend's listing keeps.
+        let entries: Vec<_> = self
+            .fs
+            .read_dir_entries(&dir_inode)?
+            .into_iter()
+            .filter(|entry| entry.name != "." && entry.name != "..")
+            .collect();
         let entry = entries.get(index).ok_or(Error::NotFound)?;
         let child_inode = self.fs.read_inode(entry.inode)?;
         Ok(DirectoryEntry::new(

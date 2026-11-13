@@ -35,6 +35,7 @@ extern crate alloc;
 
 pub mod block_cache;
 pub mod ext4;
+pub mod f2fs;
 pub mod filesystem;
 pub mod iso9660;
 pub mod mount;
