@@ -12,6 +12,7 @@ members = [
     "fs",
     "ipc",
     "kernel",
+    "link",
     "memory",
     "net",
     "power",

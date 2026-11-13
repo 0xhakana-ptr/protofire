@@ -746,7 +746,7 @@ pub fn exercise_network() -> bool {
     // hides the receive wait entirely — measured, the reply was already in the
     // ring by the time the send finished, so the receive loop took zero turns
     // and could not tell a working message from a poll that never needed one.
-    let request = virtio_net::arp_request(mac, OUR_PROTOCOL, GATEWAY_PROTOCOL);
+    let request = net::arp::request(mac, OUR_PROTOCOL, GATEWAY_PROTOCOL);
     if let Err(error) = card.submit_frame(&request) {
         arch::serial::write_str("protofire: virtio-net could not send the arp request: ");
         arch::serial::write_str(match error {
@@ -805,7 +805,7 @@ pub fn exercise_network() -> bool {
     loop {
         match card.receive_frame(&mut frame) {
             Ok(Some(length)) => {
-                let Some(arp) = virtio_net::parse_arp(&frame[..length]) else {
+                let Some(arp) = net::arp::parse(&frame[..length]) else {
                     arch::serial::write_str(
                         "protofire: virtio-net received a frame that is not arp\n",
                     );

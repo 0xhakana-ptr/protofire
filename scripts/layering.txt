@@ -155,6 +155,18 @@
 # need.
 4 block
 
+# `link` is `block`'s shape one layer up: what a network card is, as the
+# protocol stack above it needs one.  A driver implements `LinkDevice`; `net`
+# sends frames through it and never names a driver.  It sits beside `block`
+# because it answers the same kind of question about a different device, and it
+# names `abi` for the error type and nothing else.
+#
+# It exists because the alternative was measured and was wrong: ARP used to
+# live in `virtio_net`, which made a driver that knew what an ARP is.  A second
+# card would have had to copy the protocol to compile, and a protocol in two
+# places is a protocol that disagrees with itself.
+4 link
+
 # `memory` is the frame pool and the region pools: a range and a bitmap, plus one
 # injected hook for "make this range writable".  It does *not* name `arch` — the
 # hook is what keeps the page table out of a data structure — which is the

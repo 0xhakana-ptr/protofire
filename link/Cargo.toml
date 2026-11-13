@@ -1,0 +1,20 @@
+[package]
+name = "link"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# What a network card is, as the protocol stack above it needs one.
+#
+# This is the `block` crate's shape one layer up: a trait at the bottom,
+# drivers that implement it, the stack above, and the kernel joining them.
+# Without it the stack would have to name a driver — so a second card would be
+# a second stack — or the driver would have to know what an ARP is, which is
+# where `virtio_net` was.
+#
+# It names `abi` for the error type and nothing else.  Not `sync`: a device
+# behind this trait is shared, and how it serialises its own queues is its
+# business.  Not `arch`: a card is not a machine.
+[dependencies]
+abi.workspace = true

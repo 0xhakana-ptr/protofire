@@ -1,6 +1,33 @@
 //! net/src/lib.rs
 //!
-//! A placeholder for the network subsystem: reserved now, filled when a
-//! stack is worth building against a real device.
+//! The protocol stack above the frame: what the bytes a card carries mean.
+//!
+//! ## What this crate is, and what it is not
+//!
+//! It is the layer that reads and writes the protocols a network runs on.  It
+//! is not a driver: it sends and receives frames through [`link::LinkDevice`]
+//! and never names a card, which is why a second network device is a second
+//! implementation of that trait and not a second stack.
+//!
+//! This is the same division `block` makes for disks.  `virtio_block`
+//! implements `QueuedBlockDevice`; `fs` reads through it and knows nothing
+//! about virtio. Here `virtio_net` implements `LinkDevice`; this crate sends
+//! through it.
+//!
+//! ## What is here, today
+//!
+//! The Ethernet frame and ARP: the layout of both, a request this crate builds
+//! and a reply it reads.  That is the smallest exchange that proves a card in
+//! both directions, and it is the first layer of the stack rather than a test
+//! of the driver — which is what it was when it lived in `virtio_net`, where a
+//! driver had to know what an ARP is.
+//!
+//! ## What is not here yet
+//!
+//! IPv4, ICMP, UDP and TCP, in that order.  `docs/roadmap.md` carries the eight
+//! steps and what each is proved by.
 
 #![no_std]
+
+pub mod arp;
+pub mod ethernet;

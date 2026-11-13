@@ -558,6 +558,37 @@ impl VirtioNet {
     }
 }
 
+/// The card, as the protocol stack above it sees one.
+///
+/// The trait is `link`'s, and this is the only place a card's own vocabulary
+/// meets it.  Three of the four methods are the driver's own under a name the
+/// stack knows: the address the device published, a frame on the transmit
+/// queue, the next frame off the receive queue.  The fourth is new, and it is
+/// here because a stack has to size a receive buffer and only the device knows
+/// the answer.
+///
+/// `submit_frame` is the one that is not a rename.  The driver's own version
+/// answers a [`Ticket`], because its caller wants to know when the transmit
+/// queue retired the request; a stack does not.  So this blocks until the
+/// device has taken the frame, and reports the failure the ticket would have.
+impl link::LinkDevice for VirtioNet {
+    fn hardware_address(&self) -> [u8; 6] {
+        self.mac()
+    }
+
+    fn submit_frame(&self, frame: &[u8]) -> Result<()> {
+        self.submit_frame_blocking(frame)
+    }
+
+    fn receive_frame(&self, into: &mut [u8]) -> Result<Option<usize>> {
+        VirtioNet::receive_frame(self, into)
+    }
+
+    fn maximum_frame_len(&self) -> usize {
+        RECEIVE_BUFFER_LEN
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! The tests for this module.
@@ -602,8 +633,14 @@ mod tests {
         addresses: Mutex<Vec<(u16, DeviceAddresses)>>,
         enabled: Mutex<Vec<u16>>,
         mac: [u8; 6],
-        /// What the device sends back when an ARP request arrives, if anything.
-        arp_reply: Mutex<Option<Vec<u8>>>,
+        /// What the device sends back once the driver has transmitted anything.
+        ///
+        /// An echo, not a protocol answer: this fake exists to prove the driver
+        /// moves bytes in both directions, and it has no business knowing what
+        /// the bytes mean.  It used to hold an ARP reply and match on the frame
+        /// being an ARP request, which made the driver's own tests depend on a
+        /// protocol the driver no longer carries.
+        echo: Mutex<Option<Vec<u8>>>,
         /// How many completions the device has published on each queue.
         transmit_used: AtomicU64,
         receive_used: AtomicU64,
@@ -628,7 +665,7 @@ mod tests {
                 addresses: Mutex::new(Vec::new()),
                 enabled: Mutex::new(Vec::new()),
                 mac: [0x02, 0x11, 0x22, 0x33, 0x44, 0x55],
-                arp_reply: Mutex::new(None),
+                echo: Mutex::new(None),
                 transmit_used: AtomicU64::new(0),
                 receive_used: AtomicU64::new(0),
                 transmit_consumed: AtomicU64::new(0),
@@ -718,13 +755,12 @@ mod tests {
                 let total = header.length + frame.length;
                 self.transmitted.lock().push(frame_bytes.clone());
 
-                // An ARP request is what the fake answers.  It is the smallest
-                // thing a device can say back, and it is what the machine's
-                // user-mode network answers too.
-                if let Some(reply) = self.arp_reply.lock().as_ref()
-                    && crate::frame::parse_arp(&frame_bytes)
-                        .is_some_and(|arp| arp.operation == crate::frame::OPER_REQUEST)
-                {
+                // What the fake sends back, if it was told to send anything.
+                //
+                // An echo and not a protocol answer: the driver's job is to
+                // move a frame in each direction, and a fake that inspected
+                // the frame would be testing a parser that is not here.
+                if let Some(reply) = self.echo.lock().as_ref() {
                     self.deliver(reply);
                 }
                 // The header is ten bytes and is not part of the frame the
@@ -1000,74 +1036,50 @@ mod tests {
         assert_eq!(VirtioNet::new(card).err(), Some(abi::Error::Unsupported));
     }
 
-    /// Build the reply a user-mode network sends to an ARP request.
-    ///
-    /// Written here rather than by the driver's own builder so the driver is
-    /// checked against the wire format and not against itself.
-    fn gateway_reply(card: [u8; 6], us: [u8; 4], gateway: [u8; 4]) -> Vec<u8> {
-        const GATEWAY_HARDWARE: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
-        let mut frame = alloc::vec![0_u8; crate::frame::ARP_FRAME_LEN];
-        frame[0..6].copy_from_slice(&card);
-        frame[6..12].copy_from_slice(&GATEWAY_HARDWARE);
-        frame[12..14].copy_from_slice(&crate::frame::ETHERTYPE_ARP.to_be_bytes());
-        frame[14..16].copy_from_slice(&1u16.to_be_bytes());
-        frame[16..18].copy_from_slice(&crate::frame::ETHERTYPE_IPV4.to_be_bytes());
-        frame[18] = 6;
-        frame[19] = 4;
-        frame[20..22].copy_from_slice(&crate::frame::OPER_REPLY.to_be_bytes());
-        frame[22..28].copy_from_slice(&GATEWAY_HARDWARE);
-        frame[28..32].copy_from_slice(&gateway);
-        frame[32..38].copy_from_slice(&card);
-        frame[38..42].copy_from_slice(&us);
-        frame
-    }
-
-    /// An ARP request on transmit, and the reply on receive.
+    /// A frame leaves on transmit, and the device's answer comes back on
+    /// receive.
     ///
     /// The whole exchange through the real driver: the transmit chain is
     /// published with a ten-byte header in front, the device reads the frame,
-    /// answers it, and the driver takes the reply off the receive queue with
-    /// the header stripped.  Nothing here is stubbed except the card.
+    /// answers with bytes of its own, and the driver takes the answer off the
+    /// receive queue with the header stripped.  Nothing here is stubbed except
+    /// the card.
+    ///
+    /// The bytes are opaque on purpose.  This test is about a driver moving a
+    /// frame in each direction; what the frame *means* is `net`'s business, and
+    /// when this driver also carried an ARP parser the two got tested together
+    /// and could only fail together.
     #[test]
-    fn an_arp_request_leaves_and_the_reply_comes_back() {
-        const US: [u8; 4] = [10, 0, 2, 15];
-        const GATEWAY: [u8; 4] = [10, 0, 2, 2];
-
+    fn a_frame_leaves_and_the_devices_answer_comes_back() {
         let card = RecordingCard::new(2, alloc::vec![8, 8]);
-        let mac = card.mac;
-        *card.arp_reply.lock() = Some(gateway_reply(mac, US, GATEWAY));
+
+        // A frame with a recognisable pattern at every offset, so a driver that
+        // shifted a byte is visible rather than plausible.
+        let outgoing: Vec<u8> = (0..60u8).collect();
+        let incoming: Vec<u8> = (100..160u8).collect();
+        *card.echo.lock() = Some(incoming.clone());
+
         let net = VirtioNet::new(card.clone()).expect("bring up");
-
         net.post_receive_buffer().expect("post a receive buffer");
-        let request = crate::frame::arp_request(mac, US, GATEWAY);
-        net.submit_frame_blocking(&request).expect("send");
+        net.submit_frame_blocking(&outgoing).expect("send");
 
-        // What the device was handed: the frame the driver built, behind the
-        // ten zero bytes of header.
+        // What the device was handed: the frame the driver was given, behind
+        // the ten zero bytes of header.
         let sent = card.transmitted.lock().clone();
         assert_eq!(sent.len(), 1, "the device was sent one frame");
-        assert_eq!(sent[0], request, "the frame the driver wrote");
+        assert_eq!(sent[0], outgoing, "the frame the caller wrote");
 
         let mut buffer = [0_u8; crate::device::RECEIVE_BUFFER_LEN];
         let length = net
             .receive_frame(&mut buffer)
             .expect("a frame was waiting")
-            .expect("the reply arrived");
+            .expect("the answer arrived");
+        assert_eq!(length, incoming.len(), "the answer, without the header");
         assert_eq!(
-            length,
-            crate::frame::ARP_FRAME_LEN,
-            "the reply, without the device's header"
+            &buffer[..length],
+            incoming.as_slice(),
+            "every byte at its offset"
         );
-        let reply = crate::frame::parse_arp(&buffer[..length]).expect("an ARP frame");
-        assert_eq!(reply.operation, crate::frame::OPER_REPLY);
-        assert_eq!(
-            reply.sender_hardware,
-            [0x52, 0x54, 0x00, 0x12, 0x34, 0x56],
-            "the gateway's address is the answer the request asked for"
-        );
-        assert_eq!(reply.sender_protocol, GATEWAY);
-        assert_eq!(reply.target_hardware, mac, "the reply is addressed to us");
-        assert_eq!(reply.target_protocol, US);
         assert_eq!(net.health(), crate::device::Health::Healthy);
     }
 

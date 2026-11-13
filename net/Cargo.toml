@@ -5,4 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# The protocol stack above the frame.
+#
+# It names `link` for the device it sends through and `abi` for the error type.
+# It names no driver: that is the whole point of `link` existing, and the reason
+# `virtio_net` no longer carries an ARP message — a driver that knows what an
+# ARP is cannot be replaced by a second driver without copying the protocol.
 [dependencies]
+abi.workspace = true
+link = { path = "../link" }

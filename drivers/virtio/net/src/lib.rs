@@ -17,18 +17,22 @@
 //!
 //! ## What is here, today
 //!
-//! The bring-up, and a frame in each direction: [`VirtioNet::submit_frame`]
-//! puts a driver-readable header and a frame on the transmit queue, and
-//! [`VirtioNet::post_receive_buffer`] posts a device-writable buffer that
-//! [`VirtioNet::receive_frame`] drains.  [`frame::arp_request`] is the frame
-//! that proves both, because QEMU's user-mode network answers one without any
-//! configuration and the answer is 42 bytes of fields the driver wrote.
+//! The bring-up and the frames, and **no protocol**:
+//! [`VirtioNet::submit_frame`] puts a driver-readable header and a frame on the
+//! transmit queue, [`VirtioNet::post_receive_buffer`] posts a device-writable
+//! buffer that [`VirtioNet::receive_frame`] drains, and
+//! [`link::LinkDevice::maximum_frame_len`] says how large a receive buffer has
+//! to be.
 //!
-//! ## What is not here
+//! ## What is not here, and why it left
 //!
-//! A network stack.  No IP, no UDP, no DHCP: an ARP exchange is the smallest
-//! thing that exercises both queues, and a stack above it is a different
-//! project.
+//! ARP used to be.  `arp_request` and `parse_arp` lived here with the Ethernet
+//! and ARP layouts beside them, which made this a driver that knew what an ARP
+//! is: a second network card would have had to copy the protocol to compile,
+//! and the protocol would then exist twice.  It lives in `net` now, above the
+//! [`link::LinkDevice`] trait this crate implements — the same division `block`
+//! makes for disks, where `virtio_block` implements `QueuedBlockDevice` and
+//! `fs` reads through it.
 //!
 //! ## The specification
 //!
@@ -43,7 +47,6 @@ extern crate alloc;
 pub mod config;
 pub mod device;
 pub mod features;
-pub mod frame;
 pub mod header;
 
 pub use device::Health;
@@ -53,6 +56,3 @@ pub use device::TRANSMIT_QUEUE;
 pub use device::Ticket;
 pub use device::VirtioNet;
 pub use features::VIRTIO_NET_F_MAC;
-pub use frame::Arp;
-pub use frame::arp_request;
-pub use frame::parse_arp;

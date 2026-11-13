@@ -46,6 +46,12 @@ virtio_block = { path = "../drivers/virtio/block" }
 # one is the ordinary state on two of the three machines, and the driver prints
 # nothing then.
 virtio_net = { path = "../drivers/virtio/net" }
+# The protocol stack above the frame, and the trait a card implements.  The
+# kernel names both because it is what joins them: `net` never sees
+# `virtio_net` and `virtio_net` never sees `net`, which is the whole reason
+# `link` exists.
+net = { path = "../net" }
+link = { path = "../link" }
 # The table a caller finds a service by name in, and the request/completion
 # model a service answers through.
 service_table = { path = "../service_table" }

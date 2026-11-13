@@ -5,13 +5,15 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-# The virtio network card: two queues, the address the device publishes, and
-# the frame path that arrives with the next change.
+# The virtio network card: two queues, the address the device publishes, and the
+# frame path in both directions.
 #
-# It names `virtio_core` for the queue and the transport and `abi` for the
-# errors it answers with.  It names no other device, and no device names it: a
-# framework one device reaches through another device's code is not a framework.
+# It names `virtio_core` for the queue and the transport, `link` for the trait a
+# card implements, and `abi` for the errors it answers with.  It names no
+# protocol: ARP used to be here and left, because a driver that knows what an
+# ARP is cannot be replaced by a second driver without copying the protocol.
 [dependencies]
 abi.workspace = true
+link = { path = "../../../link" }
 virtio_core = { path = "../core" }
 spin.workspace = true

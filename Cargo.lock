@@ -263,7 +263,9 @@ dependencies = [
  "fs",
  "ipc",
  "irq",
+ "link",
  "memory",
+ "net",
  "paging",
  "pci",
  "security",
@@ -274,6 +276,13 @@ dependencies = [
  "virtio_block",
  "virtio_core",
  "virtio_net",
+]
+
+[[package]]
+name = "link"
+version = "0.1.0"
+dependencies = [
+ "abi",
 ]
 
 [[package]]
@@ -296,6 +305,10 @@ dependencies = [
 [[package]]
 name = "net"
 version = "0.1.0"
+dependencies = [
+ "abi",
+ "link",
+]
 
 [[package]]
 name = "once_cell_polyfill"
@@ -475,6 +488,7 @@ name = "virtio_net"
 version = "0.1.0"
 dependencies = [
  "abi",
+ "link",
  "spin",
  "virtio_core",
 ]

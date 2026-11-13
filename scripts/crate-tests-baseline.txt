@@ -54,8 +54,9 @@ init                  493    0 # exempt: entry symbols, a panic handler and an e
 ipc                   344    9
 irq                   463   12
 kernel              18930  134 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
+link                  137    3
 memory               2289   36
-net                     7    0
+net                   498   11
 paging                779   13
 pci                  2596   44
 power                 324   12
@@ -73,5 +74,5 @@ userland              722    2
 virt                   62    0 # exempt: a design argument and no code; the day it has a value to assert, this row loses the note
 virtio_block         1253   15
 virtio_core          2101   25
-virtio_net           1838   26
+virtio_net           1560   20
 xtask                2113    9

@@ -1,38 +1,38 @@
-//! drivers/virtio/net/src/frame.rs
+//! net/src/arp.rs
 //!
-//! An Ethernet frame and the one ARP message this driver sends and reads.
+//! Address Resolution Protocol: who holds this address, and what does it answer
+//! with.
 //!
-//! ## Why ARP is the first frame
-//!
-//! It is the smallest exchange that proves both queues.  An ARP request is 42
-//! bytes, needs no configuration, no address assignment and no stack above it,
-//! and QEMU's user-mode network answers one for its gateway without being asked
-//! to.  So a boot that sends one and reads the reply has exercised the
-//! transmit chain, the device's own send path, the receive chain and the
-//! device's receive path — four things a bring-up test cannot reach.
-//!
-//! ## The layout is the protocol's, not this tree's
+//! ## The layout
 //!
 //! ```text
-//! Ethernet  dst[6] src[6] ethertype[2]             14 bytes
+//! Ethernet  dst[6] src[6] ethertype=0x0806       14 bytes
 //! ARP       htype[2] ptype[2] hlen[1] plen[1]
-//!           oper[2] sha[6] spa[4] tha[6] tpa[4]    28 bytes
+//!           oper[2] sha[6] spa[4] tha[6] tpa[4]  28 bytes
 //! ```
 //!
-//! Every multi-byte field is big-endian on the wire, which is the opposite of
-//! the device's own configuration registers.  That is not a curiosity: a driver
-//! that wrote an ARP request with little-endian fields asks for the address of
-//! `0x0100000a` instead of `10.0.0.1`, and a network that answers nothing looks
-//! exactly like a card that does not send.
+//! ## Why ARP is the first protocol here
+//!
+//! It is the smallest exchange that needs nothing configured: an ARP request is
+//! 42 bytes, needs no address assignment, and QEMU's user-mode network answers
+//! one for its gateway without being asked to.  So a boot that sends one and
+//! reads the answer has exercised the transmit chain, the device's send path,
+//! the receive chain and the device's receive path — four things a bring-up
+//! cannot reach.
+//!
+//! ## What is not here yet
+//!
+//! The cache.  This module builds a question and reads an answer; a table that
+//! remembers the answer, and a caller that asks once instead of every time, is
+//! step 5.2 in `docs/roadmap.md`.
 
-/// The Ethernet header's length: two addresses and a type.
-pub const ETHERNET_HEADER_LEN: usize = 14;
-
-/// `0x0806`: ARP, as the ethertype field carries it.
-pub const ETHERTYPE_ARP: u16 = 0x0806;
-
-/// `0x0800`: IPv4, the protocol address type an ARP message names.
-pub const ETHERTYPE_IPV4: u16 = 0x0800;
+use crate::ethernet::BROADCAST;
+use crate::ethernet::ETHERTYPE_ARP;
+use crate::ethernet::ETHERTYPE_IPV4;
+use crate::ethernet::get_u16;
+use crate::ethernet::put_u16;
+use crate::ethernet::write_header;
+use link::ETHERNET_HEADER_LEN;
 
 /// The ARP message's length, for an Ethernet and IPv4 pair.
 pub const ARP_LEN: usize = 28;
@@ -40,26 +40,16 @@ pub const ARP_LEN: usize = 28;
 /// The length of a complete ARP frame for Ethernet over IPv4.
 pub const ARP_FRAME_LEN: usize = ETHERNET_HEADER_LEN + ARP_LEN;
 
-/// The broadcast address, which is who an ARP request is sent to.
-pub const BROADCAST: [u8; 6] = [0xFF; 6];
-
 /// `oper` value 1: a request.
 pub const OPER_REQUEST: u16 = 1;
 
 /// `oper` value 2: a reply.
 pub const OPER_REPLY: u16 = 2;
 
-/// Write a `u16` in the byte order the wire uses.
-fn put_u16(frame: &mut [u8], at: usize, value: u16) {
-    frame[at..at + 2].copy_from_slice(&value.to_be_bytes());
-}
+/// `htype` value 1: Ethernet hardware.
+const HTYPE_ETHERNET: u16 = 1;
 
-/// Read a `u16` from the byte order the wire uses.
-fn get_u16(frame: &[u8], at: usize) -> u16 {
-    u16::from_be_bytes([frame[at], frame[at + 1]])
-}
-
-/// An ARP message, as this driver reads one.
+/// An ARP message, as this stack reads one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Arp {
     /// `oper`: 1 for a request, 2 for a reply.
@@ -76,24 +66,23 @@ pub struct Arp {
 
 /// Build an ARP request asking who holds `target_protocol`.
 ///
-/// `source` is the card's address, which the device published; the request is a
-/// broadcast because the answer is what the driver does not have.  The sender's
-/// hardware field carries `source` so the reply is addressed back to it.
-pub fn arp_request(
+/// `source` is this card's address, which the device published; the request is
+/// a broadcast because the answer is what the caller does not have.  The
+/// sender's hardware field carries `source` so the reply is addressed back to
+/// it.
+pub fn request(
     source: [u8; 6],
     sender_protocol: [u8; 4],
     target_protocol: [u8; 4],
 ) -> [u8; ARP_FRAME_LEN] {
     let mut frame = [0_u8; ARP_FRAME_LEN];
 
-    // Ethernet: to everyone, from the card, and it is an ARP.
-    frame[0..6].copy_from_slice(&BROADCAST);
-    frame[6..12].copy_from_slice(&source);
-    put_u16(&mut frame, 12, ETHERTYPE_ARP);
+    // Ethernet: to everyone, from this card, and it is an ARP.
+    write_header(&mut frame, BROADCAST, source, ETHERTYPE_ARP);
 
     let arp = ETHERNET_HEADER_LEN;
-    // htype = 1 (Ethernet), ptype = IPv4, hlen = 6, plen = 4.
-    put_u16(&mut frame, arp, 1);
+    // htype = Ethernet, ptype = IPv4, hlen = 6, plen = 4.
+    put_u16(&mut frame, arp, HTYPE_ETHERNET);
     put_u16(&mut frame, arp + 2, ETHERTYPE_IPV4);
     frame[arp + 4] = 6;
     frame[arp + 5] = 4;
@@ -109,12 +98,12 @@ pub fn arp_request(
 
 /// Read the ARP message at the start of an Ethernet frame.
 ///
-/// `None` for anything that is not an Ethernet ARP frame this driver can
+/// `None` for anything that is not an Ethernet ARP frame this stack can
 /// interpret: a frame shorter than the message, a different ethertype, or an
 /// ARP whose own field sizes say it is not Ethernet over IPv4.  Each of those
 /// would otherwise be read from offsets that mean something else, and the
 /// fields after the mistake would look plausible.
-pub fn parse_arp(frame: &[u8]) -> Option<Arp> {
+pub fn parse(frame: &[u8]) -> Option<Arp> {
     if frame.len() < ARP_FRAME_LEN {
         return None;
     }
@@ -122,7 +111,7 @@ pub fn parse_arp(frame: &[u8]) -> Option<Arp> {
         return None;
     }
     let arp = ETHERNET_HEADER_LEN;
-    if get_u16(frame, arp) != 1 {
+    if get_u16(frame, arp) != HTYPE_ETHERNET {
         return None;
     }
     if get_u16(frame, arp + 2) != ETHERTYPE_IPV4 {
@@ -154,12 +143,12 @@ pub fn parse_arp(frame: &[u8]) -> Option<Arp> {
 mod tests {
     use super::ARP_FRAME_LEN;
     use super::ARP_LEN;
-    use super::BROADCAST;
-    use super::ETHERNET_HEADER_LEN;
     use super::OPER_REPLY;
     use super::OPER_REQUEST;
-    use super::arp_request;
-    use super::parse_arp;
+    use super::parse;
+    use super::request;
+    use crate::ethernet::BROADCAST;
+    use link::ETHERNET_HEADER_LEN;
 
     const CARD: [u8; 6] = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];
     const US: [u8; 4] = [10, 0, 2, 15];
@@ -169,12 +158,12 @@ mod tests {
     /// reader would check.
     ///
     /// The frame is compared whole rather than field by field because that is
-    /// what the wire carries: a driver that wrote one field with the host's
-    /// byte order produces a frame that is wrong in a way a per-field read
-    /// back through the same wrong order would agree with.
+    /// what the wire carries: a writer that used the host's byte order produces
+    /// a frame that is wrong in a way a per-field read back through the same
+    /// wrong order would agree with.
     #[test]
     fn the_request_is_the_frame_the_wire_carries() {
-        let request = arp_request(CARD, US, GATEWAY);
+        let request = request(CARD, US, GATEWAY);
         assert_eq!(request.len(), 42, "the smallest ARP frame");
         assert_eq!(
             request,
@@ -207,7 +196,7 @@ mod tests {
     /// The request parses back as the message it is.
     #[test]
     fn a_request_parses_back() {
-        let parsed = parse_arp(&arp_request(CARD, US, GATEWAY)).expect("an ARP frame");
+        let parsed = parse(&request(CARD, US, GATEWAY)).expect("an ARP frame");
         assert_eq!(parsed.operation, OPER_REQUEST);
         assert_eq!(parsed.sender_hardware, CARD);
         assert_eq!(parsed.sender_protocol, US);
@@ -217,11 +206,12 @@ mod tests {
 
     /// A reply's fields land where the structure says.
     ///
-    /// Written here as a device would, rather than by the driver's own builder,
-    /// so the parser is checked against the layout rather than against itself.
+    /// Written here as a device would, rather than by this module's own
+    /// builder, so the parser is checked against the layout rather than against
+    /// itself.
     #[test]
     fn a_reply_parses() {
-        let mut frame = arp_request(CARD, US, GATEWAY);
+        let mut frame = request(CARD, US, GATEWAY);
         // Turn it into the answer: from the gateway, to the card, oper 2.
         frame[0..6].copy_from_slice(&CARD);
         frame[6..12].copy_from_slice(&[0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
@@ -231,7 +221,7 @@ mod tests {
         frame[32..38].copy_from_slice(&CARD);
         frame[38..42].copy_from_slice(&US);
 
-        let parsed = parse_arp(&frame).expect("an ARP frame");
+        let parsed = parse(&frame).expect("an ARP frame");
         assert_eq!(parsed.operation, OPER_REPLY);
         assert_eq!(
             parsed.sender_hardware,
@@ -243,46 +233,42 @@ mod tests {
         assert_eq!(parsed.target_protocol, US);
     }
 
-    /// A frame this driver cannot interpret is refused rather than read at the
+    /// A frame this stack cannot interpret is refused rather than read at the
     /// wrong offsets.
     #[test]
     fn a_frame_that_is_not_ethernet_over_ipv4_arp_is_refused() {
-        let request = arp_request(CARD, US, GATEWAY);
+        let request = request(CARD, US, GATEWAY);
 
-        assert!(parse_arp(&request[..ARP_FRAME_LEN - 1]).is_none(), "short");
+        assert!(parse(&request[..ARP_FRAME_LEN - 1]).is_none(), "short");
 
         let mut wrong_type = request;
         wrong_type[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
-        assert!(parse_arp(&wrong_type).is_none(), "not an ARP");
+        assert!(parse(&wrong_type).is_none(), "not an ARP");
 
         let mut wrong_hardware = request;
         wrong_hardware[18] = 8;
-        assert!(
-            parse_arp(&wrong_hardware).is_none(),
-            "not an Ethernet address"
-        );
+        assert!(parse(&wrong_hardware).is_none(), "not an Ethernet address");
 
         let mut wrong_protocol = request;
         wrong_protocol[19] = 16;
-        assert!(parse_arp(&wrong_protocol).is_none(), "not an IPv4 address");
+        assert!(parse(&wrong_protocol).is_none(), "not an IPv4 address");
 
         let mut wrong_htype = request;
         wrong_htype[14..16].copy_from_slice(&6u16.to_be_bytes());
-        assert!(parse_arp(&wrong_htype).is_none(), "not Ethernet hardware");
+        assert!(parse(&wrong_htype).is_none(), "not Ethernet hardware");
 
         let mut wrong_ptype = request;
         wrong_ptype[16..18].copy_from_slice(&0x86DDu16.to_be_bytes());
-        assert!(parse_arp(&wrong_ptype).is_none(), "not an IPv4 protocol");
+        assert!(parse(&wrong_ptype).is_none(), "not an IPv4 protocol");
     }
 
     /// A buffer longer than the frame parses from its start, which is what a
-    /// receive buffer holds: the device's header, then the frame, then
-    /// whatever else the buffer had.
+    /// receive buffer holds: the frame, then whatever else the buffer had.
     #[test]
     fn a_longer_buffer_parses_from_the_start() {
         let mut buffer = [0xAA_u8; 128];
-        buffer[..ARP_FRAME_LEN].copy_from_slice(&arp_request(CARD, US, GATEWAY));
-        let parsed = parse_arp(&buffer).expect("the frame is at the start");
+        buffer[..ARP_FRAME_LEN].copy_from_slice(&request(CARD, US, GATEWAY));
+        let parsed = parse(&buffer).expect("the frame is at the start");
         assert_eq!(parsed.sender_protocol, US);
     }
 }
