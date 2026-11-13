@@ -25,9 +25,9 @@ grep -cE '^\s{4}[A-Z][A-Za-z0-9]* = [0-9]+,' abi/src/number.rs
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **43 of the 195 numbers are served**, after the memory,
-filesystem, process and time levels.  That is the number the census command
-above answers, and it is the one to re-take rather than trust.
+Four machines boot, and **50 of the 195 numbers are served**, after the memory,
+filesystem, process, time and network levels.  That is the number the census
+command above answers, and it is the one to re-take rather than trust.
 
 The boot's own line, `syscall table installed, 25 number(s) served`, counts
 only the registry's half — the numbers whose handler functions live in
@@ -140,7 +140,7 @@ whose "reachable" column used to say no, which is why this table is now short.
 | shorten a file, `SetLength` and truncate | yes, `VNode::set_len` | **no** — one handler and one registration |
 | stat or list by descriptor, `StatFd`/`ReadDirFd` | yes | **no** — the descriptor carries `path`, so the anchor exists |
 | seek, duplicate, poll a descriptor | the offset is per descriptor | **no** |
-| **the network** | frames and ARP only | no — 43 socket and protocol numbers, all empty |
+| **the network** | the stack — IPv4, ICMP, UDP, TCP — and 7 of its numbers served | **yes** for 7 — the status call, the three datagram calls, the three stream calls; 36 socket and protocol numbers still answer `NotImplemented` |
 | **shared memory** | no | no — `ShmGet` and its three siblings |
 | **threads** | no — one task per process | no |
 | **pass a handle to another process** | no — `Descriptor` has two variants | no |
@@ -150,20 +150,20 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 195 numbers, **43 are served**.  The 152 that are not fall into these
+Of 195 numbers, **50 are served**.  The 145 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
 
 | family | numbers | in the kernel today |
 |---|---|---|
 | filesystem metadata and mutation still unserved (`SetLength`, `StatFd`, `ReadDirFd`, `Fsync`, `Fallocate`, xattrs, file flags, the access and permission queries) | 19 | **all of it** — the filesystem implements every operation |
-| sockets and the network stack (TCP, UDP, raw, local domain, DCCP, TLS, IPsec, MRT, the packet filter, and the host-name and address calls beside them) | 43 | ARP only |
+| sockets and the network stack still unserved (raw, local domain, DCCP, TLS, IPsec, MRT, the packet filter, the host-name and address calls beside them, and the rest of the stream and datagram surface) | 36 | **the seven Level 5 serves** — the status call, the three datagram calls, the three stream calls |
 | process, signal and scheduling still unserved (`Futex`, `SchedSetAffinity`, `Ptrace`, `Seccomp`, `Prctl`, the introspection calls) | 10 | fork/exit/wait/pid/signals landed; these did not |
 | shared memory and synchronisation primitives (`Shm*`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 20 | none |
 | GPU | 9 | none |
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
 | **the rest** — descriptors (`Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`), identity (`GetUid`, `GetGid`, users), power, audit, io_uring, service, locking, and the app's own argv/env/path/debug calls | 46 | assorted |
 
-The seven rows sum to exactly 152, because each number is assigned to one row by
+The seven rows sum to exactly 145, because each number is assigned to one row by
 name — the edges between families (`GetHostName` is identity *and* network,
 `ListThreads` is process introspection) are settled by where the row's handler
 would live, and that assignment is the census's one judgement call.  The counts
@@ -373,10 +373,10 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `arch` | 95,361 | **done** — three ports, trap paths, timers, SMP, ring 3 (20,645 lines here, a third of the size) |
 | `fs` | 68,494 | **partial** — PyroFS, tmpfs, ISO 9660; ten filesystems are not here |
 | `kernel` | 39,704 | **mostly done** — scheduler, processes, COW, pipes, signals, memory |
-| `network` | 39,240 | **not started** — Level 5 is the first layer of it |
+| `network` | 39,240 | **partial** — the stack is one tenth of it: IPv4, ICMP, UDP, TCP, and the seven calls a program reaches |
 | `drivers` | 18,828 | **partial** — virtio-blk and virtio-net; the rest are not here |
 | `user` | 19,145 | **partial** — three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial** — 43 of 195 numbers |
+| `syscall` | 15,647 | **partial** — 50 of 195 numbers |
 | `abi` | 4,725 | **done** — the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
@@ -391,7 +391,7 @@ the order is the part that cannot be chosen.
 
 Measured: the previous kernel served **194 of the 195** numbers.  The one it did
 not serve is `WaitProcessOf` (196), which was added after that kernel stopped.
-This tree serves **43**.
+This tree serves **50**.
 
 That single number is the clearest statement of what is left.  The old tree's
 15,647-line syscall tree is the work list, and its modules are named by what
