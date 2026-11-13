@@ -1352,17 +1352,21 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         || number == SyscallNumber::GetRandom as usize
         || number == SyscallNumber::SystemInfo as usize
         || number == SyscallNumber::AbiInfo as usize
+        || number == SyscallNumber::NetworkStatus as usize
     {
         // `GetRandom` names its buffer and its length in `a0`/`a1`.  `AbiInfo`
-        // names the record in `a0` and its length in `a1`, because it has no
-        // selector to make room for.  `GetTimeOfDay` and `SystemInfo` each have
-        // one, so their record and length are `a1`/`a2`.  Reading the wrong
-        // pair here validates an address that is not the buffer, and the
-        // refusal it produces looks exactly like a machine that does not serve
-        // the call.
+        // and `NetworkStatus` name the record in `a0` and its length in `a1`,
+        // because neither has a selector to make room for.  `GetTimeOfDay`
+        // and `SystemInfo` each have one, so their record and length are
+        // `a1`/`a2`.  Reading the wrong pair here validates an address that
+        // is not the buffer, and the refusal it produces looks exactly like
+        // a machine that does not serve the call.
         let (record, length) = match number {
             n if n == SyscallNumber::GetRandom as usize => (call.arguments[0], call.arguments[1]),
             n if n == SyscallNumber::AbiInfo as usize => (call.arguments[0], call.arguments[1]),
+            n if n == SyscallNumber::NetworkStatus as usize => {
+                (call.arguments[0], call.arguments[1])
+            }
             _ => (call.arguments[1], call.arguments[2]),
         };
         if !crate::address_space::is_user_range(record, length) {
@@ -1395,6 +1399,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 n if n == SyscallNumber::GetTimeOfDay as usize => " read the clock, ",
                 n if n == SyscallNumber::GetRandom as usize => " drew random bytes, ",
                 n if n == SyscallNumber::SystemInfo as usize => " asked the system, ",
+                n if n == SyscallNumber::NetworkStatus as usize => " asked the network, ",
                 _ => " asked the ABI, ",
             });
             arch::serial::write_u32(length as u32);

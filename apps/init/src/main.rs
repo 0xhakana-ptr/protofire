@@ -75,6 +75,8 @@ use user_abi::sys_get_time_of_day;
 #[cfg(target_os = "none")]
 use user_abi::sys_mmap;
 #[cfg(target_os = "none")]
+use user_abi::sys_network_status;
+#[cfg(target_os = "none")]
 use user_abi::sys_open;
 #[cfg(target_os = "none")]
 use user_abi::sys_open_at;
@@ -438,6 +440,23 @@ pub extern "C" fn _start() -> ! {
     let free = read_word(&system, 7);
     if managed == 0 || free > managed {
         sys_exit(219);
+    }
+
+    // The network: what this machine's card is, read from the record the
+    // kernel filled.  The checks are the ones a program can make without
+    // knowing the wire: a card the kernel drives, and three addresses that
+    // are not the zeros a boot with no card would have left behind — the
+    // values themselves are the kernel's line to print, because a program
+    // here cannot.
+    let mut network = [0u8; user_abi::NETWORK_STATUS_BYTES];
+    insist(sys_network_status(&mut network));
+    let (state, hardware, protocol, gateway) = user_abi::network_record(&network);
+    if state != user_abi::NETWORK_STATUS_UP
+        || hardware == [0; 6]
+        || protocol == [0, 0, 0, 0]
+        || gateway == [0, 0, 0, 0]
+    {
+        sys_exit(220);
     }
 
     // The anchors are done with, and a slot closed is a slot the kernel got

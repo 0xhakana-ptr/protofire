@@ -74,6 +74,7 @@ pub use handlers::mac_get_status;
 pub use handlers::mac_set_mode;
 pub use handlers::mmap;
 pub use handlers::munmap;
+pub use handlers::network_status;
 pub use handlers::open;
 pub use handlers::open_at;
 pub use handlers::read;

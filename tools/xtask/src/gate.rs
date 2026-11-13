@@ -453,6 +453,7 @@ impl Machine {
                 ("protofire: process 1 drew random bytes, 16 byte(s)", true),
                 ("protofire: process 1 asked the ABI, 24 byte(s)", true),
                 ("protofire: process 1 asked the system, 64 byte(s)", true),
+                ("protofire: process 1 asked the network, 24 byte(s)", true),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 // The answer the reply left behind: the cache holding it, and
@@ -958,6 +959,7 @@ impl Machine {
                     ("protofire: process 1 drew random bytes, 16 byte(s)", true),
                     ("protofire: process 1 asked the ABI, 24 byte(s)", true),
                     ("protofire: process 1 asked the system, 64 byte(s)", true),
+                    ("protofire: process 1 asked the network, 24 byte(s)", true),
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
                     // The cache, for the reason the x86_64 list states: the
@@ -1137,6 +1139,7 @@ impl Machine {
                 ("protofire: process 1 drew random bytes, 16 byte(s)", true),
                 ("protofire: process 1 asked the ABI, 24 byte(s)", true),
                 ("protofire: process 1 asked the system, 64 byte(s)", true),
+                ("protofire: process 1 asked the network, 24 byte(s)", true),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 // The cache, for the reason the x86_64 list states: the

@@ -14,6 +14,7 @@ use abi::Error;
 use abi::Result;
 use abi::fs as fs_abi;
 use abi::memory as memory_abi;
+use abi::network as network_abi;
 use abi::system as system_abi;
 use abi::time as time_abi;
 use paging;
@@ -918,6 +919,43 @@ pub fn abi_info(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Res
 /// the ABI defines the rule and this is the build reporting it; a test pins the
 /// two together.
 pub(crate) const FROZEN_SYSCALL_COUNT: usize = 121;
+
+/// What the network is, on this machine.
+///
+/// Arguments: the record, its length, then four reserved slots that must be
+/// zero.  Answers zero, with the record filled.
+///
+/// The record is filled from the interface the boot installed, not from
+/// constants: a boot whose card never came up installed nothing, and that is
+/// the one case this call answers `NotFound` for — a record implies
+/// addresses, and a machine with no card has none.  One interface, one
+/// address, one gateway is the whole of what this build answers, which is
+/// the whole of the routing its wire has.
+pub fn network_status(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < network_abi::NETWORK_STATUS_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let record = crate::net::status().ok_or(Error::NotFound)?;
+    write_network_status(buffer, &record);
+    Ok(Dispatch::complete(0))
+}
+
+/// Write a `NetworkStatus` record at the start of a validated buffer: the
+/// state word, then the fourteen address bytes the record packed.
+fn write_network_status(buffer: &mut [u8], record: &network_abi::NetworkStatusRecord) {
+    buffer[0..8].copy_from_slice(&record.state.to_le_bytes());
+    buffer[8..8 + network_abi::NETWORK_ADDRESSES_BYTES].copy_from_slice(&record.addresses);
+}
 
 /// Write an `AbiInfo` record at the start of a validated buffer.
 fn write_abi_info(buffer: &mut [u8], record: &system_abi::AbiInfo) {

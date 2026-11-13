@@ -257,9 +257,25 @@ whose device completes asynchronously, which QEMU's user-mode network is not.
 The count is what the message's own mechanism has for evidence, and it is
 required non-zero on the AIA machine.
 
+**The network's first call is served.**  `NetworkStatus` (37) answers from the
+interface the boot's exercise installed — the card up, the hardware address
+it published, the protocol address this boot claims, and the gateway — and a
+program reads the record back through `user_abi`'s wrapper:
+
+```
+protofire: process 1 asked the network, 24 byte(s)
+```
+
+The boot installs the interface where the card comes up, so the call answers
+from state rather than from constants; a machine with no card installed
+nothing, and that is the one case the call answers `NotFound` for.  Verified
+by the line above on every machine, and by `init`'s own read-back, which
+checks the state word and that none of the three addresses is the zeros a
+boot with no card would have left.
+
 A network stack above this is under construction: `net` carries Ethernet, ARP
-with its cache, and IPv4, and `docs/roadmap.md` Level 5 carries the steps and
-what each is proved by.
+with its cache, IPv4, ICMP and UDP, and `docs/roadmap.md` Level 5 carries the
+steps and what each is proved by.
 
 **Services — built, and deliberately parked.**  A table from a name to a
 service, installed during boot and frozen before anything looks one up; a caller
@@ -331,8 +347,8 @@ be started without deciding it is time.  In particular:
 - **No driver implements `Service`.**  `VirtioBlock` stays on
   `QueuedBlockDevice`, which works and has a caller.
 - **No syscall reaches the table.**  No number names a service; 197 stays
-  unassigned, and the 43 numbers that are served are the memory, filesystem,
-  process, time and descriptor calls.
+  unassigned, and the 44 numbers that are served are the memory, filesystem,
+  process, time, descriptor and network-status calls.
 - **`apps/service_manager` stays a shell.**  It is the ring-3 half, and it is the
   half that matters when this direction is picked up.
 
@@ -351,7 +367,7 @@ than the list.
 |---|---|---|
 | the memory layer | **done** — `Mmap`, `Munmap`, `Brk`, `ReclaimPages` served | the `program memory call` lines below |
 | a process a program can start | **done** — `SpawnProcess` plus the six signal calls | `process 1 spawned /bin/shell as pid 5` |
-| a way to reach the table from ring 3 | **done** — 43 numbers reachable, the registry holding 25 of them | `syscall table installed, 25 number(s) served` |
+| a way to reach the table from ring 3 | **done** — 44 numbers reachable, the registry holding 26 of them | `syscall table installed, 26 number(s) served` |
 | **a handle that can be given away** | **not started** | `Descriptor` still has two variants, `File` and `Pipe` |
 
 The last one is the one that matters now, and the fourth line of the old list
@@ -531,7 +547,7 @@ side's build rather than drifting until a host test notices.
 
 Verified by the lines above on every machine, by the gate's required lines
 for the spawn, the two waits and the suspend, and by `protofire: syscall
-table installed, 25 number(s) served` with the census at **43 of 195**
+table installed, 26 number(s) served` with the census at **44 of 195**
 reachable from ring 3.
 
 **The clock and the generator.**  `GetTimeOfDay` (70), `GetRandom` (75),
@@ -579,7 +595,7 @@ Two defects the first ring-3 boot of this found:
 
 Verified by the six lines above on every machine, by the gate's required lines
 for all four calls, and by `protofire: syscall table installed, 25 number(s)
-served` with the census at **43 of 195**.
+served` with the census at **44 of 195**.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement

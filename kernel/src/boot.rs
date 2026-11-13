@@ -291,6 +291,12 @@ fn install_registry(namespace: fs::MountTable) {
         crate::syscall::system_info,
     );
     table.register(::syscall::SyscallNumber::AbiInfo, crate::syscall::abi_info);
+    // The network's first call, and the smallest: what the boot's exercise
+    // installed is what a program asks about here.
+    table.register(
+        ::syscall::SyscallNumber::NetworkStatus,
+        crate::syscall::network_status,
+    );
     let served = table.served();
 
     // SAFETY: called once, after the namespace is set and every handler is

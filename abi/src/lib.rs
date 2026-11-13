@@ -31,6 +31,7 @@ pub mod error;
 pub mod exception;
 pub mod fs;
 pub mod memory;
+pub mod network;
 pub mod number;
 pub mod power;
 pub mod process;

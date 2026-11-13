@@ -284,6 +284,12 @@ The calls a ring-3 program can make today, and the slots each carries.
   `a2`-`a5` reserved zero.  Answers zero, with the version, the slot count and
   the frozen boundary filled.  This is the one call a program can make before
   it trusts any other, and every field is a constant of the build.
+- **`NetworkStatus`** — `a0` the record; `a1` its length, at least
+  `NETWORK_STATUS_SIZE`; `a2`-`a5` reserved zero.  Answers zero, with the
+  record filled — a state word, then the card's hardware address, its
+  protocol address and the gateway, packed as the wire carries them.  A
+  machine with no card answers `NotFound` rather than a record: a record
+  implies addresses, and a machine with no card has none.
 
 A handled, unmasked signal is **delivered** rather than queued: the target's
 context is redirected to the handler at its next install, with the record in

@@ -727,6 +727,18 @@ pub fn exercise_network() -> bool {
     arch::serial::write_u32(card.transmit_queue_size() as u32);
     arch::serial::write_str("\n");
 
+    // The interface, installed for the calls this boot's programs make later.
+    // The addresses are the configuration this boot runs its exchanges with —
+    // the card's own, the one it claims, and the gateway the user-mode
+    // network answers for — and installing them here is what makes the
+    // network calls answer from state rather than from constants a caller
+    // would have to guess.
+    crate::net::install(crate::net::Interface::new(
+        mac,
+        OUR_PROTOCOL,
+        GATEWAY_PROTOCOL,
+    ));
+
     // The receive queue's message, wired **after** the driver for the reason
     // the block device's is: the driver's first step is a reset, and a reset
     // forgets every queue's vector.

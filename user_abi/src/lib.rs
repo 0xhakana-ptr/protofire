@@ -105,6 +105,12 @@ pub const SYS_GET_TIME_OF_DAY: usize = SyscallNumber::GetTimeOfDay as usize;
 pub const SYS_GET_RANDOM: usize = SyscallNumber::GetRandom as usize;
 /// The selector `SystemInfo` serves.
 pub use abi::system::SYSTEM_INFO_SCHEDULER;
+/// `NetworkStatus`, what the machine's network is.
+pub const SYS_NETWORK_STATUS: usize = SyscallNumber::NetworkStatus as usize;
+/// A `NetworkStatus` record is a word of state and fourteen address bytes.
+pub const NETWORK_STATUS_BYTES: usize = core::mem::size_of::<abi::network::NetworkStatusRecord>();
+/// The state word for a card the kernel drives.
+pub use abi::network::NETWORK_STATUS_UP;
 /// The machine's own counter, the only clock this build answers.
 pub use abi::time::CLOCK_MONOTONIC;
 /// An `AbiInfo` record is three words.
@@ -569,6 +575,41 @@ pub fn sys_abi_info(record: &mut [u8; ABI_INFO_BYTES]) -> usize {
         0,
         0,
         0,
+    )
+}
+
+/// `network_status(record)`: zero, with the record filled — whether a card
+/// is up, and the addresses it answers for.
+#[cfg(target_os = "none")]
+pub fn sys_network_status(record: &mut [u8; NETWORK_STATUS_BYTES]) -> usize {
+    syscall6(
+        SYS_NETWORK_STATUS,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// A filled `NetworkStatus` record, read back: the state word, the card's
+/// hardware address, its protocol address, and the gateway.
+#[cfg(target_os = "none")]
+pub fn network_record(record: &[u8; NETWORK_STATUS_BYTES]) -> (usize, [u8; 6], [u8; 4], [u8; 4]) {
+    let mut state_bytes = [0u8; 8];
+    state_bytes.copy_from_slice(&record[..8]);
+    let mut hardware = [0u8; 6];
+    hardware.copy_from_slice(&record[8..14]);
+    let mut protocol = [0u8; 4];
+    protocol.copy_from_slice(&record[14..18]);
+    let mut gateway = [0u8; 4];
+    gateway.copy_from_slice(&record[18..22]);
+    (
+        usize::from_le_bytes(state_bytes),
+        hardware,
+        protocol,
+        gateway,
     )
 }
 
