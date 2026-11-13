@@ -49,31 +49,28 @@ several sessions.
 
 ## What is open
 
-The order is now: **Level 5 (the network), then Level 6 (finishing the
-migration from the previous kernel), then Level 7 (the device model)**.  The
-device model moved last on purpose — it decides what a descriptor *is*, and
-deciding that before the filesystems and drivers have landed would decide it
-against an incomplete set of things a descriptor has to name.
+The road from here, in dependency order.  Levels 6 onward are a **rewrite**, not
+a migration: the two trees do not share an architecture, so nothing is carried
+across unchanged.  `docs/roadmap.md` carries each level.
+
+| level | subject | why here |
+|---|---|---|
+| **5** | the network, eight steps | the ABI's largest unserved family, and the only one whose first four steps need no kernel change |
+| **6** | ten filesystems | the largest gap; a format is proveable against a real image |
+| **7** | the drivers | NVMe, AHCI, the framebuffer console, USB, virtio-gpu/input |
+| **8** | the ~20 mechanisms the numbers name | shared memory, futex, timers, epoll, message queues, identity, introspection |
+| **9** | the programs | a shell a person can use, and `service_manager` with a body |
+| **10** | the device model | last, because it decides what a descriptor *is* |
 
 - **Level 5, step 5.1** — the IPv4 header, its checksum, and a round-trip test
   over hand-built bytes.  No device, no syscall: `net/src/lib.rs` is 6 lines and
-  grows its first module.  `docs/roadmap.md` carries the eight steps and what
-  each is proved by.
-- **Level 6 — the migration, and the number that sizes it.**  The previous
-  kernel served **194 of 195** syscall numbers; this one serves **43**.  Its
-  nine module trees were 301,718 lines against this tree's 94,245.  Three are
-  done (`abi`, `arch`, most of `kernel`), five are partial (`fs`, `drivers`,
-  `user`, `syscall`, `util`), one has not started (`network`).  The two largest
-  gaps are **ten filesystems** (ext4, fat32, exfat, ntfs, btrfs, xfs, f2fs,
-  erofs, squashfs, and a FUSE client) and the **drivers** (NVMe, AHCI, USB
-  HID/MSD, framebuffer, virtio-gpu, virtio-input).
-- **Level 7** is planned and not started: the handle a program can give away.
-  Four questions are named in `docs/roadmap.md`, and no work should start
-  before they are answered in writing.
+  grows its first module.
+- **The number that sizes everything after it.**  The previous kernel served
+  **194 of 195** syscall numbers; this one serves **43**.  Its nine module trees
+  were 301,718 lines against this tree's 94,245.
 - **`SetLength` (20), `StatFd` (30), `ReadDirFd` (31)** — three numbers the
-  filesystem already implements (`VNode::set_len`) and the ABI has not been
-  given.  Handler, registration, ring-3 intercept and a wrapper each.  They are
-  not in a level; they are the leftover of Level 2 and each is one commit.
+  filesystem already implements and the ABI has not been given.  They are the
+  first item of Level 8 and the cheapest row on the whole road.
 
 ## The distributed question, and what this tree actually holds
 
@@ -118,7 +115,7 @@ what exists is the way this tree has gone wrong before.
   designing, and neither is today:
   - **There has to be something worth passing.**  A service handle over a
     service table with one entry and no device behind it is a handle to the
-    clock.  The migration is what puts filesystems, drivers and the 152 numbers
+    clock.  Levels 6 to 9 are what put filesystems, drivers and the 152 numbers
     behind it.
   - **The `abi` records have to be worth freezing.**  A handle format frozen
     against a tree with 43 of 195 calls would be frozen against a fraction of
@@ -131,7 +128,7 @@ one.**  Building it now would decide a descriptor's third variant against one
 service and no device.
 
 **The one thing worth doing early, and it is cheap:** write down the four
-questions `docs/roadmap.md`'s Level 7 names.  They are decisions, not code, and
+questions `docs/roadmap.md`'s Level 10 names.  They are decisions, not code, and
 answering them in prose costs a page and does not constrain anything that comes
 before.
 

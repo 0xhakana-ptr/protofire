@@ -343,99 +343,183 @@ lands before anything in the kernel depends on it.
   receive is the first caller that could exercise it, and it may still not on
   this machine.
 
-### Level 6 — finishing the migration from the previous kernel
+### The rest of the road: rewriting what the previous kernel had
 
-**This level comes before the device model, and it is the one that is actually
-next after Level 5.**  The previous kernel was 301,718 lines across nine module
-trees; this one is 94,245 across 40 crates.  The difference is not lost work —
-it is work that has not been re-done in the new shape yet, and the order below
-is by how much of the old tree each piece accounts for.
+The previous kernel was 301,718 lines across nine module trees; this one is
+94,245 across 40 crates.  The difference is not lost work — it is work the new
+architecture has to **do again, in its own shape**, and that word is the
+important one.
 
-The numbers, measured from `16b5ef8` (the previous kernel's last commit) and
-from this tree.  The nine rows below are the module trees and sum to 301,718;
-the remaining 764 lines are that tree's two root files, the entry and the
-library root, which have no counterpart to compare against.
+**This is a rewrite, not a migration.**  The two trees do not share an
+architecture: the old one was one binary with module trees and a `shared` crate;
+this one is 40 crates with a layering a gate enforces, a different error type, a
+different syscall dispatch, and a rule that no crate outside `arch/` may name a
+machine.  Code carried across unchanged would either fail those gates or, worse,
+pass them and leave a layer inverted.  So every row below is read as *"what does
+this have to do here"*, with the old module open beside it for its arithmetic —
+never pasted, and often not recognisable afterwards.
 
-| old module | lines | state in this tree |
+The measurements, taken from `16b5ef8` (the previous kernel's last commit):
+
+| old module | lines | state now |
 |---|---|---|
-| `arch` | 95,361 | **done** — three ports, trap paths, timers, SMP, ring 3 (20,645 lines, a third of the size) |
-| `fs` | 68,494 | **partial** — PyroFS, tmpfs, ISO 9660; **10 filesystems did not come** |
+| `arch` | 95,361 | **done** — three ports, trap paths, timers, SMP, ring 3 (20,645 lines here, a third of the size) |
+| `fs` | 68,494 | **partial** — PyroFS, tmpfs, ISO 9660; ten filesystems are not here |
 | `kernel` | 39,704 | **mostly done** — scheduler, processes, COW, pipes, signals, memory |
-| `network` | 39,240 | **not started** — Level 5 builds the first layer of it |
-| `drivers` | 18,828 | **partial** — virtio-blk and virtio-net; **NVMe, AHCI, USB, framebuffer, HID did not come** |
-| `user` | 19,145 | **partial** — `init`, `shell`, `service_manager`; the old shell's command set did not come |
+| `network` | 39,240 | **not started** — Level 5 is the first layer of it |
+| `drivers` | 18,828 | **partial** — virtio-blk and virtio-net; the rest are not here |
+| `user` | 19,145 | **partial** — three programs; the old shell's body and command set are not here |
 | `syscall` | 15,647 | **partial** — 43 of 195 numbers |
 | `abi` | 4,725 | **done** — the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
-So: **three of the nine module trees are done, five are partial, one is not
-started.**
+The nine rows sum to 301,718; the remaining 764 lines are that tree's two root
+files, the entry and the library root.
 
-#### What "complete migration" means, in order
-
-Each row is one commit's worth of work or a small number of them, and each is
-independent of the rows below it.
-
-1. **The filesystem gap** — ten filesystems the old tree read and this one does
-   not: `ext4`, `fat32`, `exfat`, `ntfs`, `btrfs`, `xfs`, `f2fs`, `erofs`,
-   `squashfs`, and the old `fuse` client.  The `VNode` and `FileSystem` traits
-   in `fs/src/` are the contract; each filesystem is a crate that implements
-   them, and each brings its own on-disk format parser.  This is the largest
-   single gap and the least risky to redo, because a read-only implementation
-   of a format is proveable against a real image.
-2. **The driver gap** — `nvme`, `ahci`/`hda`, `xhci`/USB HID and MSD, the
-   framebuffer console, `virtio_gpu`, `virtio_input`, `pcspkr`.  The last four
-   are why the old tree had a shell a person could use; this one has a serial
-   console and no display.
-3. **The syscall gap** — the 152 unserved numbers, grouped by which module
-   would answer them.  `docs/roadmap.md`'s family table is the count; the work
-   is mostly wiring once the mechanism exists.
-4. **The user gap** — the old `shell`'s command set (`src/user/program/shell/
-   commands/`), which is what made the machine usable rather than demonstrable.
-
-#### What this level is not
-
-Not a copy-back.  The old tree's code is a reference for what an
-implementation must do, never a thing to paste: the layering is different, the
-error type is different, and several of its modules would fail this tree's
-`check-unsafe-comments` or `check-arch-fanout`.  A filesystem that comes over
-does so as a new crate against `fs`'s traits, with the old module read for its
-on-disk arithmetic.
+Where it is written down: each of the levels below is one subject, because that
+is the unit a commit and a gate can check.  They are ordered by dependency, and
+the order is the part that cannot be chosen.
 
 #### The syscall gap is the whole of the old tree's coverage
 
-Measured: the previous kernel served **194 of the 195** numbers.  The one it
-did not serve is `WaitProcessOf` (196), which was added after that kernel
-stopped.  This tree serves **43**.
+Measured: the previous kernel served **194 of the 195** numbers.  The one it did
+not serve is `WaitProcessOf` (196), which was added after that kernel stopped.
+This tree serves **43**.
 
-That single number is the clearest statement of what "complete migration" means.
-The old tree's 15,647-line syscall tree is the work list: every handler there
-is a handler this tree does not have, and its modules are named by what answers
-them — epoll, eventfd, futex, io_uring, message queues, POSIX timers, ptrace,
-seccomp, scheduler affinity, TLS, IPsec, multicast routing, the GPU calls,
-shared memory, extended attributes, and the network calls.
+That single number is the clearest statement of what is left.  The old tree's
+15,647-line syscall tree is the work list, and its modules are named by what
+answers them — epoll, eventfd, futex, io_uring, message queues, POSIX timers,
+ptrace, seccomp, scheduler affinity, TLS, IPsec, multicast routing, the GPU
+calls, shared memory, extended attributes, and the network calls.
 
-So the syscall gap is not 152 independent pieces of wiring: it is roughly
-twenty mechanisms, each of which brings its numbers with it.  A futex is one
-mechanism and one number; shared memory is four numbers and one mechanism.
+The gap is not 152 independent pieces of wiring: it is roughly twenty
+mechanisms, each of which brings its numbers with it.  A futex is one number and
+one mechanism; shared memory is four numbers and one.  That is why the levels
+below are named after mechanisms and not after syscall families.
 
-### Level 7 — the device model, and what "everything is a service" would mean
+### Level 6 — the filesystems
 
-**Deliberately after the migration.**  A handle a program can give away is a
-design decision about what a descriptor *is*, and making it before the
-filesystems and drivers have landed would decide it against an incomplete set of
-things a descriptor has to name.
+Ten filesystems the old tree read and this one does not: `ext4`, `fat32`,
+`exfat`, `ntfs`, `btrfs`, `xfs`, `f2fs`, `erofs`, `squashfs`, and the old
+`fuse` client.
 
-Level 5 finishes the ABI's largest unserved family.  What follows it is not
-another family of syscalls: it is the question `docs/async_io.md` and
-`service_table` have been parked on since before this roadmap existed, and
-`docs/status.md` records the state it is in.
+This is one level and not ten, because they share one thing worth deciding
+once: **a filesystem in this tree is a crate that implements `VNode` and
+`FileSystem`** (`fs/src/filesystem.rs`, `fs/src/vnode.rs`) and brings its own
+on-disk parser.  The first one built sets the pattern — how a crate's tests get
+a real image, how a parse error becomes `abi::Error`, how the mount table names
+it — and the rest follow it.
 
-The question, stated plainly: **a handle a program can give away.**  Every
-other gap on this page is code.  That one is a design decision, because it
-decides what a descriptor *is* — today a `Descriptor` is a `File` or a `Pipe`,
-both of which are things the kernel implements, and a service handle is a third
-thing the kernel only has to *route*.
+Ordered by what each proves:
+
+1. **`ext4`** first.  It is the format most likely to be on a disk a person
+   actually has, and its extent tree is the hardest arithmetic in the set, so it
+   is the one whose pattern is worth having first.
+2. **`fat32`**, then **`exfat`**.  Simpler, and together they are what a
+   removable medium is.
+3. **`squashfs`** and **`erofs`**, the two read-only compressed formats.  Both
+   are read-only by construction, which makes them the cheapest to finish and
+   the most useful for an image.
+4. **`ntfs`** and **`xfs`**, read-only.  Read-write for either is a project of
+   its own and neither is promised here.
+5. **`btrfs`** and **`f2fs`**, read-only.  Same reason.
+6. **A FUSE client** last, because it is not a format: it is a protocol, and it
+   needs a program on the other side.
+
+What this level does not promise: **write support** for anything but the
+formats this tree already writes (PyroFS, tmpfs), and **compression codecs** as
+a shared abstraction — `squashfs`'s and `erofs`'s both belong to their crates
+until a third user appears.
+
+### Level 7 — the drivers
+
+The old tree's `drivers/` was 18,828 lines and this tree has virtio-blk and
+virtio-net.  What is missing, in the order it matters:
+
+1. **`nvme`** — a modern machine's disk, and the one that makes a boot from
+   real hardware plausible.
+2. **`ahci`** — the SATA controller, for a machine without NVMe.
+3. **The framebuffer console** — this is the one that changes what the machine
+   *is*: today a boot has a serial port and nothing else, which is why every
+   demonstration is a log rather than a screen.
+4. **`xhci`** and USB HID/MSD — a keyboard, a mouse, a stick.
+5. **`virtio_gpu`** and **`virtio_input`** — the same two, on the emulator this
+   tree is developed on, which is the cheaper way to prove the input path.
+6. **`pcspkr`** last: one line of value, and it needs a timer nobody has asked
+   for.
+
+What this level does not promise: a driver *framework*.  `block`'s two traits
+are the only abstraction this tree has and they are enough for a disk; a
+display and an input device do not obviously want the same shape, and inventing
+one before the second driver exists is how a framework becomes a constraint.
+
+### Level 8 — the mechanisms the numbers name
+
+The syscall gap restated as work: roughly twenty mechanisms, ordered by what
+each unblocks rather than by size.
+
+1. **Descriptors and the file interface** — `SetLength`, `StatFd`, `ReadDirFd`,
+   `Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`, `Fsync`, `Fallocate`.  These are the
+   leftover of Level 2 and the cheapest row on this page: the filesystem already
+   implements every operation.
+2. **Shared memory** — `ShmGet`, `ShmAt`, `ShmDt`, `ShmCtl`.  Two processes
+   naming one region, which is a decision about the address space and not
+   wiring.
+3. **Synchronisation** — `Futex`.  One number, and the wrong shape for a kernel
+   with a scheduler that already parks.
+4. **Timers and notifications** — `TimerFd`, `SignalFd`, `EventFd`,
+   `TimerCreate`, `TimerSetTime`, `TimerGetTime`, `TimerDelete`.
+5. **Multiplexing** — `EpollCreate`, `EpollCtl`, `EpollWait`.
+6. **Message queues** — `MqOpen`, `MqClose`, `MqSend`, `MqReceive`, `MqNotify`,
+   `MqUnlink`.
+7. **Identity** — `GetUid`, `GetGid`, `AddUser`, `RemoveUser`,
+   `SetUserPassword`, `SetSecurityDescriptor`.  `security` has the types and
+   nothing has asked them.
+8. **Introspection** — `ListProcesses`, `ListThreads`, `ListProcessFaults`,
+   `KernelLog`, `Prctl`, `Ptrace`, `Seccomp`, `SchedSetAffinity`,
+   `SchedGetAffinity`.
+9. **The app's own calls** — `ArgCount`, `ArgValue`, `EnvCount`, `EnvValue`,
+   `CurrentDir`, `SetCurrentDir`, `AppId`, `AppVersion`, `ImagePath`,
+   `ManifestPath`, `Yield`, `WriteDebug`, `ReadConsole`, `ListBlockDevices`,
+   `ListMounts`, `Mount`, `Umount`, `Sync`, `RestartSyscall`, `CompactMemory`,
+   `Mlock`, `Munlock`, `Madvise`.
+10. **io_uring** — `IoUringSetup`, `IoUringEnter`.  Last because it is a second
+    way to do what every call above already does, and nothing needs it.
+11. **The rest of the network** — `ResolveHostname` beyond a hosts table, the
+    local-domain calls, the raw socket calls, `GetSockName`/`GetPeerName`,
+    `SetSockOpt`/`GetSockOpt`, `TlsConnect`, `Ipsec*`, `Mrt*`, `Filter*`,
+    `Dccp*`.
+
+What this level does not promise: **the GPU calls**.  `GpuCtxCreate` and its
+eight siblings describe a VIRGL context, which is a device this tree does not
+have and a protocol above it, and they belong with Level 7's `virtio_gpu` if
+that ever lands — not here.
+
+### Level 9 — the programs
+
+The old tree's shell was 2,639 lines and its command set 528 more, across
+`env`, `gpu`, `network`, `process` and `user`.  This tree's shell reads the
+greeting and announces itself, which is the smallest program whose exit status
+proves the kernel loaded and ran a second image.
+
+What this level is: a shell a person can use.  It needs the mechanisms above —
+a console to read from, a command set to run, an environment to read — so it is
+last by dependency and not by importance.  `service_manager` grows a body in the
+same level, because supervising is the other half of what a program with the
+process calls can do.
+
+### Level 10 — the device model, and what "everything is a service" would mean
+
+**Deliberately last.**  A handle a program can give away is a design decision
+about what a descriptor *is*, and making it before the filesystems, the drivers
+and the mechanisms have landed would decide it against an incomplete set of
+things a descriptor has to name.  It is also the one level whose *size* is small
+and whose *consequence* is large — see `docs/handover.md` for what the tree
+actually holds behind the direction.
+
+Every other level on this page is code.  This one is a decision.  Today a
+`Descriptor` is a `File` or a `Pipe`, both of which are things the kernel
+implements; a service handle is a third thing the kernel only has to *route*.
 
 What the level would have to decide, in the order the decisions depend:
 
@@ -456,19 +540,19 @@ What the level would have to decide, in the order the decisions depend:
    "shared state" of its own would be the bloat the same document warns about —
    every device type adds kernel code, and the set of device types has no bound.
 
-So the intended shape of Level 6 is **not** a distributed bus in the kernel.  It
-is: `abi` grows wire records and a numbering for capability transfer; `kernel`
-grows the transfer itself and nothing about what is transferred; `service_table`
-gains its first real consumer; `apps/service_manager` grows a body.  Whether a
-*distributed* layer ever exists on top of that is a later question, and the test
-of whether it can is whether `abi`'s records are stable enough that two
-implementations of them can talk — which is the same test the syscall numbering
-already passes.
+So the intended shape of Level 10 is **not** a distributed bus in the kernel.
+It is: `abi` grows wire records and a numbering for capability transfer;
+`kernel` grows the transfer itself and nothing about what is transferred;
+`service_table` gains its first real consumer; `apps/service_manager` grows a
+body.  Whether a *distributed* layer ever exists on top of that is a later
+question, and the test of whether it can is whether `abi`'s records are stable
+enough that two implementations of them can talk — which is the same test the
+syscall numbering already passes.
 
-**Nothing in Level 6 is scheduled, and no work on the service layer should start
-before the four questions above are answered in writing.**  Level 5 does not
-depend on it and it does not depend on Level 5; it is listed after because
-Level 5 is the last level the ABI's numbering already describes.
+**Nothing in Level 10 is scheduled, and no work on the service layer should
+start before the four questions above are answered in writing.**  The levels
+before it do not depend on it; it is listed last because it is the only one
+whose first step is a decision rather than a file.
 
 ### In parallel — the drivers
 
