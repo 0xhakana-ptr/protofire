@@ -35,6 +35,8 @@ pub mod number;
 pub mod power;
 pub mod process;
 pub mod syscall;
+pub mod system;
+pub mod time;
 
 pub use boot::BootInfo;
 pub use boot::DeviceTreeSummary;
@@ -43,3 +45,6 @@ pub use error::Error;
 pub use error::Result;
 pub use number::SyscallNumber;
 pub use power::CpuFreqDriver;
+pub use system::AbiInfo;
+pub use system::SystemInfo;
+pub use time::TimeRecord;
