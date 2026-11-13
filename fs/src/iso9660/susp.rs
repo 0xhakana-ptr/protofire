@@ -249,6 +249,146 @@ pub fn render_link(components: &[LinkComponent]) -> String {
     path
 }
 
+// ── the builders ─────────────────────────────────────────────────────────
+//
+// The write half.  A parse turns an area's bytes into fields; a build turns
+// fields back into the bytes a record carries, and both have to agree —
+// which is why the builders below are proven by the round trip the volume's
+// write tests make, a record written and then parsed again.
+
+/// One SUSP entry: signature, a length that includes the header, version 1,
+/// then the body.
+///
+/// The length is one byte and includes the header, so what fits is what this
+/// can write; a caller with more has to split it, which is what
+/// [`name_entry`] does for a long name.
+fn build_entry(signature: &[u8; 2], body: &[u8]) -> Vec<u8> {
+    debug_assert!(ENTRY_HEADER_LEN + body.len() <= u8::MAX as usize);
+    let mut out = Vec::with_capacity(ENTRY_HEADER_LEN + body.len());
+    out.extend_from_slice(signature);
+    out.push((ENTRY_HEADER_LEN + body.len()) as u8);
+    out.push(1); // SUSP version 1
+    out.extend_from_slice(body);
+    out
+}
+
+/// The `NM` entry: the name a Rock Ridge reader uses instead of the identifier.
+///
+/// One entry holds 250 bytes of name, and a longer name continues in the next
+/// entry with the CONTINUE flag set — the flag is what tells a reader to join
+/// them rather than to replace what it has.
+pub fn name_entry(name: &[u8]) -> Vec<u8> {
+    const PER_ENTRY: usize = 250;
+
+    let mut out = Vec::new();
+    let mut rest = name;
+    loop {
+        let chunk = core::cmp::min(rest.len(), PER_ENTRY);
+        let (head, tail) = rest.split_at(chunk);
+
+        let mut body = Vec::with_capacity(1 + head.len());
+        body.push(if tail.is_empty() { 0x00 } else { NM_CONTINUE });
+        body.extend_from_slice(head);
+        out.extend_from_slice(&build_entry(b"NM", &body));
+
+        if tail.is_empty() {
+            return out;
+        }
+        rest = tail;
+    }
+}
+
+/// The `PX` entry: POSIX attributes, each stored twice.
+pub fn posix_entry(mode: u32, links: u32, uid: u32, gid: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(32);
+    for value in [mode, links, uid, gid] {
+        body.extend_from_slice(&value.to_le_bytes());
+        body.extend_from_slice(&value.to_be_bytes());
+    }
+    build_entry(b"PX", &body)
+}
+
+/// The `ST` entry: the System Use area's terminator.
+pub fn terminator_entry() -> Vec<u8> {
+    build_entry(b"ST", &[])
+}
+
+/// The `SP` entry: the marker that says a record's System Use area is SUSP's.
+///
+/// SUSP puts it first, and only in the root directory's own "." record.  The
+/// two magic bytes are the standard's, and the last field is how far into the
+/// area a reader should start — zero, because the entries here begin where
+/// the record says they do.
+pub fn sharing_protocol_entry() -> Vec<u8> {
+    build_entry(b"SP", &[0xBE, 0xEF, 0x00])
+}
+
+/// The `CE` entry: where the entries that did not fit continue.
+///
+/// A directory record's length is a single byte, so an area with more in it
+/// than that continues in a block of its own, named here by logical block,
+/// byte offset and length — each stored twice, the way the format stores every
+/// number a reader might check.
+pub fn continuation_entry(block: u32, offset: u32, size: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(24);
+    for value in [block, offset, size] {
+        body.extend_from_slice(&value.to_le_bytes());
+        body.extend_from_slice(&value.to_be_bytes());
+    }
+    build_entry(b"CE", &body)
+}
+
+/// The `ER` entry: the extension a volume's System Use areas belong to.
+///
+/// It names `RRIP_1991A`, the standard whose `NM`, `PX` and `SL` entries this
+/// driver writes and reads, and it is the entry a reader looks for before it
+/// believes any of the others.  Its own description and source text are the
+/// ones the standard fixes, which is what makes it 237 bytes and too long for
+/// a directory record: the record holds a `CE` pointing at where this goes.
+pub fn extensions_reference_entry() -> Vec<u8> {
+    const ID: &[u8] = b"RRIP_1991A";
+    const DESCRIPTION: &[u8] =
+        b"THE ROCK RIDGE INTERCHANGE PROTOCOL PROVIDES SUPPORT FOR POSIX FILE SYSTEM SEMANTICS";
+    const SOURCE: &[u8] = b"PLEASE CONTACT DISC PUBLISHER FOR SPECIFICATION SOURCE.  SEE PUBLISHER IDENTIFIER IN PRIMARY VOLUME DESCRIPTOR FOR CONTACT INFORMATION.";
+
+    let mut body = Vec::with_capacity(4 + ID.len() + DESCRIPTION.len() + SOURCE.len());
+    body.push(ID.len() as u8);
+    body.push(DESCRIPTION.len() as u8);
+    body.push(SOURCE.len() as u8);
+    body.push(1); // extension version
+    body.extend_from_slice(ID);
+    body.extend_from_slice(DESCRIPTION);
+    body.extend_from_slice(SOURCE);
+    build_entry(b"ER", &body)
+}
+
+/// The same System Use area with the name entries replaced.
+///
+/// Every other entry is copied **verbatim**, because a record can carry
+/// entries this driver does not parse — a symlink's target, a timestamp — and
+/// re-serialising them from parsed fields would store what the parse could
+/// hold and lose the rest.  The `NM` entries are the ones a rename changes,
+/// and the terminator goes last, as SUSP requires.
+pub fn with_name(system_use: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(system_use.len() + name.len() + 8);
+    let mut rest = system_use;
+    while rest.len() >= ENTRY_HEADER_LEN {
+        let length = rest[2] as usize;
+        if length < ENTRY_HEADER_LEN || length > rest.len() {
+            break;
+        }
+        let (entry, tail) = rest.split_at(length);
+        let signature = &entry[..2];
+        if signature != b"NM" && signature != b"ST" {
+            out.extend_from_slice(entry);
+        }
+        rest = tail;
+    }
+    out.extend_from_slice(&name_entry(name));
+    out.extend_from_slice(&terminator_entry());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     //! The tests for this module.

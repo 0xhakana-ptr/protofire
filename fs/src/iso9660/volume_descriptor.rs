@@ -81,6 +81,16 @@ pub const OFFSET_VOLUME_SPACE_SIZE: usize = 80;
 pub const OFFSET_ESCAPE_SEQUENCES: usize = 88;
 /// Logical block size: `le16` then `be16`.
 pub const OFFSET_BLOCK_SIZE: usize = 128;
+/// The path tables' total size, `le32` then `be32`.
+pub const OFFSET_PATH_TABLE_SIZE: usize = 132;
+/// The little-endian path table's location, `le32`.
+pub const OFFSET_L_PATH_TABLE_LOC: usize = 140;
+/// The optional copy of it, `le32`; zero when the volume has none.
+pub const OFFSET_OPT_L_PATH_TABLE_LOC: usize = 144;
+/// The big-endian path table's location, `be32`.
+pub const OFFSET_M_PATH_TABLE_LOC: usize = 148;
+/// The optional copy of it, `be32`; zero when the volume has none.
+pub const OFFSET_OPT_M_PATH_TABLE_LOC: usize = 152;
 /// The root directory's record, embedded in the descriptor.
 pub const OFFSET_ROOT_RECORD: usize = 156;
 
@@ -100,6 +110,16 @@ pub struct VolumeDescriptor {
     pub volume_space_size: u32,
     /// The size of a logical block.
     pub block_size: u16,
+    /// The path tables' total size, in bytes.
+    pub path_table_size: u32,
+    /// The little-endian path table's location, in logical blocks.
+    pub l_path_table_loc: u32,
+    /// The optional little-endian copy's location; zero when there is none.
+    pub opt_l_path_table_loc: u32,
+    /// The big-endian path table's location, in logical blocks.
+    pub m_path_table_loc: u32,
+    /// The optional big-endian copy's location; zero when there is none.
+    pub opt_m_path_table_loc: u32,
     /// The root directory's record, undecoded.
     pub root_record: [u8; 34],
     /// Whether the descriptor's escape sequences name Joliet.
@@ -133,6 +153,31 @@ impl VolumeDescriptor {
         let volume_id = read_volume_id(&bytes[OFFSET_VOLUME_ID..OFFSET_VOLUME_ID + VOLUME_ID_LEN]);
         let volume_space_size = both32(bytes, OFFSET_VOLUME_SPACE_SIZE).map(|(le, _be)| le)?;
         let block_size = both16(bytes, OFFSET_BLOCK_SIZE).map(|(le, _be)| le)?;
+        let path_table_size = both32(bytes, OFFSET_PATH_TABLE_SIZE).map(|(le, _be)| le)?;
+        let l_path_table_loc = u32::from_le_bytes(
+            bytes
+                .get(OFFSET_L_PATH_TABLE_LOC..OFFSET_L_PATH_TABLE_LOC + 4)?
+                .try_into()
+                .ok()?,
+        );
+        let opt_l_path_table_loc = u32::from_le_bytes(
+            bytes
+                .get(OFFSET_OPT_L_PATH_TABLE_LOC..OFFSET_OPT_L_PATH_TABLE_LOC + 4)?
+                .try_into()
+                .ok()?,
+        );
+        let m_path_table_loc = u32::from_be_bytes(
+            bytes
+                .get(OFFSET_M_PATH_TABLE_LOC..OFFSET_M_PATH_TABLE_LOC + 4)?
+                .try_into()
+                .ok()?,
+        );
+        let opt_m_path_table_loc = u32::from_be_bytes(
+            bytes
+                .get(OFFSET_OPT_M_PATH_TABLE_LOC..OFFSET_OPT_M_PATH_TABLE_LOC + 4)?
+                .try_into()
+                .ok()?,
+        );
 
         let mut root_record = [0u8; 34];
         root_record.copy_from_slice(&bytes[OFFSET_ROOT_RECORD..OFFSET_ROOT_RECORD + 34]);
@@ -146,6 +191,11 @@ impl VolumeDescriptor {
             volume_id,
             volume_space_size,
             block_size,
+            path_table_size,
+            l_path_table_loc,
+            opt_l_path_table_loc,
+            m_path_table_loc,
+            opt_m_path_table_loc,
             root_record,
             joliet,
         })

@@ -101,8 +101,12 @@ fn root_extent() -> Vec<u8> {
 }
 
 /// A directory record, laid out field by field as ECMA-119 9.1 has it.
+///
+/// The record's length is even, and 33 plus an *even* identifier is odd, so
+/// the padding byte follows an even-length identifier — the rule a reader
+/// walks by, and the one this disc has to be built by to be legal.
 fn record(identifier: &[u8], extent: u32, length: u32, directory: bool) -> Vec<u8> {
-    let padded = identifier.len() + (identifier.len() & 1);
+    let padded = identifier.len() + (identifier.len().is_multiple_of(2) as usize);
     let total = 33 + padded;
     let mut bytes = Vec::with_capacity(total);
     bytes.push(total as u8);
@@ -119,7 +123,7 @@ fn record(identifier: &[u8], extent: u32, length: u32, directory: bool) -> Vec<u
     bytes.extend_from_slice(&1u16.to_be_bytes());
     bytes.push(identifier.len() as u8);
     bytes.extend_from_slice(identifier);
-    if identifier.len() % 2 == 1 {
+    if identifier.len().is_multiple_of(2) {
         bytes.push(0);
     }
     bytes

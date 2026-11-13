@@ -87,6 +87,16 @@ pub struct Record {
     /// File unit size: zero for a contiguous file, non-zero for an interleaved
     /// one.
     pub file_unit_size: u8,
+    /// Where this record itself sits, as a byte offset into the buffer it was
+    /// parsed from.
+    ///
+    /// The record says where a file's *extent* is; this says where the record
+    /// is, which is what a resize rewrites.  The parser knows it because it
+    /// walks the extent, and the mount turns it into an offset on the volume —
+    /// the volume is what knows where the extent it read came from — so a node
+    /// can change the length the record carries without walking the path
+    /// again.
+    pub source_offset: usize,
 }
 
 impl Record {
@@ -115,7 +125,22 @@ impl Record {
         if identifier_end > record_len {
             return None;
         }
-        let padded_identifier_len = identifier_len + (identifier_len & 1);
+        // The System Use area begins after the identifier and one padding
+        // byte when the identifier's length is **even** — 33 + an even length
+        // is odd, and the padding is what makes the record's length even and
+        // the area begin at an even offset.  An odd length is followed by no
+        // padding at all.  A record with no identifier has its area right
+        // after the fixed part.
+        let system_use_start = if identifier_len == 0 {
+            OFFSET_IDENTIFIER
+        } else {
+            let pad = if identifier_len.is_multiple_of(2) {
+                1
+            } else {
+                0
+            };
+            (OFFSET_IDENTIFIER + identifier_len + pad).min(record_len)
+        };
 
         let extent = both32(record, OFFSET_EXTENT)?.0;
         let data_length = both32(record, OFFSET_DATA_LENGTH)?.0;
@@ -126,7 +151,6 @@ impl Record {
             return None;
         }
 
-        let system_use_start = (OFFSET_IDENTIFIER + padded_identifier_len).min(record_len);
         let system_use = record[system_use_start..].to_vec();
 
         Some((
@@ -140,9 +164,62 @@ impl Record {
                 joliet,
                 record_len,
                 file_unit_size: record[OFFSET_FILE_UNIT_SIZE],
+                source_offset: offset,
             },
             end,
         ))
+    }
+
+    /// Serialise the record: the write half of [`Record::parse`].
+    ///
+    /// The two fields that say where a file is and how long it is are each
+    /// stored twice — little-endian then big-endian — because a reader is free
+    /// to check either, and the recording date is left as all-zero, which the
+    /// standard reads as "not specified" and this driver does not use.  The
+    /// System Use area follows the identifier's padding, and the whole record
+    /// is padded to an even length like every other.
+    ///
+    /// `None` is a record with more in it than its own length byte can say —
+    /// the caller asked for an entry too long to write, and it is the caller
+    /// that has to refuse it rather than store part of it.
+    pub fn build(
+        identifier: &[u8],
+        extent: u32,
+        data_length: u32,
+        directory: bool,
+        system_use: &[u8],
+    ) -> Option<Vec<u8>> {
+        let mut rec = Vec::with_capacity(FIXED_LEN + identifier.len() + system_use.len() + 2);
+        // The length itself comes last, when the whole record's size is known.
+        rec.push(0);
+        rec.push(0); // extended attribute record length
+        rec.extend_from_slice(&extent.to_le_bytes());
+        rec.extend_from_slice(&extent.to_be_bytes());
+        rec.extend_from_slice(&data_length.to_le_bytes());
+        rec.extend_from_slice(&data_length.to_be_bytes());
+        rec.extend_from_slice(&[0u8; 7]); // recording date and time
+        rec.push(if directory { FLAG_DIRECTORY } else { 0x00 });
+        rec.push(0); // file unit size
+        rec.push(0); // interleave gap
+        rec.extend_from_slice(&1u16.to_le_bytes());
+        rec.extend_from_slice(&1u16.to_be_bytes());
+        rec.push(identifier.len() as u8);
+        rec.extend_from_slice(identifier);
+        if identifier.len().is_multiple_of(2) {
+            // 33 + an even identifier is odd: this is the padding byte that
+            // makes the System Use area begin at an even offset and the
+            // record's length even — the rule the parser reads by.
+            rec.push(0);
+        }
+        rec.extend_from_slice(system_use);
+        if !rec.len().is_multiple_of(2) {
+            rec.push(0);
+        }
+        if rec.len() > u8::MAX as usize {
+            return None;
+        }
+        rec[0] = rec.len() as u8;
+        Some(rec)
     }
 
     /// Whether this record names a directory.
@@ -301,7 +378,7 @@ mod tests {
     /// Build a record the way the specification lays one out.
     fn record(identifier: &[u8], extent: u32, length: u32, flags: u8) -> Vec<u8> {
         let mut record = Vec::new();
-        let padded_identifier = identifier.len() + (identifier.len() & 1);
+        let padded_identifier = identifier.len() + (identifier.len().is_multiple_of(2) as usize);
         let total = 33 + padded_identifier;
         record.push(total as u8);
         record.push(0); // extended attribute blocks
@@ -317,7 +394,7 @@ mod tests {
         record.extend_from_slice(&1u16.to_be_bytes());
         record.push(identifier.len() as u8);
         record.extend_from_slice(identifier);
-        if identifier.len() % 2 == 1 {
+        if identifier.len().is_multiple_of(2) {
             record.push(0);
         }
         record
