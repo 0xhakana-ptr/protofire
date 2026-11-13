@@ -701,6 +701,7 @@ mod tests {
         let volume = StaticFileSystem::with_entries(
             "test",
             &[
+                ("/", NodeKind::Directory, b""),
                 ("/greeting.txt", NodeKind::File, b"hello from a syscall"),
                 ("/docs", NodeKind::Directory, b""),
             ],
@@ -715,6 +716,7 @@ mod tests {
         table.register(SyscallNumber::Read, read);
         table.register(SyscallNumber::Write, write);
         table.register(SyscallNumber::Stat, stat);
+        table.register(SyscallNumber::ReadDir, read_dir);
         table.register(SyscallNumber::Close, close);
         table
     }
@@ -742,6 +744,7 @@ mod tests {
         table.register(SyscallNumber::CreateDir, create_dir);
         table.register(SyscallNumber::RemovePath, remove_path);
         table.register(SyscallNumber::Rename, rename);
+        table.register(SyscallNumber::ReadDir, read_dir);
         table.register(SyscallNumber::Close, close);
         table
     }
@@ -1578,6 +1581,142 @@ mod tests {
             buffer: None,
         };
         assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
+    }
+
+    /// List one entry through the registry, parsed the way a caller parses
+    /// it: four header words and the name bytes the header points at.
+    fn list_entry(
+        table: &mut SyscallTable,
+        path: &str,
+        index: usize,
+        buffer: &mut [u8],
+    ) -> Result<(usize, usize, usize, usize, alloc::string::String)> {
+        let mut context =
+            SyscallContext::new(SyscallNumber::ReadDir as usize, [0, index, 0, 0, 0, 0]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some(path),
+            second_path: None,
+            buffer: Some(buffer),
+        };
+        let written = table.dispatch(&mut arguments)?.value;
+        let word =
+            |at: usize| usize::from_le_bytes(buffer[at..at + 8].try_into().expect("header word"));
+        let kind = word(0);
+        let size = word(8);
+        let name_offset = word(16);
+        let name_len = word(24);
+        // The answer is the bytes the call wrote — header and name together —
+        // which is the number a caller sizes its next buffer from.
+        assert_eq!(
+            written,
+            fs_abi::DIRECTORY_ENTRY_RECORD_SIZE + name_len,
+            "the answer is the bytes written"
+        );
+        let name =
+            alloc::string::String::from_utf8_lossy(&buffer[name_offset..name_offset + name_len])
+                .into_owned();
+        Ok((kind, size, name_offset, name_len, name))
+    }
+
+    /// A directory lists its entries by index, and the record carries the
+    /// name the header points at.
+    ///
+    /// The static volume's two root entries are in name order, so the
+    /// indexes are known; the entries past the end are the loop's end, and
+    /// answering `NotFound` there is what lets a caller's loop be `while
+    /// let` rather than a count it had to know in advance.
+    #[test]
+    fn a_directory_lists_its_entries_in_order_and_stops() {
+        let mut table = mounted();
+        let mut buffer = [0u8; 64];
+
+        let (kind, size, offset, len, name) =
+            list_entry(&mut table, "/", 0, &mut buffer).expect("first entry");
+        assert_eq!(kind, fs_abi::FILE_KIND_DIRECTORY);
+        assert_eq!(size, 0);
+        assert_eq!(offset, fs_abi::DIRECTORY_ENTRY_RECORD_SIZE);
+        assert_eq!(len, name.len());
+        assert_eq!(name, "docs");
+
+        let (kind, _, _, _, name) = list_entry(&mut table, "/", 1, &mut buffer).expect("second");
+        assert_eq!(kind, fs_abi::FILE_KIND_FILE);
+        assert_eq!(name, "greeting.txt");
+
+        assert_eq!(
+            list_entry(&mut table, "/", 2, &mut buffer),
+            Err(Error::NotFound),
+            "past the end is the loop's end"
+        );
+    }
+
+    /// A directory the table's own creates have grown lists what it holds.
+    ///
+    /// The static volume's listing is fixed at build time, so this is the
+    /// test that catches a listing that answered from a snapshot rather
+    /// than from the namespace.
+    #[test]
+    fn a_directory_lists_what_the_table_itself_put_in_it() {
+        let mut table = writable();
+        assert_eq!(make_dir(&mut table, "/notes"), Ok(0));
+        let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+        let descriptor = open_path(&mut table, "/notes/todo.txt", flags).expect("create");
+        assert_eq!(table.close(descriptor), Ok(()));
+
+        let mut buffer = [0u8; 64];
+        let (kind, size, _, len, name) =
+            list_entry(&mut table, "/notes", 0, &mut buffer).expect("the entry");
+        assert_eq!(kind, fs_abi::FILE_KIND_FILE);
+        assert_eq!(size, 0, "created empty, listed empty");
+        assert_eq!(len, 8);
+        assert_eq!(name, "todo.txt");
+
+        assert_eq!(
+            list_entry(&mut table, "/notes", 1, &mut buffer),
+            Err(Error::NotFound)
+        );
+    }
+
+    /// A listing of a file is refused: a file has no entries to list.
+    #[test]
+    fn a_listing_of_a_file_is_refused() {
+        let mut table = mounted();
+        let mut buffer = [0u8; 64];
+        assert_eq!(
+            list_entry(&mut table, "/greeting.txt", 0, &mut buffer),
+            Err(Error::InvalidArgument)
+        );
+    }
+
+    /// A buffer without room for the header, or for the whole name, is
+    /// refused rather than partly written.
+    ///
+    /// The record declares the name's length, so a truncated name would be
+    /// a record that lies about itself; refusing names the number the
+    /// caller has to grow instead.
+    #[test]
+    fn a_buffer_without_room_for_the_record_is_refused() {
+        let mut table = mounted();
+        let mut header_only = [0u8; fs_abi::DIRECTORY_ENTRY_RECORD_SIZE];
+        assert_eq!(
+            list_entry(&mut table, "/", 0, &mut header_only),
+            Err(Error::InvalidArgument),
+            "the header fits and the name does not"
+        );
+
+        let mut short = [0u8; 8];
+        let mut context = SyscallContext::new(SyscallNumber::ReadDir as usize, [0, 0, 0, 0, 0, 0]);
+        let mut arguments = Arguments {
+            context: &mut context,
+            path: Some("/"),
+            second_path: None,
+            buffer: Some(&mut short),
+        };
+        assert_eq!(
+            table.dispatch(&mut arguments),
+            Err(Error::InvalidArgument),
+            "not even the header fits"
+        );
     }
 
     /// Call a number through the registry with six argument words and no

@@ -950,6 +950,44 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    if number == SyscallNumber::ReadDir as usize {
+        // `ReadDir(path, index, buffer, length)`: one entry of the directory
+        // at the path, written into the caller's buffer as the ABI's record
+        // with the name packed after it.  The answer is the bytes written,
+        // and the evidence line names the path and the index — the entry's
+        // name is in the record the caller now holds.
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let buffer = call.arguments[2];
+        let length = call.arguments[3];
+        if !crate::address_space::is_user_range(buffer, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handler writes the
+        // record and the name, and nothing past either.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let outcome = through_registry(&mut context, Some(path), None, Some(destination));
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" read ");
+            arch::serial::write_str(path);
+            arch::serial::write_str(" entry ");
+            arch::serial::write_u32(call.arguments[1] as u32);
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
     // The memory calls, in one block because they share everything but their
     // number: none takes a pointer, so each rebuilds the argument words and
     // hands them straight to the registry.

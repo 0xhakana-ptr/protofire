@@ -298,6 +298,67 @@ fn mac_write_checked(context: &SyscallContext, path: &str) -> Result<()> {
     mac::check_file(subject, path, mac::MAC_CLASS_FILE, mac::MAC_PERM_WRITE, 0)
 }
 
+/// List one entry of a directory, by index.
+///
+/// Arguments: the path, the index, the buffer, its length, then two reserved
+/// slots that must be zero.  The record is the ABI's
+/// [`fs_abi::DirectoryEntryRecord`] — kind, size, and where the name starts —
+/// with the name's UTF-8 bytes packed directly after it, which is why the
+/// answer is how many bytes were written rather than a status: the caller
+/// sized the buffer, and the answer says how much of it now means something.
+///
+/// A buffer too small for the header, or for the whole name, is refused
+/// rather than partly written.  The record declares the name's length, so a
+/// truncated name would be a record that lies about itself, and a caller
+/// that sized its buffer from the last entry it read has a number it can
+/// grow — the error tells it to, instead of handing it half a name.
+///
+/// An index past the directory's end answers `NotFound`, the same word a
+/// missing path answers: "there is no such entry" is true of both, and a
+/// third answer for the one case a caller uses to end its loop would be a
+/// word it had to special-case.
+pub fn read_dir(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let index = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 4)?;
+
+    let subject = arguments
+        .context
+        .identity
+        .unwrap_or(mac::MAC_TYPE_UNLABELED);
+    mac::check_file(subject, path, mac::MAC_CLASS_FILE, mac::MAC_PERM_READ, 0)?;
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < fs_abi::DIRECTORY_ENTRY_RECORD_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let (filesystem, relative) = namespace.resolve(path)?;
+    let entry = filesystem.read_dir(&relative, index)?;
+
+    let name = entry.name.as_bytes();
+    if buffer.len() - fs_abi::DIRECTORY_ENTRY_RECORD_SIZE < name.len() {
+        return Err(Error::InvalidArgument);
+    }
+    let record = fs_abi::DirectoryEntryRecord::new(file_kind(entry.kind), entry.size, name.len());
+    let mut at = 0;
+    for word in [
+        record.kind,
+        record.size,
+        record.name_offset,
+        record.name_len,
+    ] {
+        buffer[at..at + 8].copy_from_slice(&word.to_le_bytes());
+        at += 8;
+    }
+    buffer[at..at + name.len()].copy_from_slice(name);
+    Ok(Dispatch::complete(at + name.len()))
+}
+
 /// Close a descriptor.
 ///
 /// Arguments: the descriptor, then five reserved slots that must be zero.

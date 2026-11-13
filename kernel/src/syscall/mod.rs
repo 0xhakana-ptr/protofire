@@ -72,6 +72,7 @@ pub use handlers::mmap;
 pub use handlers::munmap;
 pub use handlers::open;
 pub use handlers::read;
+pub use handlers::read_dir;
 pub use handlers::reclaim_pages;
 pub use handlers::remove_path;
 pub use handlers::rename;
