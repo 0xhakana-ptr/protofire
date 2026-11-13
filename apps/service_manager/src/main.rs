@@ -19,8 +19,9 @@
 //!
 //! ## What is here, today
 //!
-//! The shape a program must have.  Supervising anything needs to spawn, wait
-//! and signal, and none of those are served yet.
+//! The shape a program must have.  The calls supervising needs — spawn, wait,
+//! signal — are served now; what this program is missing is the policy they
+//! would implement, so it is a shell by decision rather than by dependency.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]

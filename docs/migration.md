@@ -23,8 +23,8 @@ says so and says what it would take.
   PL011, the NS16550A, the device-tree handshake, the GIC, the OpenSBI handoff,
   and ring 3 on all three bootable machines.
 - **`fs`** — PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract.
-- **`kernel`** — the boot sequence, the syscall table, the scheduler, device
-  discovery.
+- **`kernel`** — the boot sequence, the syscall registry and the handlers behind
+  it, the scheduler and the process model, the address space, device discovery.
 - **`memory`** — the frame pool and the region pools.
 - **`drivers`** — five crates rather than one directory under one name:
   `drivers/bus/pci` (ports, ECAM, capability walks, BAR enumeration, MSI-X),
@@ -34,19 +34,31 @@ says so and says what it would take.
   receive and transmit queues, and the address the device publishes), and
   `drivers/net/e1000` (a placeholder for a device this tree does not boot
   with).
-- **`syscall`** — the context, the validators, and a handful of handlers.
+- **`syscall`** — the context and the validators, and the numbering's re-export.
+  The handlers are not here: they name the filesystem, the scheduler and the
+  address space, and this crate may name none of them.  `kernel/src/syscall/`
+  holds them and `boot.rs` installs them.
 - **`libs`** — allocator, audit, cell, crypto, fdt, irq, paging, profiler,
   rights, sync, unicode.  Each is a crate rather than a module under `kernel`
   or `memory` as it once was, because a crate is what can be tested on a host
   without the kernel it belongs to.
-- **`net`** — nothing.  The crate is one line so the layer exists and the
-  boundary is declared before there is code to put behind it.  It is `net`, the
-  name the workspace member uses, and not `network`.
+- **`net`** — nothing, and no manifest dependency either.  The crate exists so
+  the layer and the boundary are declared before there is code to put behind
+  them; it is `net`, the name the workspace member uses, and not `network`.
+  `virtio_net` is the driver and does not name it: a packet's format is the
+  stack's business and the card's is the ring.
 - **`apps`** — `init`, `shell` and `service_manager`.  `init` is a working
-  program rather than a shape: the kernel execs it from its own filesystem, it
-  reads the boot volume's greeting file through `open`/`read`/`close`, and its
-  exit status is that file's first byte — the boot's `exit statuses 1 -> 116`.
-  The other two are shapes with a body still to be built against them.
+  program rather than a shape: the kernel execs it from its own filesystem, and
+  it is where every level so far is exercised — it reads the greeting through
+  `open`/`read`/`close`, maps a page and reads its break, writes a file and
+  reads it back, stats, creates, lists, renames and removes, starts `/bin/shell`
+  twice and exchanges signals with each, and reads the clock, the generator and
+  both information records.  Its exit status is the greeting's first byte — the
+  boot's `exit statuses 1 -> 116` — which is a value no call it makes earlier
+  can produce.  `shell` is the second program: it reads the greeting, arms a
+  handler for `SIGUSR1`, announces itself to its parent and exits with the
+  file's length.  `service_manager` is a shape with a body still to be built
+  against it.
 
 ## Filesystems
 

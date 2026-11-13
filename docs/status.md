@@ -266,8 +266,9 @@ Three crates answer to the word "service", and they are not the same thing:
   directory and not the table.
 - **`apps/service_manager`** is a ring-3 program, and it is where "everything is
   a service" is meant to end up: it supervises processes with lifecycle policies.
-  Its own header says it is a shell today because `SpawnProcess` and
-  `WaitProcess` are not served for programs yet.
+  Its own header still says it is a shell because supervising needs a restart
+  policy — the spawn, wait and signal calls it was waiting on have since landed,
+  so what is missing now is the policy and not the mechanism.
 
 The first two split for a reason worth keeping: the table is a mechanism, the
 list is this boot's content, the same division as `fs`'s `MountTable` and
@@ -290,7 +291,9 @@ be started without deciding it is time.  In particular:
 
 - **No driver implements `Service`.**  `VirtioBlock` stays on
   `QueuedBlockDevice`, which works and has a caller.
-- **No syscall reaches the table.**  Number 197 stays unassigned.
+- **No syscall reaches the table.**  No number names a service; 197 stays
+  unassigned, and the 43 numbers that are served are the memory, filesystem,
+  process, time and descriptor calls.
 - **`apps/service_manager` stays a shell.**  It is the ring-3 half, and it is the
   half that matters when this direction is picked up.
 
@@ -298,30 +301,29 @@ The four items this section lists below are the prerequisites for that half, and
 they are prerequisites for a userland of any shape — which is why they are worth
 reading whether or not this direction is taken.
 
-### What the user-space half still needs
+### What the user-space half needed, and what it got
 
 "Everything is a service" is a direction, and the user side is the larger half
-of it.  The kernel's job there is a base, not the feature.  Measured against the
-tree today, four things are missing, in the order they block each other:
+of it.  When this section was written it listed four prerequisites, in the order
+they blocked each other.  Three have landed; this is the honest scorecard rather
+than the list.
 
-- **Shared memory.**  `Brk`, `Mmap`, `Munmap` and `ReclaimPages` all have
-  numbers in the ABI and **no implementation anywhere in `kernel/src/`**.  A
-  submit ring and a completion ring a program can write are the whole point of a
-  fast asynchronous interface, and without a mapping there is only copying.
-- **A handle that can be given away.**  `Descriptor` has two variants, `File`
-  and `Pipe`.  A service handle that one process can pass to another — with the
-  rights it was granted and nothing more — needs a third.
-- **A process a program can start.**  `SpawnProcess` has a number and no
-  handler; only the boot's own `ExecProcess` path exists.  A supervisor cannot
-  supervise what it cannot start.
-- **A way to reach the table from ring 3.**  The next free syscall number is
-  197 — the range `0..=196` is fully assigned and 141/142 are retired — and
-  reaching the table also needs the descriptor variant above, so this comes
-  last of the four.
+| prerequisite | state | evidence |
+|---|---|---|
+| the memory layer | **done** — `Mmap`, `Munmap`, `Brk`, `ReclaimPages` served | the `program memory call` lines below |
+| a process a program can start | **done** — `SpawnProcess` plus the six signal calls | `process 1 spawned /bin/shell as pid 5` |
+| a way to reach the table from ring 3 | **done** — 43 numbers reachable, the registry holding 25 of them | `syscall table installed, 25 number(s) served` |
+| **a handle that can be given away** | **not started** | `Descriptor` still has two variants, `File` and `Pipe` |
 
-None of these is a service-layer change: they are the memory and process layers
-underneath it.  Recorded here so the next reader does not read "the table landed"
-as "the direction is nearly done".
+The last one is the one that matters now, and the fourth line of the old list
+explains why it waited: a service handle is a `Descriptor` variant carrying the
+rights it was granted, and passing one between processes is the change that
+makes the service table a thing programs use rather than a thing the boot fills.
+
+What has **not** been done is the service layer itself.  `service_manager` is
+still an entry point and a panic handler, and the reason is in its own header:
+supervising needs a restart policy, and a manager of processes and a manager of
+services are the same code until something needs one.
 
 **Memory.**  A program can ask for memory and get it.  `Mmap`, `Munmap`, `Brk`
 and `ReclaimPages` are served from ring 3 — four numbers that had none — and the

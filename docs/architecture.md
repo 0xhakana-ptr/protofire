@@ -37,7 +37,9 @@ extracted yet.
                                                          page tables, a handler
                                                          table, the tree
      1   abi                                           the wire format
-     0   cell, profiler, unicode, rights, audit        core and alloc only
+     0   cell, profiler, unicode, rights, audit,
+         userland                                      core and alloc only, and
+                                                         the ring-3 side of `abi`
 ```
 
 `ipc` and `power` sit at layer 2 with the algorithms, not with the kernel, and
@@ -74,6 +76,17 @@ and its ring buffer.
 The flags are read by the filesystem, by device descriptors, by the audit log and
 by the handle table.  As a module under any one of them, the other three would
 have to depend on it.  As a crate at layer 0, they all depend on a leaf.
+
+`userland` is here for the opposite reason to everything else on this row: it is
+not a leaf by content — it is the numbering, one call gate per machine, and the
+wrappers above them, which is a whole interface — but by **dependency**.  It
+names nothing of this tree, because a program compiles against it and a program
+carries no kernel.  So the numbers are written down twice: once in `abi` for the
+kernel, and once here as constants, with `abi` as a **dev**-dependency whose
+only job is a test that pins every constant to the enum.  The layering gate does
+not count a dev-dependency as an edge, which is what makes that arrangement
+legal rather than a cycle — and it is `docs/fmts/syscall-abi.md` §8's subject,
+not a detail of this file.
 
 ### Layer 1, the wire format
 

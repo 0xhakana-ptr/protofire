@@ -25,78 +25,100 @@ grep -cE '^\s{4}[A-Z][A-Za-z0-9]* = [0-9]+,' abi/src/number.rs
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-As of the commit that added this file: **39 crates, 87,492 lines, 832 tests**,
-four machines booting, and **22 of 195 syscall numbers served**.  The number
-is re-taken by the census command above, not remembered: it reads **43 of
-195** now, after the memory, filesystem, process and time levels, and the
-boot's own line — `syscall table installed, 25 number(s) served` — counts the
-registry's half of that, the numbers whose handlers live in the table.  The
-rest are the calls `process.rs` serves itself, the pipe's and the scheduler's.
-(The 22 the file was written with was a narrower grep than the one above; the
-command is the method now, and this paragraph is the only number not
-re-taken by it.)
+Four machines boot, and **43 of the 195 numbers are served**, after the memory,
+filesystem, process and time levels.  That is the number the census command
+above answers, and it is the one to re-take rather than trust.
+
+The boot's own line, `syscall table installed, 25 number(s) served`, counts
+only the registry's half — the numbers whose handler functions live in
+`boot.rs`'s table.  The rest are the ones `process.rs` serves itself: the
+scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
+borrow before a handler can see it.  A number reachable from a program needs
+**both** a registry entry and a branch in `process.rs`, which is the division
+that cost the `*At` calls a boot to learn.
 
 ---
 
 ## What exists
 
+The inventory, by what a crate is for.  **No line counts here**: a table of
+sizes maintained by hand is wrong within a month, and this one was.  It listed
+29 crates where the workspace has 40 — `userland`, the four architecture crates
+and all four placeholders were missing — and it named `init` as "reads a
+greeting, exits with its first byte" long after that program had grown the whole
+filesystem, memory and signal demo.
+
+Two commands answer what it used to:
+
+```sh
+sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
+sh scripts/check-layering.sh               # the crates and their layers
+```
+
+The tree is **94,084 lines of Rust across 40 crates**, which is
+`find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
+census's sum: that one walks each crate's directory and so counts the three
+machine crates twice, inside `arch/` and on their own.
+
 ### The foundation
 
-| crate | lines | what it is |
-|---|---|---|
-| `cell` | 325 | a `Sync`-capable `UnsafeCell` |
-| `profiler` | 310 | operation counters, compiled out when off |
-| `unicode` | 4,619 | character conversion and normalisation |
-| `rights` | 76 | two constants and **no consumer** |
-| `audit` | 601 | an audit record and its ring |
-| `abi` | 3,524 | error codes, the 195 syscall numbers, boot information |
+| crate | what it is |
+|---|---|
+| `cell` | a `Sync`-capable `UnsafeCell` |
+| `profiler` | operation counters, compiled out when off |
+| `unicode` | character conversion and normalisation |
+| `rights` | two constants and **no consumer** |
+| `audit` | an audit record and its ring |
+| `abi` | error codes, the 195 syscall numbers, the wire records, boot information |
 
 ### Tools a host can test
 
-| crate | lines | what it is |
-|---|---|---|
-| `crypto` | 4,895 | SHA-256/512, CRC, ChaCha20, Poly1305, AES, GCM, XTS, HMAC, HKDF, PBKDF2, X25519, ECDSA, RSA |
-| `fdt` | 1,663 | the flattened device tree |
-| `paging` | 776 | a page table and the arithmetic that walks one |
-| `irq` | 460 | the handler table |
-| `ipc` | 342 | the pipe's ring buffer |
-| `power` | 322 | a frequency governor |
-| `async_io` | 1,539 | the request/completion model — **parked**, see `docs/async_io.md` |
+| crate | what it is |
+|---|---|
+| `crypto` | SHA-256/512, CRC, ChaCha20, Poly1305, AES, GCM, XTS, HMAC, HKDF, PBKDF2, X25519, ECDSA, RSA |
+| `fdt` | the flattened device tree |
+| `paging` | a page table and the arithmetic that walks one |
+| `irq` | the handler table |
+| `ipc` | the pipe's ring buffer |
+| `power` | a frequency governor |
+| `async_io` | the request/completion model — **parked**, see `docs/async_io.md` |
+| `userland` | the ring-3 side of the ABI: the numbering, one call gate per machine, the wrappers |
 
 ### The machines
 
-| crate | lines | what it is |
-|---|---|---|
-| `arch_x86_64`, `arch_aarch64`, `arch_riscv64` | 20,526 total | three real ports: boot, traps, timers, SMP, ring 3 |
-| `arch` | — | the route between them |
-| `block` | 1,217 | `BlockDevice` and `QueuedBlockDevice` |
-| `memory` | 2,285 | the frame pool and the region pools |
+| crate | what it is |
+|---|---|
+| `arch_x86_64`, `arch_aarch64`, `arch_riscv64` | three real ports: boot, traps, timers, SMP, ring 3 |
+| `arch` | the route between them |
+| `block` | `BlockDevice` and `QueuedBlockDevice` |
+| `memory` | the frame pool and the region pools |
 
 ### The subsystems
 
-| crate | lines | what it is |
-|---|---|---|
-| `pci` | 2,590 | ECAM and ports, capability walks, BARs, MSI-X |
-| `sync` | 353 | a spinlock that masks interrupts |
-| `syscall` | 289 | numbering, the call context, the validators — **no handlers** |
-| `security` | 1,272 | the MAC policy: rules, types, denials |
-| `virtio_core` | 1,989 | queue, feature negotiation, the PCI modern transport |
-| `fs` | 14,706 | the VFS, PyroFS, tmpfs, ISO 9660 |
-| `virtio_block` | 1,249 | the block driver |
-| `virtio_net` | 1,832 | the network card: two queues, ARP in and out |
-| `service_table` | 562 | a name-to-service table — **parked** |
-| `allocator` | 2,502 | the TLSF heap |
-| `net`, `sound`, `virt`, `e1000` | 6 / 6 / 54 / 6 | **empty placeholders** |
+| crate | what it is |
+|---|---|
+| `pci` | ECAM and ports, capability walks, BARs, MSI-X |
+| `sync` | a spinlock that masks interrupts |
+| `syscall` | numbering, the call context, the validators |
+| `security` | the MAC policy: rules, types, denials |
+| `virtio_core` | queue, feature negotiation, the PCI modern transport |
+| `fs` | the VFS, PyroFS, tmpfs, ISO 9660 |
+| `virtio_block` | the block driver |
+| `virtio_net` | the network card: two queues, ARP in and out |
+| `service_table` | a name-to-service table — **parked** |
+| `allocator` | the TLSF heap |
+| `net`, `sound`, `virt`, `e1000` | **empty placeholders**: a protocol stack, audio, virtualisation, and a card this tree does not boot with |
 
 ### The kernel and the image
 
-| crate | lines | what it is |
-|---|---|---|
-| `kernel` | 14,112 | boot, scheduler, processes, COW, pipes, the address space, device discovery |
-| `bootloader` | 112 | the image entry |
-| `init` | 291 | the one real program: reads a greeting, exits with its first byte |
-| `service_manager`, `shell` | 60 / 59 | **empty shells** |
-| `xtask` | 1,870 | the build and the gate |
+| crate | what it is |
+|---|---|
+| `kernel` | boot, scheduler, processes, COW, pipes, the address space, the syscall registry, device discovery |
+| `bootloader` | the image entry: one symbol, a panic handler, and `kernel_main` |
+| `init` | the first program: the filesystem interface, memory, spawn, signals, the clock and the two records |
+| `shell` | the second program: reads the greeting, arms a handler, announces itself to its parent |
+| `service_manager` | **an empty shell**: supervising needs a service model, not just spawn |
+| `xtask` | the build and the gate |
 
 ---
 
@@ -108,43 +130,44 @@ Many gaps are **not** missing capabilities.  They are capabilities the kernel ha
 and user space cannot reach.  That difference decides how hard the work is: a
 missing capability is design and code, a missing syscall is wiring.
 
+The rows below are the ones left.  The four levels that landed — memory, the
+filesystem interface, the process model, time and randomness — took every row
+whose "reachable" column used to say no, which is why this table is now short.
+
 | capability | in the kernel | reachable from a program |
 |---|---|---|
-| open, read, close a file | yes | yes — `Open`, `Read`, `Close` |
-| **write a file** | yes, `VNode::write` | **no** — `Write` prints to the console |
-| **create, remove, rename** | yes, PyroFS has all of it | **no** — no syscall at all |
-| **list a directory, stat** | yes | **no** |
-| allocate memory | yes, the heap | **yes** — `Mmap`, `Munmap`, `Brk`, `ReclaimPages` |
-| start a process | yes | only the boot's own `ExecProcess` |
-| fork, wait, pipe | yes | yes |
-| **signals** | no | no — five numbers, all empty |
-| **threads** | no | no |
-| **time, randomness** | yes, the counter and `crypto` | **no** — nine numbers, all empty |
-| **network** | ARP only | no — fourteen numbers, all empty |
-| **shared memory** | no | no — `ShmGet` and friends are unimplemented |
+| shorten a file, `SetLength` and truncate | yes, `VNode::set_len` | **no** — one handler and one registration |
+| stat or list by descriptor, `StatFd`/`ReadDirFd` | yes | **no** — the descriptor carries `path`, so the anchor exists |
+| seek, duplicate, poll a descriptor | the offset is per descriptor | **no** |
+| **the network** | frames and ARP only | no — 32 socket numbers, all empty |
+| **shared memory** | no | no — `ShmGet` and its three siblings |
+| **threads** | no — one task per process | no |
 | **pass a handle to another process** | no — `Descriptor` has two variants | no |
+| mount, unmount, list mounts | the table exists | **no** — five numbers |
+| identity: uid, gid, users | no | no |
+| power, audit, io_uring, GPU, seccomp | `power`'s governors and `audit`'s ring exist, the rest do not | no |
 
 ### The syscall census, by family
 
-Of 195 numbers, 18 are served.  The unserved 177 fall into these groups; the
-count is the number of numbers in the group, not the work involved.
+Of 195 numbers, **43 are served**.  The 152 that are not fall into these
+groups; the count is the number of numbers in the group, not the work involved.
 
 | family | numbers | in the kernel today |
 |---|---|---|
-| filesystem metadata and mutation (`Stat`, `ReadDir`, `CreateDir`, `RemovePath`, `Rename`, the `*At` forms, `SetLength`, `Fsync`, `Fallocate`, xattrs, file flags) | 28 | **all of it** — PyroFS implements every operation |
-| sockets and the network stack (TCP, UDP, raw, local domain, DCCP, IPsec, MRT) | 32 | ARP only |
-| process, signal and scheduling (`SpawnProcess`, `SendSignal`, `WaitSignal`, `*SignalHandler`, `Futex`, `SchedSetAffinity`, `Ptrace`, `Seccomp`, `Prctl`, introspection) | 23 | fork/exit/wait/pid only |
+| filesystem metadata and mutation still unserved (`SetLength`, `StatFd`, `ReadDirFd`, `Fsync`, `Fallocate`, xattrs, file flags, the access and permission queries) | 18 | **all of it** — the filesystem implements every operation |
+| sockets and the network stack (TCP, UDP, raw, local domain, DCCP, IPsec, MRT, and the host-name and address calls beside them) | 34 | ARP only |
+| process, signal and scheduling still unserved (`Futex`, `SchedSetAffinity`, `Ptrace`, `Seccomp`, `Prctl`, the introspection calls) | 10 | fork/exit/wait/pid/signals landed; these did not |
 | shared memory and synchronisation primitives (`Shm*`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 20 | none |
 | GPU | 9 | none |
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
-| time, randomness, system information (`GetTimeOfDay`, `GetRandom`, `SystemInfo`, `AbiInfo`) | 4 | the counter and `crypto` |
-| **the rest** — memory (`Brk`, `Mmap`, `Munmap`, `ReclaimPages`), descriptors (`Dup`, `Seek`, `Fcntl`, `Poll`), identity (`GetUid`, `GetGid`, users), power, audit, io_uring, service, and the app's own argv/env/path calls | 56 | assorted |
+| **the rest** — descriptors (`Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`), identity (`GetUid`, `GetGid`, users), power, audit, io_uring, service, and the app's own argv/env/path calls | 56 | assorted |
 
-The groups overlap at the edges — `SigReturn` is a signal number, `ListThreads`
-is process introspection, `GetHostName` is identity and network — so the column
-does not sum to a clean total.  The counts were taken by matching the enum's
-names, which is how they can be re-taken; the code block at the top of this file
-shows the command.
+The seven rows sum to exactly 152, because each number is assigned to one row by
+name — the edges between families (`GetHostName` is identity *and* network,
+`ListThreads` is process introspection) are settled by where the row's handler
+would live, and that assignment is the census's one judgement call.  The counts
+come from matching the enum's names, which is how they can be re-taken; the code
+block at the top of this file shows the command.
 
 ---
 
