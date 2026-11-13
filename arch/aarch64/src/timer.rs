@@ -28,6 +28,61 @@
 //! arrived one tick late would program a deadline in the past, which fires
 //! immediately and looks like a timer that ignores its interval.
 //!
+//! ## The private line is not reliable on a started core
+//!
+//! Everything above assumes the private timer interrupt arrives.  On a started
+//! core it sometimes stops arriving, and the measurement is the tree's own:
+//! `CNTP_CTL_EL0` reads 5 — enabled, `ISTATUS` set, the timer expired —
+//! `GICD_ISENABLER0` has bit 30 set, and `GICD_ISPENDR0` reads `0x3` with bit
+//! 30 **absent**.  The timer expired, its line was enabled, and the
+//! distributor was not pending it.  A core in that state takes no further tick
+//! for the rest of the boot.
+//!
+//! `wait_for_a_wakeup` already works around the case where the missing
+//! interrupt was only needed to end a park: it waits on a `sev` event, which
+//! another core's inter-CPU wake issues, and which the controller cannot
+//! suppress.  What that workaround does **not** cover is the three things a
+//! running core needs its own tick for — preemption, the signal delivery taken
+//! inside `preempt`, and the `wake_expired` that ends a sleep.
+//!
+//! Measured on this tree with two cores: the boot core's `ticks` passed 81,000
+//! while a started core's stopped at 466, and the program that core was running
+//! spun in ring 3 for ever with a signal waiting to be delivered to it.  The
+//! scheduler's state was correct throughout — the parent blocked where it
+//! should be, the child `Runnable` and held by the right CPU — so the whole
+//! failure was one missing interrupt.
+//!
+//! ## What that rules out
+//!
+//! It rules out, as a design, "each core drives its own scheduling from its own
+//! timer".  Three attempts to patch around that from inside the existing shape
+//! made the boot worse rather than better, and each failed for the same reason:
+//! they added work to the path that was already the unreliable one.
+//!
+//! - Making `preempt` wait when it found an unowned user frame: 4 of 14 boots
+//!   completed, against 6 of 14 before it.
+//! - Accumulating `CNTP_CVAL_EL0` in the handler instead of re-arming
+//!   `CNTP_TVAL_EL0` from a fresh counter read: 4 of 14.  That one is worth
+//!   remembering because it is the right fix for a **late** handler and the
+//!   wrong one for an **absent** one; a compare value in the past cannot fire
+//!   on a line the distributor never asserts.
+//! - The boot core pinging every other core on every one of its own ticks: 4 of
+//!   14. One inter-CPU interrupt per 100 µs is a broadcast storm, and it slowed
+//!   the boot enough to lose more often than it won.
+//!
+//! What follows from the measurement is to stop asking a started core's timer
+//! to schedule anything.  The boot core's line is the one that always arrives,
+//! and the inter-CPU interrupt is the one that always arrives; so the boot
+//! core's tick is what should drive preemption, delivery and expiry on every
+//! core, through the second.  That is a change to **where the scheduler's clock
+//! lives**, not to this module — the arming and the conversion here stay as
+//! they are — and it has to be made with the boot core's tick slowed to what a
+//! broadcast can afford, because 100 µs is a slice for a core asking itself and
+//! not for one asking the machine.
+//!
+//! Until that lands, `docs/status.md` records the defect as open with the
+//! numbers, and the gate's aarch64 boot can fail on the timing.
+//!
 //! ## The trap a frequency invites
 //!
 //! `CNTFRQ_EL0` is not a constant of the format; the firmware sets it, and a

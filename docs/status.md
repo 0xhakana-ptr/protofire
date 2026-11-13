@@ -696,30 +696,70 @@ unmask.
 With two CPUs and the signal exchange `init` runs — `SpawnProcess`, the child's
 announcement, the parent's delivery, the parent's `WaitProcessOf` — a boot
 sometimes stops after `a program waits for process N` and never reaches
-`every program exited`.  Measured at **1 boot in 12** after the two wake lines
-this tree was missing were added (before them, 3 in 6); a single-CPU boot stops
-at the same place **5 times in 5**, which is how the defect is confirmed to be
-in the wait/wake accounting rather than in the second core.
+`every program exited`.  Measured at 6 boots in 10 on the machine the gate
+boots, and 6 in 14 through `cargo xtask check`; the two wake lines this tree was
+missing were a real defect and were fixed separately, but they were not this.
 
-QEMU's monitor at a stopped boot shows the shape, and it is the one the
-exclusion set exists to forbid: one core at `EL0t` at
-`0x8040000070` — a program's own address — while the scheduler reports
-`state=RFFF` with `running=[none, none]`.  So a core is executing a frame that
-belongs to a task the scheduler has already marked `Finished` and no longer
-holds.  `report_and_finish` then waits on that core's park, which never comes,
-or the other core reaches `report_and_finish` while this one has no reason to
-trap again.
+**The cause is one missing interrupt, and the scheduler is not at fault.**  At a
+stopped boot, with the image under gdb, the scheduler's own fields read:
 
-What was **ruled out**, each by measuring a change rather than by argument: a
-missing `sev` after the exit wake (fixed — it was real, see
-`kernel/src/scheduler/core/switch.rs` — and it is not the whole of it); the
-order of `idle_until_woken` and `switch_without_saving` in the
-`WaitProcessOf` park (removing the idle call made it worse, 5 in 6); the
-`has_runnable`-includes-blocked reading; an exit whose `running[cpu]` was
-already clear (a probe for it never fired); the tick's frequency (ten times
-faster, 3 in 5); and a guard in `preempt` for the case where `schedule`
-installs nothing (6 in 14 — waiting inside an interrupt made the ordinary
-preemption worse, and it was reverted).
+```
+states  = 1B, 2F, 3F, 4F, 5R
+running = 0, 4, -, -, -
+```
+
+The parent (pid 1) is blocked exactly where `WaitProcessOf` parks it, the child
+(pid 5) is `Runnable` at index 4, and `running[1]` is 4 — the right CPU holds
+the right task.  Every state is what it should be.  What is wrong is that the
+core holding it takes no further interrupt: `per_cpu::CPUS[].ticks` read
+**81,533 on the boot core and 466 on the started core**, and the program on the
+started core spins in ring 3 with a delivery sitting in its slot.
+
+That is the private timer line, and this tree already knows about it —
+`arch/aarch64/src/timer.rs` carries the register evidence: `CNTP_CTL_EL0` reads
+5 (enabled, `ISTATUS` set, expired), `GICD_ISENABLER0` has bit 30 set, and
+`GICD_ISPENDR0` reads `0x3` with bit 30 **absent**.  The timer expired, its line
+was enabled, and the distributor was never pending it.  `wait_for_a_wakeup`
+works around that for a **parked** core by waiting on a `sev` event instead of
+an interrupt.  A core **running a program** has no such workaround: preemption,
+the signal delivery taken inside `preempt`, and `wake_expired` all need its own
+tick, and none of them happen.
+
+Three repairs were tried from inside that shape and all three made the boot
+worse, which is the evidence that the shape is what has to change:
+
+| repair | boots completed |
+|---|---|
+| none (before the attempts) | 6 of 14 |
+| `preempt` waits when it finds an unowned user frame | 4 of 14 |
+| `CNTP_CVAL_EL0` accumulated by the handler | 4 of 14 |
+| boot core pings the others on every one of its ticks | 4 of 14 |
+
+The direction `timer.rs` now argues for is to stop asking a started core's
+timer to schedule anything, and let the boot core's tick — which always arrives
+— drive preemption, delivery and expiry on every core through the inter-CPU
+interrupt, with that tick slowed to a rate a broadcast can afford.
+
+Also ruled out along the way, each by measuring rather than by argument: the
+machine's CPU model (cortex-a57 7 in 10, `max` 6 in 10 — the same defect); the
+GIC version (`virt,gic-version=2` 6 in 10, and `gic-version=3` 0 in 10 because
+this tree implements the v2 register interface only); a missing `sev` after the
+exit wake (real, fixed, not the whole of it); the order of `idle_until_woken`
+and `switch_without_saving` (removing the idle call made it worse, 5 in 6); and
+an exit whose `running[cpu]` was already clear (the probe for it never fired);
+a stalled global clock (the global `TIMER_TICKS` keeps climbing at a stopped
+boot — it is the started core's own count that stops, which is why the per-CPU
+census is the number to read); and the `has_runnable`-counts-blocked reading
+(the dump above shows the blocked parent and the runnable child exactly where
+they belong).
+
+One measurement detail is worth keeping because it cost a false conclusion: an
+early attempt booted **one** CPU against a disk formatted by the kernel's own
+built-in image — the one that carries the greeting and no init image — and every
+such boot stopped five times in five.  That stop was `ExecProcess` failing on a
+file the disk did not have, followed by the program's own `b .`.  A single-CPU
+boot with the disk the gate builds prints `every program exited`.  Any future
+measurement here has to name which disk it booted.
 
 None of this is in the level-4 calls: the same boot stops at the same line on
 the commit before them, and the two wake lines that did help were landed
