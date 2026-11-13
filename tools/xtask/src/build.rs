@@ -64,8 +64,18 @@ const INIT_LINKER_SCRIPT: &str = "apps/init/linker.ld";
 /// sysroot carries is built with the default code model, which the program's
 /// own CGUs must not contradict.
 fn build_init(machine: Machine) -> Result<Vec<u8>> {
+    // The image is a PIE container with `relocation-model=pic` alone, and a
+    // PIE's calls to its own library symbols go through a GOT whose slots
+    // are filled by `R_X86_64_RELATIVE` relocations the kernel's loader does
+    // not apply — measured: the first program big enough to make the linker
+    // route a `bcmp` through the GOT died on its first comparison, at
+    // address 0.  `-no-pie` resolves those slots at link time, which is
+    // honest for an image whose load address the linker script fixes anyway;
+    // the kernel's own build, which does relocate, is a different command
+    // and does not inherit this one's flags.
     let rustflags = format!(
-        "-C link-arg=-T{INIT_LINKER_SCRIPT} -C link-arg=--strip-debug -C relocation-model=pic"
+        "-C link-arg=-T{INIT_LINKER_SCRIPT} -C link-arg=--strip-debug \
+         -C relocation-model=pic -C link-arg=-no-pie"
     );
     let mut command = Command::new("cargo");
     command

@@ -183,6 +183,24 @@ fn install_registry(namespace: fs::MountTable) {
     );
     table.register(::syscall::SyscallNumber::Rename, crate::syscall::rename);
     table.register(::syscall::SyscallNumber::ReadDir, crate::syscall::read_dir);
+    // The anchored five.  Their handlers and their ring-3 forwards landed in
+    // the change before this one; the registrations are here because a
+    // handler this table does not hold is a number that answers
+    // `NotImplemented`, which is how the first program to call one found it.
+    table.register(::syscall::SyscallNumber::OpenAt, crate::syscall::open_at);
+    table.register(::syscall::SyscallNumber::StatAt, crate::syscall::stat_at);
+    table.register(
+        ::syscall::SyscallNumber::RenameAt,
+        crate::syscall::rename_at,
+    );
+    table.register(
+        ::syscall::SyscallNumber::CreateDirAt,
+        crate::syscall::create_dir_at,
+    );
+    table.register(
+        ::syscall::SyscallNumber::RemovePathAt,
+        crate::syscall::remove_path_at,
+    );
     table.register(
         ::syscall::SyscallNumber::MacGetStatus,
         crate::syscall::mac_get_status,

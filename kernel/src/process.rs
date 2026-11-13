@@ -2,10 +2,14 @@
 //!
 //! One program, running at EL0, calling back into the kernel.
 //!
-//! What the kernel does with a program's supervisor call: a handful of calls
-//! are served — `Write`, `Exit`, `Sleep`, a pipe's `Read` and `Write`, `Fork`,
-//! `ExecProcess`, `GetPid`, `GetPpid`, `WaitProcess` and `Pipe` — and
-//! everything else answers `NotImplemented`.
+//! What the kernel does with a program's supervisor call: two kinds of
+//! answer.  The calls whose object lives in the scheduler or the pipe —
+//! `Exit`, `Sleep`, a pipe's `Read` and `Write`, `Fork`, `ExecProcess`,
+//! `GetPid`, `GetPpid`, the three waits and `Pipe` — are served here,
+//! because their object is.  Everything else is forwarded to the registry's
+//! table, after this file has done the one thing only it can do: turned the
+//! ring-3 words into the borrows the handlers take.  A number with neither
+//! a branch here nor a handler in the table answers `NotImplemented`.
 //!
 //! The image a program runs is machine code, so it lives in `arch` and this
 //! file asks for it.  An array here would have to be right for three

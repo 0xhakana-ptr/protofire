@@ -19,28 +19,55 @@ use crate::volume::BOOT_VOLUME_LABEL;
 /// The path the policy is asked about, and the one the boot reads.
 const BOOT_GREETING_PATH: &str = "/greeting.txt";
 
-/// Enable the policy, install one rule, and make `open` decide both ways.
+/// Enable the policy, install one rule granting read and write, and make
+/// `open` decide both ways.
 ///
 /// The rule is installed for `MAC_TYPE_UNLABELED`, which is what
 /// `object_type_for_path` answers for a path under no labelled prefix on this
 /// boot's volume.  That is not a guess: `security/src/mac/check.rs` falls back
 /// to unlabelled for anything outside `/system`, `/apps`, `/data`, `/dev` and
 /// `/tmp`.
+///
+/// The rule grants **write** as well as read, because the boot's programs do
+/// more than read.  Write is what every file-creating call a program makes is
+/// policed by — `open` with the create flag, the path mutations and their
+/// `*At` forms all ask it.  Without it the policy's read-only rule would let
+/// a program read everything and write nothing, and the first program to try
+/// would have met a denial whose reason was a rule the boot never chose to
+/// have.
 pub fn exercise() {
     use security::mac;
 
-    // One rule: the system label may read an unlabelled file.
+    // Two rules granting two permissions each: the system label may read and
+    // write an unlabelled file, and it may read and write the scratch zone.
+    //
+    // A rule's permission field is a set — `decision` answers allow when the
+    // rule holds every permission the request asks for — so read and write
+    // are one rule per object, not two that would otherwise have to be added
+    // with `replace` off to avoid displacing each other: `add_rule` with
+    // `replace` on removes every rule for the same subject, object and class
+    // before adding, which is how a second add would have taken the read
+    // rule away.
+    //
+    // The second object is `MAC_TYPE_TMP`, because `/tmp` is not unlabelled:
+    // the layout resolves it to the scratch type, and the scratch zone is
+    // the one the boot mounts *for its programs* — a policy whose system
+    // label could not write the filesystem it provided for writing would
+    // have every one of its programs' first writes meet a denial whose
+    // reason was a rule the boot never chose to have.
     {
         let mut state = mac::policy_state().lock();
-        state.policy.add_rule(
-            mac::MacRule {
-                subject: mac::MAC_TYPE_SYSTEM,
-                object: mac::MAC_TYPE_UNLABELED,
-                class: mac::MAC_CLASS_FILE,
-                perms: mac::MAC_PERM_READ,
-            },
-            true,
-        );
+        for object in [mac::MAC_TYPE_UNLABELED, mac::MAC_TYPE_TMP] {
+            state.policy.add_rule(
+                mac::MacRule {
+                    subject: mac::MAC_TYPE_SYSTEM,
+                    object,
+                    class: mac::MAC_CLASS_FILE,
+                    perms: mac::MAC_PERM_READ | mac::MAC_PERM_WRITE,
+                },
+                true,
+            );
+        }
         state.policy.enabled = true;
     }
 

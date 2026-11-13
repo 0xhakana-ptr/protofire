@@ -358,6 +358,92 @@ with a store page fault three frames below `USER_BASE` — reported as
 destroyed the register that names the CPU.  Both are sized by the image bound
 now, which is the set of pages each actually describes.
 
+**The file interface.**  A program can write, measure, list, move and remove.
+Eleven numbers serve the filesystem now — `Write` (6), `CreateDir` (19),
+`RemovePath` (21), `Stat` (27), `ReadDir` (28), `Rename` (29) and the five
+`*At` forms (32–36) — where a program could previously only open, read and
+close, and `Write` printed a fixed line instead of writing anything.  The boot
+execs a program that does the whole of it against the tmpfs and shows each
+answer beside the call that produced it:
+
+```
+protofire: process 1 opened note.txt via descriptor 0
+protofire: process 1 wrote 19 byte(s) to a file
+protofire: process 1 opened note.txt via descriptor 0
+protofire: process 1 stat'd note.txt via descriptor 0, kind file, size 19
+protofire: process 1 created directory notes via descriptor 0
+protofire: process 1 opened at.txt via descriptor 5
+protofire: process 1 wrote 4 byte(s) to a file
+protofire: process 1 stat'd at.txt via descriptor 5, kind file, size 4
+protofire: process 1 read /tmp/notes entry 0
+protofire: process 1 renamed note.txt via descriptor 0 to kept.txt via descriptor 0
+protofire: process 1 stat'd /tmp/kept.txt, kind file, size 19
+protofire: process 1 removed scratch.txt via descriptor 0
+```
+
+The descriptor number on those lines is the table's, not the program's, which
+is why the gate takes them as prefixes.  The checks the program makes on its
+own are stricter than the lines: it compares the read-back bytes, the stat
+record's kind and size, and the listed name against what it wrote, and exits
+with a status that is not the greeting's byte when any of them disagrees —
+so the boot's `exit statuses 1 -> 116` is the whole program's claim, and a
+broken step turns the gate red rather than printing something plausible.
+
+The rights a descriptor holds are the open's: a `writable` flag recorded
+beside `readable`, refused with `PermissionDenied` on a descriptor that did
+not ask.  A create is the volume's own refusal when the volume cannot create,
+not the lookup's miss that prompted it.  A rename whose two names resolve to
+different filesystems is refused outright — the alternative is a copy and a
+delete, whose halfway failure is the one outcome a rename exists to make
+impossible.
+
+The `*At` forms anchor on a descriptor, and the anchor is the descriptor's
+record: every open now records the path it resolved to, because a node knows
+its own last component and nothing of the namespace above it.  An absolute
+path bypasses the anchor; the `AT_FDCWD` sentinel anchors at `/`, the one
+base every process shares, because there is no per-process current directory
+yet; anything else resolves against the directory the descriptor was opened
+from.  A file, a pipe end, or another process's descriptor is not an anchor.
+
+Two defects the first ring-3 exercise found, both recorded because a gate
+that had never called these numbers was green through both:
+
+- The five `*At` handlers were wired but **never registered** in the boot's
+  table — a silent python replacement in the change that added them skipped
+  `boot.rs` and nothing in that change's gate called the numbers.  The first
+  program to call one got `NotImplemented`, and the probe that found it is
+  the reason the registrations carry a comment.
+- A program linked as PIE routes calls to its own library symbols through a
+  GOT whose slots are filled by `R_X86_64_RELATIVE` relocations the loader
+  does not apply.  The first image big enough to make the linker route a
+  `bcmp` that way died jumping to address 0.  init now links `-no-pie`, which
+  resolves those slots at link time — honest for an image whose load address
+  the linker script fixes — and the flag lives in the command that builds
+  init, not in the target's config, so the kernel's own relocatable build is
+  untouched.
+
+One entry-assembly defect fell out of the same exercise, on the memory side
+of the boundary: x86_64's `iretq`-into-ring-3 left the kernel's own selector,
+flags and hand-over pointer in the three registers a program's arguments
+travel in (`rdi`, `rdx`, `rcx`, measured), because `iretq` changes rings and
+touches no general register.  Every program's first `Write` therefore carried
+a length the kernel was right to refuse.  The entry zeroes the program's
+registers now, the same clean slate `Context::user` builds and the trap
+epilogue restores everywhere else.
+
+The boot's policy grew the permission these calls are policed by: the system
+label may read and write unlabelled files **and** the scratch zone, because
+`/tmp` is not unlabelled — the layout resolves it to `MAC_TYPE_TMP`, and the
+scratch zone is the one the boot mounts for its programs.  The rule's
+permission field is a set, which is what makes read and write one rule per
+object; two `add_rule` calls with `replace` on would have displaced each
+other, and the first attempt did exactly that — the boot's own allow probe
+printed `MISPOLICED`, which is what caught it.
+
+Verified by the eight lines above on every machine, by `protofire: syscall
+table installed, 21 number(s) served`, and by the gate's required lines for
+the write counts, the kept file's stat and the directory listing.
+
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement
 follows a rule rather than the rotation: a task the asking CPU last ran is

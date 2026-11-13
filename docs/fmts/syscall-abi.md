@@ -219,6 +219,40 @@ The calls a ring-3 program can make today, and the slots each carries.
   than it can have learns what it actually got.
 - **`ReclaimPages`** — `a0` how many pages the caller would like back, or zero
   for as many as will go; `a1`-`a5` reserved zero.  Answers how many came back.
+- **`Write`** — `a0` the descriptor; `a1` the buffer; `a2` its length;
+  `a3`-`a5` reserved zero.  Answers the bytes accepted, starting at the
+  descriptor's own position, which moves by them.  A `Write` whose `a2` is
+  zero names no bytes and is the announcement, not a write.
+- **`Stat`** — `a0` the path, a NUL-terminated string; `a1` the record;
+  `a2` its length, at least `FILE_STAT_SIZE`; `a3`-`a5` reserved zero.
+  Answers zero, with the record filled.
+- **`ReadDir`** — `a0` the path; `a1` the index; `a2` the buffer; `a3` its
+  length; `a4`-`a5` reserved zero.  Answers the bytes written: the ABI's
+  `DirectoryEntryRecord` header with the name's UTF-8 bytes packed after it.
+  An index past the end answers `NotFound`.
+- **`CreateDir`** — `a0` the path; `a1`-`a5` reserved zero.  Answers zero.
+- **`RemovePath`** — `a0` the path; `a1`-`a5` reserved zero.  Answers zero.
+- **`Rename`** — `a0` the old path; `a1` the new path; `a2`-`a5` reserved
+  zero.  Answers zero.  Both names must resolve to one filesystem.
+- **`OpenAt`** — `a0` the descriptor the path is relative to, or `AT_FDCWD`;
+  `a1` the path; `a2` the flags; `a3`-`a5` reserved zero.  Answers a
+  descriptor, like `Open`.
+- **`StatAt`** — `a0` the descriptor; `a1` the path; `a2` the record; `a3`
+  its length; `a4`-`a5` reserved zero.  Answers zero, like `Stat`.
+- **`RenameAt`** — `a0` the old descriptor; `a1` the old path; `a2` the new
+  descriptor; `a3` the new path; `a4`-`a5` reserved zero.  Answers zero.
+- **`CreateDirAt`** — `a0` the descriptor; `a1` the path; `a2`-`a5` reserved
+  zero.  Answers zero.
+- **`RemovePathAt`** — `a0` the descriptor; `a1` the path; `a2`-`a5` reserved
+  zero.  Answers zero.
+
+The `*At` anchor readings, once, because all five share them: an **absolute**
+path is anchored at the root and the descriptor is bypassed; **`AT_FDCWD`**
+anchors at `/`, the one base every process shares, because there is no
+per-process current directory yet; anything else resolves against the
+directory the descriptor was opened from.  A descriptor that names no file of
+the caller's, a pipe end, or a file that is not a directory is refused before
+the path is looked at.
 
 The four memory calls take **no pointer**: every argument is a value, which is
 why they are the first calls a program can make that change its own address

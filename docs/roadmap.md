@@ -26,7 +26,14 @@ grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
 As of the commit that added this file: **39 crates, 87,492 lines, 832 tests**,
-four machines booting, and **22 of 195 syscall numbers served**.
+four machines booting, and **22 of 195 syscall numbers served**.  The number
+is re-taken by the census command above, not remembered: it reads **32 of
+195** now, after the memory and filesystem levels, and the boot's own line —
+`syscall table installed, 21 number(s) served` — counts the registry's half
+of that, the numbers whose handlers live in the table.  The rest are the
+calls `process.rs` serves itself, the pipe's and the scheduler's.  (The 22
+the file was written with was a narrower grep than the one above; the command
+is the method now, and this paragraph is the only number not re-taken by it.)
 
 ---
 
@@ -158,16 +165,25 @@ What is still not here: **shared memory**.  `ShmGet` and its three siblings are
 separate numbers and a separate problem — two processes naming one region — and
 they are not part of what this level promised.
 
-### Level 2 — the filesystem interface
+### Level 2 — the filesystem interface — **done**
 
-`Write` (so a program can write a file and not only print), then `Stat`,
-`ReadDir`, `CreateDir`, `RemovePath`, `Rename`, and the `*At` variants.  The
-kernel capability exists for all of it; the work is wiring and the descriptor
-bookkeeping each one needs.
+`Write` writes a file, `Stat` answers a sixteen-byte record, `ReadDir` lists a
+directory by index, `CreateDir`, `RemovePath` and `Rename` change the
+namespace, and all five `*At` forms anchor on a directory descriptor — eleven
+numbers, every one reachable from ring 3, with a program that does the whole
+of it and boot lines beside each call.  `docs/status.md` carries the evidence
+and the two defects the first ring-3 exercise found (an unregistered handler
+and an unapplied GOT relocation), which is the part a green gate could not
+have said on its own.
 
-**This level is the cheapest.**  PyroFS implements every operation, the VFS
-declares them, and the syscall table already has the pattern: `open` in
-`kernel/src/syscall/handlers.rs` is the model to follow.
+What the level did **not** promise: `StatFd` and `ReadDirFd` (30, 31) — a
+descriptor's own stat needs the descriptor to know what it names beyond the
+node, and the listing-by-descriptor is the same gap; both are separate
+numbers.  `SetLength` (20) and the truncate side of `write` are one decision
+the filesystem already implements (`VNode::set_len`) and the ABI has not been
+given yet.  And nothing here is about *which* filesystem answers — the mount
+table routes every call the same way, which is why the tmpfs and the PyroFS
+volume both served the level without the handlers changing.
 
 ### Level 3 — the process model
 

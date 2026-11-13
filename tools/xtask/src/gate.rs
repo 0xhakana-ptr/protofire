@@ -386,6 +386,34 @@ impl Machine {
                 // the two lines would still be there.
                 ("protofire: program memory call 67 answered 0x80", false),
                 ("protofire: program memory call 92 answered 0x80", false),
+                // The filesystem interface, exercised by the program the
+                // boot execs: a file written and read back, a directory
+                // made and listed, a rename and a remove, and the `*At`
+                // calls resolving a relative name against a descriptor the
+                // program opened.  The two `wrote` lines are exact — the
+                // counts are the program's own constants — and the anchored
+                // lines are prefixes because the descriptor number is the
+                // table's to hand out, not the gate's to pin.
+                ("protofire: process 1 wrote 19 byte(s) to a file", true),
+                ("protofire: process 1 wrote 4 byte(s) to a file", true),
+                (
+                    "protofire: process 1 stat'd /tmp/kept.txt, kind file, size 19",
+                    true,
+                ),
+                ("protofire: process 1 read /tmp/notes entry 0", true),
+                (
+                    "protofire: process 1 created directory notes via descriptor ",
+                    false,
+                ),
+                ("protofire: process 1 stat'd at.txt via descriptor ", false),
+                (
+                    "protofire: process 1 renamed note.txt via descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 1 removed scratch.txt via descriptor ",
+                    false,
+                ),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 (
@@ -813,6 +841,35 @@ impl Machine {
                     // is set, and the two lines would still be there.
                     ("protofire: program memory call 67 answered 0x80", false),
                     ("protofire: program memory call 92 answered 0x80", false),
+                    // The filesystem interface, exercised by the program the
+                    // boot execs: a file written and read back, a directory
+                    // made and listed, a rename and a remove, and the `*At`
+                    // calls resolving a relative name against a descriptor
+                    // the program opened.  The two `wrote` lines are exact —
+                    // the counts are the program's own constants — and the
+                    // anchored lines are prefixes because the descriptor
+                    // number is the table's to hand out, not the gate's to
+                    // pin.
+                    ("protofire: process 1 wrote 19 byte(s) to a file", true),
+                    ("protofire: process 1 wrote 4 byte(s) to a file", true),
+                    (
+                        "protofire: process 1 stat'd /tmp/kept.txt, kind file, size 19",
+                        true,
+                    ),
+                    ("protofire: process 1 read /tmp/notes entry 0", true),
+                    (
+                        "protofire: process 1 created directory notes via descriptor ",
+                        false,
+                    ),
+                    ("protofire: process 1 stat'd at.txt via descriptor ", false),
+                    (
+                        "protofire: process 1 renamed note.txt via descriptor ",
+                        false,
+                    ),
+                    (
+                        "protofire: process 1 removed scratch.txt via descriptor ",
+                        false,
+                    ),
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
                     ("protofire: virtio-blk wrote and read back sector ", false),
@@ -921,6 +978,34 @@ impl Machine {
                 // the two lines would still be there.
                 ("protofire: program memory call 67 answered 0x80", false),
                 ("protofire: program memory call 92 answered 0x80", false),
+                // The filesystem interface, exercised by the program the
+                // boot execs: a file written and read back, a directory
+                // made and listed, a rename and a remove, and the `*At`
+                // calls resolving a relative name against a descriptor the
+                // program opened.  The two `wrote` lines are exact — the
+                // counts are the program's own constants — and the anchored
+                // lines are prefixes because the descriptor number is the
+                // table's to hand out, not the gate's to pin.
+                ("protofire: process 1 wrote 19 byte(s) to a file", true),
+                ("protofire: process 1 wrote 4 byte(s) to a file", true),
+                (
+                    "protofire: process 1 stat'd /tmp/kept.txt, kind file, size 19",
+                    true,
+                ),
+                ("protofire: process 1 read /tmp/notes entry 0", true),
+                (
+                    "protofire: process 1 created directory notes via descriptor ",
+                    false,
+                ),
+                ("protofire: process 1 stat'd at.txt via descriptor ", false),
+                (
+                    "protofire: process 1 renamed note.txt via descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 1 removed scratch.txt via descriptor ",
+                    false,
+                ),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 ("protofire: virtio-blk wrote and read back sector ", false),
