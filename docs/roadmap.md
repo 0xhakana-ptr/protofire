@@ -343,7 +343,88 @@ lands before anything in the kernel depends on it.
   receive is the first caller that could exercise it, and it may still not on
   this machine.
 
-### Level 6 — the device model, and what "everything is a service" would mean
+### Level 6 — finishing the migration from the previous kernel
+
+**This level comes before the device model, and it is the one that is actually
+next after Level 5.**  The previous kernel was 301,718 lines across nine module
+trees; this one is 94,245 across 40 crates.  The difference is not lost work —
+it is work that has not been re-done in the new shape yet, and the order below
+is by how much of the old tree each piece accounts for.
+
+The numbers, measured from `16b5ef8` (the previous kernel's last commit) and
+from this tree.  The nine rows below are the module trees and sum to 301,718;
+the remaining 764 lines are that tree's two root files, the entry and the
+library root, which have no counterpart to compare against.
+
+| old module | lines | state in this tree |
+|---|---|---|
+| `arch` | 95,361 | **done** — three ports, trap paths, timers, SMP, ring 3 (20,645 lines, a third of the size) |
+| `fs` | 68,494 | **partial** — PyroFS, tmpfs, ISO 9660; **10 filesystems did not come** |
+| `kernel` | 39,704 | **mostly done** — scheduler, processes, COW, pipes, signals, memory |
+| `network` | 39,240 | **not started** — Level 5 builds the first layer of it |
+| `drivers` | 18,828 | **partial** — virtio-blk and virtio-net; **NVMe, AHCI, USB, framebuffer, HID did not come** |
+| `user` | 19,145 | **partial** — `init`, `shell`, `service_manager`; the old shell's command set did not come |
+| `syscall` | 15,647 | **partial** — 43 of 195 numbers |
+| `abi` | 4,725 | **done** — the numbering, the records, the boot information |
+| `util` | 574 | folded into the crates that use it |
+
+So: **three of the nine module trees are done, five are partial, one is not
+started.**
+
+#### What "complete migration" means, in order
+
+Each row is one commit's worth of work or a small number of them, and each is
+independent of the rows below it.
+
+1. **The filesystem gap** — ten filesystems the old tree read and this one does
+   not: `ext4`, `fat32`, `exfat`, `ntfs`, `btrfs`, `xfs`, `f2fs`, `erofs`,
+   `squashfs`, and the old `fuse` client.  The `VNode` and `FileSystem` traits
+   in `fs/src/` are the contract; each filesystem is a crate that implements
+   them, and each brings its own on-disk format parser.  This is the largest
+   single gap and the least risky to redo, because a read-only implementation
+   of a format is proveable against a real image.
+2. **The driver gap** — `nvme`, `ahci`/`hda`, `xhci`/USB HID and MSD, the
+   framebuffer console, `virtio_gpu`, `virtio_input`, `pcspkr`.  The last four
+   are why the old tree had a shell a person could use; this one has a serial
+   console and no display.
+3. **The syscall gap** — the 152 unserved numbers, grouped by which module
+   would answer them.  `docs/roadmap.md`'s family table is the count; the work
+   is mostly wiring once the mechanism exists.
+4. **The user gap** — the old `shell`'s command set (`src/user/program/shell/
+   commands/`), which is what made the machine usable rather than demonstrable.
+
+#### What this level is not
+
+Not a copy-back.  The old tree's code is a reference for what an
+implementation must do, never a thing to paste: the layering is different, the
+error type is different, and several of its modules would fail this tree's
+`check-unsafe-comments` or `check-arch-fanout`.  A filesystem that comes over
+does so as a new crate against `fs`'s traits, with the old module read for its
+on-disk arithmetic.
+
+#### The syscall gap is the whole of the old tree's coverage
+
+Measured: the previous kernel served **194 of the 195** numbers.  The one it
+did not serve is `WaitProcessOf` (196), which was added after that kernel
+stopped.  This tree serves **43**.
+
+That single number is the clearest statement of what "complete migration" means.
+The old tree's 15,647-line syscall tree is the work list: every handler there
+is a handler this tree does not have, and its modules are named by what answers
+them — epoll, eventfd, futex, io_uring, message queues, POSIX timers, ptrace,
+seccomp, scheduler affinity, TLS, IPsec, multicast routing, the GPU calls,
+shared memory, extended attributes, and the network calls.
+
+So the syscall gap is not 152 independent pieces of wiring: it is roughly
+twenty mechanisms, each of which brings its numbers with it.  A futex is one
+mechanism and one number; shared memory is four numbers and one mechanism.
+
+### Level 7 — the device model, and what "everything is a service" would mean
+
+**Deliberately after the migration.**  A handle a program can give away is a
+design decision about what a descriptor *is*, and making it before the
+filesystems and drivers have landed would decide it against an incomplete set of
+things a descriptor has to name.
 
 Level 5 finishes the ABI's largest unserved family.  What follows it is not
 another family of syscalls: it is the question `docs/async_io.md` and

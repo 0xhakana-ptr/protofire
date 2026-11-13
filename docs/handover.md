@@ -49,17 +49,91 @@ several sessions.
 
 ## What is open
 
+The order is now: **Level 5 (the network), then Level 6 (finishing the
+migration from the previous kernel), then Level 7 (the device model)**.  The
+device model moved last on purpose — it decides what a descriptor *is*, and
+deciding that before the filesystems and drivers have landed would decide it
+against an incomplete set of things a descriptor has to name.
+
 - **Level 5, step 5.1** — the IPv4 header, its checksum, and a round-trip test
   over hand-built bytes.  No device, no syscall: `net/src/lib.rs` is 6 lines and
   grows its first module.  `docs/roadmap.md` carries the eight steps and what
   each is proved by.
+- **Level 6 — the migration, and the number that sizes it.**  The previous
+  kernel served **194 of 195** syscall numbers; this one serves **43**.  Its
+  nine module trees were 301,718 lines against this tree's 94,245.  Three are
+  done (`abi`, `arch`, most of `kernel`), five are partial (`fs`, `drivers`,
+  `user`, `syscall`, `util`), one has not started (`network`).  The two largest
+  gaps are **ten filesystems** (ext4, fat32, exfat, ntfs, btrfs, xfs, f2fs,
+  erofs, squashfs, and a FUSE client) and the **drivers** (NVMe, AHCI, USB
+  HID/MSD, framebuffer, virtio-gpu, virtio-input).
+- **Level 7** is planned and not started: the handle a program can give away.
+  Four questions are named in `docs/roadmap.md`, and no work should start
+  before they are answered in writing.
 - **`SetLength` (20), `StatFd` (30), `ReadDirFd` (31)** — three numbers the
   filesystem already implements (`VNode::set_len`) and the ABI has not been
   given.  Handler, registration, ring-3 intercept and a wrapper each.  They are
   not in a level; they are the leftover of Level 2 and each is one commit.
-- **Level 6** is planned and not started: the handle a program can give away.
-  Four questions are named in `docs/roadmap.md`, and no work should start
-  before they are answered in writing.
+
+## The distributed question, and what this tree actually holds
+
+The intended direction is "everything is a service" with a distributed layer
+above it, where the kernel supplies mechanism and user space supplies policy.
+Measured against the previous kernel, here is what that direction actually has
+behind it today — the distinction matters, because a plan built on a guess about
+what exists is the way this tree has gone wrong before.
+
+**What exists and is real:**
+
+- A message-passing primitive that can be built on for real: `abi` holds the
+  numbering and the `#[repr(C)]` records, `ipc` holds a ring, and the pipe
+  already parks a reader and wakes it.  A remote call would go through the same
+  shape.
+- `async_io` — a request/completion model with a `Service` trait, a bounded
+  queue, and one real implementor (`kernel/src/service/clock.rs`).  It has never
+  had a device behind it, so its *pending* half has never run.
+- `service_table` — a name-to-service table, installed at boot, frozen before
+  anything looks one up.  It has one entry (the clock) and no syscall reaches
+  it.
+- `rights` — two constants and no consumer.  It sits at layer 0 for exactly the
+  case where a handle carries rights.
+- `Descriptor` — a handle table that already distinguishes copy from transfer
+  (`Descriptor::for_owner`), which is the arithmetic a capability passing would
+  need.
+
+**What does not exist, and the honest reading of it:**
+
+- **No distributed bus, no device virtualisation, no task migration, no remote
+  discovery.**  None of it is in this tree and none of it was in the previous
+  one either — `git ls-tree 16b5ef8` finds no module for any of it.  So this is
+  not "migrated and lost"; it is a direction nobody has built yet.
+- **The kernel does not need much code for it — that part of the reading is
+  right.**  `abi` would grow wire records and a numbering for a handle transfer,
+  `kernel` would grow the transfer itself and nothing about what is transferred,
+  and that is tens of lines rather than thousands.  Everything above it — what a
+  service is, how it is found, what a restart policy is — is user space, and is
+  the part that would make two distributions able to talk or not.
+- **But "the kernel needs little code" is not the same as "this is nearly
+  done".**  Two things have to be true before a handle transfer is worth
+  designing, and neither is today:
+  - **There has to be something worth passing.**  A service handle over a
+    service table with one entry and no device behind it is a handle to the
+    clock.  The migration is what puts filesystems, drivers and the 152 numbers
+    behind it.
+  - **The `abi` records have to be worth freezing.**  A handle format frozen
+    against a tree with 43 of 195 calls would be frozen against a fraction of
+    what it has to describe.
+
+So the reading of the DeepSeek conversation that survives contact with this tree
+is: **the architecture it describes is the one this tree is already shaped
+for, and the work it implies is small — but it is the last step, not the next
+one.**  Building it now would decide a descriptor's third variant against one
+service and no device.
+
+**The one thing worth doing early, and it is cheap:** write down the four
+questions `docs/roadmap.md`'s Level 7 names.  They are decisions, not code, and
+answering them in prose costs a page and does not constrain anything that comes
+before.
 
 ## Two habits that cost a session each to learn
 
