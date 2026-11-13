@@ -149,6 +149,27 @@ impl Scheduler {
                 // never fires leaves the waiter parked beside the exit it
                 // was waiting for.
                 self.wake_blocked();
+                // **The exit is an event, and the wait parked on it may be on
+                // another CPU.**  A blocked task's state change is a memory
+                // write, and `wfe` does not return for one: the parked core is
+                // woken by `sev`, which is what `send_ipi_to_others` issues
+                // beside its SGI.  Without this a parent parked in
+                // `WaitProcessOf` stays parked beside a child that has already
+                // exited — the boot's log stops at `a program waits for
+                // process N`, and the machine sits there.
+                //
+                // Unconditional, not "when a task was woken": the wake that
+                // matters may have been consumed by a `block_unless_pid`
+                // re-check that ran before this exit was recorded, in which
+                // case nothing was blocked at this instant and the waiter is
+                // about to park.  Sending on every exit costs one interrupt per
+                // program that ends, and a program that ends is not a hot path.
+                #[cfg(target_os = "none")]
+                // SAFETY: the boot's own inter-CPU line, installed before any
+                // program ran.
+                unsafe {
+                    arch::send_ipi_to_others()
+                };
             }
         }
 

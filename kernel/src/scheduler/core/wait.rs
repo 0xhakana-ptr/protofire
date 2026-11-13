@@ -220,6 +220,31 @@ impl Scheduler {
             target.queue_signal(signal, sender_pid, payload)?;
         }
         self.wake_blocked();
+        // **A wake is a state change, and a parked CPU does not see one.**
+        //
+        // The wait this ends is `wfe` on this tree's aarch64, and `wfe` returns
+        // for an event rather than for a memory write; the inter-CPU line is
+        // what sets one.  The pipe's write and close paths send it after their
+        // wake for exactly this reason.  This path — the one `WaitSignal` and
+        // `SigSuspend` park on, and the one that carries a handled signal to a
+        // program's own handler — did not, and a boot whose waiter was parked
+        // on another core ended at `a program waits for process N` with the
+        // record sitting unread in its ring.
+        //
+        // Sent whether or not a task was parked, because the target that needs
+        // it is usually the **running** one: a delivery is taken at the
+        // target's next install, and a target spinning in ring 3 has no
+        // install until an interrupt reaches its CPU.  The tick would be that
+        // interrupt, except this tree's own history records a started core
+        // whose timer expires without its PPI ever reaching the distributor.
+        // Conditional on a parked task, the line a running target needed was
+        // never raised.
+        #[cfg(target_os = "none")]
+        // SAFETY: the boot's own inter-CPU line, installed before any program
+        // ran.
+        unsafe {
+            arch::send_ipi_to_others()
+        };
         Ok(())
     }
 
