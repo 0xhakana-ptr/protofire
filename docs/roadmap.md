@@ -287,18 +287,107 @@ this level does not promise — seven `Dccp*`, five `Ipsec*`, six `Mrt*`, four
 
 The dependencies, in order:
 
-1. **`net`** is 7 lines today, a `#![no_std]` and a comment.  It grows the
-   frame's layers: an IPv4 header and its checksum, an ARP cache (the card
-   answers one ARP question and remembers nothing), ICMP enough to be refuted
-   politely, UDP, then TCP's state machine.
-2. **The kernel** grows a socket table and the dispatch, because a socket is a
-   handle a program holds and `Descriptor` has two variants today.
-3. **The gate** grows a line per layer, the way the ARP exchange already has
-   one.
+1. **`net`** is 6 lines today, a `#![no_std]` and a comment.  It grows the
+   frame's layers, and each one is a host-testable unit with no device in it:
+   IPv4 header parse and build plus its checksum, an ARP cache (the card
+   answers one ARP question and remembers nothing), ICMP as far as "port
+   unreachable" needs, UDP with its checksum, then TCP's state machine.
+2. **The kernel** grows a socket table and the dispatch.  A socket is a handle
+   a program holds, and `Descriptor` in `kernel/src/syscall/table.rs` has two
+   variants — `File` and `Pipe` — so this is where a third arrives.  The
+   scheduler's parking machinery is already the right shape for a blocking
+   `accept` and a blocking `recv`; nothing about it needs to change.
+3. **The gate** grows a line per layer.  `virtio_net` already proves both
+   queues with the ARP exchange, and QEMU's user-mode network answers a ping
+   and a UDP echo, so a layer's evidence can be a real exchange rather than a
+   packet built and thrown away.
 
-`virtio_net` itself needs almost nothing: the card already sends and receives,
-and the two defects recorded in `docs/status.md` were in its framing, which is
-settled.
+`virtio_net` needs no change to carry this: `submit_frame`, `post_receive_buffer`
+and `receive_frame` are already the raw interface a stack wants, and the card
+already owns both queues.  What it has never had is a *caller that is not the
+boot's ARP probe*, and that is what a stack becomes.
+
+#### The order inside Level 5, and why each step is worth landing
+
+Each step is one commit with its own host tests and its own boot line, and each
+is useful before the next exists.
+
+| step | what it adds | how it is proved |
+|---|---|---|
+| **5.1** IPv4 | header parse/build, checksum, a frame this host can construct and re-read | host tests over hand-built bytes; round-trip |
+| **5.2** ARP cache | a table from an address to a MAC, an unanswered question asked once | host tests; a boot that asks once and reuses the answer |
+| **5.3** ICMP echo | a reply to a ping the boot sends | QEMU's user-mode network answers `10.0.2.2` |
+| **5.4** UDP | a datagram out and back, the checksum that may be zero | a boot that sends and parses the echo |
+| **5.5** `NetworkStatus` (37) | one number: is a card up, and what is its address | the first syscall of the level, and the smallest |
+| **5.6** `BindUdp`/`SendToUdp`/`RecvFromUdp` (58–60) | the three calls a datagram needs | `init` sends and receives through ring 3 |
+| **5.7** TCP | a handshake, a segment, an acknowledgement, an orderly close | QEMU's user-mode network is a real peer here |
+| **5.8** `ConnectTcp`/`ListenTcp`/`AcceptTcp` (38, 56, 57) | the three calls a stream needs | two programs on one machine, one listening and one connecting |
+
+5.1 to 5.4 are `net`-only: no syscall, no kernel change, and every test runs on
+the host.  That is deliberate — the largest and least certain part of the level
+lands before anything in the kernel depends on it.
+
+#### What Level 5 does not promise
+
+- **The 23 protocol numbers this level leaves alone.**  `Dccp*`, `Ipsec*`,
+  `Mrt*`, `Filter*` and `TlsConnect` are named in the ABI and stay unserved.
+  They are separate mechanisms, not more calls on this stack.
+- **Routing.**  One interface, one address, one gateway.  A routing table is a
+  decision for a tree with two networks.
+- **DNS beyond the literal.**  `ResolveHostname` (93) can answer from a hosts
+  table the boot installs; a resolver that asks a server is a protocol on top of
+  the UDP that lands at 5.4, and it is its own step.
+- **Any guarantee about the card's message.**  `docs/status.md` records that the
+  receive wait has never executed on QEMU's user-mode network, because the reply
+  is already in the ring when the doorbell returns.  A stack that blocks on a
+  receive is the first caller that could exercise it, and it may still not on
+  this machine.
+
+### Level 6 — the device model, and what "everything is a service" would mean
+
+Level 5 finishes the ABI's largest unserved family.  What follows it is not
+another family of syscalls: it is the question `docs/async_io.md` and
+`service_table` have been parked on since before this roadmap existed, and
+`docs/status.md` records the state it is in.
+
+The question, stated plainly: **a handle a program can give away.**  Every
+other gap on this page is code.  That one is a design decision, because it
+decides what a descriptor *is* — today a `Descriptor` is a `File` or a `Pipe`,
+both of which are things the kernel implements, and a service handle is a third
+thing the kernel only has to *route*.
+
+What the level would have to decide, in the order the decisions depend:
+
+1. **What a handle names.**  A service, a capability, or a right over an object
+   the kernel already has.  `rights` is a crate with two constants and no
+   consumer; it was put at layer 0 for exactly this, and this is the change that
+   would give it one.
+2. **How a handle crosses a process boundary.**  The same call that makes
+   `Fork` copy descriptors is the one that would have to *transfer* one, and the
+   difference between copying and transferring is what `Descriptor::for_owner`
+   is written by hand to get right today.
+3. **What the kernel guarantees about a handle it did not create.**  This is the
+   part that decides whether the tree stays a monolithic kernel or grows a
+   distributed one.  `docs/async_io.md` argues the position: the kernel supplies
+   mechanism, a name-to-service table and a submit/complete queue, and the
+   *policy* of what services exist stays in user space, where a service that
+   crashes can be restarted.  A kernel that grew "discovery", "migration" and
+   "shared state" of its own would be the bloat the same document warns about —
+   every device type adds kernel code, and the set of device types has no bound.
+
+So the intended shape of Level 6 is **not** a distributed bus in the kernel.  It
+is: `abi` grows wire records and a numbering for capability transfer; `kernel`
+grows the transfer itself and nothing about what is transferred; `service_table`
+gains its first real consumer; `apps/service_manager` grows a body.  Whether a
+*distributed* layer ever exists on top of that is a later question, and the test
+of whether it can is whether `abi`'s records are stable enough that two
+implementations of them can talk — which is the same test the syscall numbering
+already passes.
+
+**Nothing in Level 6 is scheduled, and no work on the service layer should start
+before the four questions above are answered in writing.**  Level 5 does not
+depend on it and it does not depend on Level 5; it is listed after because
+Level 5 is the last level the ABI's numbering already describes.
 
 ### In parallel — the drivers
 
