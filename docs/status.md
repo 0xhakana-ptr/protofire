@@ -22,11 +22,14 @@ path named here has to exist.
 
 The three machines are one kernel.  A boot installs the same frame pool and
 heap, mounts PyroFS at `/`, tmpfs at `/tmp` and an ISO 9660 disc at `/cdrom`,
-installs the syscall table, asks the MAC policy both ways, and runs three
-ring-3 programs — one asleep, one blocked on a pipe, one writing to it — whose
-lines every machine's check requires.  The four parts below are the same on all
-three machines, so they are stated once.  A machine's own section carries only
-what differs.
+installs the syscall table, asks the MAC policy both ways, and starts three
+ring-3 programs: one that sleeps and maps memory, one blocked on a pipe, and one
+writing to it.  The sleeping one is `/bin/init`, which then does the rest of the
+boot's demonstration itself — it forks, spawns `/bin/shell` twice, exchanges
+signals with each child, and reads the clock and two ABI records — so the boot's
+`every program exited` counts **six** exits from the three tasks it started.
+The four parts below are the same on all three machines, so they are stated
+once.  A machine's own section carries only what differs.
 
 **Scheduler.**  Preemption, sleeping with a deadline, and a read blocked on a
 pipe and woken by a write.  Each task carries a pid, a parent, and the status
@@ -542,10 +545,6 @@ Verified by the six lines above on every machine, by the gate's required lines
 for all four calls, and by `protofire: syscall table installed, 25 number(s)
 served` with the census at **43 of 195**.
 
-Verified by the eight lines above on every machine, by `protofire: syscall
-table installed, 21 number(s) served`, and by the gate's required lines for
-the write counts, the kept file's stat and the directory listing.
-
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement
 follows a rule rather than the rotation: a task the asking CPU last ran is
@@ -606,7 +605,10 @@ delivers and the kernel counts.  Verified by `interrupt delivered to its handler
 
 **Timer and clock.**  The APIC timer, calibrated once against the PIT, and the
 TSC as the monotonic clock, calibrated separately.  The two rates differ and
-the boot proves both.  Verified by `timer armed at ` and `timer counter  ticks apart`.
+the boot proves both.  Verified by `timer armed at ` and `timer counter `.  That
+second line carries a count between its two fragments —
+`timer counter 5395 ticks apart` — which is why the gate asserts the prefix
+rather than a whole line.
 
 **Ring 3.**  A GDT with DPL-3 code and data segments, a TSS whose `RSP0` names
 the stack every ring-3 interrupt lands on, a call gate at DPL 3, and an `iretq`

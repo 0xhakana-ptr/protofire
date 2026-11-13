@@ -55,7 +55,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **94,084 lines of Rust across 40 crates**, which is
+The tree is **94,245 lines of Rust across 40 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -107,7 +107,8 @@ machine crates twice, inside `arch/` and on their own.
 | `virtio_net` | the network card: two queues, ARP in and out |
 | `service_table` | a name-to-service table — **parked** |
 | `allocator` | the TLSF heap |
-| `net`, `sound`, `virt`, `e1000` | **empty placeholders**: a protocol stack, audio, virtualisation, and a card this tree does not boot with |
+| `net`, `sound`, `e1000` | **empty placeholders**: a protocol stack, audio, and a card this tree does not boot with |
+| `virt` | a header and no code: which half of the guest/host question comes first, and why neither is written |
 
 ### The kernel and the image
 
@@ -139,7 +140,7 @@ whose "reachable" column used to say no, which is why this table is now short.
 | shorten a file, `SetLength` and truncate | yes, `VNode::set_len` | **no** — one handler and one registration |
 | stat or list by descriptor, `StatFd`/`ReadDirFd` | yes | **no** — the descriptor carries `path`, so the anchor exists |
 | seek, duplicate, poll a descriptor | the offset is per descriptor | **no** |
-| **the network** | frames and ARP only | no — 32 socket numbers, all empty |
+| **the network** | frames and ARP only | no — 43 socket and protocol numbers, all empty |
 | **shared memory** | no | no — `ShmGet` and its three siblings |
 | **threads** | no — one task per process | no |
 | **pass a handle to another process** | no — `Descriptor` has two variants | no |
@@ -154,13 +155,13 @@ groups; the count is the number of numbers in the group, not the work involved.
 
 | family | numbers | in the kernel today |
 |---|---|---|
-| filesystem metadata and mutation still unserved (`SetLength`, `StatFd`, `ReadDirFd`, `Fsync`, `Fallocate`, xattrs, file flags, the access and permission queries) | 18 | **all of it** — the filesystem implements every operation |
-| sockets and the network stack (TCP, UDP, raw, local domain, DCCP, IPsec, MRT, and the host-name and address calls beside them) | 34 | ARP only |
+| filesystem metadata and mutation still unserved (`SetLength`, `StatFd`, `ReadDirFd`, `Fsync`, `Fallocate`, xattrs, file flags, the access and permission queries) | 19 | **all of it** — the filesystem implements every operation |
+| sockets and the network stack (TCP, UDP, raw, local domain, DCCP, TLS, IPsec, MRT, the packet filter, and the host-name and address calls beside them) | 43 | ARP only |
 | process, signal and scheduling still unserved (`Futex`, `SchedSetAffinity`, `Ptrace`, `Seccomp`, `Prctl`, the introspection calls) | 10 | fork/exit/wait/pid/signals landed; these did not |
 | shared memory and synchronisation primitives (`Shm*`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 20 | none |
 | GPU | 9 | none |
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
-| **the rest** — descriptors (`Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`), identity (`GetUid`, `GetGid`, users), power, audit, io_uring, service, and the app's own argv/env/path calls | 56 | assorted |
+| **the rest** — descriptors (`Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`), identity (`GetUid`, `GetGid`, users), power, audit, io_uring, service, locking, and the app's own argv/env/path/debug calls | 46 | assorted |
 
 The seven rows sum to exactly 152, because each number is assigned to one row by
 name — the edges between families (`GetHostName` is identity *and* network,
@@ -168,6 +169,14 @@ name — the edges between families (`GetHostName` is identity *and* network,
 would live, and that assignment is the census's one judgement call.  The counts
 come from matching the enum's names, which is how they can be re-taken; the code
 block at the top of this file shows the command.
+
+Two of those rows were wrong until this was re-taken, and the error is worth
+keeping: the network row said 34 while the enum has **43** names that are
+network — seven `Dccp*`, five `Ipsec*`, six `Mrt*`, four `Filter*` and
+`TlsConnect` were not counted in the parenthetical — and the "rest" row
+absorbed the difference at 56.  One row's undercount is invisible in a total
+that another row's overcount fills, which is why the rows are asserted to sum
+rather than the total alone.
 
 ---
 
@@ -256,22 +265,47 @@ What this level did **not** promise:
 - `Sleep`'s timed parks, `TimerFd`, `TimerCreate`, `ClockGetRes`: separate
   numbers, and the first of them is a scheduler feature rather than a source.
 
-**Open, and not part of this level:** aarch64 stops on some boots between a
-signal and the wait that follows it.  `docs/status.md` has the measurement, the
-state QEMU's monitor shows, and the six explanations that were ruled out — two
-of them real defects that are now fixed and were not the whole of it.
+**The aarch64 stop that used to shadow this level is fixed.**  It looked like a
+started core's timer going silent; it was a software interrupt at the GIC's
+reset priority blocking that core's whole interrupt path.  `docs/status.md`
+carries the trace and the 30-of-30 measurement.
 
 ### Level 5 — the network
 
 A stack, not a driver: IPv4, then UDP, then TCP.  `virtio_net` moves frames and
 stops there on purpose.  This is the largest single level and the one with the
-least existing code to build on — fourteen numbers and not one line of protocol
+least existing code to build on — **43 numbers** and not one line of protocol
 above the frame.
+
+What those 43 are, because the shape decides the order: 20 of them are the
+socket and address calls a program makes (`NetworkStatus`, `ConnectTcp`,
+`ListenTcp`, `AcceptTcp`, `BindUdp`, `SendToUdp`, `RecvFromUdp`, the three
+name lookups, `GetSockName`/`GetPeerName`, the four raw-socket calls, the two
+`SockOpt` calls and the three local-domain ones); the other 23 are protocols
+this level does not promise — seven `Dccp*`, five `Ipsec*`, six `Mrt*`, four
+`Filter*`, and `TlsConnect`.
+
+The dependencies, in order:
+
+1. **`net`** is 7 lines today, a `#![no_std]` and a comment.  It grows the
+   frame's layers: an IPv4 header and its checksum, an ARP cache (the card
+   answers one ARP question and remembers nothing), ICMP enough to be refuted
+   politely, UDP, then TCP's state machine.
+2. **The kernel** grows a socket table and the dispatch, because a socket is a
+   handle a program holds and `Descriptor` has two variants today.
+3. **The gate** grows a line per layer, the way the ARP exchange already has
+   one.
+
+`virtio_net` itself needs almost nothing: the card already sends and receives,
+and the two defects recorded in `docs/status.md` were in its framing, which is
+settled.
 
 ### In parallel — the drivers
 
-`e1000`, `sound` and `virt` are placeholders.  None of them blocks a level above;
-each is an independent piece of work with its own gate line.
+`e1000` and `sound` are 7-line placeholders.  `virt` is not: it is a 61-line
+header that states the guest/host question and which half comes first, and it
+has no code because nothing has needed one.  None of the three blocks a level
+above; each is an independent piece of work with its own gate line.
 
 ---
 
