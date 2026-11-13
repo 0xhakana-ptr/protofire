@@ -39,6 +39,8 @@ use core::panic::PanicInfo;
 #[cfg(target_os = "none")]
 use userland::AT_FDCWD;
 #[cfg(target_os = "none")]
+use userland::CLOCK_MONOTONIC;
+#[cfg(target_os = "none")]
 use userland::MAP_ANONYMOUS_PRIVATE;
 #[cfg(target_os = "none")]
 use userland::MMAP_BYTES;
@@ -51,9 +53,13 @@ use userland::PROT_READ_WRITE;
 #[cfg(target_os = "none")]
 use userland::SIGUSR1;
 #[cfg(target_os = "none")]
+use userland::SYSTEM_INFO_SCHEDULER;
+#[cfg(target_os = "none")]
 use userland::insist;
 #[cfg(target_os = "none")]
 use userland::is_error;
+#[cfg(target_os = "none")]
+use userland::sys_abi_info;
 #[cfg(target_os = "none")]
 use userland::sys_brk;
 #[cfg(target_os = "none")]
@@ -62,6 +68,10 @@ use userland::sys_close;
 use userland::sys_create_dir_at;
 #[cfg(target_os = "none")]
 use userland::sys_exit;
+#[cfg(target_os = "none")]
+use userland::sys_get_random;
+#[cfg(target_os = "none")]
+use userland::sys_get_time_of_day;
 #[cfg(target_os = "none")]
 use userland::sys_mmap;
 #[cfg(target_os = "none")]
@@ -90,6 +100,8 @@ use userland::sys_stat;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use userland::sys_stat_at;
+#[cfg(target_os = "none")]
+use userland::sys_system_info;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use userland::sys_wait_process_of;
@@ -366,6 +378,68 @@ pub extern "C" fn _start() -> ! {
         sys_exit(212);
     }
 
+    // The time and the information calls: four numbers served by the
+    // registry, reached from ring 3.  Each one writes a record this program
+    // reads back, which is what makes the kernel's line proof of a call
+    // rather than of a handler that was compiled.
+    //
+    // The clock is checked for the two things a monotonic reading must have:
+    // it is a number (the call answered), and two readings taken across work
+    // do not go backwards.  The *gap* is not asserted — an emulator can hand
+    // out the same reading twice in a row and that is not a defect — so the
+    // claim is the weaker, true one.
+    let mut time = [0u8; userland::TIME_RECORD_BYTES];
+    insist(sys_get_time_of_day(CLOCK_MONOTONIC, &mut time));
+    let (first_seconds, first_nanoseconds) = userland::time_words(&time);
+    if first_nanoseconds >= 1_000_000_000 {
+        sys_exit(213);
+    }
+    let mut later = [0u8; userland::TIME_RECORD_BYTES];
+    insist(sys_get_time_of_day(CLOCK_MONOTONIC, &mut later));
+    let (later_seconds, later_nanoseconds) = userland::time_words(&later);
+    if (later_seconds, later_nanoseconds) < (first_seconds, first_nanoseconds) {
+        sys_exit(214);
+    }
+
+    // The random call fills the buffer it was given, and the length it answers
+    // is the length it was asked for.  Two draws being different is the
+    // property that matters and it is checked here rather than assumed: a
+    // generator that repeated itself would satisfy every other claim.
+    let mut first_draw = [0u8; 16];
+    let mut second_draw = [0u8; 16];
+    if insist(sys_get_random(&mut first_draw)) != first_draw.len() {
+        sys_exit(215);
+    }
+    if insist(sys_get_random(&mut second_draw)) != second_draw.len() {
+        sys_exit(216);
+    }
+    if first_draw == second_draw {
+        sys_exit(217);
+    }
+
+    // The two records, read back field by field against what the ABI says they
+    // mean.  `AbiInfo` is the one a program can trust before anything else, so
+    // the check is that this build's own numbering is what the record carries:
+    // a slot count that was not above the highest call this program made would
+    // mean the record and the table had drifted apart.
+    let mut abi = [0u8; userland::ABI_INFO_BYTES];
+    insist(sys_abi_info(&mut abi));
+    let (version, slots, frozen) = userland::abi_words(&abi);
+    if version == 0 || slots <= userland::SYS_WAIT_PROCESS_OF || frozen != 121 {
+        sys_exit(218);
+    }
+
+    let mut system = [0u8; userland::SYSTEM_INFO_BYTES];
+    insist(sys_system_info(SYSTEM_INFO_SCHEDULER, &mut system));
+    // The frame counts are the fields this program can check against a fact it
+    // already knows: the pool manages frames, and it cannot be handing out more
+    // of them than it manages.
+    let managed = read_word(&system, 6);
+    let free = read_word(&system, 7);
+    if managed == 0 || free > managed {
+        sys_exit(219);
+    }
+
     // The anchors are done with, and a slot closed is a slot the kernel got
     // back: the exit's release line reports what this program left open,
     // which is nothing.
@@ -394,6 +468,14 @@ fn lists_name(entry: &[u8; 64], written: usize, expected: &[u8]) -> bool {
     // record's name is not.  The comparison is against the name alone.
     let name = &expected[..expected.len() - 1];
     offset + len <= entry.len() && &entry[offset..offset + len] == name
+}
+
+/// One word of a record, little-endian, at `index` words in.
+#[cfg(target_os = "none")]
+fn read_word(record: &[u8; 64], index: usize) -> usize {
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&record[index * 8..index * 8 + 8]);
+    usize::from_le_bytes(bytes)
 }
 
 /// Read the file and answer its first byte, closing the descriptor on the way

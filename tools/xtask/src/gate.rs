@@ -441,6 +441,18 @@ impl Machine {
                     "protofire: a suspend answered signal 10 from process ",
                     false,
                 ),
+                // The time and the information calls, reached from ring 3 and
+                // answered by the registry.  Two lines each for the clock and
+                // the generator because the program calls each twice — the
+                // clock to check it does not go backwards, the generator to
+                // check two draws differ — and one line each for the two
+                // records.  The length on the line is the program's own buffer
+                // size, which is a fact about the program and not about the
+                // kernel.
+                ("protofire: process 1 read the clock, 16 byte(s)", true),
+                ("protofire: process 1 drew random bytes, 16 byte(s)", true),
+                ("protofire: process 1 asked the ABI, 24 byte(s)", true),
+                ("protofire: process 1 asked the system, 64 byte(s)", true),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 (
@@ -915,6 +927,18 @@ impl Machine {
                         "protofire: a suspend answered signal 10 from process ",
                         false,
                     ),
+                    // The time and the information calls, reached from ring 3
+                    // and answered by the registry.  Two lines each for the
+                    // clock and the generator because the program calls each
+                    // twice — the clock to check it does not go backwards, the
+                    // generator to check two draws differ — and one line each
+                    // for the two records.  The length on the line is the
+                    // program's own buffer size, which is a fact about the
+                    // program and not about the kernel.
+                    ("protofire: process 1 read the clock, 16 byte(s)", true),
+                    ("protofire: process 1 drew random bytes, 16 byte(s)", true),
+                    ("protofire: process 1 asked the ABI, 24 byte(s)", true),
+                    ("protofire: process 1 asked the system, 64 byte(s)", true),
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
                     ("protofire: virtio-blk wrote and read back sector ", false),
@@ -1067,6 +1091,18 @@ impl Machine {
                     "protofire: a suspend answered signal 10 from process ",
                     false,
                 ),
+                // The time and the information calls, reached from ring 3 and
+                // answered by the registry.  Two lines each for the clock and
+                // the generator because the program calls each twice — the
+                // clock to check it does not go backwards, the generator to
+                // check two draws differ — and one line each for the two
+                // records.  The length on the line is the program's own buffer
+                // size, which is a fact about the program and not about the
+                // kernel.
+                ("protofire: process 1 read the clock, 16 byte(s)", true),
+                ("protofire: process 1 drew random bytes, 16 byte(s)", true),
+                ("protofire: process 1 asked the ABI, 24 byte(s)", true),
+                ("protofire: process 1 asked the system, 64 byte(s)", true),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 ("protofire: virtio-blk wrote and read back sector ", false),
