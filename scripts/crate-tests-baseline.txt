@@ -12,11 +12,29 @@
 #
 # Recording is `sh scripts/check-crate-tests.sh --record`.  A row whose crate
 # has left the workspace is refused, so the file describes the tree.
+#
+# ## Rows that name a module
+#
+# A row whose first field holds `::` names one module inside a crate instead of
+# the crate itself, and its line count is a dash because the source is the
+# crate's: counting it here would make the crate's number depend on how its
+# files happen to be split.
+#
+# These exist because a crate with several implementations reports one total,
+# and one total cannot say whether each of them is tested.  `fs` holds PyroFS,
+# tmpfs and ISO 9660; a fifth that size arriving with two hundred tests and a
+# sixth with none would leave the total rising while half of what the crate
+# claims went unproven.
+#
+# A module is watched when its row is added here, and never by `--record`: that
+# is what keeps this a list of decisions rather than a mirror of the tree's
+# internal structure.  A module that loses tests fails even when its crate's
+# total does not fall.
 
-abi                  3963   63
+abi                  3960   63
 allocator            2508   13
-arch                20645    1
-arch_aarch64         6553   50
+arch                20860    1
+arch_aarch64         6768   52
 arch_riscv64         7313   50
 arch_x86_64          6213   53
 async_io             1546   26
@@ -27,12 +45,16 @@ cell                  328    5
 crypto               4913   64
 e1000                   7    0
 fdt                  1668   30
-fs                  14742  114
+fs                  14734  114
+fs::block_cache         -   24
+fs::iso9660             -   39
+fs::pyrofs              -   10
+fs::tmpfs               -   10
 init                  493    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 ipc                   344    9
 irq                   463   12
 kernel              18930  134 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
-memory               2290   36
+memory               2289   36
 net                     7    0
 paging                779   13
 pci                  2596   44
@@ -40,7 +62,7 @@ power                 324   12
 profiler              312    2
 rights                 78    3
 security             1281   14
-service_manager        61    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
+service_manager        62    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 service_table         564    7
 shell                 134    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 sound                   7    0
