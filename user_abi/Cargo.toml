@@ -1,5 +1,5 @@
 [package]
-name = "userland"
+name = "user_abi"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -33,13 +33,13 @@ extracted yet.
                                                          the lock
      3   arch_x86_64, arch_aarch64, arch_riscv64       the machines
      2   crypto, async_io, power, ipc, paging, irq,
-         fdt                                           tools: algorithms, rings,
+         fdt, user_abi                                 tools: algorithms, rings,
                                                          page tables, a handler
-                                                         table, the tree
+                                                         table, the tree, the
+                                                         program's gate
      1   abi                                           the wire format
-     0   cell, profiler, unicode, rights, audit,
-         userland                                      core and alloc only, and
-                                                         the ring-3 side of `abi`
+     0   cell, profiler, unicode, rights, audit        core and alloc, and
+                                                         nothing of this tree
 ```
 
 `ipc` and `power` sit at layer 2 with the algorithms, not with the kernel, and
@@ -77,16 +77,15 @@ The flags are read by the filesystem, by device descriptors, by the audit log an
 by the handle table.  As a module under any one of them, the other three would
 have to depend on it.  As a crate at layer 0, they all depend on a leaf.
 
-`userland` is here for the opposite reason to everything else on this row: it is
-not a leaf by content — it is the numbering, one call gate per machine, and the
-wrappers above them, which is a whole interface — but by **dependency**.  It
-names nothing of this tree, because a program compiles against it and a program
-carries no kernel.  So the numbers are written down twice: once in `abi` for the
-kernel, and once here as constants, with `abi` as a **dev**-dependency whose
-only job is a test that pins every constant to the enum.  The layering gate does
-not count a dev-dependency as an edge, which is what makes that arrangement
-legal rather than a cycle — and it is `docs/fmts/syscall-abi.md` §8's subject,
-not a detail of this file.
+`user_abi` is here for a reason its name states: it is the program's half of the
+ABI — the numbering under call-site names, one call gate per machine, and the
+wrappers above them.  It names `abi` and nothing else of this tree, which is
+what this row's test asks, and every constant it carries is derived from abi's
+own value rather than copied, so a number that moves in `abi` breaks this
+crate's build instead of drifting.  (The previous tree carried a copy justified
+by an `abi` that carried the kernel; this tree's does not, and the copy is
+gone.)  The arrangement is `docs/fmts/syscall-abi.md` §8's subject, not a
+detail of this file.
 
 ### Layer 1, the wire format
 

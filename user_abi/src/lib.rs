@@ -1,4 +1,4 @@
-//! userland/src/lib.rs
+//! user_abi/src/lib.rs
 //!
 //! The wrappers a program of this kernel is written against: the numbering,
 //! the one call gate per machine, and the typed-on-nothing helpers above them.
@@ -662,7 +662,7 @@ mod tests {
     //! here; what a derivation cannot pin is the *value*.  A number a program
     //! hard-codes is a number these constants have to keep being — the frozen
     //! range's own rule, `0..=120` (`docs/fmts/syscall-abi.md`) — and these
-    //! literals are the guard.  `cargo test -p userland` runs them on a host,
+    //! literals are the guard.  `cargo test -p user_abi` runs them on a host,
     //! with no kernel involved.
 
     use super::SYS_BRK;

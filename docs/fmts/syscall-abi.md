@@ -339,17 +339,17 @@ What is already decided, and is what a new call with an address argument does to
 
 The previous tree carried a `shared` crate holding its user-side wrappers: number
 re-exports, the raw trap instruction, and typed `sys_<name>` wrappers. This tree
-carries [`userland/`](../../userland/src/lib.rs), which is that crate: the
+carries [`user_abi/`](../../user_abi/src/lib.rs), which is that crate: the
 numbering as constants, one six-argument gate per machine, and the wrappers
 above it.  The conventions it landed with:
 
 - Name them `sys_` + the syscall's name (`sys_open`, `sys_read`, `sys_stat`).
-- The wrapper answers the **raw status word**, and [`is_error`](../../userland/src/lib.rs)
+- The wrapper answers the **raw status word**, and [`is_error`](../../user_abi/src/lib.rs)
   is the one test a program needs: the ABI encodes an error as a word with its
   high bit set, so a successful answer is a small positive number and a test a
   `no_std` program can make without carrying the kernel's `Result` type.  A
   program whose next step is meaningless after a refusal uses
-  [`insist`](../../userland/src/lib.rs), the fail-fast form.
+  [`insist`](../../user_abi/src/lib.rs), the fail-fast form.
 - Take Rust types in the signature where the operation has them (`&mut [u8]`
   for a read's buffer) and do the pointer/length packing here, that is the
   whole point of the layer; a path stays an address, because a NUL-terminated

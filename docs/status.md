@@ -492,10 +492,10 @@ the first to exercise:
   waiting for each other.  The delivery now moves without a switch, which
   is what it is: the signal's arrival, not a scheduling decision.
 
-The `userland` crate is the other structural fact of the level: the
-wrappers every program compiles against, with the numbering pinned to the
-ABI's own enum by the crate's tests, carried by a dev-dependency the
-layering gate does not count as an edge.
+The `user_abi` crate is the other structural fact of the level: the
+wrappers every program compiles against, with the numbering derived from
+the ABI's own enum — a number that moves in `abi` breaks the program
+side's build rather than drifting until a host test notices.
 
 Verified by the lines above on every machine, by the gate's required lines
 for the spawn, the two waits and the suspend, and by `protofire: syscall

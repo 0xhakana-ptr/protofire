@@ -110,7 +110,7 @@
 # and hands bytes to this ring, which never learns what a thread is.
 2 ipc
 
-# `userland` is the crate the programs compile against: the numbering, one call
+# `user_abi` is the crate the programs compile against: the numbering, one call
 # gate per machine, and the wrappers above them, so the gate is spelled once
 # and not once per program.  It names `abi` and nothing else of this tree — the
 # numbering is the one thing both sides of the privilege boundary name, which
@@ -121,7 +121,7 @@
 # was the price of the boundary.  This tree's `abi` carries nothing of the
 # kernel, so the copy is gone and the layer is the one its one dependency
 # states.  Everything at layer 10 may name it, and nothing else does.
-2 userland
+2 user_abi
 
 # ── Layer 3: the machine ────────────────────────────────────────────────────
 #
@@ -311,7 +311,7 @@
 # ── Layer 10: programs ──────────────────────────────────────────────────────
 #
 # A program is not a crate of the kernel: it reaches everything through
-# syscalls, so the one thing of this tree it names is `userland` (layer 2),
+# syscalls, so the one thing of this tree it names is `user_abi` (layer 2),
 # the stub its calls go through, and nothing below names a program.  The layer
 # is the top one because that is what "a caller and not a callee" is — the same
 # reason the tests and the build tool are here.

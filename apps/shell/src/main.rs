@@ -16,7 +16,7 @@
 //!
 //! ## Ring 3, and where the wrappers live
 //!
-//! The calls go through the `userland` crate, the same gate `init` uses:
+//! The calls go through the `user_abi` crate, the same gate `init` uses:
 //! two programs that spell the gate separately are two places for one fact
 //! to drift, which is why the crate exists.
 
@@ -27,27 +27,27 @@
 use core::panic::PanicInfo;
 
 #[cfg(target_os = "none")]
-use userland::OPEN_READ;
+use user_abi::OPEN_READ;
 #[cfg(target_os = "none")]
-use userland::SIGUSR1;
+use user_abi::SIGUSR1;
 #[cfg(target_os = "none")]
-use userland::insist;
+use user_abi::insist;
 #[cfg(target_os = "none")]
-use userland::sys_close;
+use user_abi::sys_close;
 #[cfg(target_os = "none")]
-use userland::sys_exit;
+use user_abi::sys_exit;
 #[cfg(target_os = "none")]
-use userland::sys_get_ppid;
+use user_abi::sys_get_ppid;
 #[cfg(target_os = "none")]
-use userland::sys_open;
+use user_abi::sys_open;
 #[cfg(target_os = "none")]
-use userland::sys_read;
+use user_abi::sys_read;
 #[cfg(target_os = "none")]
-use userland::sys_send_signal;
+use user_abi::sys_send_signal;
 #[cfg(target_os = "none")]
-use userland::sys_set_signal_handler;
+use user_abi::sys_set_signal_handler;
 #[cfg(target_os = "none")]
-use userland::sys_sigreturn;
+use user_abi::sys_sigreturn;
 
 /// The path the shell reads, NUL-terminated in its own `.rodata`: the same
 /// file `init` reads, which is what makes the two statuses comparable — the

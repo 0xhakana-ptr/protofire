@@ -6,4 +6,4 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-userland = { path = "../../userland" }
+user_abi = { path = "../../user_abi" }

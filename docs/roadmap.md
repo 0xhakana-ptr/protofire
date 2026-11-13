@@ -43,7 +43,7 @@ that cost the `*At` calls a boot to learn.
 
 The inventory, by what a crate is for.  **No line counts here**: a table of
 sizes maintained by hand is wrong within a month, and this one was.  It listed
-29 crates where the workspace has 40 — `userland`, the four architecture crates
+29 crates where the workspace has 40 — `user_abi`, the four architecture crates
 and all four placeholders were missing — and it named `init` as "reads a
 greeting, exits with its first byte" long after that program had grown the whole
 filesystem, memory and signal demo.
@@ -82,7 +82,7 @@ machine crates twice, inside `arch/` and on their own.
 | `ipc` | the pipe's ring buffer |
 | `power` | a frequency governor |
 | `async_io` | the request/completion model — **parked**, see `docs/async_io.md` |
-| `userland` | the ring-3 side of the ABI: the numbering, one call gate per machine, the wrappers |
+| `user_abi` | the ring-3 side of the ABI: the numbering, one call gate per machine, the wrappers |
 
 ### The machines
 
