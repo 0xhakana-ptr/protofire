@@ -32,6 +32,11 @@
 #![no_std]
 
 extern crate alloc;
+// The host tests — the NTFS harness's own, which drive the driver against a
+// volume mkntfs makes — read files and environment from the host, and the
+// kernel target compiles none of this.
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 pub mod block_cache;
 pub mod exfat;
@@ -41,6 +46,7 @@ pub mod fat32;
 pub mod filesystem;
 pub mod iso9660;
 pub mod mount;
+pub mod ntfs;
 pub mod path;
 pub mod profiler;
 pub mod pyrofs;
