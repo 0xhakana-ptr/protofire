@@ -792,6 +792,60 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         }
     }
 
+    // The mask, and the suspend that runs a ring under one.  Both take the
+    // mask as a bit-per-signal word; the mask's known set is the signals'
+    // own range, and a bit outside it is a signal this ABI does not define.
+    if number == SyscallNumber::SetSignalMask as usize {
+        let mask = call.arguments[0];
+        let flags = call.arguments[1];
+        if syscall::validate_known_flags(flags, abi::process::PROCESS_SIGNAL_KNOWN_FLAGS).is_err()
+            || mask & !SIGNAL_KNOWN_MASK != 0
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let previous = crate::scheduler::set_signal_mask(mask as u32);
+        return CallOutcome::Return(previous as usize);
+    }
+
+    if number == SyscallNumber::SigSuspend as usize {
+        let mask = call.arguments[0];
+        let flags = call.arguments[1];
+        if syscall::validate_known_flags(flags, abi::process::PROCESS_SIGNAL_KNOWN_FLAGS).is_err()
+            || mask & !SIGNAL_KNOWN_MASK != 0
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let record = call.arguments[2];
+        let length = call.arguments[3];
+        if length < SIGNAL_RECORD_BYTES {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        if !crate::address_space::is_user_range(record, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.
+        let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        match crate::scheduler::sigsuspend(frame, mask as u32) {
+            Some((signal, sender_pid, payload)) => {
+                write_signal_record(destination, signal, sender_pid, payload);
+                arch::serial::write_str("protofire: a suspend answered signal ");
+                arch::serial::write_u32(signal as u32);
+                arch::serial::write_str(" from process ");
+                arch::serial::write_u32(sender_pid);
+                arch::serial::write_str(", mask put back\n");
+                return CallOutcome::Return(0);
+            }
+            None => {
+                if !crate::scheduler::has_selectable() {
+                    crate::scheduler::idle_until_woken();
+                }
+                return crate::scheduler::switch_without_saving(frame);
+            }
+        }
+    }
+
     if number == SyscallNumber::Pipe as usize {
         // `Pipe()`: make one and answer the read end's descriptor.  The write
         // end is the next number, because a call answers one word and two
@@ -1253,6 +1307,12 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // a handler that answered through the registry.
     CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented))
 }
+
+/// The mask bits the ABI defines: one per signal, `1..=31`.  Bit 0 and
+/// everything above are signals this ABI does not define, and a mask word
+/// that named one would be a promise about a signal no send can carry.
+#[cfg(target_os = "none")]
+const SIGNAL_KNOWN_MASK: usize = 0xFFFF_FFFE;
 
 /// The byte length of the ABI's `ProcessSignalRecord`, the record `WaitSignal`
 /// answers with: three words — signal, sender, payload.

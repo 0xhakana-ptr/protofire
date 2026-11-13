@@ -227,6 +227,71 @@ impl Scheduler {
         answer
     }
 
+    /// Set the running task's signal mask, answering what it was.
+    ///
+    /// A mask bit is a signal's number: bit 10 blocks `SIGUSR1`.  The
+    /// answer is the previous mask, which is what lets a caller put back
+    /// what it found rather than what it assumed.
+    pub fn set_signal_mask_current(&mut self, cpu: usize, mask: u32) -> u32 {
+        let previous = self
+            .running
+            .get(cpu)
+            .copied()
+            .flatten()
+            .and_then(|index| self.tasks.get(index))
+            .map(|task| task.signal_mask)
+            .unwrap_or(0);
+        if let Some(index) = self.running.get(cpu).copied().flatten()
+            && let Some(task) = self.tasks.get_mut(index)
+        {
+            task.signal_mask = mask;
+        }
+        previous
+    }
+
+    /// Run the calling task's ring under `mask`, and answer an unblocked
+    /// signal with the mask put back.
+    ///
+    /// The park is the subtlety: the wake resumes the **call**, so the retry
+    /// re-enters with the same argument and cannot know what the mask was
+    /// before the first entry.  The task's own slot carries it — set on the
+    /// first entry, taken on the answering path — which is what makes the
+    /// restore survive a park.
+    pub fn sigsuspend_current(
+        &mut self,
+        cpu: usize,
+        frame: &Context,
+        mask: u32,
+    ) -> Option<(usize, u32, usize)> {
+        let answer = self
+            .running
+            .get(cpu)
+            .copied()
+            .flatten()
+            .and_then(|index| self.tasks.get_mut(index))
+            .and_then(|task| {
+                if task.suspend_restore.is_none() {
+                    task.suspend_restore = Some(task.signal_mask);
+                }
+                task.signal_mask = mask;
+                task.take_signal()
+            });
+        match answer {
+            Some(pending) => {
+                if let Some(index) = self.running.get(cpu).copied().flatten()
+                    && let Some(task) = self.tasks.get_mut(index)
+                {
+                    task.signal_mask = task.suspend_restore.take().unwrap_or(task.signal_mask);
+                }
+                Some((pending.signal, pending.sender_pid, pending.payload))
+            }
+            None => {
+                self.block(cpu, frame);
+                None
+            }
+        }
+    }
+
     /// Wake every blocked task, answering how many.
     ///
     /// Every blocked task wakes, because a wait queue would record *which*

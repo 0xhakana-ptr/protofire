@@ -68,6 +68,10 @@ pub const SYS_SPAWN_PROCESS: usize = 25;
 pub const SYS_GETPPID: usize = 82;
 /// `SIGUSR1`, the signal a program may use for anything of its own.
 pub const SIGUSR1: usize = 10;
+/// `SetSignalMask`, the caller's block set.
+pub const SYS_SET_SIGNAL_MASK: usize = 94;
+/// `SigSuspend`, a ring run under a mask until an unblocked signal answers.
+pub const SYS_SIGSUSPEND: usize = 135;
 /// `WaitProcessOf`, one named process's exit status.
 pub const SYS_WAIT_PROCESS_OF: usize = 196;
 /// `Mmap`, anonymous private memory.
@@ -387,6 +391,27 @@ pub fn sys_wait_signal(record: &mut [u8; 24]) -> usize {
     )
 }
 
+/// `set_signal_mask(mask)`: the mask the caller had.
+#[cfg(target_os = "none")]
+pub fn sys_set_signal_mask(mask: usize) -> usize {
+    syscall6(SYS_SET_SIGNAL_MASK, mask, 0, 0, 0, 0, 0)
+}
+
+/// `sigsuspend(mask, record)`: zero, with the record filled — an unblocked
+/// signal that arrived under the mask, with the previous mask put back.
+#[cfg(target_os = "none")]
+pub fn sys_sigsuspend(mask: usize, record: &mut [u8; 24]) -> usize {
+    syscall6(
+        SYS_SIGSUSPEND,
+        mask,
+        0,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+    )
+}
+
 /// `get_ppid()`: the caller's parent's pid.
 #[cfg(target_os = "none")]
 pub fn sys_get_ppid() -> usize {
@@ -504,6 +529,8 @@ mod tests {
     use super::SYS_REMOVE_PATH_AT;
     use super::SYS_RENAME_AT;
     use super::SYS_SEND_SIGNAL;
+    use super::SYS_SET_SIGNAL_MASK;
+    use super::SYS_SIGSUSPEND;
     use super::SYS_SPAWN_PROCESS;
     use super::SYS_STAT;
     use super::SYS_STAT_AT;
@@ -529,6 +556,8 @@ mod tests {
         assert_eq!(SYS_MMAP, SyscallNumber::Mmap as usize);
         assert_eq!(SYS_BRK, SyscallNumber::Brk as usize);
         assert_eq!(SYS_SEND_SIGNAL, SyscallNumber::SendSignal as usize);
+        assert_eq!(SYS_SET_SIGNAL_MASK, SyscallNumber::SetSignalMask as usize);
+        assert_eq!(SYS_SIGSUSPEND, SyscallNumber::SigSuspend as usize);
         assert_eq!(SYS_WAIT_SIGNAL, SyscallNumber::WaitSignal as usize);
         assert_eq!(SYS_GETPPID, SyscallNumber::GetPpid as usize);
         assert_eq!(SYS_SPAWN_PROCESS, SyscallNumber::SpawnProcess as usize);

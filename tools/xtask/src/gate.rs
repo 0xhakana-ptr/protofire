@@ -477,7 +477,7 @@ impl Machine {
                 // the walk's scaffolding — three tables per space, fifteen on
                 // this boot — prints a smaller number and fails here.
                 (
-                    "protofire: address spaces reaped 5, 131072 frame(s) free",
+                    "protofire: address spaces reaped 6, 131072 frame(s) free",
                     true,
                 ),
                 // The invalidation's own account, as a whole line: three sends,
@@ -658,7 +658,7 @@ impl Machine {
                     // and produced 186 page faults in six boots of eight, which
                     // is why the count is here at the end rather than absent.
                     (
-                        "protofire: address spaces reaped 5, 16384 frame(s) free",
+                        "protofire: address spaces reaped 6, 16384 frame(s) free",
                         true,
                     ),
                     // One invalidation, acknowledged, and no wait ran out.
@@ -1110,7 +1110,7 @@ impl Machine {
                 // Every finished program's address space went back, as on the
                 // other two machines.
                 (
-                    "protofire: address spaces reaped 5, 16384 frame(s) free",
+                    "protofire: address spaces reaped 6, 16384 frame(s) free",
                     true,
                 ),
                 // No invalidation, and that is this machine's fact rather than

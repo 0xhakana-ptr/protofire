@@ -137,6 +137,21 @@ pub struct Task {
     /// whose programs exchange one signal needs and far short of a heap's
     /// worth.
     pub(crate) signals: [Option<PendingSignal>; TASK_SIGNAL_QUEUE],
+    /// The mask whose bit `n` blocks signal `n`.
+    ///
+    /// A masked signal still queues — the sender's send succeeded and the
+    /// target is not consuming, which is the ring's business — but a wait
+    /// does not take it until something clears the bit.  `0` is the fresh
+    /// task's mask: everything deliverable.
+    pub(crate) signal_mask: u32,
+    /// The mask a `SigSuspend` will put back when its signal answers.
+    ///
+    /// A suspend parks, and the wake resumes the **call**, which re-enters
+    /// with the same argument: without this slot the retry could not tell
+    /// the mask to restore from the mask it was told to run under, and the
+    /// original would be lost to the suspend's own.  `None` is a task not
+    /// inside a suspend.
+    pub(crate) suspend_restore: Option<u32>,
 }
 
 /// A signal one process sent another, waiting to be taken.
@@ -158,9 +173,17 @@ pub(crate) struct PendingSignal {
 pub(crate) const TASK_SIGNAL_QUEUE: usize = 8;
 
 impl Task {
-    /// Take the oldest pending signal, answering it.
+    /// Take the oldest pending signal the mask does not block.
+    ///
+    /// A masked signal stays queued: the wait that skipped it is not a
+    /// refusal, it is "not yet", and the day the bit clears the ring
+    /// answers.
     pub(crate) fn take_signal(&mut self) -> Option<PendingSignal> {
-        let taken = self.signals.iter_mut().find(|slot| slot.is_some());
+        let mask = self.signal_mask;
+        let taken = self.signals.iter_mut().find(|slot| match slot {
+            Some(pending) => mask & (1 << pending.signal) == 0,
+            None => false,
+        });
         taken.and_then(|slot| slot.take())
     }
 
@@ -200,6 +223,8 @@ impl Task {
             last_cpu: usize::MAX,
             ran_off_boot_cpu: usize::MAX,
             signals: [const { None }; TASK_SIGNAL_QUEUE],
+            signal_mask: 0,
+            suspend_restore: None,
         }
     }
 
@@ -221,6 +246,8 @@ impl Task {
             last_cpu: usize::MAX,
             ran_off_boot_cpu: usize::MAX,
             signals: [const { None }; TASK_SIGNAL_QUEUE],
+            signal_mask: 0,
+            suspend_restore: None,
         }
     }
 

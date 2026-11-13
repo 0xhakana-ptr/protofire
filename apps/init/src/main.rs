@@ -77,6 +77,11 @@ use userland::sys_remove_path_at;
 #[cfg(target_os = "none")]
 use userland::sys_rename_at;
 #[cfg(target_os = "none")]
+#[cfg(target_os = "none")]
+use userland::sys_set_signal_mask;
+#[cfg(target_os = "none")]
+use userland::sys_sigsuspend;
+#[cfg(target_os = "none")]
 use userland::sys_spawn;
 #[cfg(target_os = "none")]
 use userland::sys_stat;
@@ -86,7 +91,6 @@ use userland::sys_stat_at;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use userland::sys_wait_process_of;
-#[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use userland::sys_wait_signal;
 #[cfg(target_os = "none")]
@@ -333,6 +337,29 @@ pub extern "C" fn _start() -> ! {
     if status != SHELL_STATUS {
         sys_exit(208);
     }
+
+    // The mask: this process blocks the signal, starts another child, and
+    // lets that child speak anyway — the send queues, the wait does not
+    // take it, and the child's exit still answers, because an exit is not
+    // a signal.  The suspend then runs the ring with everything unblocked,
+    // the queued signal answers, and the mask this process had goes back.
+    let previous = insist(sys_set_signal_mask(1 << SIGUSR1));
+    let second = insist(sys_spawn(SHELL_PATH.as_ptr() as usize));
+    let status = insist(sys_wait_process_of(second));
+    if status != SHELL_STATUS {
+        sys_exit(210);
+    }
+    let mut record = [0u8; 24];
+    insist(sys_sigsuspend(0, &mut record));
+    let (signal, sender, payload) = userland::signal_words(&record);
+    if signal != SIGUSR1 || sender != second || payload != 0x5348 {
+        sys_exit(211);
+    }
+    let restored = insist(sys_set_signal_mask(0));
+    if restored != (1 << SIGUSR1) {
+        sys_exit(212);
+    }
+    let _ = previous;
 
     // The anchors are done with, and a slot closed is a slot the kernel got
     // back: the exit's release line reports what this program left open,

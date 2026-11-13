@@ -1100,6 +1100,37 @@ pub fn wait_signal(_frame: &arch::Context) -> Option<(usize, u32, usize)> {
     None
 }
 
+/// Set the running process's signal mask, answering what it was.
+#[cfg(target_os = "none")]
+pub fn set_signal_mask(mask: u32) -> u32 {
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_mut()
+            .map_or(0, |s| s.set_signal_mask_current(cpu, mask))
+    })
+}
+
+/// A host has no mask to set.
+#[cfg(not(target_os = "none"))]
+pub fn set_signal_mask(_mask: u32) -> u32 {
+    0
+}
+
+/// Run the calling process's ring under `mask` and answer an unblocked
+/// signal with the previous mask put back.
+#[cfg(target_os = "none")]
+pub fn sigsuspend(frame: &arch::Context, mask: u32) -> Option<(usize, u32, usize)> {
+    let cpu = this_cpu();
+    with_scheduler(|scheduler| scheduler.as_mut()?.sigsuspend_current(cpu, frame, mask))
+}
+
+/// A host has nothing to suspend.
+#[cfg(not(target_os = "none"))]
+pub fn sigsuspend(_frame: &arch::Context, _mask: u32) -> Option<(usize, u32, usize)> {
+    None
+}
+
 /// The process id of the running task, if a scheduler is installed.
 pub fn current_pid() -> Option<u32> {
     let cpu = this_cpu();
@@ -1864,6 +1895,70 @@ mod tests {
                 .is_some()
         );
         scheduler.send_signal_to(7, 1, 10, 0).expect("room again");
+    }
+
+    /// A masked signal stays queued, and the wait skips it: the refusal is
+    /// "not yet", not "no".
+    ///
+    /// The property is what makes a mask usable — a caller that blocks a
+    /// signal must be able to hold the bit without losing what arrives
+    /// under it, and the day the bit clears the ring answers.  The queue
+    /// filling while blocked is the sender's `Busy`, which the ring test
+    /// above pins; this one is the skip.
+    #[test]
+    fn a_masked_signal_stays_queued_and_a_clear_bit_answers_it() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add(Task::without_space("target"));
+        scheduler.tasks[0].identify(1, 7);
+        assert_eq!(scheduler.claim(0), Claim::Took(0));
+
+        scheduler
+            .send_signal_to(7, 1, 10, 0x41)
+            .expect("the send succeeds whatever the mask says");
+        scheduler.set_signal_mask_current(0, 1 << 10);
+
+        assert_eq!(
+            scheduler.wait_signal_current(0, &starting_context(0, 0)),
+            None,
+            "the wait skips what the mask blocks"
+        );
+        scheduler.set_signal_mask_current(0, 0);
+        assert_eq!(
+            scheduler.wait_signal_current(0, &starting_context(0, 0)),
+            Some((10, 7, 0x41)),
+            "the day the bit clears, the ring answers"
+        );
+    }
+
+    /// A suspend answers an unblocked signal and puts the caller's own mask
+    /// back — the mask the suspend found, not the one it was told to run
+    /// under.
+    ///
+    /// The restore is the call's whole point: a caller that ends a suspend
+    /// with the suspend's own mask would have its blocking silently widened
+    /// by the act of waiting.
+    #[test]
+    fn a_suspend_answers_and_puts_the_caller_s_mask_back() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add(Task::without_space("target"));
+        scheduler.tasks[0].identify(1, 7);
+        assert_eq!(scheduler.claim(0), Claim::Took(0));
+        scheduler.set_signal_mask_current(0, 1 << 10);
+
+        scheduler.send_signal_to(7, 1, 10, 0x42).expect("send");
+
+        // Everything unblocked: the masked signal answers, and the mask the
+        // caller had — bit 10 — goes back.
+        let answer = scheduler.sigsuspend_current(0, &starting_context(0, 0), 0);
+        assert_eq!(answer, Some((10, 7, 0x42)));
+        assert_eq!(
+            scheduler.tasks[0].signal_mask,
+            1 << 10,
+            "the mask went back"
+        );
+
+        // And the ring is empty: the signal was taken, not copied.
+        assert!(scheduler.tasks[0].take_signal().is_none());
     }
 
     /// A signal sent to a task that is not running still queues, and the
