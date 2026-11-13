@@ -27,8 +27,8 @@ grep -E '^[0-9]+ ' scripts/layering.txt
 
 As of the commit that added this file: **39 crates, 87,492 lines, 832 tests**,
 four machines booting, and **22 of 195 syscall numbers served**.  The number
-is re-taken by the census command above, not remembered: it reads **32 of
-195** now, after the memory and filesystem levels, and the boot's own line —
+is re-taken by the census command above, not remembered: it reads **39 of
+195** now, after the memory, filesystem and process levels, and the boot's own line —
 `syscall table installed, 21 number(s) served` — counts the registry's half
 of that, the numbers whose handlers live in the table.  The rest are the
 calls `process.rs` serves itself, the pipe's and the scheduler's.  (The 22
@@ -185,16 +185,23 @@ given yet.  And nothing here is about *which* filesystem answers — the mount
 table routes every call the same way, which is why the tmpfs and the PyroFS
 volume both served the level without the handlers changing.
 
-### Level 3 — the process model
+### Level 3 — the process model — **done**
 
-`SpawnProcess` (a supervisor cannot supervise what it cannot start), then
-signals: `SendSignal`, `WaitSignal`, `SetSignalHandler`, `SetSignalMask`,
-`SigReturn`, `SigSuspend`.  The scheduler has the waits already —
-`block_unless`, `wake_blocked` — which is what a signal delivery needs.
+`SpawnProcess` starts a program from a file as a child the caller can wait
+for by pid, and all six signal numbers serve: `SendSignal` queues on the
+target's own ring, `WaitSignal` parks on it, `SetSignalMask` blocks and
+`SigSuspend` runs the ring under a mask with the caller's own put back, and
+a handled signal is **delivered** — the target's context redirected to the
+program's own handler at its next install, `SigReturn` putting the whole
+interrupted context back.  `docs/status.md` carries the exchange and the
+three defects the first boot of it found, one of them in the riscv64 trap
+path itself.
 
-Threads are in this level if they are wanted, and they are a different decision:
-the tree has one task per process today, and a thread brings shared address
-spaces.
+What the level did **not** promise: **threads** — the tree has one task per
+process, and a thread brings shared address spaces, which is a decision and
+not wiring.  Nor a wait that names a timeout: the tree's waits park until
+the thing they name happens, and a timed park is a scheduler feature the
+level did not need.
 
 ### Level 4 — time and randomness
 

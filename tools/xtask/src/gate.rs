@@ -414,6 +414,22 @@ impl Machine {
                     "protofire: process 1 removed scratch.txt via descriptor ",
                     false,
                 ),
+                // The process model: a program starts another program and
+                // waits for it by pid, and the signal exchange between them
+                // runs both ways — the child's cooperative send, the
+                // parent's delivery to the child's own handler, and the
+                // queued record a suspend answers.  The pids are the
+                // table's, so prefixes.
+                ("protofire: process 1 spawned /bin/shell as pid ", false),
+                ("protofire: a wait answered status 23 for process ", false),
+                (
+                    "protofire: a signal wait answered signal 10 from process ",
+                    false,
+                ),
+                (
+                    "protofire: a suspend answered signal 10 from process ",
+                    false,
+                ),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 (
@@ -870,6 +886,22 @@ impl Machine {
                         "protofire: process 1 removed scratch.txt via descriptor ",
                         false,
                     ),
+                    // The process model: a program starts another program
+                    // and waits for it by pid, and the signal exchange
+                    // between them runs both ways — the child's cooperative
+                    // send, the parent's delivery to the child's own
+                    // handler, and the queued record a suspend answers.  The
+                    // pids are the table's, so prefixes.
+                    ("protofire: process 1 spawned /bin/shell as pid ", false),
+                    ("protofire: a wait answered status 23 for process ", false),
+                    (
+                        "protofire: a signal wait answered signal 10 from process ",
+                        false,
+                    ),
+                    (
+                        "protofire: a suspend answered signal 10 from process ",
+                        false,
+                    ),
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
                     ("protofire: virtio-blk wrote and read back sector ", false),
@@ -1004,6 +1036,22 @@ impl Machine {
                 ),
                 (
                     "protofire: process 1 removed scratch.txt via descriptor ",
+                    false,
+                ),
+                // The process model: a program starts another program and
+                // waits for it by pid, and the signal exchange between them
+                // runs both ways — the child's cooperative send, the
+                // parent's delivery to the child's own handler, and the
+                // queued record a suspend answers.  The pids are the
+                // table's, so prefixes.
+                ("protofire: process 1 spawned /bin/shell as pid ", false),
+                ("protofire: a wait answered status 23 for process ", false),
+                (
+                    "protofire: a signal wait answered signal 10 from process ",
+                    false,
+                ),
+                (
+                    "protofire: a suspend answered signal 10 from process ",
                     false,
                 ),
                 ("protofire: virtio-net up, address ", false),

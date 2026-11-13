@@ -440,6 +440,59 @@ object; two `add_rule` calls with `replace` on would have displaced each
 other, and the first attempt did exactly that — the boot's own allow probe
 printed `MISPOLICED`, which is what caught it.
 
+**The process model.**  A program can start a program, and processes can
+signal each other.  Seven numbers serve the level — `SpawnProcess` (25) and
+the six signal calls (`SendSignal` 40, `WaitSignal` 41, `SetSignalHandler`
+104, `SetSignalMask` 94, `SigReturn` 134, `SigSuspend` 135) — and the boot's
+`init` runs the whole of it: it starts `/bin/shell`, the child announces
+itself with a signal, the parent delivers one to the child's **own handler**,
+and each child exits with the greeting's length.
+
+```
+protofire: process 1 spawned /bin/shell as pid 5
+protofire: process 5 sent signal 10 to process 1
+protofire: a signal wait answered signal 10 from process 5
+protofire: a suspend answered signal 10 from process 6, mask put back
+protofire: every program exited, 6 exit(s), 429 tick(s), 32 switch(es), 2 signal delivery(ies)
+```
+
+The spawn shares one image construction with `exec` — read, parse, map,
+stack, exec block — and the child inherits nothing: a fresh process opens
+its own files.  The signal's ring is the target's own, eight deep, FIFO,
+carrying the sender **with** the signal; a masked signal stays queued and a
+wait skips it, which is what a mask means.  A handled, unmasked signal is
+**delivered** — the target's context redirected to the program's handler at
+the one moment the kernel owns the frame — with the whole displaced context
+kept for the handler's `SigReturn`, because a delivery that is not
+transparent is a corruption: the measured case was a resumed flow reading
+through a base register the handler's own `ecall` had overwritten, one
+instruction past an address computation the delivery's resume had skipped.
+
+Two defects the first boot of this found, both in code the signal demo was
+the first to exercise:
+
+- The riscv64 trap path destroyed the program's `x5` and `x6` **twice
+  over** — the head computed the hart id in `t0`/`t1` before saving them,
+  and the epilogue spent the same registers on its own return after
+  restoring them.  Every `ecall` cost the program two registers, and
+  nothing noticed while the only programs were machine code that reloaded
+  before every call.  The shell's compiler kept a value in `t0` across one.
+- `preempt` declined to switch when no other task was runnable, and a
+  delivery rode the switch — an armed child spinning as the only runnable
+  task never got its delivery, and the boot hung with both processes
+  waiting for each other.  The delivery now moves without a switch, which
+  is what it is: the signal's arrival, not a scheduling decision.
+
+The `userland` crate is the other structural fact of the level: the
+wrappers every program compiles against, with the numbering pinned to the
+ABI's own enum by the crate's tests, carried by a dev-dependency the
+layering gate does not count as an edge.
+
+Verified by the lines above on every machine, by the gate's required lines
+for the spawn, the two waits and the suspend, and by `protofire: syscall
+table installed, 21 number(s) served` with the census at **39 of 195**
+reachable from ring 3.
+
 Verified by the eight lines above on every machine, by `protofire: syscall
 table installed, 21 number(s) served`, and by the gate's required lines for
 the write counts, the kept file's stat and the directory listing.

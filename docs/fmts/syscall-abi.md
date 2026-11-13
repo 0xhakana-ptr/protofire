@@ -245,6 +245,33 @@ The calls a ring-3 program can make today, and the slots each carries.
   zero.  Answers zero.
 - **`RemovePathAt`** — `a0` the descriptor; `a1` the path; `a2`-`a5` reserved
   zero.  Answers zero.
+- **`SpawnProcess`** — `a0` the path of the program to run, NUL-terminated;
+  `a1`-`a5` reserved zero.  Answers the child's pid; the caller is the
+  parent, and the child inherits nothing.
+- **`SendSignal`** — `a0` the target pid; `a1` the signal, `1..=31`; `a2` the
+  payload; `a3` the flags; `a4`-`a5` reserved zero.  Answers zero, or
+  `NotFound` for a pid no task carries and `Busy` for a full ring.
+- **`WaitSignal`** — `a0` the record; `a1` its length, at least 24 bytes;
+  `a2`-`a5` reserved zero.  Blocks until a signal the mask does not block
+  answers, and fills the record — signal, sender, payload — little-endian.
+- **`SetSignalMask`** — `a0` the mask, one bit per signal; `a1` the flags;
+  `a2`-`a5` reserved zero.  Answers the mask the caller had.
+- **`SigSuspend`** — `a0` the mask; `a1` the flags; `a2` the record; `a3` its
+  length; `a4`-`a5` reserved zero.  Blocks under the mask until an unblocked
+  signal answers, fills the record, and puts the caller's own mask back.
+- **`SetSignalHandler`** — `a0` the signal; `a1` the action (`1` install,
+  `0` withdraw); `a2` the handler's address; `a3`-`a5` reserved zero.
+  Answers zero.
+- **`SigReturn`** — `a0` the resume; `a1`-`a5` reserved zero.  The delivered
+  handler's only exit: the kernel puts the interrupted context back and the
+  interrupted flow resumes at `a0`.  Control does not come back.
+
+A handled, unmasked signal is **delivered** rather than queued: the target's
+context is redirected to the handler at its next install, with the record in
+the argument registers — signal, sender, payload, and the interrupted resume
+as the fourth — and the whole displaced context kept by the kernel for the
+handler's `SigReturn`.  The delivery is transparent or it is a corruption;
+the whole context is the difference.
 
 The `*At` anchor readings, once, because all five share them: an **absolute**
 path is anchored at the root and the descriptor is bypassed; **`AT_FDCWD`**
