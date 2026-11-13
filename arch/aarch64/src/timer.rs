@@ -28,60 +28,64 @@
 //! arrived one tick late would program a deadline in the past, which fires
 //! immediately and looks like a timer that ignores its interval.
 //!
-//! ## The private line is not reliable on a started core
+//! ## Why a started core's timer could stop arriving
 //!
-//! Everything above assumes the private timer interrupt arrives.  On a started
-//! core it sometimes stops arriving, and the measurement is the tree's own:
-//! `CNTP_CTL_EL0` reads 5 — enabled, `ISTATUS` set, the timer expired —
-//! `GICD_ISENABLER0` has bit 30 set, and `GICD_ISPENDR0` reads `0x3` with bit
-//! 30 **absent**.  The timer expired, its line was enabled, and the
-//! distributor was not pending it.  A core in that state takes no further tick
-//! for the rest of the boot.
+//! Everything above assumes the private timer interrupt arrives.  It sometimes
+//! stopped on a started core, and this module's first explanation — "the
+//! private line is not reliable" — was **wrong**.  The timer was never the
+//! broken thing.  It was being starved by a higher-priority interrupt that
+//! never finished.
 //!
-//! `wait_for_a_wakeup` already works around the case where the missing
-//! interrupt was only needed to end a park: it waits on a `sev` event, which
-//! another core's inter-CPU wake issues, and which the controller cannot
-//! suppress.  What that workaround does **not** cover is the three things a
-//! running core needs its own tick for — preemption, the signal delivery taken
-//! inside `preempt`, and the `wake_expired` that ends a sleep.
+//! ## What the controller actually did
 //!
-//! Measured on this tree with two cores: the boot core's `ticks` passed 81,000
-//! while a started core's stopped at 466, and the program that core was running
-//! spun in ring 3 for ever with a signal waiting to be delivered to it.  The
-//! scheduler's state was correct throughout — the parent blocked where it
-//! should be, the child `Runnable` and held by the right CPU — so the whole
-//! failure was one missing interrupt.
+//! Measured on one stalled boot with QEMU's `-d int` and its `gic_*` trace
+//! events, both read from that same boot:
+//!
+//! - The started core's last acknowledge was `irq 0`, a **software** interrupt,
+//!   and no `EOIR` write for it ever followed.  The SGI stayed active.
+//! - Every later `gic_update_bestirq` for that core read `irq 30 priority 128
+//!   cpu priority mask 255 cpu running priority 0`: the distributor had the
+//!   timer pending and could not hand it over.  A running priority of 0 blocks
+//!   every line at or below it, and the timer's priority is 128.
+//! - The exception log then recorded **no exception at all** on that core — not
+//!   a tick, not a wake, nothing — while its program kept executing in ring 3
+//!   with `IRQs` unmasked.  Its `per_cpu` record froze at 500 ticks and 6 IPIs
+//!   while the boot core's passed 220,000.
+//!
+//! The running priority of 0 is the SGI's.  `GICD_IPRIORITYR` resets to zero,
+//! zero is the *highest* priority a GIC has, and nothing in this tree ever
+//! wrote an SGI's priority: `enable_interrupt` refuses one, because an SGI's
+//! enable bits are read-only.  So every inter-processor interrupt ran above the
+//! timer and above every device, and one that was acknowledged and not finished
+//! wedged the core's whole interrupt path.
+//!
+//! `gic.rs` now writes every software interrupt below every device, at boot,
+//! and its `a_software_interrupt_never_outranks_a_device` test pins the
+//! ordering.  Measured over the same boots the defect was found on: 4 of 10
+//! completed before the change, 2 of 10 with the priority write removed as a
+//! control, and **30 of 30 with it in place**.
 //!
 //! ## What that rules out
 //!
-//! It rules out, as a design, "each core drives its own scheduling from its own
-//! timer".  Three attempts to patch around that from inside the existing shape
-//! made the boot worse rather than better, and each failed for the same reason:
-//! they added work to the path that was already the unreliable one.
+//! Three attempts to repair this from inside the timer path all made the boot
+//! worse, and each failed for the same reason: they added work to a path that
+//! was not the one at fault.
 //!
 //! - Making `preempt` wait when it found an unowned user frame: 4 of 14 boots
 //!   completed, against 6 of 14 before it.
 //! - Accumulating `CNTP_CVAL_EL0` in the handler instead of re-arming
 //!   `CNTP_TVAL_EL0` from a fresh counter read: 4 of 14.  That one is worth
 //!   remembering because it is the right fix for a **late** handler and the
-//!   wrong one for an **absent** one; a compare value in the past cannot fire
-//!   on a line the distributor never asserts.
+//!   wrong one for an **absent** one.
 //! - The boot core pinging every other core on every one of its own ticks: 4 of
-//!   14. One inter-CPU interrupt per 100 µs is a broadcast storm, and it slowed
-//!   the boot enough to lose more often than it won.
+//!   14.
 //!
-//! What follows from the measurement is to stop asking a started core's timer
-//! to schedule anything.  The boot core's line is the one that always arrives,
-//! and the inter-CPU interrupt is the one that always arrives; so the boot
-//! core's tick is what should drive preemption, delivery and expiry on every
-//! core, through the second.  That is a change to **where the scheduler's clock
-//! lives**, not to this module — the arming and the conversion here stay as
-//! they are — and it has to be made with the boot core's tick slowed to what a
-//! broadcast can afford, because 100 µs is a slice for a core asking itself and
-//! not for one asking the machine.
-//!
-//! Until that lands, `docs/status.md` records the defect as open with the
-//! numbers, and the gate's aarch64 boot can fail on the timing.
+//! A fourth conclusion was drawn from those three and is also now **wrong**:
+//! that each core should stop driving its own scheduling from its own timer,
+//! and the boot core's tick should drive every core through a broadcast.  That
+//! design was never implemented, and the measurement above shows it was aimed
+//! at the wrong module.  Each core's own tick works, once a software interrupt
+//! cannot outrank it.
 //!
 //! ## The trap a frequency invites
 //!

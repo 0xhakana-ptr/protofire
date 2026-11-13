@@ -111,43 +111,6 @@ pub fn halt() -> ! {
     panic!("halt() called on a host: this is the kernel's stop, not a test's")
 }
 
-/// Wait for something to change, without requiring an interrupt to arrive.
-///
-/// `halt` masks interrupts first and is the machine's final stop.  This is the
-/// idle a scheduler uses when it has nothing to run, and it has to return
-/// **whether or not an interrupt came**, because on this machine one may not.
-///
-/// ## Why this is a spin and not a `wfi`
-///
-/// It was a `wfi`, on the argument that an interrupt is the one thing an idle
-/// core waits for and the timer supplies it.  Measured on a failing boot, that
-/// argument does not hold for a started core.  Immediately before the wait its
-/// registers read:
-///
-/// - `CNTP_CTL_EL0` = 5 — enabled, and `ISTATUS` set, so the timer had expired
-/// - `GICD_ISENABLER0` = `0x4000ffff` — bit 30, the timer's line, enabled
-/// - `GICD_ISPENDR0` = `0x3` — a software interrupt and one other private line,
-///   and **not** bit 30
-///
-/// The timer was expired and its line was enabled, and the distributor did not
-/// have it pending.  The core's first `wfi` returned once; its second never
-/// did, and the boot ended `ended without confirmation from 1 cpu(s)` with that
-/// core still waiting and 398 timer ticks behind it — all of them from before
-/// it started waiting.
-///
-/// So the wait is bounded: it spins and returns regardless.  Every caller
-/// re-reads the condition it is waiting for after this returns, which is what
-/// makes the wait endable without an interrupt.  The cost is real — an idle
-/// core burns its slice — and it is the right trade for a boot whose
-/// alternative is waiting for ever on an interrupt the controller may not
-/// deliver.
-///
-/// Interrupts are still unmasked first, so one that does arrive is taken rather
-/// than held off, and a caller waiting for a device still gets its wake.
-///
-/// A host has no clock and no interrupt to wait for, so the host arm returns
-/// immediately; a test that called it in a loop would spin, which is the one
-/// thing its caller must not rely on.
 /// Wait for something to change, parking the core when the machine cooperates.
 ///
 /// `halt` masks interrupts first and is the machine's final stop.  This is the
@@ -165,20 +128,23 @@ pub fn halt() -> ! {
 /// with `wfi` in this position was stuck in **22 boots of 40**, and the same
 /// image with a bounded spin in its place ended clean in 40 of 40.
 ///
-/// The register evidence from the earlier session is why it is not a mask: just
-/// before the wait, `CNTP_CTL_EL0` read 5 (enabled, `ISTATUS` set, so the timer
-/// had expired) and `GICD_ISENABLER0` had bit 30 (the timer's line) set, while
-/// `GICD_ISPENDR0` read `0x3` — bit 30 absent.  The distributor was not pending
-/// the private timer line, so the interrupt that was supposed to end the wait
-/// did not exist.  Clearing every mask bit changed nothing.
+/// The register evidence looked like "the distributor is not pending the
+/// timer", and it was read that way for two sessions.  It was a symptom, not a
+/// cause: `GICD_ISPENDR0` showed no bit 30 because the distributor could not
+/// *forward* the line while the core's CPU interface had a higher-priority
+/// interrupt active.  The SGI's priority was never written — `IPRIORITYR`
+/// resets to zero, the highest — so one un-finished software interrupt blocked
+/// the timer.  See `gic.rs`'s [`SOFTWARE_PRIORITY`] for the trace and the
+/// measurement.
 ///
-/// **`wfe` is the wait that does not depend on that.**  The event register is
-/// set by a `sev` from any core in the system and is otherwise untouched by the
-/// interrupt controller, and a core that waits on it returns the moment another
-/// core says the world changed.  This kernel's inter-CPU wake is exactly that
-/// statement — [`send_ipi_to_others`] raises the SGI *and* issues `sev` — so a
-/// parked core is woken by the same call that tells it there is work, and the
-/// timer's PPI is no longer required to arrive for the park to end.
+/// **`wfe` is kept anyway, and not as a workaround for that defect.**  The
+/// event register is set by a `sev` from any core in the system and is
+/// untouched by the interrupt controller, and a core that waits on it returns
+/// the moment another core says the world changed.  This kernel's inter-CPU
+/// wake is exactly that statement — [`send_ipi_to_others`] raises the SGI *and*
+/// issues `sev` — so a park ends on a call this kernel makes rather than on a
+/// line it hopes the controller delivers.  That is the property a park wants
+/// even when every priority is right.
 ///
 /// Interrupts are still unmasked first, so one that does arrive is taken rather
 /// than held off, and a caller waiting for a device still gets its wake.
@@ -805,13 +771,16 @@ pub unsafe fn send_ipi_to_others() -> bool {
     // mechanism.**
     //
     // The SGI is the interrupt; `sev` is the event.  A core parked in
-    // `wait_for_a_wakeup` waits on `wfe`, because the timer's PPI was measured
-    // not to reach a started core's idle (see that function).  `wfe` returns
-    // for an event and not for an interrupt, and `sev` is what sets one on
-    // every core in the system — so this call is the *only* thing that ends a
-    // parked core's wait, and it has to do both halves.  Measured: with the SGI
-    // alone and `wfi` in the wait, a started core was left parked in 22 boots
-    // of 40.
+    // `wait_for_a_wakeup` waits on `wfe`, and measured, a `wfi` in that place
+    // left a started core parked in 22 boots of 40 while `wfe` finished 40 of
+    // 40 — a core whose timer had stopped being delivered.  The cause found
+    // later is in `gic.rs`: a software interrupt at the reset priority of zero
+    // outranked the timer and, once acknowledged without a finish, blocked the
+    // core's whole interrupt path.  `wfe` is kept because it does not depend on
+    // any interrupt arriving at all, which is the property a park wants.  `wfe`
+    // returns for an event rather than for an interrupt, and `sev` is what sets
+    // one on every core in the system — so this call is the *only* thing that
+    // ends a parked core's wait, and it has to do both halves.
     //
     // SAFETY: the controller was installed before any core started, both
     // windows are mapped uncached, and the number is an SGI.  `sev` is a hint

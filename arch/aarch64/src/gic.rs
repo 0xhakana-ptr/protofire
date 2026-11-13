@@ -70,6 +70,69 @@ pub const DIST_ICFGR: usize = 0xC00;
 /// reports, so a line at `0xFF` is one that never preempts anything.
 pub const DEVICE_PRIORITY: u8 = 0x80;
 
+/// The priority a **software** interrupt is given, which is deliberately
+/// lower than a device's.
+///
+/// A lower number is a higher priority, so `0xA0` is *less* urgent than
+/// [`DEVICE_PRIORITY`]'s `0x80`.  That ordering is the whole reason this
+/// constant exists, and it is measured rather than chosen.
+///
+/// ## What a software interrupt at the reset priority cost
+///
+/// `IPRIORITYR` resets to **zero** for every interrupt, and zero is the
+/// *highest* priority a GIC has.  Nothing in this tree ever wrote a priority
+/// for an SGI, because `enable_interrupt` refuses one: the low sixteen bits of
+/// `ISENABLER0` are read-only and an SGI is always enabled.  So every
+/// inter-processor interrupt ran at priority zero — above the timer's `0x80` —
+/// and a GIC keeps a CPU interface's *running* priority at the value of the
+/// interrupt it has acknowledged until that interrupt is finished.
+///
+/// The consequence is a wedge, and it is the aarch64 stop this tree spent two
+/// sessions on.  On QEMU's GICv2, `-d int` and the `gic_*` trace events on one
+/// stalled boot read:
+///
+/// - the started core's last acknowledge was `irq 0`, and no `EOIR` write for
+///   it followed, so the SGI stayed **active**;
+/// - every later `gic_update_bestirq` for that core read `irq 30 priority 128
+///   ... running priority 0` — the distributor knew the timer was pending and
+///   could not hand it over, because a priority-128 line cannot preempt a
+///   running priority of 0;
+/// - the core's exception log recorded **no exception at all** after that
+///   point, while its program kept executing in ring 3 with `IRQs` unmasked.
+///
+/// So the timer was never the broken thing: it was starved by a higher
+/// priority interrupt that never finished.  Putting every software interrupt
+/// below every device interrupt makes the wedge impossible to reach through
+/// this path, because a pending timer can always preempt a software
+/// interrupt's active state.
+///
+/// `0xFF` is refused for the same reason it is the "no interrupt" value: a
+/// line at the lowest priority that never preempts anything would not be a
+/// wake.  `0xA0` leaves the device range untouched and stays above `0xFF`.
+pub const SOFTWARE_PRIORITY: u8 = 0xA0;
+
+/// How many `IPRIORITYR` registers carry the sixteen software interrupts.
+///
+/// One byte per interrupt and four bytes per register, so sixteen SGIs are
+/// four words.  A GIC gives every SGI a priority byte and this tree writes all
+/// of them; see [`SOFTWARE_PRIORITY`].
+pub const SOFTWARE_PRIORITY_REGISTERS: usize = 4;
+
+/// The word [`SOFTWARE_PRIORITY`] writes: four SGIs' bytes at one value.
+///
+/// Split out from the register write so a host test can read what the boot
+/// would store, rather than a copy of the constants in the test itself.  A
+/// test that asserted `(SOFTWARE_PRIORITY, DEVICE_PRIORITY) == (0xA0, 0x80)`
+/// only ever passes; this is the value the machine receives.
+pub const fn software_priority_word() -> u32 {
+    u32::from_ne_bytes([
+        SOFTWARE_PRIORITY,
+        SOFTWARE_PRIORITY,
+        SOFTWARE_PRIORITY,
+        SOFTWARE_PRIORITY,
+    ])
+}
+
 impl Distributor {
     /// The distributor at `base`, as the machine's device tree named it.
     pub const fn new(base: usize) -> Distributor {
@@ -288,6 +351,46 @@ impl Gic {
             write(self.cpu.base + CPU_PMR, CpuInterface::PMR_ACCEPT_ALL);
             core::arch::asm!("dsb sy", options(nostack));
             core::arch::asm!("isb", options(nostack));
+
+            // Every software interrupt, below every device.
+            self.set_software_priorities();
+        }
+    }
+
+    /// Give the sixteen software interrupts [`SOFTWARE_PRIORITY`].
+    ///
+    /// `IPRIORITYR0..IPRIORITYR3` cover interrupts 0..16, one byte each, and
+    /// they are the only priority registers an SGI has: the low sixteen bits of
+    /// `ISENABLER0` are read-only, so
+    /// [`enable_interrupt`](Self::enable_interrupt) never routes one and its
+    /// priority is never written by that path.  The reset value is **zero**,
+    /// which is the highest priority a GIC has, and a software interrupt at
+    /// zero outranks the timer's `0x80` — see [`SOFTWARE_PRIORITY`] for the
+    /// stalled boot that measured what that costs.
+    ///
+    /// Writing all sixteen rather than the two this kernel raises is
+    /// deliberate. The line an inter-processor interrupt arrives on is a
+    /// *number this tree chooses* (`arch::ipi_interrupt`), the self-test raises
+    /// another, and a GIC forwards every SGI on any core, so a number left at
+    /// the reset priority is a number that can wedge a core the boot never
+    /// aimed at. Sixteen bytes is four register writes and this runs once.
+    ///
+    /// # Safety
+    ///
+    /// As [`enable`]: the distributor window must be the machine's GIC, mapped
+    /// uncached, and this must run before any line is unmasked.
+    #[cfg(target_os = "none")]
+    unsafe fn set_software_priorities(&self) {
+        // SAFETY: the caller's contract is `enable`'s, and these are the first
+        // four words of `IPRIORITYR`, which every GIC has.
+        unsafe {
+            for register in 0..SOFTWARE_PRIORITY_REGISTERS {
+                write(
+                    self.distributor.base + DIST_IPRIORITYR + register * 4,
+                    software_priority_word(),
+                );
+            }
+            core::arch::asm!("dsb sy", options(nostack));
         }
     }
 
@@ -580,9 +683,93 @@ mod tests {
     use super::CpuInterface;
     use super::DEVICE_PRIORITY;
     use super::Distributor;
+    use super::SOFTWARE_PRIORITY;
 
     const DIST: Distributor = Distributor::new(0x0800_0000);
     const CPU: CpuInterface = CpuInterface::new(0x0801_0000);
+
+    /// A software interrupt must never outrank a device's.
+    ///
+    /// The GIC keeps a CPU interface's running priority at the value of the
+    /// interrupt it has acknowledged until that interrupt is finished, and it
+    /// will not hand over a line of equal or higher priority.  `IPRIORITYR`
+    /// resets to **zero**, and zero is the highest priority, so an SGI whose
+    /// priority nobody wrote runs above the timer's `0x80` — which is exactly
+    /// how a started core's clock stopped on QEMU's GICv2: one unwritten SGI
+    /// priority, one un-EOI'd acknowledge, and `gic_update_bestirq` then
+    /// reporting `irq 30 priority 128 ... running priority 0` for ever.
+    ///
+    /// So the ordering is the assertion, not the two numbers.  A later change
+    /// that raises the device priority past this one reintroduces the wedge,
+    /// and it has to see this test fail rather than discover it on a boot.
+    /// The ordering is a **compile-time** relation, not a test's opinion.
+    ///
+    /// Two constants are known when this crate is compiled, so the check
+    /// belongs in a `const` block: a change that inverted the ordering — the
+    /// wedge this fix closes — would fail the build instead of surviving until
+    /// someone ran the tests.  The test below only has to exist so the relation
+    /// is named somewhere a reader looks.
+    const _: () = assert!(
+        SOFTWARE_PRIORITY > DEVICE_PRIORITY,
+        "a software interrupt must be less urgent than a device's"
+    );
+    const _: () = assert!(
+        SOFTWARE_PRIORITY < 0xFF,
+        "0xFF is the controller's no-line value"
+    );
+
+    /// The value the boot writes gives every SGI the lower priority, and it
+    /// reaches all sixteen.
+    ///
+    /// This reads the same function the register write calls, so it is a
+    /// statement about what the machine receives rather than a restatement of
+    /// the constants beside it.  Three properties, and each is a way the fix
+    /// could be undone:
+    ///
+    /// 1. Every byte of the word is the software priority — a partially filled
+    ///    word leaves some SGI at the reset value of zero, which is the defect.
+    /// 2. The byte is *greater* than the device priority, since a lower number
+    ///    is more urgent on this controller.
+    /// 3. Four registers at four bytes each cover the sixteen SGIs.
+    #[test]
+    fn the_boot_writes_a_lower_priority_to_every_software_interrupt() {
+        let word = super::software_priority_word();
+        for byte in word.to_ne_bytes() {
+            assert_eq!(byte, SOFTWARE_PRIORITY);
+            assert!(
+                byte > DEVICE_PRIORITY,
+                "an SGI at {byte:#x} outranks the timer's {DEVICE_PRIORITY:#x}"
+            );
+        }
+        // Sixteen interrupts, one byte each, four bytes to a register.
+        assert_eq!(super::SOFTWARE_PRIORITY_REGISTERS * 4, 16);
+    }
+
+    /// The four registers that carry the sixteen SGIs are the first four of
+    /// `IPRIORITYR`, and sixteen bytes at one byte each is what they hold.
+    ///
+    /// The boot writes all of them rather than the one number it raises,
+    /// because any SGI can reach any core.  A driver that wrote only
+    /// `IPRIORITYR0` would leave interrupts 4..16 at the reset priority of
+    /// zero — the highest — which is the defect this fix exists to close.
+    #[test]
+    fn the_software_priority_registers_are_the_first_four() {
+        assert_eq!(super::DIST_IPRIORITYR, 0x400);
+        // Interrupt 0 is byte 0 of the first register, and interrupt 15 is the
+        // last byte of the fourth.  The array stride is four bytes.
+        for number in 0..16usize {
+            let register = number / 4;
+            let shift = Distributor::priority_shift(number);
+            assert!(
+                register < 4,
+                "interrupt {number} needs register {register}, past the four \
+                 this boot writes"
+            );
+            // Each of the sixteen has a distinct byte within its word, so one
+            // write per register reaches four interrupts and no write collides.
+            assert_eq!(shift, ((number % 4) * 8) as u32);
+        }
+    }
 
     /// `ISENABLER` holds 32 interrupts per register, so interrupt 32 is bit 0
     /// of the first register and interrupt 33 bit 1.

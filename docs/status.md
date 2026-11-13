@@ -644,22 +644,26 @@ started core's own clock fires from it.  Verified by `timer armed at ` and
 
 **Idle.**  A CPU with nothing to run parks in `wfe` and is woken by the event
 the kernel's inter-CPU wake issues.  The mechanism is the **event**, not the
-interrupt, because a started core's timer expires without its PPI ever
-reaching the distributor while it idles — measured: `CNTP_CTL_EL0` 5 with
-`GICD_ISPENDR0` `0x3`, bit 30 absent — so a `wfi` there never returns.  Re-
-measured for this change: a `wfi` in the idle left a started core parked in
-**22 boots of 40**, and the boot ended `ended without confirmation`; `wfe`
-beside a `sev` from `send_ipi_to_others` ended clean in **100 of 100**, and in
-40 more with the bounded spin behind the hint removed, which is what shows the
-event — not the spin — is what ends the wait.  Verified by the absence of the
-confirmation line across those 100 boots and by the started core's own record
-(`cpu 1 id 1, ticking, ` with a non-zero tick count).
+interrupt: `wfe` returns for a `sev` from any core and is untouched by the
+controller, so a park ends on a call this kernel makes rather than on a line it
+hopes the controller delivers.  Measured: a `wfi` in the idle left a started
+core parked in **22 boots of 40**, and the boot ended `ended without
+confirmation`; `wfe` beside a `sev` from `send_ipi_to_others` ended clean in
+**100 of 100**, and in 40 more with the bounded spin behind the hint removed,
+which is what shows the event — not the spin — is what ends the wait.  Verified
+by the absence of the confirmation line across those 100 boots and by the
+started core's own record (`cpu 1 id 1, ticking, ` with a non-zero tick count).
 
 The mask is not the cause and was ruled out: clearing every bit
 (`DAIFClr, #0xf`) and halting still left that core's second `wfi` never
 returning.  With `wfe` there is no bound behind it: a core whose event never
 comes stays parked, and the boot's own reaping side reports the CPUs that never
 confirmed rather than waiting for ever.
+
+The reason a `wfi` there never returned was found later and is not a defect in
+this wait: an SGI at the reset priority of zero outranked the timer and, once
+acknowledged without a finish, blocked the core's whole interrupt path.  See the
+"Fixed" entry below for the trace and the measurement.
 
 **Ring 3.**  `eret` to EL0t, `SP_EL0` carried in the trap frame, FP/SIMD saved
 because the compiler provably emits them.  Verified by `entering ring 3`.
@@ -694,41 +698,48 @@ masking again after the dispatch, before the restore, measured **200 of 200
 clean**.  `eret` reloads `DAIF` from `SPSR_EL1`, so neither mask needs an
 unmask.
 
-**Open: a boot that stops between a signal and the wait that follows it.**
+**Fixed: a boot that stopped between a signal and the wait that follows it.**
 With two CPUs and the signal exchange `init` runs — `SpawnProcess`, the child's
 announcement, the parent's delivery, the parent's `WaitProcessOf` — a boot
-sometimes stops after `a program waits for process N` and never reaches
-`every program exited`.  Measured at 6 boots in 10 on the machine the gate
-boots, and 6 in 14 through `cargo xtask check`; the two wake lines this tree was
-missing were a real defect and were fixed separately, but they were not this.
+sometimes stopped after `a program waits for process N` and never reached
+`every program exited`.  Measured at 4 boots in 10 on the machine the gate
+boots.  The scheduler was never at fault: its state read correctly throughout.
 
-**The cause is one missing interrupt, and the scheduler is not at fault.**  At a
-stopped boot, with the image under gdb, the scheduler's own fields read:
+**The cause was an interrupt priority, not a lost interrupt.**  This entry said
+for two sessions that the started core's private timer line stopped arriving,
+because `GICD_ISPENDR0` showed no bit 30 while `CNTP_CTL_EL0.ISTATUS` was set.
+That was a symptom read as a cause.  QEMU's `-d int` exception log and its
+`gic_*` trace events, from **one** stalled boot, show what actually happened:
 
-```
-states  = 1B, 2F, 3F, 4F, 5R
-running = 0, 4, -, -, -
-```
+- The started core's last acknowledge was `irq 0`, a software interrupt, and
+  **no `EOIR` write for it followed** — the SGI stayed active.
+- Every later `gic_update_bestirq` for that core read
+  `irq 30 priority 128 cpu priority mask 255 cpu running priority 0`: the
+  distributor had the timer pending and could not forward it, because a
+  priority-128 line cannot preempt a running priority of 0.
+- The exception log then recorded **no exception at all** on that core while
+  its program kept executing in ring 3 with `IRQs` unmasked — 507 IRQs taken
+  and then none, over the remaining twelve million lines of log.
 
-The parent (pid 1) is blocked exactly where `WaitProcessOf` parks it, the child
-(pid 5) is `Runnable` at index 4, and `running[1]` is 4 — the right CPU holds
-the right task.  Every state is what it should be.  What is wrong is that the
-core holding it takes no further interrupt: `per_cpu::CPUS[].ticks` read
-**81,533 on the boot core and 466 on the started core**, and the program on the
-started core spins in ring 3 with a delivery sitting in its slot.
+A running priority of 0 is the SGI's, and nothing in this tree ever wrote one.
+`GICD_IPRIORITYR` resets to **zero**, zero is the *highest* priority a GIC has,
+and `enable_interrupt` never routes an SGI — its enable bits are read-only — so
+every inter-processor interrupt outranked the timer's `0x80`.  One un-finished
+SGI then blocked that core's entire interrupt path.
 
-That is the private timer line, and this tree already knows about it —
-`arch/aarch64/src/timer.rs` carries the register evidence: `CNTP_CTL_EL0` reads
-5 (enabled, `ISTATUS` set, expired), `GICD_ISENABLER0` has bit 30 set, and
-`GICD_ISPENDR0` reads `0x3` with bit 30 **absent**.  The timer expired, its line
-was enabled, and the distributor was never pending it.  `wait_for_a_wakeup`
-works around that for a **parked** core by waiting on a `sev` event instead of
-an interrupt.  A core **running a program** has no such workaround: preemption,
-the signal delivery taken inside `preempt`, and `wake_expired` all need its own
-tick, and none of them happen.
+`arch/aarch64/src/gic.rs` now writes every software interrupt at
+`SOFTWARE_PRIORITY` (`0xA0`, below the device priority) when the controller is
+enabled, and a `const` assertion fails the build if the ordering is ever
+inverted.  The fix was measured against a control rather than assumed:
 
-Three repairs were tried from inside that shape and all three made the boot
-worse, which is the evidence that the shape is what has to change:
+| image | boots completed |
+|---|---|
+| before the change | 4 of 10 |
+| with the priority write removed (control) | 2 of 10 |
+| with the priority write | **30 of 30** |
+
+The three repairs tried before this one all made the boot worse, which is
+consistent with the cause being outside the timer path altogether:
 
 | repair | boots completed |
 |---|---|
@@ -737,10 +748,11 @@ worse, which is the evidence that the shape is what has to change:
 | `CNTP_CVAL_EL0` accumulated by the handler | 4 of 14 |
 | boot core pings the others on every one of its ticks | 4 of 14 |
 
-The direction `timer.rs` now argues for is to stop asking a started core's
-timer to schedule anything, and let the boot core's tick — which always arrives
-— drive preemption, delivery and expiry on every core through the inter-CPU
-interrupt, with that tick slowed to a rate a broadcast can afford.
+`wait_for_a_wakeup` still waits on the `sev` **event**, and that is no longer a
+workaround for a broken timer: a park should end on a call this kernel makes
+rather than on a line it hopes the controller delivers.  The design those three
+failed repairs pointed at — "the boot core's tick drives every core" — was
+never implemented, and this measurement shows it was aimed at the wrong module.
 
 Also ruled out along the way, each by measuring rather than by argument: the
 machine's CPU model (cortex-a57 7 in 10, `max` 6 in 10 — the same defect); the
@@ -752,20 +764,27 @@ an exit whose `running[cpu]` was already clear (the probe for it never fired);
 a stalled global clock (the global `TIMER_TICKS` keeps climbing at a stopped
 boot — it is the started core's own count that stops, which is why the per-CPU
 census is the number to read); and the `has_runnable`-counts-blocked reading
-(the dump above shows the blocked parent and the runnable child exactly where
-they belong).
+(the scheduler's state was correct throughout).
 
-One measurement detail is worth keeping because it cost a false conclusion: an
-early attempt booted **one** CPU against a disk formatted by the kernel's own
-built-in image — the one that carries the greeting and no init image — and every
-such boot stopped five times in five.  That stop was `ExecProcess` failing on a
-file the disk did not have, followed by the program's own `b .`.  A single-CPU
-boot with the disk the gate builds prints `every program exited`.  Any future
-measurement here has to name which disk it booted.
+Three measurement details are worth keeping, because each cost a wrong
+conclusion:
 
-None of this is in the level-4 calls: the same boot stops at the same line on
-the commit before them, and the two wake lines that did help were landed
-separately.
+1. An early attempt booted **one** CPU against a disk formatted by the kernel's
+   own built-in image — the one that carries the greeting and no init image —
+   and every such boot stopped five times in five.  That stop was
+   `ExecProcess` failing on a file the disk did not have.  Any future
+   measurement here has to name which disk it booted.
+2. Reading GIC memory through a gdb stub's `x` command **kills the
+   connection** on this machine; it is device memory and the stub's translation
+   does not carry it.  QEMU's monitor (`xp`) reads it and survives.
+3. Four QEMU processes were once left running at the same time, one of them
+   holding the gdb port, so "the stalled machine" a later session attached to
+   was not the one whose log it read.  The numbers in this entry come from
+   single-process runs, sampled twice with the guest executing between the
+   samples.
+
+None of this was in the level-4 calls: the same boot stopped at the same line
+on the commit before them.
 
 ## RISC-V 64
 
