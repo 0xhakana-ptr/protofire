@@ -130,6 +130,38 @@ pub fn kernel_main() -> ! {
         }
     }
 
+    // The random generator, seeded from this boot's own timing.
+    //
+    // Two reads, compared, and the comparison is the evidence: a generator
+    // that answered the same eight bytes twice is one whose counter never
+    // advanced, and the line would say so rather than needing a reader to
+    // eyeball two hex numbers.  The readings themselves are printed because
+    // they are **output** — public by definition — and a line that named only
+    // "seeded" would be a claim rather than a measurement.
+    #[cfg(target_os = "none")]
+    match unsafe { crate::random::seed() } {
+        Some(_) => {
+            let mut first = [0u8; 8];
+            let mut second = [0u8; 8];
+            let read =
+                crate::random::fill(&mut first).is_ok() && crate::random::fill(&mut second).is_ok();
+            arch::serial::write_str("protofire: random seeded, two reads ");
+            arch::serial::write_str(if read {
+                if first == second {
+                    "the same"
+                } else {
+                    "differ"
+                }
+            } else {
+                "failed"
+            });
+            arch::serial::write_str("\n");
+        }
+        None => {
+            arch::serial::write_str("protofire: no seed, the random call will refuse\n");
+        }
+    }
+
     // A program, at ring 3, calling back.
     // What each CPU has taken so far, before the programs start: the timer is
     // up by now, so the boot CPU's count is real.

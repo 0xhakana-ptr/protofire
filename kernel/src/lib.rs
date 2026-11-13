@@ -67,6 +67,7 @@ pub mod pipe;
 pub mod policy;
 pub mod process;
 pub mod programs;
+pub mod random;
 pub mod scheduler;
 pub mod service;
 pub mod shootdown;

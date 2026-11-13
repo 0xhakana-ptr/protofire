@@ -50,3 +50,8 @@ virtio_net = { path = "../drivers/virtio/net" }
 # model a service answers through.
 service_table = { path = "../service_table" }
 async_io = { path = "../async_io" }
+# The ciphers and hashes behind the random generator.  `crypto` is a layer-2
+# tool: it names `core`, `alloc` and `abi`, and knows nothing of this crate or
+# any other above it, which is what makes it something a kernel may use rather
+# than something a kernel is shaped by.
+crypto = { path = "../libs/crypto" }

@@ -357,6 +357,11 @@ impl Machine {
                 // `Unsupported`, which reads the same as a machine whose timer
                 // never came up — so the line is what separates the two.
                 ("protofire: time origin ", false),
+                // The generator, and a measurement of it: two 8-byte reads have
+                // to differ.  An exact line rather than a prefix, because
+                // "the same" is the failure this line exists to catch and a
+                // prefix check would pass on it.
+                ("protofire: random seeded, two reads differ", true),
                 (
                     "protofire 0.1.0: entered via pvh, console up, stage 1",
                     true,
@@ -802,6 +807,7 @@ impl Machine {
                     ("protofire: mac denied ", false),
                     ("protofire: syscall table installed, ", false),
                     ("protofire: time origin ", false),
+                    ("protofire: random seeded, two reads differ", true),
                     (
                         "protofire 0.1.0: entered via dtb, console up, stage 1",
                         true,
@@ -1088,6 +1094,7 @@ impl Machine {
                 ),
                 ("protofire: syscall table installed, ", false),
                 ("protofire: time origin ", false),
+                ("protofire: random seeded, two reads differ", true),
                 ("protofire: mac policy enabled, ", false),
                 ("protofire: mac allowed ", false),
                 ("protofire: mac denied ", false),

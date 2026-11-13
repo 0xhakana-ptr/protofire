@@ -262,6 +262,7 @@ dependencies = [
  "async_io",
  "block",
  "cell",
+ "crypto",
  "fs",
  "ipc",
  "irq",
