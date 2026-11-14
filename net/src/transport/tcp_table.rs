@@ -1,4 +1,4 @@
-//! net/src/tcp_table.rs
+//! net/src/transport/tcp_table.rs
 //!
 //! The streams a machine holds: an id per end, the listeners that open them,
 //! and the four fields a segment is matched on.

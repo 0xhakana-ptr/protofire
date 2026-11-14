@@ -1,4 +1,4 @@
-//! net/src/reassembly.rs
+//! net/src/internet/reassembly.rs
 //!
 //! Putting a packet back together: the pieces of a fragmented datagram, held
 //! until the last one arrives, bounded in every direction a peer controls.

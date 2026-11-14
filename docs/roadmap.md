@@ -368,10 +368,10 @@ What landed, in the order a packet needs it:
 
 | layer | where | what it does |
 |---|---|---|
-| the packet | `net/src/ipv6.rs` | the fixed header, the extension-header chain walked to the first consumer, the fragment header reported rather than reassembled, and the forty-byte pseudo-header sum |
-| the messages | `net/src/icmpv6.rs` | echo, the error types a sender reacts to, and the four NDP messages, neighbour and router, solicitation and advertisement, with the option walk |
-| what is remembered | `net/src/ndp.rs` | a neighbour cache with three states, the duplicate-address check, and the two addresses a host computes rather than asks for |
-| the transports | `net/src/udp.rs`, `net/src/tcp.rs`, `net/src/address.rs` | an IPv6 writer and reader each, a **second function** rather than the IPv4 one with a flag, and an address type that carries its family so a socket and a connection can be keyed on either |
+| the packet | `net/src/internet/ipv6.rs` | the fixed header, the extension-header chain walked to the first consumer, the fragment header reported rather than reassembled, and the forty-byte pseudo-header sum |
+| the messages | `net/src/internet/icmpv6.rs` | echo, the error types a sender reacts to, and the four NDP messages, neighbour and router, solicitation and advertisement, with the option walk |
+| what is remembered | `net/src/internet/ndp.rs` | a neighbour cache with three states, the duplicate-address check, and the two addresses a host computes rather than asks for |
+| the transports | `net/src/transport/udp.rs`, `net/src/transport/tcp.rs`, `net/src/address.rs` | an IPv6 writer and reader each, a **second function** rather than the IPv4 one with a flag, and an address type that carries its family so a socket and a connection can be keyed on either |
 | the interface | `kernel/src/net.rs` | a link-local address derived at install, the groups joined, the cache, and a demux branch that walks the chain before it reads a transport |
 | the program's view | `AbiInfo`-shaped record in `abi/src/network.rs` | `Ipv6Status` (197), a new number above the frozen boundary, because `NetworkStatus`'s fourteen address bytes are IPv4's |
 
@@ -480,7 +480,7 @@ nobody relies on.  The name's evidence is the boot's line and the parser's own
 tests, which cover a compression pointer that does not point backwards, an
 answer for another transaction, and a record whose length is not its type's.
 
-SLAAC was reachable in theory and not in fact: `net/src/ndp.rs` had the prefix
+SLAAC was reachable in theory and not in fact: `net/src/internet/ndp.rs` had the prefix
 arithmetic and `handle_icmpv6` had no branch for a router advertisement, so no
 advertisement could ever reach it.  The branch is the change, and the boot's
 probe sends its advertisement through the same receive path a real one takes.

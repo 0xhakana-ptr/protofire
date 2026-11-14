@@ -1,4 +1,4 @@
-//! net/src/ndp.rs
+//! net/src/internet/ndp.rs
 //!
 //! The neighbour cache and the addresses a host configures for itself.
 //!

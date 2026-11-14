@@ -118,8 +118,10 @@ the VFS, PyroFS and tmpfs, and the ten Level 6 formats, six writing and
 four (`xfs`, `squashfs`, `erofs` and `btrfs`) reading, with `fuse` a protocol
 whose writes are its server's.  `net` is the protocol stack
 Ethernet, ARP, IPv4, IPv6, ICMP, ICMPv6, neighbour discovery, UDP, TCP
-and the connection table, sent through the trait in
-`devices/netdev`.  `power` is the governor policy: a load sample and a
+and the connection table, sent through the trait in `devices/netdev`.
+Its files sit in three directories by the layer of the frame each reads,
+`link/`, `internet/` and `transport/`, and each module is re-exported at
+the crate root so a caller names the protocol and not its shelf.  `power` is the governor policy: a load sample and a
 frequency range in, a target frequency out.  `security` labels subjects
 and objects and refuses what the policy refuses.  `sound` and `virt` are
 the two honest placeholders, reserved plots, with `virt`'s header

@@ -1,4 +1,4 @@
-//! net/src/arp.rs
+//! net/src/internet/arp.rs
 //!
 //! Address Resolution Protocol: who holds this address, and what does it answer
 //! with.

@@ -1,4 +1,4 @@
-//! net/src/ethernet.rs
+//! net/src/link/ethernet.rs
 //!
 //! An Ethernet frame: two addresses, a type, and what follows.
 //!

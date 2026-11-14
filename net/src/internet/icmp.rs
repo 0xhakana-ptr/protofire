@@ -1,4 +1,4 @@
-//! net/src/icmp.rs
+//! net/src/internet/icmp.rs
 //!
 //! ICMP: the control messages the wire sends about itself, as far as this
 //! stack needs them, an echo request out, an echo reply back.

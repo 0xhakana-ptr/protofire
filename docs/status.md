@@ -462,7 +462,7 @@ deliberately not a gate line: a CI machine may have no network, and a gate that
 fails for a reason the tree cannot fix is a gate nobody can rely on.
 
 **A router's prefix configures a global IPv6 address.**  `handle_icmpv6` had no
-branch for a router advertisement at all, so the SLAAC code in `net/src/ndp.rs`
+branch for a router advertisement at all, so the SLAAC code in `net/src/internet/ndp.rs`
 had no caller and no machine could reach it.  It has a branch now, and the boot
 proves it by putting an advertisement through the same receive path a real one
 arrives at:
@@ -936,7 +936,7 @@ says why, so a later change that "fixes" the pseudo-header's order fails a test
 that explains the invariant instead of silently changing the wire.
 
 **What is not proven here.**  A router advertisement configuring a global
-address: the code path is in `net/src/ndp.rs` and the interface holds the
+address: the code path is in `net/src/internet/ndp.rs` and the interface holds the
 field, but nothing this tree boots on sends one, so the record's `has_global`
 is read and not asserted.  Reassembly of a fragmented packet: `walk` reports a
 fragment and the demux drops it, because a stack that read the first piece as

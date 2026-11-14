@@ -1,4 +1,4 @@
-//! net/src/tcp.rs
+//! net/src/transport/tcp.rs
 //!
 //! TCP: the stream that a handshake opens, an acknowledgement carries, and an
 //! orderly close shuts.

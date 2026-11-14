@@ -1,4 +1,4 @@
-//! net/src/udp.rs
+//! net/src/transport/udp.rs
 //!
 //! UDP: a datagram from a port to a port, with no connection and no delivery
 //! promise.

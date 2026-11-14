@@ -1,4 +1,4 @@
-//! net/src/ipv4.rs
+//! net/src/internet/ipv4.rs
 //!
 //! IPv4: the packet every protocol above the frame rides in, and the checksum
 //! that says its bytes survived the wire.

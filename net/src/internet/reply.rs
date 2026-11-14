@@ -1,4 +1,4 @@
-//! net/src/reply.rs
+//! net/src/internet/reply.rs
 //!
 //! The two frames a host answers on its own: an echo reply and a neighbour
 //! advertisement.  Both are composed here, byte for byte, from addresses and

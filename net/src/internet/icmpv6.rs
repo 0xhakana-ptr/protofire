@@ -1,4 +1,4 @@
-//! net/src/icmpv6.rs
+//! net/src/internet/icmpv6.rs
 //!
 //! ICMPv6 and the Neighbor Discovery messages IPv6 cannot work without.
 //!

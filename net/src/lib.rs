@@ -24,6 +24,26 @@
 //! parsers and no lock anywhere, which is what lets every one of them be a
 //! host test without a card.
 //!
+//! ## The three directories, and what each is for
+//!
+//! Seventeen flat files read as a list rather than as a stack, so they sit in
+//! three directories, by the layer of the frame each one reads:
+//!
+//! | directory | what it holds |
+//! |---|---|
+//! | [`link`] | the frame a card carries, and its type numbers |
+//! | [`internet`] | what a packet means before a transport reads it, the control messages about it, and the neighbour state a host keeps |
+//! | [`transport`] | the two ways a program's bytes cross, and the table or queue each one needs |
+//!
+//! [`address`], [`dhcp`] and [`dns`] stay at the root because they are not a
+//! layer: an address is what every layer names, and the other two configure a
+//! machine rather than carry its traffic.
+//!
+//! The directories are the reader's; the paths are not.  Every module below is
+//! re-exported at the crate root, so a caller spells `net::ipv4::parse` and
+//! never learns which directory the module is in, which is what keeps this
+//! grouping from becoming an interface the day a file moves again.
+//!
 //! Two modules hold state rather than reading a byte slice, and both hold it
 //! as a **value** a caller owns rather than as a `static`: [`tcp_table`] is
 //! which streams exist, the port a listener reserved, the queue a finished
@@ -85,18 +105,31 @@
 extern crate alloc;
 
 pub mod address;
-pub mod arp;
 pub mod dhcp;
 pub mod dns;
-pub mod ethernet;
-pub mod icmp;
-pub mod icmpv6;
-pub mod ipv4;
-pub mod ipv6;
-pub mod ndp;
-pub mod reassembly;
-pub mod reply;
-pub mod tcp;
-pub mod tcp_table;
-pub mod udp;
-pub mod udp_socket;
+pub mod internet;
+pub mod link;
+pub mod transport;
+
+/// The internet layer's modules, at the crate root so a caller names the
+/// protocol and not its shelf.
+///
+/// A `pub use` of a module, not of the items in it: `net::ipv4::Packet` is the
+/// path a caller spells, and re-exporting the module keeps its own docs and
+/// its own name attached.  The directories exist for a reader browsing the
+/// tree, which is the only reader a directory helps.
+pub use internet::arp;
+pub use internet::icmp;
+pub use internet::icmpv6;
+pub use internet::ipv4;
+pub use internet::ipv6;
+pub use internet::ndp;
+pub use internet::reassembly;
+pub use internet::reply;
+
+pub use link::ethernet;
+
+pub use transport::tcp;
+pub use transport::tcp_table;
+pub use transport::udp;
+pub use transport::udp_socket;

@@ -48,7 +48,10 @@ says so and says what it would take.
   state a machine needs (which address, which neighbours, which sockets) is
   `kernel/src/net.rs`'s.  It is `net`, the name the workspace member uses, and
   not `network`.  `virtio_net` is the driver and does not name it: a packet's
-  format is the stack's business and the card's is the ring.
+  format is the stack's business and the card's is the ring.  Its files sit in
+  `link/`, `internet/` and `transport/`, one directory per layer of the frame,
+  and the crate root re-exports each module, so the grouping is the reader's
+  and not the caller's.
 - **`apps`**, `init`, `shell` and `service_manager`.  `init` is a working
   program rather than a shape: the kernel execs it from its own filesystem, and
   it is where every level so far is exercised, it reads the greeting through

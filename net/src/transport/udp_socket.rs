@@ -1,4 +1,4 @@
-//! net/src/udp_socket.rs
+//! net/src/transport/udp_socket.rs
 //!
 //! A datagram socket's queue: the datagrams that arrived for one bound port,
 //! in the order they arrived, bounded.

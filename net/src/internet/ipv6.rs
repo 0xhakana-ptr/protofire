@@ -1,4 +1,4 @@
-//! net/src/ipv6.rs
+//! net/src/internet/ipv6.rs
 //!
 //! IPv6: the packet every protocol above the frame rides in, the extension
 //! headers a sender may stack between its header and its payload, and the
