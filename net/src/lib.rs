@@ -65,11 +65,20 @@
 //!
 //! [RFC 5722]: https://www.rfc-editor.org/rfc/rfc5722
 //!
+//! ## Configuring the machine, as opposed to carrying its traffic
+//!
+//! [`dhcp`] is the four messages that turn a machine with a card into a
+//! machine with an address, a router and a name server.  [`dns`] is the query
+//! that turns a name into an address through that server.  Both are the
+//! protocol's arithmetic only: the socket, the clock and the retry schedule
+//! are the caller's, which is what lets a reply with a bad cookie or a
+//! compression pointer that loops be a host test rather than a boot.
+//!
 //! ## What is not here yet
 //!
-//! Path-MTU discovery, and ICMP errors beyond the one a closed port produces.
-//! Both are documented refusals in the module they belong to, with the reason
-//! beside them.
+//! Path-MTU discovery, ICMP errors beyond the one a closed port produces, and
+//! DHCP lease renewal, whose clocks are in [`dhcp::Lease`] and whose caller is
+//! not written.  Each is a documented refusal in the module it belongs to.
 
 #![no_std]
 
@@ -77,6 +86,8 @@ extern crate alloc;
 
 pub mod address;
 pub mod arp;
+pub mod dhcp;
+pub mod dns;
 pub mod ethernet;
 pub mod icmp;
 pub mod icmpv6;

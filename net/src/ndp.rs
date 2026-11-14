@@ -337,6 +337,65 @@ pub fn address_from_prefix(prefix: Addr, prefix_len: u8, mac: [u8; 6]) -> Option
     Some(address)
 }
 
+/// An address this host may configure for itself from a router's prefix
+/// advertisement.
+///
+/// Separate from [`address_from_prefix`] because the decision is not the
+/// arithmetic: the router says whether a prefix may be used this way, how long
+/// it stays valid, and how long an address from it stays preferred, and each of
+/// those is a refusal this function makes rather than a field a caller has to
+/// remember to check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Configuration {
+    /// The address to configure.
+    pub address: Addr,
+    /// How long it may be used, in the router's seconds.
+    pub valid_lifetime: u32,
+    /// How long it may be used for a new connection, in the router's seconds.
+    pub preferred_lifetime: u32,
+}
+
+/// What a router's prefix advertisement says this host should configure.
+///
+/// Three refusals, each [RFC 4862]'s:
+///
+/// - a prefix whose autonomous flag is clear may not generate an address, so a
+///   router that sends one is saying the prefix is for on-link routing only;
+/// - a prefix that is not sixty-four bits long is refused rather than extended,
+///   because the interface identifier this stack makes is sixty-four bits and
+///   there is no prefix length that leaves room for it;
+/// - a prefix with no valid lifetime is a prefix that has expired, and a host
+///   that configured from it would hold an address the router has withdrawn.
+///
+/// The address is the prefix's first sixty-four bits with the interface
+/// identifier appended, which is the whole of what stateless configuration
+/// does: no server, no state, no exchange.
+///
+/// [RFC 4862]: https://www.rfc-editor.org/rfc/rfc4862
+pub fn configure_from(
+    prefix: &crate::icmpv6::PrefixInformation,
+    bytes: &[u8],
+    mac: [u8; 6],
+) -> Option<Configuration> {
+    if !prefix.autonomous {
+        return None;
+    }
+    if prefix.prefix_len != 64 {
+        return None;
+    }
+    if prefix.valid_lifetime == 0 {
+        return None;
+    }
+    let mut raw = [0_u8; 16];
+    raw.copy_from_slice(bytes.get(prefix.prefix_at..prefix.prefix_at + 16)?);
+    let address = address_from_prefix(raw, prefix.prefix_len, mac)?;
+    Some(Configuration {
+        address,
+        valid_lifetime: prefix.valid_lifetime,
+        preferred_lifetime: prefix.preferred_lifetime.min(prefix.valid_lifetime),
+    })
+}
+
 /// Whether two addresses are on one link, given a prefix length in bits.
 ///
 /// The comparison is the prefix's, byte by byte and then bit by bit for the
@@ -584,5 +643,107 @@ mod tests {
         let mut differs_first = left;
         differs_first[4] = 0x80;
         assert!(!same_prefix(left, differs_first, 33));
+    }
+
+    /// A prefix advertisement that says it is for autonomous configuration
+    /// yields the address a host configures for itself, and the lifetimes the
+    /// router named.
+    #[test]
+    fn a_prefix_that_may_be_used_yields_an_address() {
+        let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+        // A /64 prefix, then sixteen bytes of it in a message-shaped buffer.
+        let mut bytes = alloc::vec![0_u8; 16];
+        bytes.copy_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let prefix = crate::icmpv6::PrefixInformation {
+            prefix_len: 64,
+            on_link: true,
+            autonomous: true,
+            valid_lifetime: 86_400,
+            preferred_lifetime: 14_400,
+            prefix_at: 0,
+        };
+        let configuration = super::configure_from(&prefix, &alloc::vec::Vec::from(&bytes[..]), mac)
+            .expect("a configuration");
+        // The first sixty-four bits are the router's, and the last are this
+        // interface's identifier.
+        assert_eq!(&configuration.address[..8], &bytes[..8]);
+        assert_eq!(
+            &configuration.address[8..],
+            &super::interface_identifier(mac)
+        );
+        assert_eq!(configuration.valid_lifetime, 86_400);
+        assert_eq!(configuration.preferred_lifetime, 14_400);
+    }
+
+    /// Each of the three refusals holds: a prefix that is not for autonomous
+    /// configuration, one that is not a /64, and one with no valid lifetime.
+    #[test]
+    fn a_prefix_this_host_may_not_use_is_refused() {
+        let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+        let bytes = alloc::vec::Vec::from(
+            &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
+        );
+        let base = crate::icmpv6::PrefixInformation {
+            prefix_len: 64,
+            on_link: true,
+            autonomous: true,
+            valid_lifetime: 100,
+            preferred_lifetime: 50,
+            prefix_at: 0,
+        };
+
+        let not_autonomous = crate::icmpv6::PrefixInformation {
+            autonomous: false,
+            ..base
+        };
+        assert!(
+            super::configure_from(&not_autonomous, &bytes, mac).is_none(),
+            "a prefix for on-link routing only"
+        );
+
+        let not_a_slash_64 = crate::icmpv6::PrefixInformation {
+            prefix_len: 48,
+            ..base
+        };
+        assert!(
+            super::configure_from(&not_a_slash_64, &bytes, mac).is_none(),
+            "a prefix with no room for a sixty-four-bit identifier"
+        );
+
+        let expired = crate::icmpv6::PrefixInformation {
+            valid_lifetime: 0,
+            ..base
+        };
+        assert!(
+            super::configure_from(&expired, &bytes, mac).is_none(),
+            "a prefix the router withdrew"
+        );
+
+        // And a message too short to hold the prefix is refused rather than
+        // read past its end.
+        assert!(
+            super::configure_from(&base, &bytes[..8], mac).is_none(),
+            "a message that does not carry the prefix"
+        );
+    }
+
+    /// A preferred lifetime longer than the valid one is clamped: an address
+    /// cannot be preferred for longer than it exists.
+    #[test]
+    fn a_preferred_lifetime_past_the_valid_one_is_clamped() {
+        let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+        let bytes = alloc::vec::Vec::from(
+            &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..],
+        );
+        let prefix = crate::icmpv6::PrefixInformation {
+            prefix_len: 64,
+            on_link: true,
+            autonomous: true,
+            valid_lifetime: 100,
+            preferred_lifetime: 500,
+            prefix_at: 0,
+        };
+        let configuration = super::configure_from(&prefix, &bytes, mac).expect("a configuration");
+        assert_eq!(configuration.preferred_lifetime, 100);
     }
 }

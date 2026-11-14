@@ -372,6 +372,63 @@ pub fn parse_neighbor_advertisement(
 
 // router discovery
 
+/// The length of an advertisement carrying one prefix option: the fixed part
+/// plus the option's thirty-two bytes.
+pub const ROUTER_ADVERTISEMENT_WITH_PREFIX_LEN: usize = HEADER_LEN + ROUTER_ADVERTISEMENT_LEN + 32;
+
+/// Write a router advertisement carrying one prefix.
+///
+/// An advertisement is what a router sends on its own schedule, and a stack
+/// that has no router to hear one from still has to prove it can act on one:
+/// this writer is for the boot's own probe, and its output goes through the
+/// same receive path a real advertisement does.
+///
+/// The prefix option's fields are the ones [RFC 4861] defines: the length, the
+/// on-link and autonomous flags, the two lifetimes, and sixteen bytes of
+/// prefix.  The reserved halves are written as zero, which is what a router
+/// writes and what a comparison of two advertisements expects.
+///
+/// [RFC 4861]: https://www.rfc-editor.org/rfc/rfc4861
+#[allow(clippy::too_many_arguments)]
+pub fn write_router_advertisement(
+    message: &mut [u8],
+    source: Addr,
+    destination: Addr,
+    current_hop_limit: u8,
+    router_lifetime: u16,
+    reachable_time: u32,
+    retransmit_timer: u32,
+    prefix: Addr,
+    prefix_len: u8,
+    autonomous: bool,
+    valid_lifetime: u32,
+    preferred_lifetime: u32,
+) {
+    let mut body = [0_u8; ROUTER_ADVERTISEMENT_LEN + 32];
+    body[0] = current_hop_limit;
+    // The reserved flag bits stay zero; the autonomous one is the caller's.
+    if autonomous {
+        body[1] |= 0x40;
+    }
+    body[2..4].copy_from_slice(&router_lifetime.to_be_bytes());
+    body[4..8].copy_from_slice(&reachable_time.to_be_bytes());
+    body[8..12].copy_from_slice(&retransmit_timer.to_be_bytes());
+
+    // The prefix option, after the advertisement's fixed part.
+    let option = ROUTER_ADVERTISEMENT_LEN;
+    body[option] = OPTION_PREFIX_INFORMATION;
+    body[option + 1] = 4; // thirty-two bytes, in eight-octet units
+    body[option + 2] = prefix_len;
+    // The option's own flag byte: on-link and autonomous.
+    body[option + 3] = 0x80 | if autonomous { 0x40 } else { 0 };
+    body[option + 4..option + 8].copy_from_slice(&valid_lifetime.to_be_bytes());
+    body[option + 8..option + 12].copy_from_slice(&preferred_lifetime.to_be_bytes());
+    body[option + 12..option + 14].copy_from_slice(&0u16.to_be_bytes()); // reserved
+    body[option + 16..option + 32].copy_from_slice(&prefix);
+
+    write_message(message, source, destination, ROUTER_ADVERTISEMENT, 0, &body);
+}
+
 /// Write a router solicitation, which asks the link's routers to answer with
 /// an advertisement.
 ///
