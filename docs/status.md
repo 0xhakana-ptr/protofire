@@ -725,6 +725,55 @@ because releasing one while the other CPU was still installed on its root
 faulted 186 times in six boots of eight.  `docs/migration.md` has the per-step
 cost of more CPUs.
 
+## The filesystems
+
+Ten filesystems are in `fs/src/` and none of them is mounted by a boot: the
+boot's three are PyroFS, tmpfs and the ISO 9660 disc, because those are the
+ones a demonstration needs.  The ten are proven by the host suites and by one
+harness, and the evidence is named here so a reader can re-run it rather than
+take the word "ported".
+
+**Six formats write, four read, and the FUSE client is the protocol.**  `ext4`,
+`f2fs`, `fat32`, `exfat`, `iso9660` and `ntfs` implement `FileSystem` and
+answer creates, removals and renames; `xfs`, `squashfs`, `erofs` and `btrfs`
+refuse every mutation in their own impls; `fuse` sends each mutation to the
+program on the other side, so its writes are that program's.  The division is
+the old tree's: `xfs` answered `PermissionDenied` to every write there too, and
+the three compressed formats have no write path in either tree.  A reader that
+became a writer by being ported would be a claim this tree cannot support.
+
+**What each suite proves.**  Every format's tests build a volume of its own
+and mount it, so no test depends on an image nobody rebuilt:
+
+- `cargo test -p fs ext4` — 15 tests, a formatter that writes the superblock
+  and the group descriptors so a test needs no host tool, and the JBD2 journal
+  replayed and then written.
+- `cargo test -p fs f2fs` — 11 tests, the segment, node and data paths plus
+  the two checkpoint copies.
+- `cargo test -p fs fat32` and `exfat` — 9 and 6, including FAT12's 12-bit
+  packing written into both FAT copies and exFAT's NoFatChain runs.
+- `cargo test -p fs iso9660` — 92, RFC 0011's stages in the order it took
+  them, with the block map, the tail rule and the two-tree refusals.
+- `cargo test -p fs ntfs` — 106, over a fixture built to RFC 0012's shapes;
+  two more are `#[ignore]`d and driven by the harness below.
+- `cargo test -p fs xfs`, `squashfs`, `erofs`, `btrfs` — 9, 40, 17 and 12.
+
+**The one foreign judge.**  `sh scripts/check-ntfs-image.sh` makes a volume
+with `mkntfs`, injects a file with `ntfscp` — a name and bytes this tree never
+wrote — hands it to the driver, and then has `ntfs-3g`'s own reader list the
+names, read both files back, and `ntfsfix -n` walk the metadata of what the
+driver wrote.  Its second section does the same for a compressed stream on a
+volume `mkntfs -C` made.  Run here:
+
+```
+ntfs image check passed: mounted a volume mkntfs made, read the host's file, and a foreign reader accepts what the driver wrote
+ntfs image check passed (compressed): the driver decoded the file the host injected back
+```
+
+A punch through the interface — the old tree's third section — needs a userspace
+harness this tree does not have yet, and the script says so rather than
+skipping it silently.
+
 ## x86_64
 
 **Boot.**  Multiboot2 or PVH handoff; the entry assembly's 2 MiB identity map.

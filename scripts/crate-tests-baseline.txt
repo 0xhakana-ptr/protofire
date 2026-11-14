@@ -45,9 +45,9 @@ cell                  328    5
 crypto               4913   64
 e1000                   7    0
 fdt                  1668   30
-fs                  14734  114
+fs                  54027  393
 fs::block_cache         -   24
-fs::iso9660             -   39
+fs::iso9660             -   92
 fs::pyrofs              -   10
 fs::tmpfs               -   10
 init                  493    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot

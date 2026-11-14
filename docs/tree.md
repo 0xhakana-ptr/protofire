@@ -113,7 +113,9 @@ device to get behind it.
 ### The subsystems — fs, net, power, security, sound, virt
 
 The large things a kernel exists to do, one directory each.  `fs` holds
-the VFS and the three filesystems behind it.  `net` is the protocol stack —
+the VFS, PyroFS and tmpfs, and the ten Level 6 formats — six writing and
+four (`xfs`, `squashfs`, `erofs` and `btrfs`) reading, with `fuse` a protocol
+whose writes are its server's.  `net` is the protocol stack —
 Ethernet, ARP, IPv4, ICMP, UDP, TCP — sent through the trait in
 `devices/netdev`.  `power` is the governor policy: a load sample and a
 frequency range in, a target frequency out.  `security` labels subjects

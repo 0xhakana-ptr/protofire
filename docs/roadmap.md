@@ -55,7 +55,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **94,245 lines of Rust across 40 crates**, which is
+The tree is **138,766 lines of Rust across 40 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -102,7 +102,7 @@ machine crates twice, inside `arch/` and on their own.
 | `syscall` | numbering, the call context, the validators |
 | `security` | the MAC policy: rules, types, denials |
 | `virtio_core` | queue, feature negotiation, the PCI modern transport |
-| `fs` | the VFS, PyroFS, tmpfs, ISO 9660 |
+| `fs` | the VFS, PyroFS, tmpfs, and the ten Level 6 formats |
 | `virtio_block` | the block driver |
 | `virtio_net` | the network card: two queues, ARP in and out |
 | `kernel/src/service/table.rs` | a name-to-service table — **parked** |
@@ -353,7 +353,7 @@ lands before anything in the kernel depends on it.
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-94,245 across 40 crates.  The difference is not lost work — it is work the new
+138,766 across 40 crates.  The difference is not lost work — it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 
@@ -371,7 +371,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | old module | lines | state now |
 |---|---|---|
 | `arch` | 95,361 | **done** — three ports, trap paths, timers, SMP, ring 3 (20,645 lines here, a third of the size) |
-| `fs` | 68,494 | **partial** — PyroFS, tmpfs, ISO 9660; ten filesystems are not here |
+| `fs` | 68,494 | **moved** — PyroFS, tmpfs and the ten Level 6 formats; four of them are readers, which the old tree's were too |
 | `kernel` | 39,704 | **mostly done** — scheduler, processes, COW, pipes, signals, memory |
 | `network` | 39,240 | **partial** — the stack is one tenth of it: IPv4, ICMP, UDP, TCP, and the seven calls a program reaches |
 | `drivers` | 18,828 | **partial** — virtio-blk and virtio-net; the rest are not here |
@@ -406,71 +406,67 @@ below are named after mechanisms and not after syscall families.
 
 ### Level 6 — the filesystems
 
-Ten filesystems the old tree read and this one does not: `ext4`, `fat32`,
+Ten filesystems the old tree has and this one did not: `ext4`, `fat32`,
 `exfat`, `ntfs`, `btrfs`, `xfs`, `f2fs`, `erofs`, `squashfs`, and the old
-`fuse` client.
+`fuse` client.  **All ten are here.**  This level was about moving them, not
+about completing them, and what each one can do is the old tree's answer
+carried over and, where a write path was missing, built:
 
-**The goal is that all ten can write, not that they can read.**  That is what
-the previous kernel's roadmap said it was working toward — "the read-only
-drivers move toward read-write, matching ext4 / F2FS / XFS / exFAT / FAT32" —
-and its code shows how far it got: `ext4` has 115 write operations and a
-journal, `f2fs` 48, `xfs` 21, while `fat32`, `exfat`, `ntfs`, `btrfs`,
-`squashfs`, `erofs` and `iso9660` all answered `PermissionDenied`.  Two RFCs
-were written toward the rest, one for ISO 9660 and one for NTFS.
-
-So this level has three batches, by how much of a write path exists to copy:
-
-| batch | formats | what the old tree had |
+| format | here | what it does |
 |---|---|---|
-| **already writable** | `ext4`, `f2fs`, `xfs` | a full write path and, for `ext4`, a journal |
-| **designed, partly built** | `iso9660`, `ntfs` | RFC 0011 had taken an ISO 9660 file's data, length, space and record; RFC 0012 had fixed a fixture and found five format bugs in the NTFS reader |
-| **read-only** | `fat32`, `exfat`, `btrfs`, `squashfs`, `erofs` | `PermissionDenied` everywhere |
+| `ext4` | `fs/src/ext4/` | reads and writes; extent tree, an indirect fallback, and the JBD2 journal replayed and written |
+| `f2fs` | `fs/src/f2fs/` | reads and writes; log-structured appends, NAT/SIT caches, two checkpoint copies |
+| `xfs` | `fs/src/xfs/` | **read-only**; B+tree extent and directory readers, journal replay, and every mutation refused in its own `FileSystem` impl |
+| `fat32` | `fs/src/fat32/` | reads and writes; FAT12 12-bit packing, FSInfo, LFN sets |
+| `exfat` | `fs/src/exfat/` | reads and writes; the checksummed boot region, 32-bit FAT plus allocation bitmap, NoFatChain streams |
+| `iso9660` | `fs/src/iso9660/` | reads and writes; RFC 0011's whole write path — data, length, space from a block map, records, directories, rename — with path tables rebuilt from the tree |
+| `ntfs` | `fs/src/ntfs/` | reads and writes; MFT and attribute lists, index trees split and merged, the cluster bitmap, LZNT1 streams, and a harness judging it against a volume `mkntfs` made |
+| `squashfs` | `fs/src/squashfs/` | **read-only**; LZ4 and ZSTD metadata and data blocks, fragments |
+| `erofs` | `fs/src/erofs/` | **read-only**; compact inodes, flat block mapping, 16-byte fast symlinks |
+| `btrfs` | `fs/src/btrfs/` | **read-only**; superblock, chunk map, checksummed trees |
+| `fuse` client | `fs/src/fuse/` | reads and writes through the protocol; each VFS operation is a request, so what it can do is what the program on the other side does |
+
+**The goal was that all ten can write, and four of the formats cannot.**  That
+is the honest state and it is recorded here rather than in a footnote: the old
+tree's `xfs` answered `PermissionDenied` to every mutation too — its "21 write
+operations" were reads over structures a writer would need — and the three
+compressed formats, `squashfs`, `erofs` and `btrfs`, have no write path in
+either tree.  (The FUSE client is a fifth writer in a different sense: a
+mutation is a request to the program on the other side, so its writes are its
+server's.)  What the port promised is that the *code* moved and the *evidence*
+moved with it; what it did not promise is that a reader becomes a writer by
+being ported.  A write path for any of the four is its own RFC.
+
+The three batches this level was ordered by, and where each ended:
+
+| batch | formats | outcome |
+|---|---|---|
+| **already writable** | `ext4`, `f2fs`, `xfs` | `ext4` and `f2fs` port whole, journal and checkpoint copies included; `xfs` ports as the read-only driver it always was |
+| **designed, partly built** | `iso9660`, `ntfs` | both port whole: RFC 0011's write path lands in full, and RFC 0012's fixture comes with NTFS's write path |
+| **read-only** | `fat32`, `exfat`, `btrfs`, `squashfs`, `erofs` | `fat32` and `exfat` gained write paths; `btrfs`, `squashfs` and `erofs` port as readers |
 
 `ReadOnlyFileSystem` in `fs/src/filesystem.rs` is the blanket impl a read-only
 format gets for free: it supplies every mutation as `PermissionDenied`, so a
-view has nowhere to declare one.  It is the right starting shape for the third
-batch — and the wrong final one, which is why each of them graduates to
-`FileSystem` when its write path lands.
+view has nowhere to declare one.  It is the right shape for a view over kernel
+state; it is the *wrong* final shape for a storage format, which is why
+`fat32`, `exfat`, `iso9660` and `ntfs` implement `FileSystem` directly instead
+— and why the four that stayed readers say so in their own documentation
+rather than hiding behind the blanket.
 
-This is one level and not ten, because they share one thing worth deciding
+This was one level and not ten, because they share one thing worth deciding
 once: **a filesystem in this tree is a module inside `fs` that implements
 `VNode` and `FileSystem`** (`fs/src/filesystem.rs`, `fs/src/vnode.rs`) and
 brings its own on-disk parser.  `fs/src/pyrofs/` is the shape — 18 files, its
-own `format_io`, `superblock`, `dir_ops`, `file_io`, `tests` — and
-`fs/src/iso9660/` is the smaller one a read-only format needs.
+own `format_io`, `superblock`, `dir_ops`, `file_io`, `tests` — and the ten
+ports follow it: `types` for the on-disk shapes, `fs` for the volume's low
+level, `vfs` (or `volume`) for the mount, and `tests` for a fixture the test
+builds and a second mount reads back through.
 
-Ordered by what each proves:
-
-1. **`ext4`** first, and the reason is the opposite of "it is easiest".  It is
-   the only format in the old tree with a complete write path *and* a journal,
-   so it is the template every write path after it is read against.  Reading a
-   format can be attempted in any order; writing one needs a worked example, and
-   this is the only one with crash consistency in it.
-2. **`f2fs`**, then **`xfs`** — the other two that already wrote.  Together with
-   `ext4` they are batch one, and each proves the template against a second and
-   third set of on-disk structures.
-3. **`fat32`**, then **`exfat`**.  Simple enough that the write path is
-   arithmetic rather than a journal, and together they are what a removable
-   medium is.
-4. **`iso9660`** — already in this tree as a reader; RFC 0011's write path
-   comes next, in the order it took: a file's data, then its length, then space
-   from the allocator, then its record, then directories, then rename.
-5. **`ntfs`** — RFC 0012's fixture is the first thing, because it is what found
-   five reader bugs before a single write existed.
-6. **`squashfs`** and **`erofs`** — the two compressed formats, and the last to
-   be written, because a write has to update the compression as well as the
-   allocation.
-7. **`btrfs`** — read-write last of the ten: a copy-on-write tree with checksums
-   at every level is a project of its own, and doing it before the nine simpler
-   write paths exist would mean discovering its shape twice.
-8. **A FUSE client** last, because it is not a format: it is a protocol, and it
-   needs a program on the other side.
-
-What this level does not promise: **compression codecs as a shared
-abstraction** — `squashfs`'s and `erofs`'s both belong to their crates until a
-third user appears; and **a journal for the formats that need none**.  `ext4`'s
-journal is the template because it is the hardest case, not because every
-filesystem has to grow one.
+What this level did not promise, and does not claim: **compression codecs as a
+shared abstraction** — `squashfs`'s LZ4 and ZSTD and `btrfs`'s use of them
+belong to their modules until a third user appears; and **a journal for the
+formats that need none**.  `ext4`'s journal is the template because it is the
+hardest case, not because every filesystem has to grow one.
 
 ### Level 7 — the drivers
 
