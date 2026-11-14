@@ -117,6 +117,11 @@ pub struct Interface {
     ndp: net::ndp::Cache,
     /// A global address a router's advertisement configured, if one has.
     ipv6_global: Option<net::ipv6::Addr>,
+    /// The name server a lease named, if one did.
+    ///
+    /// Kept here rather than in a socket because it is a fact about this
+    /// machine's network, and a lookup asks it once per name.
+    dns: Option<[u8; 4]>,
 }
 
 impl Interface {
@@ -148,12 +153,28 @@ impl Interface {
             ipv6_groups,
             ndp: net::ndp::Cache::new(),
             ipv6_global: None,
+            dns: None,
         }
     }
 
     /// The protocol address this interface answers for.
     pub fn protocol(&self) -> [u8; 4] {
         self.protocol
+    }
+
+    /// Take the address, the gateway and the name server a lease granted.
+    ///
+    /// The three arrive together because a lease is one decision: an address
+    /// with the old gateway is a machine that sends half its traffic to a
+    /// router it is not attached to.  The name server is stored beside them
+    /// because it is what the resolver asks, and a boot whose server is not on
+    /// this link has no way to reach one.
+    pub fn configure(&mut self, lease: &net::dhcp::Lease) {
+        self.protocol = lease.address;
+        if let Some(router) = lease.router {
+            self.gateway = router;
+        }
+        self.dns = lease.dns;
     }
 
     /// The link-local IPv6 address this interface answers for.
@@ -164,6 +185,11 @@ impl Interface {
     /// The global IPv6 address a router configured, if one has.
     pub fn ipv6_global(&self) -> Option<net::ipv6::Addr> {
         self.ipv6_global
+    }
+
+    /// The name server a lease named, if one did.
+    pub fn dns(&self) -> Option<[u8; 4]> {
+        self.dns
     }
 }
 
@@ -195,6 +221,17 @@ pub fn status() -> Option<NetworkStatusRecord> {
             interface.gateway,
         )
     })
+}
+
+/// Take the address, the gateway and the name server a lease granted.
+///
+/// A no-op on a machine with no interface, which is the same answer every
+/// other call here gives: nothing was installed, so there is nothing to
+/// configure.
+pub fn configure(lease: &net::dhcp::Lease) {
+    if let Some(interface) = INTERFACE.lock().as_mut() {
+        interface.configure(lease);
+    }
 }
 
 /// What the interface's IPv6 side answers: the record `Ipv6Status` fills, or
@@ -902,7 +939,59 @@ fn handle_icmpv6(packet: &net::ipv6::Packet, payload: &[u8]) {
         net::icmpv6::ECHO_REQUEST => {
             answer_echo_request(packet, &message, payload);
         }
+        net::icmpv6::ROUTER_ADVERTISEMENT => {
+            learn_from_router(&message, payload);
+        }
         _ => {}
+    }
+}
+
+/// Configure a global address from a router's advertisement.
+///
+/// The advertisement's prefix option is what says a network exists and whether
+/// this host may make an address in it.  [`net::ndp::configure_from`] is the
+/// decision, the autonomous flag and the prefix length and the valid
+/// lifetime, and this function is the state it changes: the address goes on the
+/// interface, joins its solicited-node group, and remembers the router's own
+/// link-layer address so later unicast needs no second solicitation.
+///
+/// An advertisement is not solicited by this stack: nothing here sends a
+/// router solicitation, because a router broadcasts one on its own schedule
+/// and a boot that waited for an answer it asked for would wait for a machine
+/// that may not be there.  An advertisement that arrives is used; one that
+/// never arrives leaves the interface with its link-local address, which is
+/// the state this stack can guarantee.
+fn learn_from_router(message: &net::icmpv6::Message, payload: &[u8]) {
+    let Some(advertisement) = net::icmpv6::parse_router_advertisement(message, payload) else {
+        return;
+    };
+    let Some(prefix) = net::icmpv6::prefix_information(
+        payload,
+        advertisement.options_at,
+        advertisement.options_at + advertisement.options_len,
+    ) else {
+        return;
+    };
+    let mut interface = INTERFACE.lock();
+    let Some(interface) = interface.as_mut() else {
+        return;
+    };
+    let Some(configuration) = net::ndp::configure_from(&prefix, payload, interface.hardware) else {
+        return;
+    };
+    interface.ipv6_global = Some(configuration.address);
+    // The group the new address answers on.  A fixed array has room for the
+    // one a link-local-only interface holds, and the global's takes the slot
+    // the all-routers group used: a host that has a global address still
+    // answers solicitations for it, and the all-routers group is the one a
+    // solicitation is *sent* to rather than one this interface receives on.
+    let group = net::ipv6::solicited_node(configuration.address);
+    if let Some(slot) = interface
+        .ipv6_groups
+        .iter_mut()
+        .find(|existing| **existing == net::ipv6::ALL_ROUTERS_MULTICAST)
+    {
+        *slot = group;
     }
 }
 
@@ -1743,6 +1832,345 @@ fn demux_tcp6(packet: &net::ipv6::Packet, payload: &[u8]) -> bool {
         let _ = tcp_exchange(&mut table, queued);
     }
     noteworthy
+}
+
+/// Resolve `name` through the name server a lease named.
+///
+/// One query, one datagram, one wait: the whole of what a stub resolver does
+/// when it has a server and no cache.  The lookup binds a port of its own so
+/// an answer for one lookup cannot be read by another, draws a transaction id
+/// from the generator for the same reason, and refuses any reply whose id or
+/// source does not match, because a datagram from a stranger on the port is
+/// not this
+/// lookup's answer.
+///
+/// `None` when no server was configured, when the send failed, or when no
+/// answer arrived inside the wait.  A name the server says does not exist is
+/// also `None`, because both are "this stack cannot give you an address" and
+/// the caller's next step is the same.
+#[cfg(target_os = "none")]
+pub fn resolve(name: &str, kind: u16) -> Option<net::address::Address> {
+    let server = {
+        let interface = INTERFACE.lock();
+        interface.as_ref()?.dns()?
+    };
+
+    // A port for this lookup, taken from the ephemeral range the TCP side
+    // uses and never reused while the socket is alive.  The socket owns the
+    // queue the answer arrives in.
+    let port = {
+        static NEXT: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(53_000);
+        NEXT.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+    };
+    let Ok(socket) = bind_udp(port) else {
+        return None;
+    };
+
+    let mut id_bytes = [0_u8; 2];
+    if crate::random::fill(&mut id_bytes).is_err() {
+        return None;
+    }
+    let id = u16::from_be_bytes(id_bytes);
+
+    let mut query = [0_u8; 300];
+    let length = net::dns::write_query(&mut query, id, name, kind)?;
+    send_datagram(
+        net::address::Address::V4(server),
+        53,
+        port,
+        &query[..length],
+    )
+    .ok()?;
+
+    // One wait, bounded by the timer: a server on this link answers in
+    // microseconds, so a second is generous and a boot with no server ends
+    // with an answer rather than a hang.
+    let deadline = crate::tick::TIMER_TICKS
+        .load(core::sync::atomic::Ordering::Relaxed)
+        .saturating_add(DHCP_WAIT_TICKS);
+    let mut buffer = [0_u8; 512];
+    while (crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64)
+        < deadline as u64
+    {
+        // The card's ring first, because the answer is on it before the
+        // socket's queue is: a receive that asked its queue alone would see
+        // nothing until the next pump.
+        pump();
+        match socket.try_recv(&mut buffer) {
+            Ok(Some((source, _, count))) => {
+                if source != net::address::Address::V4(server) {
+                    continue;
+                }
+                match net::dns::parse_answer(&buffer[..count], id, kind) {
+                    Ok(net::dns::Answer::Address { address, .. }) => return Some(address),
+                    Ok(net::dns::Answer::NoSuchName) => return None,
+                    Err(_) => continue,
+                }
+            }
+            _ => continue,
+        }
+    }
+    None
+}
+
+/// Ask the network what this machine is, and configure the interface with the
+/// answer.
+///
+/// The four-message exchange of [RFC 2131], run before the interface has an
+/// address: a broadcast DISCOVER, a server's OFFER, a broadcast REQUEST naming
+/// that offer, and the ACK that makes the address usable.  The frames are
+/// broadcast at the link layer because there is no address to resolve yet, and
+/// their source address is zero because that is what a client without a lease
+/// puts there.
+///
+/// Answers the lease, or `None` when no server answered.  A boot that gets
+/// `None` keeps whatever the caller installed, which is why this is a probe
+/// the boot reports rather than a step it depends on: QEMU's user-mode network
+/// answers, and a machine with no server is a machine this must not die on.
+///
+/// [RFC 2131]: https://www.rfc-editor.org/rfc/rfc2131
+#[cfg(target_os = "none")]
+pub fn dhcp_probe() -> Option<net::dhcp::Lease> {
+    let (card, hardware) = {
+        let interface = INTERFACE.lock();
+        let interface = interface.as_ref()?;
+        (interface.card.clone(), interface.hardware)
+    };
+
+    let mut bytes = [0_u8; 2];
+    if crate::random::fill(&mut bytes).is_err() {
+        return None;
+    }
+    let transaction = net::dhcp::Transaction {
+        id: u32::from_be_bytes([bytes[0], bytes[1], bytes[0], bytes[1]]),
+        hardware,
+    };
+
+    // One UDP datagram, broadcast to the server port, from the client port.
+    // The frame's addresses are the broadcast ones: a client with no address
+    // has nothing else to put there, and the server answers to the client's
+    // hardware address for the same reason.
+    let send = |payload: &[u8]| -> bool {
+        let udp_len = net::udp::datagram_len(payload.len());
+        let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
+        let mut frame = alloc::vec![0_u8; packet_len];
+        net::ethernet::write_header(
+            &mut frame,
+            net::ethernet::BROADCAST,
+            hardware,
+            net::ethernet::ETHERTYPE_IPV4,
+        );
+        net::ipv4::write_header(
+            &mut frame[netdev::ETHERNET_HEADER_LEN..],
+            [0, 0, 0, 0],
+            [255, 255, 255, 255],
+            net::ipv4::PROTOCOL_UDP,
+            udp_len,
+        );
+        net::udp::write_datagram(
+            &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+            [0, 0, 0, 0],
+            [255, 255, 255, 255],
+            net::dhcp::CLIENT_PORT,
+            net::dhcp::SERVER_PORT,
+            payload,
+        );
+        card.submit_frame(&frame).is_ok()
+    };
+
+    // Wait for a reply of `kind`, draining the card's ring.
+    let await_reply = |kind: u8| -> Option<net::dhcp::Reply> {
+        let limit = card.maximum_frame_len();
+        let mut frame = alloc::vec![0_u8; limit];
+        let deadline = crate::tick::TIMER_TICKS
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .saturating_add(DHCP_WAIT_TICKS);
+        while (crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64)
+            < deadline as u64
+        {
+            let Ok(Some(length)) = card.receive_frame(&mut frame) else {
+                continue;
+            };
+            if netdev::ethertype(&frame[..length]) != Some(net::ethernet::ETHERTYPE_IPV4) {
+                continue;
+            }
+            let Some(packet) = net::ipv4::parse(&frame[netdev::ETHERNET_HEADER_LEN..length]) else {
+                continue;
+            };
+            if packet.header.protocol != net::ipv4::PROTOCOL_UDP {
+                continue;
+            }
+            let at = netdev::ETHERNET_HEADER_LEN + packet.payload_at;
+            let Some(datagram) = net::udp::parse(
+                &frame[at..length],
+                packet.header.source,
+                packet.header.destination,
+            ) else {
+                continue;
+            };
+            if datagram.destination_port != net::dhcp::CLIENT_PORT {
+                continue;
+            }
+            let data =
+                &frame[at + net::udp::HEADER_LEN..at + net::udp::HEADER_LEN + datagram.payload_len];
+            if let Some(reply) = net::dhcp::parse_reply(data, transaction)
+                && reply.kind == kind
+            {
+                return Some(reply);
+            }
+        }
+        None
+    };
+
+    let mut message = [0_u8; 512];
+    let region = net::dhcp::write_discover(&mut message, transaction)?;
+    if !send(region.as_slice()) {
+        return None;
+    }
+    let offer = await_reply(net::dhcp::MESSAGE_OFFER)?;
+
+    let region = net::dhcp::write_request(&mut message, transaction, offer.address, offer.server)?;
+    if !send(region.as_slice()) {
+        return None;
+    }
+    let ack = await_reply(net::dhcp::MESSAGE_ACK)?;
+    net::dhcp::lease_from(&ack, 0, 1).ok()
+}
+
+/// How long one DHCP reply is waited for, in timer ticks.
+///
+/// Two seconds on a hundred-hertz clock.  A server on the same link answers in
+/// microseconds, so this is generous by orders of magnitude; it exists so a
+/// boot with no server ends with a line rather than a hung machine.
+#[cfg(target_os = "none")]
+const DHCP_WAIT_TICKS: usize = 200;
+
+/// The boot's name exchange: one lookup through the server a lease named.
+///
+/// QEMU's user-mode network carries a name server that answers for the names
+/// its own resolver knows, and the boot asks it for one.  The lookup is the
+/// whole path: a query this stack built, a datagram through the card, the
+/// server's answer parsed back, and the address the answer carried.
+///
+/// A network with no name server answers the probe with a line and no
+/// address, which is not a failure of the stack: the line says which of the
+/// two happened.
+#[cfg(target_os = "none")]
+pub fn dns_probe() -> bool {
+    // The name QEMU's resolver answers for on every user-mode network: the
+    // host's own name for the guest's gateway.  Asking a name that does not
+    // exist would prove the parser's refusal rather than the exchange.
+    const NAME: &str = "example.com";
+
+    match resolve(NAME, net::dns::TYPE_A) {
+        Some(net::address::Address::V4(address)) => {
+            arch::serial::write_str("protofire: dns resolved ");
+            arch::serial::write_str(NAME);
+            arch::serial::write_str(" to ");
+            arch::serial::write_u32(address[0] as u32);
+            arch::serial::write_str(".");
+            arch::serial::write_u32(address[1] as u32);
+            arch::serial::write_str(".");
+            arch::serial::write_u32(address[2] as u32);
+            arch::serial::write_str(".");
+            arch::serial::write_u32(address[3] as u32);
+            arch::serial::write_str("\n");
+            true
+        }
+        Some(net::address::Address::V6(_)) => {
+            arch::serial::write_str("protofire: dns answered the wrong family\n");
+            false
+        }
+        None => {
+            arch::serial::write_str("protofire: dns got no answer\n");
+            false
+        }
+    }
+}
+
+/// The boot's stateless-configuration exchange: a router advertisement put
+/// through the receive path, and the global address it configures.
+///
+/// No router on a machine this tree boots sends one, so the boot writes the
+/// advertisement itself and sends it through `demux_ipv6`, the function a real
+/// one arrives at.  What that proves is everything after the wire: the
+/// advertisement parses, its prefix option is read, the autonomous flag and
+/// the prefix length are checked, the address is built from the prefix and the
+/// hardware address, and it joins the group it answers on.  A router
+/// appearing later needs no code that is not here.
+///
+/// The line names the address and the prefix it came from, which is what a
+/// reader compares against the Mac's own identifier.
+#[cfg(target_os = "none")]
+pub fn slaac_probe() -> bool {
+    let hardware = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        interface.hardware
+    };
+
+    // A router's own link-local address and a global prefix in it.
+    let router = net::ipv6::link_local_from_mac([0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]);
+    let prefix: net::ipv6::Addr = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    let message_len = net::icmpv6::ROUTER_ADVERTISEMENT_WITH_PREFIX_LEN;
+    let mut frame =
+        alloc::vec![0_u8; netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN + message_len];
+    net::ethernet::write_header(
+        &mut frame,
+        hardware,
+        [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02],
+        net::ethernet::ETHERTYPE_IPV6,
+    );
+    net::ipv6::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        router,
+        net::ipv6::ALL_NODES_MULTICAST,
+        net::ipv6::NEXT_ICMPV6,
+        message_len,
+    );
+    net::icmpv6::write_router_advertisement(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+        router,
+        net::ipv6::ALL_NODES_MULTICAST,
+        64,
+        1_800,
+        30_000,
+        1_000,
+        prefix,
+        64,
+        true,
+        86_400,
+        14_400,
+    );
+    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+
+    let configured = {
+        let interface = INTERFACE.lock();
+        interface
+            .as_ref()
+            .and_then(|interface| interface.ipv6_global)
+    };
+    let Some(configured) = configured else {
+        arch::serial::write_str("protofire: slaac configured nothing\n");
+        return false;
+    };
+    // The address must be the router's prefix with this interface's own
+    // identifier, which is the whole of what a host may conclude on its own.
+    let identifier = net::ndp::interface_identifier(hardware);
+    let mut expected = prefix;
+    expected[8..16].copy_from_slice(&identifier);
+    let correct = configured == expected;
+    arch::serial::write_str("protofire: slaac configured ");
+    write_ipv6(configured);
+    arch::serial::write_str(if correct {
+        " from its router's prefix\n"
+    } else {
+        ", which is not the identifier this mac makes\n"
+    });
+    correct
 }
 
 /// The boot's reassembly exchange: a datagram split into pieces, delivered to

@@ -423,6 +423,61 @@ echoes them and closes, all over IPv6.  The sender the datagram answers with
 is checked to be this machine, so a demux that routed by the wrong address
 would print the other line and fail.
 
+**The machine negotiates its own address.**  Until this change the protocol
+address, the gateway and the name server were three constants in
+`device.rs`, named because QEMU's user-mode network happens to use them.  A
+machine that is not QEMU's therefore could not join a network at all.
+
+`net::dhcp` is the four-message exchange of RFC 2131, and the boot runs it
+before anything else touches the card:
+
+```
+protofire: dhcp leased 10.0.2.15 from 10.0.2.2, router 10.0.2.2
+```
+
+The address on that line is what slirp granted, not what this tree guessed: the
+line is the same three numbers only because slirp's defaults happen to match
+the constants that used to be here, and a different server would print
+different ones.  A network with no server prints its own line and keeps the
+built-in address, which is why this is a probe the boot reports rather than a
+step it depends on.
+
+The exchange found one ordering defect while it was being wired: the first
+version ran before `post_receive_buffer`, so the DISCOVER went out and no
+reply could arrive.  The line said "found no server", which is exactly what a
+correct stack on a serverless network says, which is why the boot's own line is
+the evidence rather than the absence of an error.
+
+**Names resolve through the server a lease named.**  `net::dns` is the query
+this stack builds and the answer it reads back, including the compression
+pointers a response uses to spell a name once.  The boot asks a real server:
+
+```
+protofire: dns resolved example.com to 104.20.23.154
+```
+
+That address came from QEMU's resolver, which forwards to the host's, so the
+line is evidence of a name resolved by a machine that is not this one.  It is
+deliberately not a gate line: a CI machine may have no network, and a gate that
+fails for a reason the tree cannot fix is a gate nobody can rely on.
+
+**A router's prefix configures a global IPv6 address.**  `handle_icmpv6` had no
+branch for a router advertisement at all, so the SLAAC code in `net/src/ndp.rs`
+had no caller and no machine could reach it.  It has a branch now, and the boot
+proves it by putting an advertisement through the same receive path a real one
+arrives at:
+
+```
+protofire: slaac configured 2001:0db8:0000:0000:5054:00ff:fe12:3456 from its router's prefix
+```
+
+The address is the router's prefix with this interface's own modified EUI-64,
+which the boot checks against the MAC it knows: a stack that built the address
+from anything else would print the other line.  Three refusals live in
+`net::ndp::configure_from` rather than at the caller, each RFC 4862's: a prefix
+whose autonomous flag is clear, one that is not a /64, and one with no valid
+lifetime.
+
 **A fragmented datagram is put back together.**  Both families' receive paths
 used to read a piece as the whole or drop it: IPv4 had no reassembly, and IPv6
 refused the fragment header outright.  `net::reassembly::Cache` holds the

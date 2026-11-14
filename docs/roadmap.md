@@ -55,7 +55,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **145,710 lines of Rust across 40 crates**, which is
+The tree is **147,731 lines of Rust across 40 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -461,16 +461,39 @@ owns the port" used to be the same `Ok(0)`.
 
 [RFC 5722]: https://www.rfc-editor.org/rfc/rfc5722
 
-What is **not** here, and is its own step: a router advertisement actually
-configuring a global address on this boot (the code path is in
-`net/src/ndp.rs` and the interface holds the field, but no machine this tree
-boots on sends one), and path-MTU discovery, so a peer that shrinks a path has
-no way to tell this stack.
+**The machine configures itself.**  Three protocols landed together because
+they answer one question, what this machine's network is:
+
+| protocol | what it settles | the line |
+|---|---|---|
+| DHCP | the IPv4 address, the router, the name server | `dhcp leased 10.0.2.15 from 10.0.2.2, router 10.0.2.2` |
+| DNS | a name, asked of the server the lease named | `dns resolved example.com to 104.20.23.154` |
+| SLAAC | a global IPv6 address, from a router's prefix | `slaac configured 2001:0db8:…:5054:00ff:fe12:3456` |
+
+Before this the first three numbers were constants in `device.rs`, named
+because QEMU's user-mode network happens to use them, so a machine that was not
+QEMU's could not join a network at all.
+
+Two of the three are gate lines and the second is not: a CI machine may have no
+resolver, and a gate that fails for a reason the tree cannot fix is a gate
+nobody relies on.  The name's evidence is the boot's line and the parser's own
+tests, which cover a compression pointer that does not point backwards, an
+answer for another transaction, and a record whose length is not its type's.
+
+SLAAC was reachable in theory and not in fact: `net/src/ndp.rs` had the prefix
+arithmetic and `handle_icmpv6` had no branch for a router advertisement, so no
+advertisement could ever reach it.  The branch is the change, and the boot's
+probe sends its advertisement through the same receive path a real one takes.
+
+What is **not** here, and is its own step: path-MTU discovery, so a peer that
+shrinks a path has no way to tell this stack; DHCP lease renewal, whose clock
+is in `net::dhcp::Lease` and whose caller is not written; and DHCPv6, which is
+a different protocol with a different message set.
 
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-145,710 across 40 crates.  The difference is not lost work, it is work the new
+147,731 across 40 crates.  The difference is not lost work, it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 

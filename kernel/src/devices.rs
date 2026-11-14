@@ -732,6 +732,11 @@ pub fn exercise_network() -> bool {
     // addresses the network calls read back.  Installing here, before the
     // exchanges, not after, is what makes the exercise prove the same state
     // a program's calls will read.
+    //
+    // The address is a placeholder for the length of one exchange: DHCP runs
+    // next and replaces it with what a server granted.  Installing first is
+    // what lets the DHCP exchange use the interface's card without a second
+    // path to it.
     crate::net::install(crate::net::Interface::new(
         card.clone(),
         mac,
@@ -761,6 +766,29 @@ pub fn exercise_network() -> bool {
     if card.post_receive_buffer().is_err() {
         arch::serial::write_str("protofire: virtio-net could not post a receive buffer\n");
         return false;
+    }
+
+    // What the network says this machine is, asked **after** a receive buffer
+    // is posted: a server's answer arrives on the same ring the exchanges
+    // below use, and a probe that ran before the buffer existed would send a
+    // DISCOVER no card could deliver the reply to.
+    if let Some(lease) = crate::net::dhcp_probe() {
+        arch::serial::write_str("protofire: dhcp leased ");
+        write_protocol(lease.address);
+        arch::serial::write_str(" from ");
+        match lease.server {
+            Some(server) => write_protocol(server),
+            None => arch::serial::write_str("an unnamed server"),
+        }
+        arch::serial::write_str(", router ");
+        match lease.router {
+            Some(router) => write_protocol(router),
+            None => arch::serial::write_str("none"),
+        }
+        arch::serial::write_str("\n");
+        crate::net::configure(&lease);
+    } else {
+        arch::serial::write_str("protofire: dhcp found no server; keeping the built-in address\n");
     }
 
     // The ARP exchange asks the wire who holds the gateway's address, and the
@@ -794,6 +822,21 @@ pub fn exercise_network() -> bool {
     // datagram sizable enough to be split arrives through this path, and
     // without it such a datagram is dropped in pieces.
     if !crate::net::reassembly_probe() {
+        return false;
+    }
+
+    // The name: one lookup through the server the lease named.  This is the
+    // exchange that proves the resolver rather than the parser: a query this
+    // stack built went out, and an answer another machine built came back.
+    if !crate::net::dns_probe() {
+        return false;
+    }
+
+    // Stateless configuration: a router's advertisement through the receive
+    // path, and the global address it makes.  No router this tree boots sends
+    // one, which is why the boot writes it; what a real router needs is
+    // nothing this probe does not exercise.
+    if !crate::net::slaac_probe() {
         return false;
     }
 
@@ -1243,6 +1286,17 @@ fn wait_one_turn(frequency: Option<u64>) {
 /// boot uses and what keeps a line in one buffer: `write_byte` goes straight to
 /// the UART on x86_64, so a line that mixed the two came out with the address's
 /// digits ahead of the text before them.
+/// Write an IPv4 address as four dot-separated octets.
+#[cfg(target_os = "none")]
+fn write_protocol(address: [u8; 4]) {
+    for (index, byte) in address.iter().enumerate() {
+        if index != 0 {
+            arch::serial::write_str(".");
+        }
+        arch::serial::write_u32(*byte as u32);
+    }
+}
+
 #[cfg(target_os = "none")]
 fn write_mac(mac: [u8; 6]) {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";

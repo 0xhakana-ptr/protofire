@@ -490,6 +490,16 @@ impl Machine {
                 // read whole.  Without it a fragment is a datagram dropped in
                 // pieces, which no line here shows.
                 ("protofire: fragments reassembled 20 byte(s), intact", true),
+                // What a server says this machine is, and an address a
+                // router's prefix configured for itself.  Two protocols, and
+                // neither restates the other: DHCP asks a server, stateless
+                // configuration only listens to a router.
+                //
+                // The name lookup is deliberately not required here: it needs
+                // a network with a resolver behind it, and a gate that fails
+                // because CI has no internet is a gate nobody can fix.
+                ("protofire: dhcp leased ", false),
+                ("protofire: slaac configured ", false),
                 (
                     "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                     true,
@@ -1081,6 +1091,8 @@ impl Machine {
                     // demux, and read whole.  Without it a fragment is a
                     // datagram dropped in pieces, which no line here shows.
                     ("protofire: fragments reassembled 20 byte(s), intact", true),
+                    ("protofire: dhcp leased ", false),
+                    ("protofire: slaac configured ", false),
                     (
                         "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                         true,
@@ -1359,6 +1371,16 @@ impl Machine {
                 // read whole.  Without it a fragment is a datagram dropped in
                 // pieces, which no line here shows.
                 ("protofire: fragments reassembled 20 byte(s), intact", true),
+                // What a server says this machine is, and an address a
+                // router's prefix configured for itself.  Two protocols, and
+                // neither restates the other: DHCP asks a server, stateless
+                // configuration only listens to a router.
+                //
+                // The name lookup is deliberately not required here: it needs
+                // a network with a resolver behind it, and a gate that fails
+                // because CI has no internet is a gate nobody can fix.
+                ("protofire: dhcp leased ", false),
+                ("protofire: slaac configured ", false),
                 (
                     "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                     true,
