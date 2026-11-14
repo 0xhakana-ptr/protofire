@@ -127,6 +127,12 @@
 //! each of which moves the thing it names.  The module is short because an
 //! option nothing acts on is a field, and this crate would rather refuse one
 //! than keep it.
+//!
+//! [`local`] is the one transport whose bytes are not on a wire: a name a
+//! listener binds, the connections waiting at it, and the rule that a full
+//! backlog refuses.  The pipes behind a connection are the kernel's, because a
+//! pipe parks a reader and parking is the scheduler's act; what is here is the
+//! naming, which is arithmetic over values and so a host test.
 
 #![no_std]
 
@@ -157,6 +163,7 @@ pub use internet::reply;
 
 pub use link::ethernet;
 
+pub use transport::local;
 pub use transport::options;
 pub use transport::tcp;
 pub use transport::tcp_table;

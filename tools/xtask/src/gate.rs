@@ -634,6 +634,39 @@ impl Machine {
                     "protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern",
                     true,
                 ),
+                // The local-domain socket, in the kernel's own exchange: a
+                // name bound, connected to, accepted, and bytes both ways.  A
+                // one-pipe connection would answer one direction and print
+                // zero for the other.
+                (
+                    "protofire: local socket 5 byte(s) forward, 6 back, both ways through one name",
+                    true,
+                ),
+                // And the same exchange between two ring-3 processes, which is
+                // the claim a probe cannot make: a bind, a connect, an accept,
+                // and a read and a write each way.
+                //
+                // The three lines required are the ones that do not depend on
+                // an interleaving.  Whether a read parks or finds its bytes
+                // already there is the scheduler's choice, and requiring
+                // `a program blocks on a local socket` made this gate fail on a
+                // boot where the child's write landed first: the exit statuses
+                // were identical, so nothing was broken.  The park and its wake
+                // are still printed and still read by a human; they are not a
+                // gate line, because a gate that depends on a race is a gate
+                // that fails for the wrong reason.
+                (
+                    "protofire: process 1 bound the local name, descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 9 connected to the local name, descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 1 accepted a local connection as descriptor ",
+                    false,
+                ),
                 // The congestion window, on an exchange long enough to see it
                 // move: ten acknowledgements grow it and a timeout collapses
                 // it.  Every other boot exchange finishes before the window
@@ -731,9 +764,14 @@ impl Machine {
                 // the walk's scaffolding, three tables per space, fifteen on
                 // this boot, prints a smaller number and fails here.
                 (
-                    "protofire: address spaces reaped 8, 131072 frame(s) free",
+                    "protofire: address spaces reaped 9, 131072 frame(s) free",
                     true,
                 ),
+                // Nine and not eight: the local-domain exchange forks once
+                // more than the stream exchange did, so the boot runs nine
+                // programs.  The number is the programs, which is why it is
+                // exact.
+                //
                 // The invalidation's own account, as a whole line: three sends,
                 // three acknowledgements, no wait ran out.
                 //
@@ -912,7 +950,7 @@ impl Machine {
                     // and produced 186 page faults in six boots of eight, which
                     // is why the count is here at the end rather than absent.
                     (
-                        "protofire: address spaces reaped 8, 16384 frame(s) free",
+                        "protofire: address spaces reaped 9, 16384 frame(s) free",
                         true,
                     ),
                     // One invalidation, acknowledged, and no wait ran out.
@@ -1310,6 +1348,22 @@ impl Machine {
                         "protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern",
                         true,
                     ),
+                    (
+                        "protofire: local socket 5 byte(s) forward, 6 back, both ways through one name",
+                        true,
+                    ),
+                    (
+                        "protofire: process 1 bound the local name, descriptor ",
+                        false,
+                    ),
+                    (
+                        "protofire: process 9 connected to the local name, descriptor ",
+                        false,
+                    ),
+                    (
+                        "protofire: process 1 accepted a local connection as descriptor ",
+                        false,
+                    ),
                     // The same two options, read back where they act: a receive
                     // buffer is the window the connection advertises next, and
                     // a send buffer is the congestion window it will not
@@ -1317,6 +1371,22 @@ impl Machine {
                     (
                         "protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern",
                         true,
+                    ),
+                    (
+                        "protofire: local socket 5 byte(s) forward, 6 back, both ways through one name",
+                        true,
+                    ),
+                    (
+                        "protofire: process 1 bound the local name, descriptor ",
+                        false,
+                    ),
+                    (
+                        "protofire: process 9 connected to the local name, descriptor ",
+                        false,
+                    ),
+                    (
+                        "protofire: process 1 accepted a local connection as descriptor ",
+                        false,
                     ),
                     // The congestion window, on an exchange long enough to see
                     // it move: ten acknowledgements grow it and a timeout
@@ -1713,6 +1783,39 @@ impl Machine {
                     "protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern",
                     true,
                 ),
+                // The local-domain socket, in the kernel's own exchange: a
+                // name bound, connected to, accepted, and bytes both ways.  A
+                // one-pipe connection would answer one direction and print
+                // zero for the other.
+                (
+                    "protofire: local socket 5 byte(s) forward, 6 back, both ways through one name",
+                    true,
+                ),
+                // And the same exchange between two ring-3 processes, which is
+                // the claim a probe cannot make: a bind, a connect, an accept,
+                // and a read and a write each way.
+                //
+                // The three lines required are the ones that do not depend on
+                // an interleaving.  Whether a read parks or finds its bytes
+                // already there is the scheduler's choice, and requiring
+                // `a program blocks on a local socket` made this gate fail on a
+                // boot where the child's write landed first: the exit statuses
+                // were identical, so nothing was broken.  The park and its wake
+                // are still printed and still read by a human; they are not a
+                // gate line, because a gate that depends on a race is a gate
+                // that fails for the wrong reason.
+                (
+                    "protofire: process 1 bound the local name, descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 9 connected to the local name, descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 1 accepted a local connection as descriptor ",
+                    false,
+                ),
                 // The congestion window, on an exchange long enough to see it
                 // move: ten acknowledgements grow it and a timeout collapses
                 // it.  Every other boot exchange finishes before the window
@@ -1853,7 +1956,7 @@ impl Machine {
                 // Every finished program's address space went back, as on the
                 // other two machines.
                 (
-                    "protofire: address spaces reaped 8, 16384 frame(s) free",
+                    "protofire: address spaces reaped 9, 16384 frame(s) free",
                     true,
                 ),
                 // No invalidation, and that is this machine's fact rather than

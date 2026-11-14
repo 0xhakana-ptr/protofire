@@ -9,7 +9,8 @@
 //! | [`tcp_table`] | which streams exist, and the four fields a segment is keyed on |
 //! | [`udp`] | the datagram, its checksum, and the rule that zero means none |
 //! | [`udp_socket`] | one bound port's queue and the bounds on it |
-//! | [`options`] | the four things a program may change about a socket, and the refusal for the rest |
+//! | [`options`] | the three things a program may change about a socket, and the refusal for the rest |
+//! | [`local`] | a name two processes meet at, and the connections waiting there |
 //!
 //! The last file in each pair is the one kind of state this crate holds: a
 //! value a caller owns, with no lock and no `static`, which is what lets the
@@ -19,6 +20,7 @@
 //! [`crate::tcp`] differ from their IPv4 twins only in the pseudo-header,
 //! which is the one place the two versions of a checksum disagree.
 
+pub mod local;
 pub mod options;
 pub mod tcp;
 pub mod tcp_table;

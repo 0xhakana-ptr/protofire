@@ -203,6 +203,15 @@ pub fn kernel_main() -> ! {
     #[cfg(target_os = "none")]
     crate::devices::exercise_network();
 
+    // The local-domain socket: a name this boot binds, connects to, accepts and
+    // moves bytes through both ways.  Deliberately outside the network exercise
+    // above, because none of it needs a card: a local connection is two pipes
+    // and a name, and a machine with no network is a machine where this still
+    // works.  Its result is the probe's own line; a boot whose line says
+    // MISMATCH is a boot the gate refuses.
+    #[cfg(target_os = "none")]
+    let _ = crate::local::probe();
+
     crate::programs::run();
 
     halt()
@@ -337,6 +346,23 @@ fn install_registry(namespace: fs::MountTable) {
     table.register(
         ::syscall::SyscallNumber::SetSockOpt,
         crate::syscall::set_sock_opt,
+    );
+    // The local-domain socket: a name two processes meet at, and the connection
+    // they read and write through.  `BindLocal` and `ConnectLocal` answer at
+    // once and the connect's own wake is what a waiting accept learns of;
+    // `AcceptLocal` is registered here too, and its parking is the trap path's
+    // branch, which is what `usize::MAX` from the handler means.
+    table.register(
+        ::syscall::SyscallNumber::BindLocal,
+        crate::syscall::bind_local,
+    );
+    table.register(
+        ::syscall::SyscallNumber::ConnectLocal,
+        crate::syscall::connect_local,
+    );
+    table.register(
+        ::syscall::SyscallNumber::AcceptLocal,
+        crate::syscall::accept_local,
     );
     table.register(
         ::syscall::SyscallNumber::GetSockOpt,

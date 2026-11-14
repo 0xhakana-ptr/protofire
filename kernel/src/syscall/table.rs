@@ -170,6 +170,31 @@ pub(crate) enum Descriptor {
         /// The process that holds it, so its exit can release it.
         owner: u32,
     },
+    /// One end of a local-domain connection: the two pipe halves a program
+    /// reads and writes through.
+    ///
+    /// Two halves and not one pipe, because a connection is two directions.
+    /// The halves are the pipes' own counted handles, so the descriptor's drop
+    /// is what closes the end, and a peer's read sees end-of-file when the
+    /// last descriptor naming the other side goes, which is a contract this
+    /// variant inherits rather than restates.
+    Local {
+        halves: crate::local::Halves,
+        /// The process that holds it, so its exit can release it.
+        owner: u32,
+    },
+    /// A bound name, the thing an accept is called on.
+    ///
+    /// A listener holds no pipe: the connection's pipes are made by the
+    /// connect that arrives, and a listener's own two ends would be handles on
+    /// a pipe nothing carries bytes through.  The name is held because its
+    /// owner's exit is what releases it, and a name whose listener died
+    /// without that release could not be bound again until the boot ended.
+    LocalListener {
+        name: alloc::string::String,
+        /// The process that holds it, so its exit can release the name.
+        owner: u32,
+    },
 }
 
 /// A descriptor copied into another process, with that process as its owner.
@@ -227,6 +252,17 @@ impl Descriptor {
             },
             Descriptor::TcpStream { stream, .. } => Descriptor::TcpStream {
                 stream: *stream,
+                owner,
+            },
+            // A local end copies as two **halves**, and each half's clone is a
+            // new handle on its pipe, which is what makes a forked child's
+            // copy keep the connection open until both processes are done.
+            Descriptor::Local { halves, .. } => Descriptor::Local {
+                halves: halves.clone(),
+                owner,
+            },
+            Descriptor::LocalListener { name, .. } => Descriptor::LocalListener {
+                name: name.clone(),
                 owner,
             },
         }
@@ -289,7 +325,9 @@ impl SyscallTable {
             | Some(Descriptor::Pipe { owner, .. })
             | Some(Descriptor::UdpSocket { owner, .. })
             | Some(Descriptor::TcpListener { owner, .. })
-            | Some(Descriptor::TcpStream { owner, .. }) => Some(*owner),
+            | Some(Descriptor::TcpStream { owner, .. })
+            | Some(Descriptor::Local { owner, .. })
+            | Some(Descriptor::LocalListener { owner, .. }) => Some(*owner),
             None => None,
         }
     }
@@ -454,6 +492,71 @@ impl SyscallTable {
         self.insert(Descriptor::TcpStream { stream, owner })
     }
 
+    /// Register one end of a local connection and answer its descriptor.
+    pub(crate) fn insert_local(
+        &mut self,
+        halves: crate::local::Halves,
+        owner: u32,
+    ) -> Result<usize> {
+        self.insert(Descriptor::Local { halves, owner })
+    }
+
+    /// Register a bound name and answer the descriptor an accept is called on.
+    pub(crate) fn insert_local_listener(
+        &mut self,
+        name: alloc::string::String,
+        owner: u32,
+    ) -> Result<usize> {
+        self.insert(Descriptor::LocalListener { name, owner })
+    }
+
+    /// The halves of the local end a descriptor names, cloned.
+    ///
+    /// A clone, for the same reason [`Self::pipe_end`] is one: a borrow held
+    /// across a read or a write would hold the registry's lock for a call that
+    /// may park.  Each cloned half raises its pipe's handle count, so the pipe
+    /// stays alive while the caller works and its own drop takes the count
+    /// back.
+    pub(crate) fn local_halves(
+        &self,
+        descriptor: usize,
+        caller: Option<u32>,
+    ) -> Option<crate::local::Halves> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::Local { halves, .. }) => Some(halves.clone()),
+            _ => None,
+        }
+    }
+
+    /// The name a listener's descriptor carries, for the accept called on it
+    /// and for the release its exit performs.
+    pub(crate) fn local_name(
+        &self,
+        descriptor: usize,
+        caller: Option<u32>,
+    ) -> Option<alloc::string::String> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::LocalListener { name, .. }) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// Every name the process `owner` holds a listener for, for its exit's
+    /// release.
+    pub(crate) fn local_names_of(&self, owner: u32) -> alloc::vec::Vec<alloc::string::String> {
+        self.descriptors
+            .iter()
+            .filter_map(|slot| match slot {
+                Some(Descriptor::LocalListener { name, owner: held }) if *held == owner => {
+                    Some(name.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The pipe end a descriptor names, cloned, if it names one.
     ///
     /// A clone, because the table owns its entries and a caller that borrowed
@@ -528,7 +631,9 @@ impl SyscallTable {
                 | Descriptor::Pipe { owner, .. }
                 | Descriptor::UdpSocket { owner, .. }
                 | Descriptor::TcpListener { owner, .. }
-                | Descriptor::TcpStream { owner, .. } = descriptor
+                | Descriptor::TcpStream { owner, .. }
+                | Descriptor::Local { owner, .. }
+                | Descriptor::LocalListener { owner, .. } = descriptor
                 && *owner == parent
             {
                 inherited.push(descriptor.for_owner(child));
@@ -565,6 +670,12 @@ impl SyscallTable {
     /// boot line saying how many a process's exit released is what makes the
     /// release observable rather than assumed.
     pub(crate) fn release_owned(&mut self, owner: u32) -> usize {
+        // Every name this process was listening on, taken before the slots go:
+        // the name is `crate::local`'s state and not the table's, and a
+        // listener's descriptor dropped without it would hold a name nothing
+        // could bind again.  Collected first because the release reads the
+        // slot while the loop below takes it.
+        let names = self.local_names_of(owner);
         let mut released = 0;
         for slot in &mut self.descriptors {
             let owned = match slot {
@@ -572,13 +683,18 @@ impl SyscallTable {
                 | Some(Descriptor::Pipe { owner: held, .. })
                 | Some(Descriptor::UdpSocket { owner: held, .. })
                 | Some(Descriptor::TcpListener { owner: held, .. })
-                | Some(Descriptor::TcpStream { owner: held, .. }) => *held == owner,
+                | Some(Descriptor::TcpStream { owner: held, .. })
+                | Some(Descriptor::Local { owner: held, .. })
+                | Some(Descriptor::LocalListener { owner: held, .. }) => *held == owner,
                 None => false,
             };
             if owned {
                 slot.take();
                 released += 1;
             }
+        }
+        for name in names {
+            crate::local::release(name.as_bytes());
         }
         released
     }
@@ -750,6 +866,11 @@ pub fn serve(arguments: &mut Arguments<'_>) -> Option<Result<Dispatch>> {
 /// The accept path's way in: the stream the listener handed out becomes a
 /// descriptor of the process that accepted it.  `None` when no registry is
 /// installed, which is the state before the boot has mounted its namespace.
+pub fn attach_local(halves: crate::local::Halves, owner: u32) -> Option<usize> {
+    REGISTRY.lock().as_mut()?.insert_local(halves, owner).ok()
+}
+
+/// Register one end of a stream and answer its descriptor.
 pub fn attach_tcp_stream(stream: usize, owner: u32) -> Option<usize> {
     REGISTRY
         .lock()
@@ -804,6 +925,22 @@ pub fn pipe_end(descriptor: usize) -> Option<pipe::End> {
 /// program sees does not tell it which slots exist.
 pub fn pipe_end_for(descriptor: usize, caller: u32) -> Option<pipe::End> {
     REGISTRY.lock().as_ref()?.pipe_end(descriptor, Some(caller))
+}
+
+/// The two halves of the local end a descriptor names, for a caller that must
+/// own it.
+///
+/// The ring-3 way in, the same shape [`pipe_end_for`] is.  A local end's read
+/// and write are the two halves', and the caller gets both because a
+/// connection is two directions: a lookup that answered one would be a socket
+/// a program could only use half of.
+pub fn local_halves_for(descriptor: usize, caller: Option<u32>) -> Option<crate::local::Halves> {
+    REGISTRY.lock().as_ref()?.local_halves(descriptor, caller)
+}
+
+/// The name a listener's descriptor names, for the accept called on it.
+pub fn local_name_for(descriptor: usize, caller: Option<u32>) -> Option<alloc::string::String> {
+    REGISTRY.lock().as_ref()?.local_name(descriptor, caller)
 }
 
 /// The datagram socket a descriptor names, for a caller that must own it.

@@ -177,6 +177,53 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // once a pipe exists.  The announcement was then served as a pipe write and
     // the program printed nothing.  A length is what the announcing call
     // genuinely lacks and a real write genuinely has.
+    // A write to a local-domain connection: the writer half of the
+    // descriptor's two.  The wake is the pipe's, and the count is what the
+    // pipe carried: a full pipe answers a short write, which is the contract a
+    // program's loop already handles.
+    if number == SyscallNumber::Write as usize
+        && call.arguments[2] != 0
+        && crate::syscall::local_halves_for(call.arguments[0], caller).is_some()
+    {
+        let descriptor = call.arguments[0];
+        let buffer = call.arguments[1];
+        let length = call.arguments[2];
+        if !crate::address_space::is_user_range(buffer, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let Some(halves) = crate::syscall::local_halves_for(descriptor, caller) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let pipe = halves.writer.pipe().clone();
+        // SAFETY: the range was validated above and the page tables are the
+        // ones this task runs through, so the buffer is readable from here.
+        let source = unsafe { core::slice::from_raw_parts(buffer as *const u8, length) };
+        let progress = match halves.writer.try_write(&pipe, source) {
+            Ok(progress) => progress,
+            Err(error) => return CallOutcome::Return(abi::syscall::encode_error(error)),
+        };
+        return match progress {
+            crate::pipe::Progress::Done(count) => {
+                if count > 0 {
+                    let woken = crate::scheduler::wake_blocked();
+                    arch::serial::write_str("protofire: a local write woke ");
+                    arch::serial::write_u32(woken as u32);
+                    arch::serial::write_str(" blocked task(s)\n");
+                    if woken > 0 {
+                        // SAFETY: the boot's own IPI path, installed before
+                        // any program ran.
+                        unsafe { arch::send_ipi_to_others() };
+                    }
+                }
+                CallOutcome::Return(count)
+            }
+            // A full pipe with a reader: this boot does not park a writer, for
+            // the reason the plain pipe's branch gives, and zero says the
+            // bytes did not go.
+            crate::pipe::Progress::Block => CallOutcome::Return(0),
+        };
+    }
+
     if number == SyscallNumber::Write as usize
         && call.arguments[2] != 0
         && crate::pipe::lookup_for(call.arguments[0], caller).is_some()
@@ -402,6 +449,68 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented));
             }
         }
+    }
+
+    // A read from a local-domain connection: the reader half of the
+    // descriptor's two.
+    //
+    // The slots are a **stream's**, `a1` the offset, `a2` the buffer and `a3`
+    // its length, because that is how `sys_read` packs one: the wrapper sends
+    // the read-from-here sentinel in `a1` and the address after it.  The pipe
+    // branch below reads `a1` and `a2`, which is right only for the boot's own
+    // calls, whose arguments are built by hand, and this branch started as a
+    // copy of it: every ring-3 read of a local end was therefore refused for a
+    // range whose "buffer" was the sentinel `0xffff_ffff_ffff_ffff`.  Both
+    // halves of the exchange failed that way, and the exit statuses 243 and
+    // 245 are what found it.
+    if number == SyscallNumber::Read as usize
+        && crate::syscall::local_halves_for(call.arguments[0], caller).is_some()
+    {
+        let descriptor = call.arguments[0];
+        let buffer = call.arguments[2];
+        let length = call.arguments[3];
+        if length == 0 {
+            return CallOutcome::Return(0);
+        }
+        if !crate::address_space::is_user_range(buffer, length) {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let Some(halves) = crate::syscall::local_halves_for(descriptor, caller) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let pipe = halves.reader.pipe().clone();
+        // SAFETY: the range was validated above and the page tables are the
+        // ones this task runs through, so the buffer is writable from here.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let progress = match halves.reader.try_read(&pipe, destination) {
+            Ok(progress) => progress,
+            Err(error) => return CallOutcome::Return(abi::syscall::encode_error(error)),
+        };
+        return match progress {
+            crate::pipe::Progress::Done(count) => CallOutcome::Return(count),
+            crate::pipe::Progress::Block => {
+                // The re-check inside the park is the pipe's own, for the
+                // reason its branch gives: a write on another CPU between the
+                // `Block` above and the park would otherwise wake a task that
+                // had not parked yet, and that task would wait for ever.
+                match crate::scheduler::block_unless(frame, || {
+                    match halves.reader.try_read(&pipe, destination) {
+                        Ok(crate::pipe::Progress::Done(count)) => Some(count),
+                        Ok(crate::pipe::Progress::Block) => None,
+                        Err(error) => Some(abi::syscall::encode_error(error)),
+                    }
+                }) {
+                    Some(answer) => CallOutcome::Return(answer),
+                    None => {
+                        arch::serial::write_str("protofire: a program blocks on a local socket\n");
+                        if !crate::scheduler::has_selectable() {
+                            crate::scheduler::idle_until_woken();
+                        }
+                        crate::scheduler::switch_without_saving(frame)
+                    }
+                }
+            }
+        };
     }
 
     if number == SyscallNumber::Read as usize
@@ -1017,6 +1126,15 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     if number == SyscallNumber::Read as usize
         && crate::pipe::lookup_for(call.arguments[0], caller).is_none()
         && crate::syscall::tcp_stream_for(call.arguments[0], caller).is_none()
+        // A local end's read is `(descriptor, buffer, length)`, which is the
+        // pipe's shape and not this branch's `(descriptor, offset, buffer,
+        // length)`.  Without this test the call fell through to here, which
+        // read `a2` as a pointer and `a3` as a length: the buffer was the
+        // length word and the length was whatever the program's register held,
+        // so the read was refused for a range the program never named.  Both
+        // halves of this exchange failed that way, and the exit statuses, 243
+        // and 245, are what found it.
+        && crate::syscall::local_halves_for(call.arguments[0], caller).is_none()
     {
         // `Read(descriptor, offset, buffer, length)`: a file descriptor in the
         // registry's table, the buffer a range of the caller's own memory.  A
@@ -1441,6 +1559,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // record.
     if number == SyscallNumber::SetHostName as usize
         || number == SyscallNumber::ResolveHostname as usize
+        || number == SyscallNumber::BindLocal as usize
+        || number == SyscallNumber::ConnectLocal as usize
     {
         let mut name_bytes = [0u8; NAME_MAX];
         let Ok(name) = copy_user_name(call.arguments[0], call.arguments[1], &mut name_bytes) else {
@@ -1456,6 +1576,14 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
             if number == SyscallNumber::SetHostName as usize {
                 arch::serial::write_str(" set the machine's name, ");
+            } else if number == SyscallNumber::BindLocal as usize
+                || number == SyscallNumber::ConnectLocal as usize
+            {
+                arch::serial::write_str(if number == SyscallNumber::BindLocal as usize {
+                    " bound the local name, descriptor "
+                } else {
+                    " connected to the local name, descriptor "
+                });
             } else {
                 arch::serial::write_str(" resolved a name to ");
             }
@@ -1839,6 +1967,67 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             arch::serial::write_str("\n");
         }
         return outcome;
+    }
+
+    // The local accept: a connection from a name's queue, or a park until a
+    // connect puts one there.  The handler answers `usize::MAX` for an empty
+    // queue rather than parking itself, because it holds the registry's lock
+    // and parking needs the scheduler; this branch is where the two meet.
+    //
+    // The wake is the connect's, which is a scheduler wake like the stream's,
+    // and the re-check under the scheduler's lock is what closes the gap
+    // between the `accept` above and the park: a connection made on another
+    // CPU in that window would otherwise wake a task that had not parked yet.
+    if number == SyscallNumber::AcceptLocal as usize {
+        let descriptor = call.arguments[0];
+        let owner = crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS);
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(owner);
+        let mut answer = through_registry(&mut context, None, None, None);
+        if matches!(answer, CallOutcome::Return(value) if value == usize::MAX) {
+            // The queue was empty.  The re-check asks the same handler again
+            // under the scheduler's lock; every answer but `usize::MAX` is the
+            // call's answer.
+            let name = crate::syscall::local_name_for(descriptor, Some(owner));
+            let retried = crate::scheduler::block_unless(frame, || {
+                let name = name.as_deref()?;
+                match crate::local::accept(name.as_bytes()) {
+                    Ok(Some(halves)) => Some(
+                        crate::syscall::attach_local(halves, owner)
+                            .unwrap_or_else(|| abi::syscall::encode_error(abi::Error::OutOfMemory)),
+                    ),
+                    // The queue is still empty, or the name went: the first is
+                    // the park's own case and the second is an error this
+                    // cannot answer from inside a re-check that must decide
+                    // park or not.
+                    Ok(None) => None,
+                    Err(error) => Some(abi::syscall::encode_error(error)),
+                }
+            });
+            answer = match retried {
+                Some(value) => CallOutcome::Return(value),
+                None => {
+                    arch::serial::write_str(
+                        "protofire: a program waits to accept a local connection\n",
+                    );
+                    if !crate::scheduler::has_selectable() {
+                        crate::scheduler::idle_until_woken();
+                    }
+                    return crate::scheduler::switch_without_saving(frame);
+                }
+            };
+        }
+        if let CallOutcome::Return(value) = answer
+            && !abi::syscall::is_error_status(value)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(owner);
+            arch::serial::write_str(" accepted a local connection as descriptor ");
+            arch::serial::write_u32(value as u32);
+            arch::serial::write_str("\n");
+        }
+        return answer;
     }
 
     // The accept: one stream from a listener's pending list, or a park

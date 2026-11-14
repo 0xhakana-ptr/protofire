@@ -1253,6 +1253,98 @@ pub fn get_peer_name(table: &mut SyscallTable, arguments: &mut Arguments<'_>) ->
     socket_end(table, arguments, crate::net::SocketEnd::Peer)
 }
 
+/// Bind a name, and answer the descriptor an accept is called on.
+///
+/// Arguments: the name and its length.  The name is **bytes** and not a path:
+/// nothing resolves it through a namespace, and a filesystem may hold a file of
+/// the same name, which is what makes this a local socket rather than a file a
+/// program would have to create and clean up.
+///
+/// The descriptor holds the name so its owner's exit releases it.  A name whose
+/// listener died without that release could not be bound again until the boot
+/// ended.
+pub fn bind_local(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+    let name = arguments.path.ok_or(Error::InvalidArgument)?;
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    crate::local::bind(name.as_bytes())?;
+    let descriptor = table.insert_local_listener(alloc::string::String::from(name), owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Connect to a bound name, and answer the descriptor the connection is read
+/// and written through.
+///
+/// Arguments: the name and its length.  The two pipes are made here, and the
+/// halves the descriptor holds are the client's: what it writes goes to the
+/// server and what the server writes comes back to it.
+pub fn connect_local(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+    let name = arguments.path.ok_or(Error::InvalidArgument)?;
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let halves = crate::local::connect(name.as_bytes())?;
+    let descriptor = table.insert_local(halves, owner)?;
+    // The connection this call put in the listener's queue is what a parked
+    // accept was waiting for.  The wake is here and not in `crate::local`
+    // because raising a task is the scheduler's act and this file is the one
+    // layer that may name it; the alternative, a connect that queued and said
+    // nothing, is a server parked for ever, which is what the first boot of
+    // this change did.
+    let woken = crate::scheduler::wake_blocked();
+    if woken > 0 {
+        // The task that woke may be held by another CPU, and that CPU is
+        // parked in a wait whose own clock may not move: without this, the
+        // woken task stays Runnable and unclaimed for ever.  A host build has
+        // no second CPU and no IPI, which is why this is gated.
+        #[cfg(target_os = "none")]
+        // SAFETY: the boot's own IPI path, installed before any program ran.
+        unsafe {
+            arch::send_ipi_to_others()
+        };
+        #[cfg(target_os = "none")]
+        {
+            arch::serial::write_str("protofire: a local connect woke ");
+            arch::serial::write_u32(woken as u32);
+            arch::serial::write_str(" blocked task(s)\n");
+        }
+        #[cfg(not(target_os = "none"))]
+        let _ = woken;
+    }
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Take a waiting connection on a listener, if there is one.
+///
+/// The answer `usize::MAX` is the trap path's signal that nothing waits: a
+/// handler cannot park, for the reason `kernel/src/syscall/mod.rs` gives, so
+/// the branch in `process.rs` asks this once and then parks on its own.  Every
+/// other answer is a descriptor or an error.
+pub fn accept_local(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 1)?;
+    let descriptor = arguments.context.arg(0);
+    let caller = arguments.context.caller_pid;
+    let name = table
+        .local_name(descriptor, caller)
+        .ok_or(Error::InvalidArgument)?;
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    match crate::local::accept(name.as_bytes())? {
+        Some(halves) => {
+            let accepted = table.insert_local(halves, owner)?;
+            Ok(Dispatch::complete(accepted))
+        }
+        None => Ok(Dispatch::complete(usize::MAX)),
+    }
+}
+
 /// Write a `NetworkStatus` record at the start of a validated buffer: the
 /// state word, then the fourteen address bytes the record packed.
 fn write_network_status(buffer: &mut [u8], record: &network_abi::NetworkStatusRecord) {

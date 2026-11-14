@@ -193,6 +193,12 @@ pub use abi::network::SO_RCVBUF;
 pub use abi::network::SO_SNDBUF;
 pub use abi::network::SOL_SOCKET;
 pub use abi::network::TCP_NODELAY;
+
+/// The three local-domain calls, and the bound a name has.
+pub const SYS_BIND_LOCAL: usize = SyscallNumber::BindLocal as usize;
+pub const SYS_CONNECT_LOCAL: usize = SyscallNumber::ConnectLocal as usize;
+pub const SYS_ACCEPT_LOCAL: usize = SyscallNumber::AcceptLocal as usize;
+pub use abi::network::HOST_NAME_MAX as LOCAL_NAME_MAX;
 pub const IPV6_STATUS_BYTES: usize = core::mem::size_of::<abi::network::Ipv6StatusRecord>();
 /// The state word for a card the kernel drives.
 pub use abi::network::NETWORK_STATUS_UP;
@@ -790,6 +796,46 @@ pub fn sys_get_sock_opt(descriptor: usize, level: u32, name: u32, buffer: &mut [
         buffer.len(),
         0,
     )
+}
+
+/// `bind_local(name)`: the listener's descriptor, or an error status.
+///
+/// The name is bytes and not a path: nothing resolves it through a namespace,
+/// and a filesystem may hold a file of the same name.  A name is copied into
+/// kernel memory, which is why its length is bounded.
+#[cfg(target_os = "none")]
+pub fn sys_bind_local(name: &[u8]) -> usize {
+    syscall6(
+        SYS_BIND_LOCAL,
+        name.as_ptr() as usize,
+        name.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// `connect_local(name)`: the connection's descriptor, or an error status.
+#[cfg(target_os = "none")]
+pub fn sys_connect_local(name: &[u8]) -> usize {
+    syscall6(
+        SYS_CONNECT_LOCAL,
+        name.as_ptr() as usize,
+        name.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// `accept_local(listener)`: the accepted connection's descriptor, or an error
+/// status.  Parks until a connect arrives, which is the kernel's business and
+/// not this wrapper's.
+#[cfg(target_os = "none")]
+pub fn sys_accept_local(listener: usize) -> usize {
+    syscall6(SYS_ACCEPT_LOCAL, listener, 0, 0, 0, 0, 0)
 }
 
 /// `ipv6_status(record)`: zero, with the record filled, the interface's

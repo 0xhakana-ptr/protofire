@@ -66,6 +66,7 @@ pub mod heap;
 pub mod interrupts;
 pub mod iso_disc;
 pub mod loader;
+pub mod local;
 pub mod net;
 pub mod per_cpu;
 pub mod pipe;

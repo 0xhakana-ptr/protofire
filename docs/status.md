@@ -609,6 +609,55 @@ prints `8192 -> 14600 -> 0, MISMATCH`.
 
 [RFC 793]: https://www.rfc-editor.org/rfc/rfc793
 
+**Three local-domain numbers: `BindLocal` (97), `ConnectLocal` (98),
+`AcceptLocal` (99).**  A name two processes meet at, a connection made when one
+connects and taken when the other accepts, and bytes in both directions.  The
+name is **bytes** and not a filesystem path: nothing resolves it through a
+namespace and a filesystem may hold a file of the same name, which is what makes
+this a socket rather than a file a program would have to create and clean up.
+
+The connection is **two pipes**, not one.  The previous tree's local socket was
+one pipe: the client kept its write end and the server its read end, so a client
+could not read what its server answered, which is half of what a socket is.  Two
+pipes cost one more buffer per connection and make the connection a connection.
+The mutation is the probe's: wire both halves to one pipe and the line reads
+`5 byte(s) forward, 0 back, MISMATCH`.
+
+A pipe's counts are its hands, so both ends of both pipes exist at **connect**
+and not at accept.  A pipe with no reader handle answers a write with zero, which
+is the rule that stops bytes going nowhere; a server's reader made only when it
+accepted would have dropped everything a client wrote in between, and the first
+version of this did exactly that.
+
+```
+protofire: local socket 5 byte(s) forward, 6 back, both ways through one name
+protofire: process 1 bound the local name, descriptor 6
+protofire: a program waits to accept a local connection
+protofire: a local connect woke 1 blocked task(s)
+protofire: process 9 connected to the local name, descriptor 12
+protofire: process 1 accepted a local connection as descriptor 13
+protofire: a program blocks on a local socket
+protofire: a local write woke 1 blocked task(s)
+```
+
+The last four lines are two ring-3 processes and not the kernel: `init` binds a
+name, forks, and the child connects and asks while this process accepts and
+answers.  The child's exit status is `114`, the `r` of `reply`, which only a
+connection that carried bytes back could have put in its register.  The park and
+its wake are printed and are **not** gate lines: whether a read parks or finds
+its bytes already there is the scheduler's choice, and requiring that line made
+the gate fail on a boot where the child's write landed first, with identical exit
+statuses and nothing broken.
+
+Two defects were found by writing this, and both by the exit statuses rather than
+by a host test.  A connect that queued a connection and woke nobody left the
+server parked for ever, so `ConnectLocal` now wakes.  And the local `Read` branch
+was a copy of the pipe's, which reads `a1` and `a2`, while `sys_read` packs a
+stream's slots: `a1` the offset, `a2` the buffer, `a3` its length.  Every ring-3
+read of a local end was therefore refused for a range whose "buffer" was the
+read-from-here sentinel `0xffff_ffff_ffff_ffff`, which is what the exit statuses
+`243` and `245` were saying.
+
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and
 `ListenTcp` (56) answer through the registry; `AcceptTcp` (57) is served by
 the trap path, because it parks, and a stream's data rides the same `Read`

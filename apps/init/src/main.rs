@@ -61,13 +61,19 @@ use user_abi::is_error;
 #[cfg(target_os = "none")]
 use user_abi::sys_abi_info;
 #[cfg(target_os = "none")]
+use user_abi::sys_accept_local;
+#[cfg(target_os = "none")]
 use user_abi::sys_accept_tcp;
+#[cfg(target_os = "none")]
+use user_abi::sys_bind_local;
 #[cfg(target_os = "none")]
 use user_abi::sys_bind_udp;
 #[cfg(target_os = "none")]
 use user_abi::sys_brk;
 #[cfg(target_os = "none")]
 use user_abi::sys_close;
+#[cfg(target_os = "none")]
+use user_abi::sys_connect_local;
 #[cfg(target_os = "none")]
 use user_abi::sys_connect_tcp;
 #[cfg(target_os = "none")]
@@ -683,6 +689,46 @@ pub extern "C" fn _start() -> ! {
     }
     insist(sys_close(stream));
     insist(sys_close(listener));
+
+    // The local-domain socket: a name this process binds, a fork that
+    // connects to it, an accept, and bytes in **both** directions.  Both ways
+    // is the property a pipe-based local socket has to have and the previous
+    // tree's did not: its connection was one pipe, so the server could never
+    // answer.
+    //
+    // The child's exit status is the answer it received, which only a
+    // connection that carried bytes back could have put in its register.
+    const LOCAL_NAME: &[u8] = b"protofire.init.local";
+    const ASK: &[u8] = b"local";
+    const ANSWER: &[u8] = b"reply";
+
+    let local_listener = insist(sys_bind_local(LOCAL_NAME));
+    let local_child = insist(sys_fork());
+    if local_child == 0 {
+        let connection = insist(sys_connect_local(LOCAL_NAME));
+        insist(sys_write(connection, ASK));
+        let mut answer = [0u8; 16];
+        let count = insist(sys_read(connection, &mut answer));
+        if count != ANSWER.len() {
+            sys_exit(236);
+        }
+        sys_exit(answer[0] as usize);
+    }
+    let connection = insist(sys_accept_local(local_listener));
+    let mut question = [0u8; 16];
+    let count = insist(sys_read(connection, &mut question));
+    if count != ASK.len() || &question[..count] != ASK {
+        sys_exit(237);
+    }
+    insist(sys_write(connection, ANSWER));
+    let local_status = insist(sys_wait_process_of(local_child));
+    // The child exits with the first byte of the answer, `r`, which is what a
+    // connection that carried bytes back leaves in its register.
+    if local_status != ANSWER[0] as usize {
+        sys_exit(238);
+    }
+    insist(sys_close(connection));
+    insist(sys_close(local_listener));
 
     // The lookup a program asks by name.  Its answer is not asserted: the
     // name is resolved by whatever server the wire has, and a machine whose
