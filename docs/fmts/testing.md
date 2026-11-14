@@ -191,6 +191,16 @@ the gate requires it at `p1` and above.  A `p3` that never boots anything is a
 `p2` with a longer name, and both of this tree's recent runtime defects would
 have passed one.
 
+Two habits, each of which cost a session before it was learned:
+
+- **Sample twice, with the guest running.**  One read of a counter says nothing
+  about whether it is moving.  The aarch64 stop looked like a deaf core until
+  two samples five seconds apart showed a frozen count on a core that was
+  executing ring 3.
+- **Name the disk you booted.**  A boot against the kernel's own built-in image
+  carries no init program, so `ExecProcess` fails and the program spins, which
+  looks exactly like the defect being chased.
+
 ### What the gate runs
 
 The tiers accumulate.  **`p0`** runs every crate on the host and builds the

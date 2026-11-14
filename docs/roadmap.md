@@ -55,7 +55,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **145,603 lines of Rust across 40 crates**, which is
+The tree is **145,710 lines of Rust across 40 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -470,7 +470,7 @@ no way to tell this stack.
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-145,603 across 40 crates.  The difference is not lost work, it is work the new
+145,710 across 40 crates.  The difference is not lost work, it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 
@@ -676,8 +676,12 @@ process calls can do.
 about what a descriptor *is*, and making it before the filesystems, the drivers
 and the mechanisms have landed would decide it against an incomplete set of
 things a descriptor has to name.  It is also the one level whose *size* is small
-and whose *consequence* is large, see `docs/handover.md` for what the tree
-actually holds behind the direction.
+and whose *consequence* is large: `abi` would grow a wire record and a
+numbering, `kernel` the transfer itself and nothing about what is transferred,
+and everything above it, what a service is and how it is found, is user space.
+That is tens of lines of kernel and an architecture of user space, which is why
+building it now would decide a descriptor's third variant against one service
+and no device.
 
 Every other level on this page is code.  This one is a decision.  Today a
 `Descriptor` is a `File` or a `Pipe`, both of which are things the kernel
