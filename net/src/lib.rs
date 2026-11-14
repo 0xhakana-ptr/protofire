@@ -148,9 +148,18 @@
 //! comparison.
 //!
 //! What is also absent is every protocol this crate does not name: DCCP,
-//! IPsec, TLS, the packet filter, multicast routing.  Those are numbers above
-//! the frozen range and each is its own stack, which is why `docs/roadmap.md`
-//! lists them as work rather than as gaps in this one.
+//! IPsec, TLS, multicast routing.  Those are numbers above the frozen range
+//! and each is its own stack, which is why `docs/roadmap.md` lists them as
+//! work rather than as gaps in this one.
+//!
+//! [`filter`] is here and is one of them no longer: an ordered rule list, the
+//! first match deciding, prefixes and port ranges in both families, and the
+//! flow table a stateful rule fills so a reply finds what its request was
+//! allowed to do.  It is a **policy about a packet**, which is why it is not
+//! under `transport`: it is asked at two points the frame crosses, and neither
+//! of them is a transport.  There is no `enabled` flag, deliberately: a rule
+//! set that a call could switch off is a rule set that can be installed and
+//! never consulted, which is the state the previous tree shipped.
 //! What a program **may change** about a socket is [`options`]: three numbers,
 //! each of which moves the thing it names.  The module is short because an
 //! option nothing acts on is a field, and this crate would rather refuse one
@@ -174,6 +183,7 @@ extern crate alloc;
 pub mod address;
 pub mod dhcp;
 pub mod dns;
+pub mod filter;
 pub mod internet;
 pub mod link;
 pub mod route;
@@ -196,6 +206,11 @@ pub use internet::reassembly;
 pub use internet::reply;
 
 pub use link::ethernet;
+
+pub use filter::Action;
+pub use filter::Filter;
+pub use filter::Packet;
+pub use filter::Rule;
 
 pub use transport::local;
 pub use transport::options;

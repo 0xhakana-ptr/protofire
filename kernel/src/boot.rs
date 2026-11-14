@@ -265,6 +265,27 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::MacGetStatus,
         crate::syscall::mac_get_status,
     );
+    // The packet filter.  Four numbers above the frozen range, and the one
+    // policy this build lets a program install that changes what the demux does
+    // with a packet.  `FilterAddRule` and `FilterGetStats` take a record, so
+    // their buffers are borrowed in the trap path; the other two name words and
+    // answer at once.
+    table.register(
+        ::syscall::SyscallNumber::FilterAddRule,
+        crate::syscall::filter_add_rule,
+    );
+    table.register(
+        ::syscall::SyscallNumber::FilterRemoveRule,
+        crate::syscall::filter_remove_rule,
+    );
+    table.register(
+        ::syscall::SyscallNumber::FilterSetDefaultAction,
+        crate::syscall::filter_set_default_action,
+    );
+    table.register(
+        ::syscall::SyscallNumber::FilterGetStats,
+        crate::syscall::filter_get_stats,
+    );
     table.register(
         ::syscall::SyscallNumber::MacSetMode,
         crate::syscall::mac_set_mode,

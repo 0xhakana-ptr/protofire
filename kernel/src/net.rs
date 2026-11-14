@@ -706,7 +706,11 @@ pub fn send_raw_packet(
                 );
                 frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..]
                     .copy_from_slice(payload);
-                card.submit_frame(&frame)?;
+                submit_filtered(
+                    card.as_ref(),
+                    &frame,
+                    &net::filter::Packet::v4(local, destination, protocol, payload),
+                )?;
                 Ok(payload.len())
             }
             // A raw socket over IPv6 would have to write the extension-header
@@ -915,7 +919,16 @@ pub fn send_datagram(
                 destination_port,
                 bytes,
             );
-            card.submit_frame(&frame)
+            submit_filtered(
+                card.as_ref(),
+                &frame,
+                &net::filter::Packet::v4(
+                    protocol,
+                    destination,
+                    net::ipv4::PROTOCOL_UDP,
+                    &frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+                ),
+            )
         }
         net::address::Address::V6(destination) => {
             let destination_hardware = peer_hardware(destination);
@@ -943,7 +956,16 @@ pub fn send_datagram(
                 destination_port,
                 bytes,
             );
-            card.submit_frame(&frame)
+            submit_filtered(
+                card.as_ref(),
+                &frame,
+                &net::filter::Packet::v6(
+                    local,
+                    destination,
+                    net::ipv6::NEXT_UDP,
+                    &frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+                ),
+            )
         }
     }
 }
@@ -1103,6 +1125,25 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
     }
     let at = netdev::ETHERNET_HEADER_LEN + packet.payload_at;
     let payload = &frame[at..at + packet.payload_len];
+
+    // The filter's opinion, before any transport reads a byte.  Before, and
+    // not after: a packet a rule drops has not reached the stream table, so a
+    // dropped SYN makes no stream, a dropped datagram fills no queue, and a
+    // dropped fragment does not spend the reassembly cache's memory.  A filter
+    // asked after the demux would be a filter that decided whether a program
+    // learned something it had already been told.
+    //
+    // A **later fragment** is matched with no ports, because its transport
+    // header is in the first piece: the filter sees the ports that arrived
+    // with this packet and nothing the sender put in another one.
+    if !filter_inbound(&net::filter::Packet::v4(
+        packet.header.source,
+        packet.header.destination,
+        packet.header.protocol,
+        payload,
+    )) {
+        return;
+    }
 
     // A piece of a larger packet is held rather than read as the whole: the
     // bytes at an offset are not a segment, and parsing them as one is how a
@@ -1506,6 +1547,32 @@ fn demux_ipv6(frame: &[u8]) {
     let Some(next) = net::ipv6::walk(frame, &packet) else {
         return;
     };
+    // The filter, at the same point in the other family: after the packet is
+    // known to be this machine's and before a piece of it is held or a
+    // transport reads it.  A first fragment carries the transport header and
+    // so has its ports; a later one does not, and is matched as a packet whose
+    // protocol has no ports, which is the same answer IPv4's path gives.
+    let (filtered_header, filtered_at, filtered_len) = match next {
+        net::ipv6::Next::Payload {
+            next_header,
+            at,
+            len,
+        } => (next_header, at, len),
+        net::ipv6::Next::Fragment {
+            next_header,
+            at,
+            len,
+            ..
+        } => (next_header, at, len),
+    };
+    if !filter_inbound(&net::filter::Packet::v6(
+        packet.header.source,
+        packet.header.destination,
+        filtered_header,
+        &frame[filtered_at..filtered_at + filtered_len],
+    )) {
+        return;
+    }
     // A piece of a larger packet is held rather than read as the whole: the
     // bytes at an offset are not a segment, and parsing them as one is how a
     // stack answers with a truncated segment that looks complete.  The piece
@@ -2205,6 +2272,106 @@ fn fragment_now() -> u64 {
 
 static TCP: Mutex<net::tcp_table::Table> = Mutex::new(net::tcp_table::Table::new());
 
+/// The packet filter: the rules a program installed, the flows they remember,
+/// and the action for a packet no rule matches.
+///
+/// The lock is here and the arithmetic is [`net::filter`]'s, the way the
+/// fragment cache and the stream table are.  What this file decides is the two
+/// places a packet crosses the machine, and those are the two calls below.
+static FILTER: Mutex<net::filter::Filter> = Mutex::new(net::filter::Filter::new());
+
+/// The filter's opinion of a packet arriving from the wire.
+///
+/// `false` is a silent drop: the demux returns without reading the payload,
+/// and nothing answers the sender.  A starting state of allow means a boot
+/// whose filter never had a rule added behaves exactly as it did before this
+/// module existed, which is what makes a filter's arrival testable.
+fn filter_inbound(packet: &net::filter::Packet) -> bool {
+    FILTER
+        .lock()
+        .permits(net::filter::Direction::Inbound, packet, micros_since_boot())
+        .allowed
+}
+
+/// The filter's opinion of a packet about to leave.
+///
+/// The same decision as [`filter_inbound`] with the other direction, and a
+/// separate function so the two call sites cannot pass the wrong one: a filter
+/// asked `Inbound` about an outbound frame is a rule set applied backwards,
+/// which is a policy that is wrong in the direction that matters most.
+fn filter_outbound(packet: &net::filter::Packet) -> bool {
+    FILTER
+        .lock()
+        .permits(
+            net::filter::Direction::Outbound,
+            packet,
+            micros_since_boot(),
+        )
+        .allowed
+}
+
+/// Hand one outbound frame to the card, unless a rule refuses it.
+///
+/// The one place the outbound filter runs, so a sender that forgot it is a
+/// sender that did not call this: three callers used to reach `submit_frame`
+/// directly and each would have needed its own copy of the decision.
+///
+/// `packet` is what the filter is asked about, and it is built by the caller
+/// from the header it just wrote rather than parsed back out of the frame: the
+/// frame's bytes are the caller's own, and a parse would be reading them to
+/// learn what the caller already knew.
+///
+/// A refused frame answers [`Error::PermissionDenied`], which is the honest
+/// answer to a program's own send: unlike a received packet, whose sender is
+/// someone else and whom this machine tells nothing, a program whose call was
+/// dropped learns that its packet did not leave.
+fn submit_filtered(
+    card: &dyn LinkDevice,
+    frame: &[u8],
+    packet: &net::filter::Packet,
+) -> Result<()> {
+    if !filter_outbound(packet) {
+        return Err(Error::PermissionDenied);
+    }
+    card.submit_frame(frame)
+}
+
+/// The filter's rules and counters, as `FilterGetStats` reports them.
+pub fn filter_status() -> (net::filter::Action, u32, u32, u64, u64) {
+    let filter = FILTER.lock();
+    let (allowed, dropped) = filter.counts();
+    (
+        filter.default_action(),
+        filter.len() as u32,
+        filter.flows() as u32,
+        allowed,
+        dropped,
+    )
+}
+
+/// Add one rule, answering the id it was given.
+pub fn filter_add(record: &abi::network::FilterRuleDef) -> Result<u32> {
+    let rule = net::filter::Rule::from_record(record)?;
+    FILTER.lock().add(rule)
+}
+
+/// Remove one rule by id, answering whether one was there.
+pub fn filter_remove(id: u32) -> bool {
+    FILTER.lock().remove(id)
+}
+
+/// Set the action a packet no rule matches gets.
+///
+/// The flows are forgotten in the same call, because they were remembered
+/// under the rules that are being changed: an entry that outlived its rules
+/// would allow traffic the new set was written to stop, which is the direction
+/// a policy change must not fail in.
+pub fn filter_set_default(action: net::filter::Action) {
+    let mut filter = FILTER.lock();
+    filter.forget_flows();
+    filter.set_default_action(action);
+}
+
 /// Open a listening port, answering the listener's id.
 ///
 /// `AlreadyExists` when the port is taken, for the reason a bound datagram
@@ -2561,7 +2728,16 @@ fn tcp_send_on_wire(
                 outgoing.window,
                 &outgoing.payload,
             );
-            interface.card.submit_frame(&frame)
+            submit_filtered(
+                interface.card.as_ref(),
+                &frame,
+                &net::filter::Packet::v4(
+                    our_protocol,
+                    destination,
+                    net::ipv4::PROTOCOL_TCP,
+                    &frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+                ),
+            )
         }
         net::address::Address::V6(destination) => {
             // No router address to route by yet: an IPv6 packet for another
@@ -2596,7 +2772,16 @@ fn tcp_send_on_wire(
                 outgoing.window,
                 &outgoing.payload,
             );
-            interface.card.submit_frame(&frame)
+            submit_filtered(
+                interface.card.as_ref(),
+                &frame,
+                &net::filter::Packet::v6(
+                    local,
+                    destination,
+                    net::ipv6::NEXT_TCP,
+                    &frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+                ),
+            )
         }
     }
 }
@@ -3997,6 +4182,233 @@ pub fn route_probe() -> bool {
         }
         Err(_) => arch::serial::write_str("nothing"),
     }
+    arch::serial::write_str(if correct { "\n" } else { ", MISMATCH\n" });
+    correct
+}
+
+/// A card that records how many frames reached it, for the filter's outbound
+/// half.
+///
+/// The question that half asks is not "did the call report a refusal" but "did
+/// the frame reach the card", and the two are different: a send that submitted
+/// the frame and then returned an error looks like a refusal from the caller's
+/// side and is a packet on the wire.  So the probe needs a card whose only job
+/// is to count.
+#[cfg(target_os = "none")]
+struct CountingCard {
+    frames: core::sync::atomic::AtomicUsize,
+}
+
+#[cfg(target_os = "none")]
+impl CountingCard {
+    fn new() -> Self {
+        Self {
+            frames: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.frames.load(core::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+#[cfg(target_os = "none")]
+impl LinkDevice for CountingCard {
+    fn hardware_address(&self) -> [u8; 6] {
+        [0x02; 6]
+    }
+
+    fn submit_frame(&self, _frame: &[u8]) -> Result<()> {
+        self.frames
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn receive_frame(&self, _into: &mut [u8]) -> Result<Option<usize>> {
+        Ok(None)
+    }
+
+    fn maximum_frame_len(&self) -> usize {
+        1514
+    }
+}
+
+/// Prove that a rule changes what the demux does with a packet.
+///
+/// The claim a filter has to earn is not "the rule was stored", it is "the
+/// packet was dropped", and the difference is the whole of the previous tree's
+/// defect: its filter kept rules and had an `enabled` flag that no call ever
+/// set, so every packet took the allow path and the rules were consulted by
+/// nothing.  This probe measures the delivery instead of the table.
+///
+/// The exchange is a datagram this machine sends **itself** through the demux,
+/// which is the loopback path and the one path that reaches the filter without
+/// a wire: a bound port, a send to it, and the queue read afterwards.  Under a
+/// deny rule the queue must stay empty and the drop counter must move; with the
+/// rule removed the same send must fill the queue.  Both halves are asserted
+/// because either one alone is passed by a filter that always drops or one that
+/// never does.
+///
+/// The rule is removed and the counts restored before the probe returns, so the
+/// boot's later exchanges run under the filter they started with.
+#[cfg(target_os = "none")]
+pub fn filter_probe() -> bool {
+    const PORT: u16 = 9_106;
+
+    let (local, hardware) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        (interface.protocol, interface.hardware)
+    };
+
+    // A port of its own, so the probe's datagrams cannot land in a queue the
+    // rest of the boot is reading.
+    let Ok(socket) = bind_udp(PORT) else {
+        return false;
+    };
+
+    // The frame is built once and sent twice: the two halves have to differ in
+    // the rule and in nothing else, or the second delivery proves nothing about
+    // the first.
+    let payload = b"filter";
+    let udp_len = net::udp::datagram_len(payload.len());
+    let frame_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
+    let mut frame = alloc::vec![0; frame_len];
+    net::ethernet::write_header(
+        &mut frame,
+        hardware,
+        hardware,
+        net::ethernet::ETHERTYPE_IPV4,
+    );
+    net::ipv4::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        local,
+        local,
+        net::ipv4::PROTOCOL_UDP,
+        udp_len,
+    );
+    net::udp::write_datagram(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+        local,
+        local,
+        PORT,
+        PORT,
+        payload,
+    );
+
+    // One rule, denying this port inbound, installed through the same call a
+    // program uses.
+    let rule = abi::network::FilterRuleDef {
+        action: abi::network::FILTER_ACTION_DENY,
+        protocol: u32::from(net::ipv4::PROTOCOL_UDP),
+        family: abi::network::FILTER_FAMILY_IPV4,
+        direction: abi::network::FILTER_DIRECTION_INBOUND,
+        stateful: 0,
+        source_prefix: 0,
+        destination_prefix: 0,
+        source_port_start: 0,
+        source_port_end: 0,
+        destination_port_start: PORT as u32,
+        destination_port_end: PORT as u32,
+        reserved: 0,
+        source_address: [0; abi::network::FILTER_ADDRESS_BYTES],
+        destination_address: [0; abi::network::FILTER_ADDRESS_BYTES],
+    };
+    let id = match filter_add(&rule) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+
+    let refused = {
+        // Index four is the drop counter, not the allow counter: the tuple is
+        // `(default, rules, flows, allowed, dropped)`, and a probe that read
+        // the allowed count would see it unchanged by a refused packet and
+        // conclude the rule had not run.
+        let before = filter_status().4;
+        demux(&frame, local);
+        let after = filter_status().4;
+        // The queue is what the sender's bytes would have filled, and a rule
+        // that ran is a rule that kept them out of it.
+        let held = socket.try_recv(&mut [0_u8; 32]).ok().flatten().is_none();
+        held && after == before + 1
+    };
+
+    // The same frame with the rule gone: the delivery that did not happen has
+    // to happen now, or the first half proved only that the port answers
+    // nothing.
+    let removed = filter_remove(id);
+    let delivered = {
+        demux(&frame, local);
+        socket
+            .try_recv(&mut [0_u8; 32])
+            .ok()
+            .flatten()
+            .is_some_and(|(_, _, count)| count == payload.len())
+    };
+    // A second read that answers nothing is the queue drained, which is what
+    // makes the next probe's port free of this one's bytes.
+    let _ = socket.try_recv(&mut [0_u8; 32]);
+
+    // The outbound half, and a separate rule because the two directions are
+    // two decisions: a filter that consulted its rules on the way in and not
+    // on the way out would pass the whole exchange above.  The frame is handed
+    // to the same `submit_filtered` the three senders call, against a card
+    // that records what reached it: the assertion is that a refused send
+    // reaches the card **nothing**, which is what the error alone cannot say,
+    // a handler that returned `PermissionDenied` *after* submitting would look
+    // identical from the caller's side.
+    let probe_card = CountingCard::new();
+    let outbound = abi::network::FilterRuleDef {
+        action: abi::network::FILTER_ACTION_DENY,
+        direction: abi::network::FILTER_DIRECTION_OUTBOUND,
+        ..rule
+    };
+    let outbound_id = match filter_add(&outbound) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let refused_out = {
+        let before = filter_status().4;
+        let answer = submit_filtered(
+            &probe_card,
+            &frame,
+            &net::filter::Packet::v4(
+                local,
+                local,
+                net::ipv4::PROTOCOL_UDP,
+                &frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+            ),
+        );
+        answer.is_err() && probe_card.count() == 0 && filter_status().4 == before + 1
+    };
+    let _ = filter_remove(outbound_id);
+    let allowed_out = {
+        let answer = submit_filtered(
+            &probe_card,
+            &frame,
+            &net::filter::Packet::v4(
+                local,
+                local,
+                net::ipv4::PROTOCOL_UDP,
+                &frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+            ),
+        );
+        answer.is_ok() && probe_card.count() == 1
+    };
+
+    let correct = refused && removed && delivered && refused_out && allowed_out;
+    arch::serial::write_str("protofire: filter dropped the datagram under a rule: ");
+    arch::serial::write_str(if refused { "yes" } else { "no" });
+    arch::serial::write_str(", delivered it once removed: ");
+    arch::serial::write_str(if delivered { "yes" } else { "no" });
+    arch::serial::write_str(", and an outbound rule kept a frame off the card: ");
+    arch::serial::write_str(if refused_out && allowed_out {
+        "yes"
+    } else {
+        "no"
+    });
     arch::serial::write_str(if correct { "\n" } else { ", MISMATCH\n" });
     correct
 }

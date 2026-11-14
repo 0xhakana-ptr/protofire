@@ -928,6 +928,15 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The filter: a rule installed and the packet it names **not delivered**,
+    // then the same packet delivered once the rule is gone.  Both halves,
+    // because a filter that always drops and one that never does each pass one
+    // of them; the previous tree's filter passed neither, its rules being
+    // consulted by nothing while an `enabled` flag nothing set said otherwise.
+    if !crate::net::filter_probe() {
+        return false;
+    }
+
     // The raw socket: a protocol number instead of a port, a packet this
     // machine sends itself, and the demux handing it back.  The source address
     // on the packet it receives is the stack's, which is what says the header

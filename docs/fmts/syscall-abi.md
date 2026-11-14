@@ -391,7 +391,49 @@ the way a pipe's reader parks, and answers zero, end of file, once the
 stream's connection is gone, which an orderly close's last acknowledgement
 is what leaves behind.
 
-The four memory calls take **no pointer**: every argument is a value, which is
+The packet filter's four calls, which are above the frozen boundary and so
+may still change, are the one policy a program installs that changes what the
+demux does with a packet:
+
+- **`FilterAddRule`**, `a0` the record; `a1` its length, exactly
+  `FILTER_RULE_DEF_SIZE`; `a2`-`a5` reserved zero.  Answers the id the rule was
+  given, which is never reused.  The record carries the action, the protocol,
+  the address family, the direction, the stateful flag, the two prefix lengths,
+  the two port ranges and the two sixteen-byte addresses.  A record no packet
+  could match is `InvalidArgument` and installs nothing: an action that is
+  neither allow nor deny, a prefix longer than its family's address, a port
+  past sixteen bits, a range written backwards, a direction word nothing
+  defines, a reserved word that is not zero, or a prefix in a rule that names
+  no family.
+- **`FilterRemoveRule`**, `a0` the id; `a1`-`a5` reserved zero.  Answers zero,
+  or `NotFound` when no rule had that id.  Removal does not renumber the rules
+  after it: an id names one rule for as long as that rule exists.
+- **`FilterSetDefaultAction`**, `a0` the action; `a1`-`a5` reserved zero.
+  Answers zero.  The tracked flows are forgotten in the same call, because they
+  were remembered under the rules it is changing: an entry that outlived its
+  rules would allow traffic the new set was written to stop.
+- **`FilterGetStats`**, `a0` the record; `a1` its length, exactly
+  `FILTER_STATS_SIZE`; `a2`-`a5` reserved zero.  Answers zero, with the default
+  action, the rule count, the flow count and the two sixty-four-bit counters
+  filled.
+
+**The rules are the filter.**  There is no `enabled` flag and no call that
+turns the filter on: a filter with no rules is one whose default action decides
+everything, and the boot installs one that allows, which is what keeps every
+exchange that ran before this call existed running the same way.  The previous
+tree's filter had an `enabled` word, started closed, and no call among its four
+ever set it, so the rules its programs installed were consulted by nothing while
+each call answered success.  A state no call can reach is a state a boot cannot
+show, which is why this one has none.
+
+**Inbound and outbound are two decisions.**  A rule names one direction or
+both, and the demux asks before any transport reads a byte: a packet a rule
+drops has filled no queue and opened no stream.  A send asks the same way
+before the frame reaches the card, and a refused send answers
+`PermissionDenied` to the program rather than dropping silently, unlike a
+refused packet arriving, whose sender this machine tells nothing.
+
+**The four memory calls take **no pointer**: every argument is a value, which is
 why they are the first calls a program can make that change its own address
 space without the kernel copying anything in or out.
 

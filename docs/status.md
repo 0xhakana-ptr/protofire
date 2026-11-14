@@ -651,6 +651,54 @@ private cloud "on the link" and sent frames to addresses no neighbour answers
 for.  What adds a connected route is a lease carrying a subnet mask or an
 advertisement carrying a prefix, and both state the length rather than guessing.
 
+**The packet filter, and the four calls above the frozen range.**  The ABI
+named `FilterAddRule` (122), `FilterRemoveRule` (123),
+`FilterSetDefaultAction` (124) and `FilterGetStats` (125) and this build served
+none of them, so a program that wanted a policy had numbers to call and
+`NotImplemented` to read.  The four are served now, and the mechanism behind
+them is `net::filter`'s: an ordered rule list, the first match deciding, a
+prefix and a port range in each rule, and a flow table the stateful rules fill
+so a reply finds the answer its request already got.
+
+**The previous tree's shape was not copied, because its shape was the bug.**
+That filter had an `enabled` flag, started with it `false`, and no call among
+its four ever set it: every packet took the `if !enabled { allow }` path, so the
+rules a program installed were consulted by nothing while each call answered
+success.  There is no flag here to leave off.  A filter with no rules is one
+whose default action decides everything, the boot installs one that allows, and
+what a call can change is the rules and the default, which are the two things
+that decide.
+
+```
+protofire: filter dropped the datagram under a rule: yes, delivered it once removed: yes, and an outbound rule kept a frame off the card: yes
+```
+
+The line has three verdicts and the boot requires all three, because each half
+is passed by a filter that is broken the other way.  The datagram is one this
+machine sends itself through the demux; under an inbound deny rule it must
+**not** reach the bound port's queue and the drop counter must move, and with
+the rule removed the same frame must arrive.  The third verdict is the outbound
+half, which the first two cannot cover: the frame goes through the same
+`submit_filtered` the three senders call, against a card that counts what
+reached it, and a refused send must leave the count at zero.  A send that
+submitted the frame and then returned `PermissionDenied` would look like a
+refusal from the caller's side and be a packet on the wire, which is why the
+count and not the answer is what the line reports.
+
+The filter runs in the demux **before** any transport reads a byte, so a
+dropped SYN makes no stream, a dropped datagram fills no queue, and a dropped
+fragment spends none of the reassembly cache.  Inbound and outbound are two
+decisions because a rule names one direction or both, and the two are separate
+functions so a call site cannot pass the wrong one.
+
+`net::filter` is 19 host tests: the match order (including the case a two-rule
+test cannot reach, an allow before a deny), a port rule refusing a packet whose
+header carried none, a prefix matching every address under it in both families,
+the canonical flow key that makes a reply and its request one entry, expiry at
+each protocol's own lifetime, the sweep's rate limit, the two bounds refusing
+rather than growing, the counters following the verdicts, and the record
+validation that refuses a rule no packet could match.
+
 **The timeout is measured now, not assumed.**  `RTO_INITIAL_MICROS` was the
 timeout for every stream on every path, and one second is right for no path: a
 machine on a fast wire retransmits a segment that was merely in flight, and one

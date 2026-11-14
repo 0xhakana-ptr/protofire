@@ -310,6 +310,155 @@ pub const TCP_NODELAY: u32 = 1;
 /// once", is a different protocol behaviour that would also be defensible.
 pub const TCP_NODELAY_DISABLED: u8 = 0;
 
+/// What a filter rule does with a packet it matches.
+///
+/// [`FILTER_ACTION_DENY`] is a **silent** drop: no reset and no unreachable
+/// message.  A filter that answered would report its own existence to whoever
+/// asked, and which answers come back is most of what a port scan learns.
+pub const FILTER_ACTION_ALLOW: u32 = 0;
+
+/// See [`FILTER_ACTION_ALLOW`].
+pub const FILTER_ACTION_DENY: u32 = 1;
+
+/// The direction a rule applies to.
+///
+/// A rule that names one direction matches packets crossing that way and no
+/// others.  [`FILTER_DIRECTION_BOTH`] is a value and not a bit mask: the three
+/// words are exclusive, and a fourth is refused.
+pub const FILTER_DIRECTION_BOTH: u32 = 0;
+
+/// See [`FILTER_DIRECTION_BOTH`].
+pub const FILTER_DIRECTION_INBOUND: u32 = 1;
+
+/// See [`FILTER_DIRECTION_BOTH`].
+pub const FILTER_DIRECTION_OUTBOUND: u32 = 2;
+
+/// The protocol word that matches any IP protocol number.
+///
+/// Zero, because no protocol is numbered zero: the value a rule leaves in its
+/// protocol field by writing nothing is the value that matches everything,
+/// which is the one zero in this record that is not a mistake.
+pub const FILTER_PROTOCOL_ANY: u32 = 0;
+
+/// The address family a rule's two prefixes are in.
+///
+/// The numbers are the IP version's own, which is the number a program already
+/// has when it says which family it means.  [`FILTER_FAMILY_ANY`] matches both
+/// and requires both prefix lengths to be zero, because a rule that names no
+/// family has not said which address space its prefix bits are in.
+pub const FILTER_FAMILY_ANY: u32 = 0;
+
+/// See [`FILTER_FAMILY_ANY`].
+pub const FILTER_FAMILY_IPV4: u32 = 4;
+
+/// See [`FILTER_FAMILY_ANY`].
+pub const FILTER_FAMILY_IPV6: u32 = 6;
+
+/// How many bytes each of a rule's two address fields holds.
+///
+/// Sixteen, so one record describes a rule in either family: a rule is a
+/// **policy**, and a filter that could only express IPv4 rules would be one
+/// whose IPv6 traffic took the default action while its author believed the
+/// rules covered it.
+pub const FILTER_ADDRESS_BYTES: usize = 16;
+
+/// One filter rule, as `FilterAddRule` takes it.
+///
+/// Twelve words and two sixteen-byte addresses, `repr(C)` with only word-wide
+/// fields before the addresses so the layout is the same on every machine this
+/// tree builds for.  The addresses are read as the family says: four bytes of
+/// an IPv4 address and twelve of zero, or all sixteen of an IPv6 one.
+///
+/// Every field is a number the caller chose, and the kernel refuses a record
+/// whose fields do not describe something a packet could match: a prefix longer
+/// than its family's address, a port past sixteen bits, a range written
+/// backwards, a direction word nothing defines.  A rule that reached the walk
+/// with one of those would decide packets by a comparison its author did not
+/// write.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilterRuleDef {
+    /// [`FILTER_ACTION_ALLOW`] or [`FILTER_ACTION_DENY`].
+    pub action: u32,
+    /// The IP protocol number, or [`FILTER_PROTOCOL_ANY`].
+    pub protocol: u32,
+    /// [`FILTER_FAMILY_ANY`], [`FILTER_FAMILY_IPV4`] or [`FILTER_FAMILY_IPV6`].
+    pub family: u32,
+    /// [`FILTER_DIRECTION_BOTH`], [`FILTER_DIRECTION_INBOUND`] or
+    /// [`FILTER_DIRECTION_OUTBOUND`].
+    pub direction: u32,
+    /// Whether a packet this rule allows leaves a flow its return traffic
+    /// finds: zero is stateless, one is stateful.
+    pub stateful: u32,
+    /// How many leading bits of `source_address` are the network's.
+    pub source_prefix: u32,
+    /// How many leading bits of `destination_address` are the network's.
+    pub destination_prefix: u32,
+    /// The source port range's first port, zero for any.
+    pub source_port_start: u32,
+    /// The source port range's last port, zero for `source_port_start` alone.
+    pub source_port_end: u32,
+    /// The destination port range's first port, zero for any.
+    pub destination_port_start: u32,
+    /// The destination port range's last port, zero for the start alone.
+    pub destination_port_end: u32,
+    /// Reserved, and must be zero.
+    ///
+    /// A word the record keeps so a later field can arrive without moving the
+    /// addresses: the two sixteen-byte fields are the part of this record a
+    /// program is most likely to have written by hand, and a field inserted
+    /// before them would be a silent misread rather than a failed compile.
+    pub reserved: u32,
+    /// The source prefix's address, of the family the record names.
+    pub source_address: [u8; FILTER_ADDRESS_BYTES],
+    /// The destination prefix's address, the same way.
+    pub destination_address: [u8; FILTER_ADDRESS_BYTES],
+}
+
+pub const FILTER_RULE_DEF_SIZE: usize = size_of::<FilterRuleDef>();
+
+/// Where the source address begins inside a [`FilterRuleDef`].
+pub const FILTER_RULE_SOURCE_ADDRESS_OFFSET: usize = offset_of!(FilterRuleDef, source_address);
+
+/// Where the destination address begins inside a [`FilterRuleDef`].
+pub const FILTER_RULE_DESTINATION_ADDRESS_OFFSET: usize =
+    offset_of!(FilterRuleDef, destination_address);
+
+/// What `FilterGetStats` answers.
+///
+/// Four words and two counters, in that order: the shape a program reads as a
+/// struct.  `packets_allowed` and `packets_dropped` are sixty-four-bit because
+/// a filter that has been running for a day has counted more packets than a
+/// thirty-two-bit word holds, and a counter that wrapped would report a busy
+/// machine as an idle one.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilterStats {
+    /// The default action: [`FILTER_ACTION_ALLOW`] or
+    /// [`FILTER_ACTION_DENY`].
+    pub default_action: u32,
+    /// How many rules are installed.
+    pub rules: u32,
+    /// How many flows the tracking table holds.
+    pub flows: u32,
+    /// Reserved, and must be zero.
+    pub reserved: u32,
+    /// Packets the filter allowed since the boot.
+    pub packets_allowed: u64,
+    /// Packets the filter dropped since the boot.
+    pub packets_dropped: u64,
+}
+
+pub const FILTER_STATS_SIZE: usize = size_of::<FilterStats>();
+
+/// Where the allowed-packet counter begins inside a [`FilterStats`].
+///
+/// The counters are sixty-four-bit and the four words before them are not, so
+/// this offset is also where the record's alignment changes: a program reading
+/// the record at the offsets this crate names cannot assume a word stride past
+/// it.
+pub const FILTER_STATS_ALLOWED_OFFSET: usize = offset_of!(FilterStats, packets_allowed);
+
 #[cfg(test)]
 mod tests {
     use super::NETWORK_ADDRESSES_BYTES;
@@ -414,6 +563,55 @@ mod tests {
         };
         assert_eq!(record.address[0], 0xfe);
         assert_eq!(record.port, 8612);
+    }
+
+    /// The filter records are word-wide fields with the two addresses last, so
+    /// the layout is the same on every machine this tree builds for.
+    ///
+    /// The addresses are sixteen bytes each rather than four, which is the one
+    /// field a caller is most likely to write by hand: a record whose
+    /// addresses were four bytes and whose family could name IPv6 would be a
+    /// rule that could only express half of what it claimed.
+    #[test]
+    fn the_filter_records_are_word_fields_and_two_addresses() {
+        // Twelve words: action through the reserved word.
+        assert_eq!(
+            super::FILTER_RULE_DEF_SIZE,
+            12 * core::mem::size_of::<u32>() + 2 * super::FILTER_ADDRESS_BYTES
+        );
+        assert_eq!(super::FILTER_ADDRESS_BYTES, 16);
+        assert_eq!(
+            super::FILTER_RULE_SOURCE_ADDRESS_OFFSET,
+            12 * core::mem::size_of::<u32>(),
+            "the addresses begin after the twelve words"
+        );
+        assert_eq!(
+            super::FILTER_RULE_DESTINATION_ADDRESS_OFFSET,
+            super::FILTER_RULE_SOURCE_ADDRESS_OFFSET + super::FILTER_ADDRESS_BYTES
+        );
+
+        // The statistics record: four words then two counters.
+        assert_eq!(
+            super::FILTER_STATS_SIZE,
+            4 * core::mem::size_of::<u32>() + 2 * core::mem::size_of::<u64>()
+        );
+        assert_eq!(
+            super::FILTER_STATS_ALLOWED_OFFSET,
+            4 * core::mem::size_of::<u32>()
+        );
+
+        // The numbers a program passes are pinned for the same reason the
+        // option numbers are: they are a field's value, and a value that moved
+        // silently would be a rule with a different meaning.
+        assert_eq!(super::FILTER_ACTION_ALLOW, 0);
+        assert_eq!(super::FILTER_ACTION_DENY, 1);
+        assert_eq!(super::FILTER_DIRECTION_BOTH, 0);
+        assert_eq!(super::FILTER_DIRECTION_INBOUND, 1);
+        assert_eq!(super::FILTER_DIRECTION_OUTBOUND, 2);
+        assert_eq!(super::FILTER_PROTOCOL_ANY, 0);
+        assert_eq!(super::FILTER_FAMILY_ANY, 0);
+        assert_eq!(super::FILTER_FAMILY_IPV4, 4);
+        assert_eq!(super::FILTER_FAMILY_IPV6, 6);
     }
 
     /// The three option numbers are pinned, and the two levels with them.

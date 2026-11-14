@@ -1597,6 +1597,82 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // The packet filter's two buffer calls.  `FilterAddRule` names a record in
+    // `a0` and its length in `a1`, and the record is read: the rule's every
+    // field is a number the caller chose, and the handler is where they are
+    // validated.  `FilterGetStats` names its output in `a0` and its length in
+    // `a1`, and is written.  One branch because the two calls differ only in
+    // which way the bytes move, which is the same reading the socket-option
+    // pair gets above.
+    if number == SyscallNumber::FilterAddRule as usize
+        || number == SyscallNumber::FilterGetStats as usize
+    {
+        let (record, length) = (call.arguments[0], call.arguments[1]);
+        if length == 0
+            || length > abi::network::FILTER_RULE_DEF_SIZE.max(abi::network::FILTER_STATS_SIZE)
+            || !crate::address_space::is_user_range(record, length)
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The add reads a record
+        // of the length it was given and the stats call writes one, each
+        // inside the length checked above and each against the size the
+        // handler itself states.
+        let buffer = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(buffer));
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if number == SyscallNumber::FilterAddRule as usize {
+                " added a filter rule, id "
+            } else {
+                " read the filter's statistics, "
+            });
+            if refused {
+                arch::serial::write_str("refused\n");
+            } else {
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return outcome;
+    }
+
+    // The filter's two calls that name no buffer: a rule by id, and the
+    // default action.  Their arguments are words, so nothing here has to turn
+    // one into a borrow.
+    if number == SyscallNumber::FilterRemoveRule as usize
+        || number == SyscallNumber::FilterSetDefaultAction as usize
+    {
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if number == SyscallNumber::FilterRemoveRule as usize {
+                " removed a filter rule, "
+            } else {
+                " set the filter's default action, "
+            });
+            if refused {
+                arch::serial::write_str("refused\n");
+            } else {
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return outcome;
+    }
+
     // `a0` is the clock or the selector), so the pair to validate is the second
     // and third words rather than the first two.
     if number == SyscallNumber::GetTimeOfDay as usize

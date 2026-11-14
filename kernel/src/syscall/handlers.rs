@@ -1473,6 +1473,153 @@ pub fn get_sock_opt(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> 
     Ok(Dispatch::complete(written))
 }
 
+/// Add one packet filter rule, and answer the id it was given.
+///
+/// Arguments: the record, its length, then four reserved slots that must be
+/// zero.  The record is [`abi::network::FilterRuleDef`], read field by field
+/// rather than by casting the buffer: a `#[repr(C)]` struct's layout is the
+/// compiler's, and a kernel that transmuted a caller's bytes into one would be
+/// trusting a layout it does not own on the machine it is running on.
+///
+/// The id a rule is given is never reused, so a program that removes a rule and
+/// adds another gets a different number: an id that came back would make a
+/// stale id remove a rule its owner never named.
+pub fn filter_add_rule(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 4)?;
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if buffer.len() != network_abi::FILTER_RULE_DEF_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+    let record = read_filter_rule(buffer)?;
+    let id = crate::net::filter_add(&record)?;
+    Ok(Dispatch::complete(id as usize))
+}
+
+/// Remove one packet filter rule by id.
+///
+/// Arguments: the id, then four reserved slots that must be zero.  Answers
+/// zero when a rule was removed and `NotFound` when the id named nothing, which
+/// is the difference between "it is gone" and "it was never here".
+pub fn filter_remove_rule(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let id = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if id > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    if !crate::net::filter_remove(id as u32) {
+        return Err(Error::NotFound);
+    }
+    Ok(Dispatch::complete(0))
+}
+
+/// Set the action a packet no rule matches gets.
+///
+/// Arguments: the action, then four reserved slots that must be zero.  The
+/// action is one of the two the ABI names, and a third is refused rather than
+/// read as allow: a number this build does not know is a caller that meant
+/// something this build does not do.
+///
+/// The flows the stateful rules remembered are forgotten here, because they
+/// were remembered under the rules this call is changing.
+pub fn filter_set_default_action(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let action = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if action > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let action = net::filter::Action::from_wire(action as u32)?;
+    crate::net::filter_set_default(action);
+    Ok(Dispatch::complete(0))
+}
+
+/// Read the filter's statistics into the caller's record.
+///
+/// Arguments: the record, its length, then four reserved slots that must be
+/// zero.  Answers zero with the record filled.  The record is
+/// [`abi::network::FilterStats`] and is written field by field at the offsets
+/// that crate names, which is what makes the layout one fact rather than two.
+pub fn filter_get_stats(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 3)?;
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() != network_abi::FILTER_STATS_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+    let (default_action, rules, flows, allowed, dropped) = crate::net::filter_status();
+    write_filter_stats(buffer, default_action, rules, flows, allowed, dropped);
+    Ok(Dispatch::complete(0))
+}
+
+/// Read a [`abi::network::FilterRuleDef`] out of a caller's bytes.
+///
+/// Field by field, at the offsets the ABI crate names.  A cast would be shorter
+/// and would be the one place this kernel trusted a layout across the boundary:
+/// the record is `repr(C)` on both sides, but "both sides agree" is a claim the
+/// offsets make checkable and a transmute only assumes.
+fn read_filter_rule(buffer: &[u8]) -> Result<network_abi::FilterRuleDef> {
+    let word = |at: usize| -> Result<u32> {
+        let bytes = buffer.get(at..at + 4).ok_or(Error::InvalidArgument)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let address = |at: usize| -> Result<[u8; network_abi::FILTER_ADDRESS_BYTES]> {
+        let bytes = buffer
+            .get(at..at + network_abi::FILTER_ADDRESS_BYTES)
+            .ok_or(Error::InvalidArgument)?;
+        let mut address = [0_u8; network_abi::FILTER_ADDRESS_BYTES];
+        address.copy_from_slice(bytes);
+        Ok(address)
+    };
+    Ok(network_abi::FilterRuleDef {
+        action: word(0)?,
+        protocol: word(4)?,
+        family: word(8)?,
+        direction: word(12)?,
+        stateful: word(16)?,
+        source_prefix: word(20)?,
+        destination_prefix: word(24)?,
+        source_port_start: word(28)?,
+        source_port_end: word(32)?,
+        destination_port_start: word(36)?,
+        destination_port_end: word(40)?,
+        reserved: word(44)?,
+        source_address: address(network_abi::FILTER_RULE_SOURCE_ADDRESS_OFFSET)?,
+        destination_address: address(network_abi::FILTER_RULE_DESTINATION_ADDRESS_OFFSET)?,
+    })
+}
+
+/// Write a [`abi::network::FilterStats`] at the start of a validated buffer.
+fn write_filter_stats(
+    buffer: &mut [u8],
+    default_action: net::filter::Action,
+    rules: u32,
+    flows: u32,
+    allowed: u64,
+    dropped: u64,
+) {
+    let words = [default_action.to_wire(), rules, flows, 0];
+    for (index, word) in words.iter().enumerate() {
+        let at = index * 4;
+        buffer[at..at + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    let at = network_abi::FILTER_STATS_ALLOWED_OFFSET;
+    buffer[at..at + 8].copy_from_slice(&allowed.to_le_bytes());
+    buffer[at + 8..at + 16].copy_from_slice(&dropped.to_le_bytes());
+}
+
 /// The socket a descriptor names, or the error that says why there is none.
 ///
 /// A descriptor that names a file or a pipe is `InvalidArgument` and not

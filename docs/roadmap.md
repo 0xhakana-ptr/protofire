@@ -340,9 +340,13 @@ lands before anything in the kernel depends on it.
 
 #### What Level 5 does not promise
 
-- **The 23 protocol numbers this level leaves alone.**  `Dccp*`, `Ipsec*`,
-  `Mrt*`, `Filter*` and `TlsConnect` are named in the ABI and stay unserved.
-  They are separate mechanisms, not more calls on this stack.
+- **Five of the 23 protocol numbers are now served, and 18 are not.**
+  `Filter*` (122-125) landed first because it is the only one of the five whose
+  mechanism this machine can observe end to end: a rule either keeps a packet
+  out or it does not, and the boot prints both halves.  `Dccp*`, `Ipsec*`,
+  `Mrt*` and `TlsConnect` are still named in the ABI and unserved; each is its
+  own stack rather than more calls on this one, and the order they land in is
+  the order of what evidence this tree can produce for them.
 - **Routing.**  One interface, one address, one gateway.  A routing table is a
   decision for a tree with two networks.
 - **DNS beyond the literal.**  `ResolveHostname` (93) can answer from a hosts

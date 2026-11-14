@@ -654,6 +654,16 @@ impl Machine {
                     "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
                     true,
                 ),
+                // The packet filter: a rule installed, the datagram it names
+                // **not delivered**, and the same datagram delivered once the
+                // rule is removed.  Both halves are required, because a filter
+                // that always drops and one that never does each pass one of
+                // them, and the previous tree's filter passed neither while its
+                // four calls reported success.
+                (
+                    "protofire: filter dropped the datagram under a rule: yes, delivered it once removed: yes, and an outbound rule kept a frame off the card: yes",
+                    true,
+                ),
                 // The frame path's data offset: two TCP segments through the
                 // demux, one carrying an option and one not, and a stream
                 // holding their data and neither header.  Every other exchange
@@ -1398,6 +1408,10 @@ impl Machine {
                         true,
                     ),
                     (
+                        "protofire: filter dropped the datagram under a rule: yes, delivered it once removed: yes, and an outbound rule kept a frame off the card: yes",
+                        true,
+                    ),
+                    (
                         "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                         true,
                     ),
@@ -1434,6 +1448,10 @@ impl Machine {
                     ),
                     (
                         "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
+                        true,
+                    ),
+                    (
+                        "protofire: filter dropped the datagram under a rule: yes, delivered it once removed: yes, and an outbound rule kept a frame off the card: yes",
                         true,
                     ),
                     (
@@ -1865,6 +1883,16 @@ impl Machine {
                 // what says the header was not the caller's.
                 (
                     "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
+                    true,
+                ),
+                // The packet filter: a rule installed, the datagram it names
+                // **not delivered**, and the same datagram delivered once the
+                // rule is removed.  Both halves are required, because a filter
+                // that always drops and one that never does each pass one of
+                // them, and the previous tree's filter passed neither while its
+                // four calls reported success.
+                (
+                    "protofire: filter dropped the datagram under a rule: yes, delivered it once removed: yes, and an outbound rule kept a frame off the card: yes",
                     true,
                 ),
                 // The frame path's data offset: two TCP segments through the

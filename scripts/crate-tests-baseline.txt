@@ -31,7 +31,7 @@
 # internal structure.  A module that loses tests fails even when its crate's
 # total does not fall.
 
-abi                  4290   67   # the IPv6 flag and the wider sender record: the frozen range's one permitted change, and the test that pins the two record sizes apart
+abi                  4623   69 # the IPv6 flag and the wider sender record: the frozen range's one permitted change, and the test that pins the two record sizes apart
 allocator            2508   13
 arch                20860    1
 arch_aarch64         6768   52
@@ -53,10 +53,10 @@ fs::tmpfs               -   10
 init                  493    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 ipc                   344    9
 irq                   463   12
-kernel              23736  149
+kernel              28834  154
 netdev                  137    3
 memory               2289   36
-net                  9032  149   # the protocols a machine configures and names itself with, beside the ones it carries: DHCP's four messages, DNS's query and answer, and the prefix a router lets a host configure itself from, each with the host tests a boot cannot isolate
+net                 16343  248 # the protocols a machine configures and names itself with, beside the ones it carries: DHCP's four messages, DNS's query and answer, and the prefix a router lets a host configure itself from, each with the host tests a boot cannot isolate
 paging                779   13
 pci                  2596   44
 power                 324   12

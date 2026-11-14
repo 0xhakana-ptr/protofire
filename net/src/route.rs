@@ -104,7 +104,7 @@ impl Route {
 /// The last byte is `length % 8` bits, and a mask of those bits must be the
 /// `length`-th bit position's; a whole-byte comparison would make a `/20` own
 /// its last four bits too, which is a route that claims more than it states.
-fn prefix_bits(prefix: &[u8], destination: &[u8], length: usize) -> bool {
+pub(crate) fn prefix_bits(prefix: &[u8], destination: &[u8], length: usize) -> bool {
     if length > prefix.len() * 8 {
         return false;
     }
