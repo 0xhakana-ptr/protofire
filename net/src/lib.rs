@@ -96,13 +96,14 @@
 //!
 //! ## What is not here yet
 //!
-//! Congestion control is the one refusal that has no module: a stream
-//! retransmits, with [`tcp::RTO_INITIAL_MICROS`]'s backoff, receives out of
-//! order, shrinks its segments to what a path reports, and enforces the window
-//! it advertises, but what it does not do is slow down before a loss tells it
-//! to.  That is a decision a stack needs a path with a round trip and a loss on
-//! it to make, and this one's exchanges are a loopback and a user-mode
-//! network.
+//! What a stream does not do is **measure**: its timeout is
+//! [`tcp::RTO_INITIAL_MICROS`]'s constant rather than a smoothed round trip,
+//! because one exchange per boot is not a sample and an estimate from a single
+//! measurement looks measured and is not.  Congestion control is here and is
+//! [RFC 5681]'s two halves, slow start and congestion avoidance, with fast
+//! retransmit on three duplicate acknowledgements.
+//!
+//! [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
 //!
 //! Path-MTU discovery is both families': [`icmp::FRAGMENTATION_NEEDED`] states
 //! a path's size on IPv4 and [`icmpv6::PACKET_TOO_BIG`] on IPv6, and

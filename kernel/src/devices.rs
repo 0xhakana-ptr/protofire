@@ -894,7 +894,14 @@ pub fn exercise_network() -> bool {
     // The window: a stream's buffer filled and read back, because no exchange
     // this gate runs carries enough bytes for a shrinking window to differ
     // from a constant one.
-    crate::net::window_probe()
+    if !crate::net::window_probe() {
+        return false;
+    }
+
+    // The congestion window: grown by acknowledgements and collapsed by a
+    // timeout, on an exchange long enough to see both.  Every other boot
+    // exchange finishes before the window matters.
+    crate::net::congestion_probe()
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the

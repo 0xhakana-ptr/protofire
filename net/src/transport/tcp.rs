@@ -132,6 +132,36 @@ pub const MAX_ATTEMPTS: u8 = 5;
 /// "nothing was carried, ask again" a full pipe answers with.
 pub const MAX_UNACKNOWLEDGED: usize = 16;
 
+/// The congestion window a stream starts with, in bytes.
+///
+/// [RFC 6928] raises the initial window to ten segments, which is what a
+/// modern sender uses: it is large enough that a short transfer finishes
+/// without waiting for an acknowledgement to grow it, and small enough that ten
+/// segments of a link are not a burst a router notices.  Ten of [`MSS_DEFAULT`]
+/// is what this is written as, because the number the RFC states is segments
+/// and the number this stack counts in is bytes.
+///
+/// [RFC 6928]: https://www.rfc-editor.org/rfc/rfc6928
+pub const INITIAL_CWND: usize = 10 * MSS_DEFAULT;
+
+/// The largest congestion window this stack grows to, in bytes.
+///
+/// A window is a sender's estimate of a path's capacity, and this stack's
+/// exchanges are a loopback and a user-mode network: without a ceiling, a long
+/// transfer to a peer that acknowledges everything would grow the window to a
+/// number that describes nothing.  Sixty-four kilobytes is past any exchange
+/// this tree carries and inside what the receive side can hold.
+pub const MAX_CWND: usize = 64 * 1024;
+
+/// How many duplicate acknowledgements a loss is assumed at.
+///
+/// [RFC 5681]'s three: a peer that has received a segment past a gap sends the
+/// same acknowledgement again, and three of them is what a single lost segment
+/// produces while a reordered pair produces two.
+///
+/// [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
+pub const DUPLICATE_ACKS: u8 = 3;
+
 /// How many segments ahead of the expected position one connection holds.
 ///
 /// A peer that opens holes in its own stream is choosing how much of this
@@ -455,6 +485,32 @@ pub struct Connection {
     /// touches the inbox into it, so the inbox stays a prefix of the peer's
     /// stream and a reader never learns that anything was reordered.
     out_of_order: alloc::vec::Vec<Held>,
+    /// The congestion window: how many bytes this side may have in flight.
+    ///
+    /// This side's estimate of the path's capacity, in bytes, which is the
+    /// number [`Connection::in_flight`] is compared against.  It starts at
+    /// [`INITIAL_CWND`] and moves on the two events a sender learns from: an
+    /// acknowledgement, which says the path carried what was sent, and a loss,
+    /// which says it did not.
+    cwnd: usize,
+    /// The window slow start grows to before it switches to congestion
+    /// avoidance.
+    ///
+    /// [RFC 5681]'s `ssthresh`: below it the window doubles per round trip,
+    /// because a path that has not lost anything yet is one with room to
+    /// spare; above it the window grows by one segment per round trip, because
+    /// the only evidence of more room is a slow trickle of acknowledgements.
+    ///
+    /// [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
+    ssthresh: usize,
+    /// How many acknowledgements in a row named the same position.
+    ///
+    /// Three of them without new data is a gap the peer has counted, which is
+    /// [RFC 5681]'s fast retransmit: the sender knows a segment is lost without
+    /// waiting for its timer, and retransmits at once.
+    ///
+    /// [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
+    duplicates: u8,
     /// The largest payload the path is known to carry, in bytes.
     ///
     /// Path-MTU discovery's answer, and [`MSS_DEFAULT`] until something says
@@ -524,6 +580,9 @@ impl Connection {
             attempts: 0,
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
+            cwnd: INITIAL_CWND,
+            ssthresh: MAX_CWND,
+            duplicates: 0,
         };
         let sent = connection.take_outgoing(connection.sequence, 0, FLAG_SYN, &[]);
         connection.sequence += 1;
@@ -557,6 +616,9 @@ impl Connection {
             attempts: 0,
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
+            cwnd: INITIAL_CWND,
+            ssthresh: MAX_CWND,
+            duplicates: 0,
         };
         let sent = connection.take_outgoing(
             connection.sequence,
@@ -613,10 +675,31 @@ impl Connection {
         segment: &Segment,
         payload: &[u8],
     ) -> (abi::Result<Event>, alloc::vec::Vec<Outgoing>) {
-        if segment.flags & FLAG_ACK != 0 {
-            self.note_acknowledgement(segment.acknowledgement);
-        }
+        // An acknowledgement may be the third duplicate that says a segment
+        // was lost, in which case the answer is that segment sent again, and
+        // it goes out before anything this call does with the segment's own
+        // data: the gap is ahead of whatever the peer just sent.
+        let fast = if segment.flags & FLAG_ACK != 0 {
+            self.note_acknowledgement(segment.acknowledgement)
+                .unwrap_or_default()
+        } else {
+            alloc::vec::Vec::new()
+        };
+        let (event, mut replies) = self.receive_body(segment, payload);
+        // The fast retransmission goes first: it is the segment at a gap the
+        // peer has already counted, and the reply this call composed is about
+        // bytes that arrived after it.
+        let mut all = fast;
+        all.append(&mut replies);
+        (event, all)
+    }
 
+    /// The receive path proper, with the fast retransmission already decided.
+    fn receive_body(
+        &mut self,
+        segment: &Segment,
+        payload: &[u8],
+    ) -> (abi::Result<Event>, alloc::vec::Vec<Outgoing>) {
         // The one segment the handshake's answer is: the SYN with this
         // side's own acknowledgement in it.  The client's move from
         // [`State::SynSent`], on the server's SYN with ACK.
@@ -899,6 +982,130 @@ impl Connection {
         (WINDOW as usize).saturating_sub(held).min(WINDOW as usize) as u16
     }
 
+    /// How many bytes this side has sent and the peer has not acknowledged.
+    ///
+    /// The number the congestion window bounds.  It is the queue's payload,
+    /// not its segment count: a window in bytes and a queue in segments would
+    /// be two units for one question, and the segment count is already bounded
+    /// separately by [`MAX_UNACKNOWLEDGED`].
+    pub fn in_flight(&self) -> usize {
+        self.unacknowledged
+            .iter()
+            .map(|segment| segment.end.wrapping_sub(segment.sequence) as usize)
+            .sum()
+    }
+
+    /// The congestion window, in bytes.
+    pub fn congestion_window(&self) -> usize {
+        self.cwnd
+    }
+
+    /// The window slow start grows to.
+    pub fn slow_start_threshold(&self) -> usize {
+        self.ssthresh
+    }
+
+    /// How many bytes this side may put in flight right now.
+    ///
+    /// The smaller of the congestion window and what the unacknowledged queue
+    /// has room for.  A sender may send when `in_flight < min(cwnd, room)`,
+    /// which is [RFC 5681]'s rule with the receiver's window standing in as
+    /// this stack's own bound: the queue is the sender's copy of what the peer
+    /// has not taken, and [`MAX_UNACKNOWLEDGED`] is what bounds it.
+    ///
+    /// [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
+    pub fn send_budget(&self) -> usize {
+        let room = MAX_UNACKNOWLEDGED
+            .saturating_sub(self.unacknowledged.len())
+            .saturating_mul(self.mss());
+        self.cwnd.saturating_sub(self.in_flight()).min(room)
+    }
+
+    /// Open the window on an acknowledgement that carried new data.
+    ///
+    /// Two rules, and which one applies is `ssthresh`'s.  Below it the window
+    /// grows by the acknowledged bytes, which doubles it per round trip: slow
+    /// start is exponential because nothing has yet said the path is full.
+    /// Above it the window grows by `mss * acked / cwnd`, which is one segment
+    /// per round trip: congestion avoidance, because the only evidence of more
+    /// room is a trickle of acknowledgements.
+    ///
+    /// `acked` is what this acknowledgement newly covered, not the whole of
+    /// what the peer has received: counting a duplicate would make a stalled
+    /// stream grow a window for repeating itself.
+    fn open_window(&mut self, acked: usize) {
+        if acked == 0 {
+            return;
+        }
+        if self.cwnd < self.ssthresh {
+            self.cwnd = self.cwnd.saturating_add(acked).min(MAX_CWND);
+        } else {
+            // `mss * acked / cwnd`, in that order, so the multiply does not
+            // lose the fraction a small acknowledgement is: a division first
+            // would round a segment per round trip down to nothing.
+            let growth = self.mss().saturating_mul(acked) / self.cwnd.max(1);
+            self.cwnd = self.cwnd.saturating_add(growth.max(1)).min(MAX_CWND);
+        }
+    }
+
+    /// Shrink the window because the path dropped something.
+    ///
+    /// [RFC 5681]'s two halves: a timeout is the harder evidence, so the window
+    /// goes to one segment and slow start begins again; three duplicate
+    /// acknowledgements are the softer one, so the window halves and the
+    /// threshold is set to it, which is fast recovery.  A path that dropped
+    /// nothing should not shrink, which is why this is called from the two
+    /// places that know something was lost and not from an acknowledgement.
+    ///
+    /// [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
+    fn close_window(&mut self, timeout: bool) {
+        let flight = self.in_flight();
+        // The threshold never goes below the protocol's floor: a path that
+        // repeatedly collapses to two segments is a path this stack cannot
+        // use, and [RFC 5681] says the threshold holds at least two segments.
+        self.ssthresh = (flight / 2).max(2 * self.mss());
+        if timeout {
+            self.cwnd = self.mss();
+            self.duplicates = 0;
+        } else {
+            self.cwnd = self.ssthresh;
+        }
+    }
+
+    /// Note an acknowledgement that covered nothing new.
+    ///
+    /// Three in a row is [RFC 5681]'s fast retransmit: the peer has received
+    /// something past a gap, so the segment at the gap is lost and waiting for
+    /// its timer would wait a second for news this acknowledgement already
+    /// carries.  The answer is the segment at the gap, sent at once.
+    ///
+    /// [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
+    fn note_duplicate(&mut self) -> Option<alloc::vec::Vec<Outgoing>> {
+        self.duplicates = self.duplicates.saturating_add(1);
+        if self.duplicates != DUPLICATE_ACKS {
+            return None;
+        }
+        // Read what the retransmission needs before anything borrows the queue
+        // mutably: the position, the flags and the bytes.
+        let (sequence, flags, payload) = {
+            let oldest = self.unacknowledged.first()?;
+            (oldest.sequence, oldest.flags, oldest.payload.clone())
+        };
+        // Fast recovery: the window halves before the retransmission, because
+        // the path has just said it dropped something and sending the whole
+        // window again would offer it the same burst.
+        self.close_window(false);
+        let segment = Outgoing {
+            sequence,
+            acknowledgement: self.acknowledgement,
+            flags,
+            window: self.advertised_window(),
+            payload,
+        };
+        self.unacknowledged[0].sent_at = self.now;
+        Some(alloc::vec![segment])
+    }
+
     /// The room this side has left for the peer's bytes.
     fn window_room(&self) -> usize {
         (WINDOW as usize).saturating_sub(self.held())
@@ -951,10 +1158,22 @@ impl Connection {
         // exists: what is queued is bytes nobody has acknowledged, and a peer
         // that stopped acknowledging must not be able to make one write cost
         // unbounded memory.
+        // The congestion window bounds this write as well as the queue does:
+        // a sender may have only `min(cwnd, queue room)` in flight, so a write
+        // that would exceed it is a partial write.  This is the rule that makes
+        // slow start mean something: an empty stream starts with ten segments
+        // of room and earns the rest.
+        let budget = self.send_budget();
+        if budget == 0 {
+            return (0, alloc::vec::Vec::new());
+        }
         let mss = self.mss();
         let mut carried = 0;
         let mut segments = alloc::vec::Vec::new();
-        while carried < bytes.len() && self.unacknowledged.len() < MAX_UNACKNOWLEDGED {
+        while carried < bytes.len()
+            && carried < budget
+            && self.unacknowledged.len() < MAX_UNACKNOWLEDGED
+        {
             let end = (carried + mss).min(bytes.len());
             let chunk = &bytes[carried..end];
             segments.extend(self.take_outgoing(
@@ -1091,21 +1310,26 @@ impl Connection {
     /// and the state goes to [`State::Closed`] so a caller's next read or
     /// write learns the stream ended instead of waiting forever on it.
     pub fn retransmit(&mut self) -> Retransmission {
-        let Some(oldest) = self.unacknowledged.first() else {
-            return Retransmission::Idle;
+        // The queue is read once, into values: what follows borrows the
+        // connection mutably, and a borrow of the queue would be a second one.
+        let (sequence, flags, payload) = {
+            let Some(oldest) = self.unacknowledged.first() else {
+                return Retransmission::Idle;
+            };
+            if self.now.wrapping_sub(oldest.sent_at) < self.timeout {
+                return Retransmission::Idle;
+            }
+            (oldest.sequence, oldest.flags, oldest.payload.clone())
         };
-        if self.now.wrapping_sub(oldest.sent_at) < self.timeout {
-            return Retransmission::Idle;
-        }
         if self.attempts >= MAX_ATTEMPTS {
             self.unacknowledged.clear();
             self.state = State::Closed;
             return Retransmission::Abandoned;
         }
-        let sequence = oldest.sequence;
+        // A timer that fired is the harder evidence of loss, so the window
+        // goes back to one segment and slow start begins again.
+        self.close_window(true);
         let acknowledgement = self.acknowledgement;
-        let flags = oldest.flags;
-        let payload = oldest.payload.clone();
         self.attempts += 1;
         // [RFC 6298]'s backoff, capped: a stream that answers nothing must
         // not hold a caller for the sum of unbounded doublings.
@@ -1185,24 +1409,53 @@ impl Connection {
     ///
     /// [RFC 793]: https://www.rfc-editor.org/rfc/rfc793
     /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
-    fn note_acknowledgement(&mut self, acknowledgement: u32) {
-        let Some(oldest) = self.unacknowledged.first() else {
-            return;
-        };
+    fn note_acknowledgement(&mut self, acknowledgement: u32) -> Option<alloc::vec::Vec<Outgoing>> {
+        let oldest = self.unacknowledged.first()?;
         // `SND.UNA <= SEG.ACK <= SND.NXT`, each comparison in the sequence's
         // own arithmetic so a stream that crossed the wrap is not refused.
         if seq_before(acknowledgement, oldest.sequence)
             || seq_before(self.sequence, acknowledgement)
         {
-            return;
+            return None;
         }
-        let before = self.unacknowledged.len();
+        // What this acknowledgement newly covers, which is what the congestion
+        // window grows by: counting the whole of what the peer has received
+        // would grow it again for a segment already counted.
+        //
+        // Only the **data** counts.  A SYN and a FIN each occupy one sequence
+        // number and neither occupies a link, so a window that grew by them
+        // would be measuring the handshake rather than the path: the first
+        // version of this added one byte for the SYN and left the initial
+        // window at ten segments and one byte, which is a number no rule
+        // produces and a test that compared against ten segments found.
+        let covered: usize = self
+            .unacknowledged
+            .iter()
+            .filter(|segment| acknowledges(acknowledgement, segment.end))
+            .map(|segment| segment.payload.len())
+            .sum();
+        // Whether this acknowledgement covers any segment at all.  A segment
+        // that carries only a SYN or a FIN occupies no link but does leave the
+        // queue, so the test is on coverage and not on the byte count: a
+        // connection that kept a handshake's SYN because it carried no data
+        // would hold it until the stream was abandoned.
+        let retires = self
+            .unacknowledged
+            .iter()
+            .any(|segment| acknowledges(acknowledgement, segment.end));
+        if !retires {
+            // Nothing covered: a duplicate, which says the peer is waiting at
+            // a gap.  Three of them is a lost segment, and the answer is the
+            // segment at the gap.
+            return self.note_duplicate();
+        }
         self.unacknowledged
             .retain(|segment| !acknowledges(acknowledgement, segment.end));
-        if self.unacknowledged.len() != before {
-            self.attempts = 0;
-            self.timeout = RTO_INITIAL_MICROS;
-        }
+        self.attempts = 0;
+        self.timeout = RTO_INITIAL_MICROS;
+        self.duplicates = 0;
+        self.open_window(covered);
+        None
     }
 }
 
@@ -1999,25 +2252,202 @@ mod tests {
         assert_eq!(client.segment_limit(), super::MIN_MSS);
     }
 
-    /// A write the queue has no room for is partly carried, and the count
+    /// A write past what may be in flight is partly carried, and the count
     /// says how much.
     ///
     /// The count is what a caller writes again from, so a write that answered
     /// the whole length and queued part of it would lose the rest silently.
+    /// What bounds this one is the **congestion window**, which is smaller
+    /// than the queue's own bound on a fresh stream: ten segments of initial
+    /// window against sixteen the queue could hold.
     #[test]
-    fn a_write_stops_where_the_queue_is_full() {
+    fn a_write_stops_where_the_window_is_full() {
         let (mut client, _server) = established_on_the_loopback();
         client.advance(0);
         assert_eq!(client.unacknowledged(), 0);
+        assert_eq!(client.in_flight(), 0);
+        assert!(
+            client.congestion_window() < super::MSS_DEFAULT * super::MAX_UNACKNOWLEDGED,
+            "the initial window is the tighter bound, which is what this test needs"
+        );
 
-        // Enough segments to fill the queue and then some.
-        let bytes = alloc::vec![0x5A_u8; super::MSS_DEFAULT * (super::MAX_UNACKNOWLEDGED + 4)];
+        // Enough segments to fill the window and then some.
+        let window = client.congestion_window();
+        let bytes = alloc::vec![0x5A_u8; window + super::MSS_DEFAULT * 4];
         let (carried, outgoing) = client.send_data(&bytes);
-
-        assert_eq!(carried, super::MSS_DEFAULT * super::MAX_UNACKNOWLEDGED);
-        assert_eq!(outgoing.len(), super::MAX_UNACKNOWLEDGED);
-        assert_eq!(client.unacknowledged(), super::MAX_UNACKNOWLEDGED);
+        assert_eq!(carried, window, "the whole window");
+        assert_eq!(client.in_flight(), window);
+        assert!(outgoing.len() > 1, "and more than one segment");
         assert!(carried < bytes.len(), "the rest is the caller's to write");
+
+        // The next write carries nothing until an acknowledgement opens room.
+        let (again, none) = client.send_data(b"more");
+        assert_eq!(again, 0, "the window is full");
+        assert!(none.is_empty());
+    }
+
+    /// A stream starts with ten segments of window, whatever the handshake
+    /// occupied, and its first acknowledgements double it.
+    ///
+    /// Slow start's rule is that an acknowledged byte adds a byte of window, so
+    /// a round trip of acknowledgements doubles what may be in flight.  The
+    /// initial number is [RFC 6928]'s ten segments exactly: the first version
+    /// of this counted the handshake's SYN as a byte, which left the window at
+    /// ten segments and one, a number no rule produces.
+    ///
+    /// [RFC 6928]: https://www.rfc-editor.org/rfc/rfc6928
+    #[test]
+    fn a_stream_starts_with_ten_segments_and_doubles_on_acknowledgement() {
+        let (mut client, mut server) = established_on_the_loopback();
+        assert_eq!(
+            client.congestion_window(),
+            super::INITIAL_CWND,
+            "ten segments, and not ten segments plus the SYN"
+        );
+        assert_eq!(super::INITIAL_CWND, 10 * super::MSS_DEFAULT);
+
+        // One segment's worth of acknowledgements, and the window grows by
+        // exactly that much.
+        let before = client.congestion_window();
+        let (_, outgoing) = client.send_data(&alloc::vec![0x11_u8; super::MSS_DEFAULT]);
+        let mut client_out = outgoing;
+        let mut server_out = alloc::vec::Vec::new();
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        assert_eq!(
+            client.congestion_window(),
+            before + super::MSS_DEFAULT,
+            "one acknowledged segment opens the window by one"
+        );
+
+        // And once ssthresh is reached the growth is one segment per round
+        // trip rather than one per acknowledgement.  The threshold is pushed
+        // down to the current window so the next acknowledgement takes the
+        // avoidance branch.
+        client.ssthresh = client.congestion_window();
+        let before = client.congestion_window();
+        let (_, outgoing) = client.send_data(&alloc::vec![0x22_u8; super::MSS_DEFAULT]);
+        let mut client_out = outgoing;
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        let grown = client.congestion_window() - before;
+        assert!(
+            grown < super::MSS_DEFAULT,
+            "congestion avoidance grew by {grown}, which is a full segment per              acknowledgement rather than per round trip"
+        );
+        assert!(grown > 0, "and it still grew");
+    }
+
+    /// A timeout collapses the window to one segment and lowers the threshold.
+    #[test]
+    fn a_timeout_collapses_the_congestion_window() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        let before = client.congestion_window();
+        let (_, outgoing) = client.send_data(&alloc::vec![0x33_u8; 4 * super::MSS_DEFAULT]);
+        assert!(outgoing.len() >= 4);
+
+        // Nothing answers, and the timer fires.
+        client.advance(super::RTO_INITIAL_MICROS);
+        assert!(matches!(
+            client.retransmit(),
+            super::Retransmission::Again(_)
+        ));
+
+        assert_eq!(
+            client.congestion_window(),
+            client.segment_limit(),
+            "one segment: the path just said it dropped something"
+        );
+        assert!(
+            client.slow_start_threshold() <= before / 2,
+            "and the threshold halved from {}",
+            before
+        );
+        assert!(
+            client.slow_start_threshold() >= 2 * client.segment_limit(),
+            "but never below two segments"
+        );
+    }
+
+    /// Three duplicate acknowledgements send the segment at the gap at once,
+    /// without waiting for its timer.
+    ///
+    /// This is fast retransmit, and it is the half of congestion control a
+    /// timer cannot do: the peer is saying it received something past a gap, so
+    /// the sender knows which segment was lost before a second has passed.
+    #[test]
+    fn three_duplicate_acknowledgements_retransmit_at_once() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        let (_, outgoing) = client.send_data(&alloc::vec![0x44_u8; 3 * super::MSS_DEFAULT]);
+        assert_eq!(outgoing.len(), 3);
+        let first = outgoing[0].clone();
+        let window_before = client.congestion_window();
+
+        // The peer's position, which is what a duplicate acknowledgement
+        // repeats: it has the first segment missing and the rest held.
+        let position = client.expected_position();
+        let duplicate = Segment {
+            source_port: THEIR_PORT,
+            destination_port: OUR_PORT,
+            sequence: position,
+            acknowledgement: first.sequence,
+            flags: FLAG_ACK,
+            window: super::WINDOW,
+            payload_len: 0,
+        };
+
+        // The first two say nothing new.
+        for expected in 1..super::DUPLICATE_ACKS {
+            let (_event, replies) = client.receive(&duplicate, &[]);
+            assert!(replies.is_empty(), "duplicate {expected} is not yet a loss");
+        }
+        // The third is.
+        let (_event, replies) = client.receive(&duplicate, &[]);
+        assert_eq!(replies.len(), 1, "the segment at the gap, sent again");
+        assert_eq!(
+            replies[0].sequence, first.sequence,
+            "the same position it first carried"
+        );
+        assert_eq!(replies[0].payload, first.payload, "and the same bytes");
+        assert!(
+            client.congestion_window() < window_before,
+            "fast recovery halved the window"
+        );
+    }
+
+    /// A reordered pair is not a loss: two duplicate acknowledgements leave
+    /// the window alone.
+    ///
+    /// This is the reason the threshold is three rather than one.  A wire that
+    /// swaps two segments produces two duplicates and no loss, and a sender
+    /// that halved its window for each would shrink for a path that carried
+    /// everything.
+    #[test]
+    fn two_duplicate_acknowledgements_are_not_a_loss() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        let (_, outgoing) = client.send_data(&alloc::vec![0x55_u8; 2 * super::MSS_DEFAULT]);
+        let first = outgoing[0].clone();
+        let window_before = client.congestion_window();
+
+        let duplicate = Segment {
+            source_port: THEIR_PORT,
+            destination_port: OUR_PORT,
+            sequence: client.expected_position(),
+            acknowledgement: first.sequence,
+            flags: FLAG_ACK,
+            window: super::WINDOW,
+            payload_len: 0,
+        };
+        for _ in 0..2 {
+            let (_event, replies) = client.receive(&duplicate, &[]);
+            assert!(replies.is_empty());
+        }
+        assert_eq!(
+            client.congestion_window(),
+            window_before,
+            "two duplicates are a reordering, not a loss"
+        );
     }
 
     /// A sent segment is kept until the peer acknowledges it.

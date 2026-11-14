@@ -488,8 +488,9 @@ probe sends its advertisement through the same receive path a real one takes.
 What is **not** here, and is its own step: rebinding, which is the broadcast
 any server may answer and which `Lease::duty` names but no caller sends; and
 DHCPv6, a different protocol with a different message set.  Congestion control
-is the other one, and it waits on a path with a round trip and a loss on it,
-which neither a loopback nor QEMU's user-mode network is.  Two things came off
+is no longer on the list: a stream slow-starts, avoids, and retransmits on three
+duplicate acknowledgements.  What it still does not do is measure a round trip,
+so its timeout is a constant.  Two things came off
 this list: out-of-order receive, because a segment ahead of the expected
 position is held and delivered in sequence order when the gap closes, and
 path-MTU discovery in both families, because a fragmentation-needed or

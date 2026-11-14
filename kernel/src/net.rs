@@ -3485,6 +3485,148 @@ pub fn window_probe() -> bool {
     bounded
 }
 
+/// Prove that a stream's window grows on acknowledgements and collapses on a
+/// loss.
+///
+/// Every exchange this gate runs sends a handful of segments and acknowledges
+/// every one, so a stack with no congestion window and one with a window behave
+/// identically: the transfer finishes before the window matters.  This probe
+/// runs an exchange long enough to see the window move, and reports the number
+/// it reached before and after a timeout.
+///
+/// The three numbers are the initial window, what acknowledgements grew it to,
+/// and what a timeout left it at.  A stack that never grew it prints the first
+/// number three times; one that never collapsed it prints the second twice.
+#[cfg(target_os = "none")]
+pub fn congestion_probe() -> bool {
+    let listener = match tcp_listen(9106) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let protocol = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9106) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+
+    let initial = match TCP.lock().connection(client) {
+        Some(connection) => connection.congestion_window(),
+        None => return false,
+    };
+    let source_port = match TCP.lock().local_port_of(client) {
+        Some(port) => port,
+        None => return false,
+    };
+
+    // Ten segments, delivered one at a time with the peer acknowledging each,
+    // which is what a round trip of acknowledgements looks like from the
+    // sender's side.  Each acknowledgement opens the window by the bytes it
+    // carried.
+    let mut peer_position = 0u32;
+    for index in 0..10u32 {
+        let (sequence, acknowledgement, payload) = {
+            let mut table = TCP.lock();
+            let Some(connection) = table.connection_mut(client) else {
+                return false;
+            };
+            // One segment at a time, so the window is asked for room each turn.
+            let (sent, outgoing) = connection.send_data(&alloc::vec![index as u8; 64]);
+            match (sent, outgoing.into_iter().next()) {
+                (64, Some(segment)) => (segment.sequence, segment.acknowledgement, segment.payload),
+                _ => return false,
+            }
+        };
+        // The peer receives it and answers, and the answer goes back through
+        // the same path a real one would take.
+        let (event, replies) = {
+            let mut table = TCP.lock();
+            let Some(peer) = table.connection_mut(accepted) else {
+                return false;
+            };
+            if peer_position == 0 {
+                peer_position = peer.expected_position();
+            }
+            let segment = net::tcp::Segment {
+                source_port,
+                destination_port: 9106,
+                sequence,
+                acknowledgement,
+                flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+                window: net::tcp::WINDOW,
+                payload_len: payload.len(),
+            };
+            peer.receive(&segment, &payload)
+        };
+        let _ = event;
+        if replies.is_empty() {
+            return false;
+        }
+        // The peer's acknowledgement reaches the sender.
+        let mut table = TCP.lock();
+        let Some(sender) = table.connection_mut(client) else {
+            return false;
+        };
+        for reply in replies {
+            let segment = net::tcp::Segment {
+                source_port: 9106,
+                destination_port: source_port,
+                sequence: peer_position,
+                acknowledgement: reply.acknowledgement,
+                flags: reply.flags,
+                window: reply.window,
+                payload_len: reply.payload.len(),
+            };
+            let _ = sender.receive(&segment, &reply.payload);
+            peer_position = peer_position.wrapping_add(64);
+        }
+    }
+
+    let grown = match TCP.lock().connection(client) {
+        Some(connection) => connection.congestion_window(),
+        None => return false,
+    };
+
+    // A segment nobody answers, and the timer that fires.
+    let timed_out = {
+        let mut table = TCP.lock();
+        let Some(sender) = table.connection_mut(client) else {
+            return false;
+        };
+        let (_, outgoing) = sender.send_data(&alloc::vec![0x7E_u8; 64]);
+        let queued = !outgoing.is_empty();
+        sender.advance(crate::net::micros_since_boot() + net::tcp::RTO_INITIAL_MICROS);
+        let fired = matches!(
+            sender.retransmit(),
+            net::tcp::Retransmission::Again(_) | net::tcp::Retransmission::Abandoned
+        );
+        (queued, fired, sender.congestion_window())
+    };
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    let correct = grown > initial && timed_out.1 && timed_out.2 < grown;
+    arch::serial::write_str("protofire: congestion ");
+    arch::serial::write_u32(initial as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(grown as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(timed_out.2 as u32);
+    arch::serial::write_str(if correct {
+        ", grew and then collapsed\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    correct
+}
+
 /// Prove that a segment which arrives early is held and then delivered.
 ///
 /// No wire this gate boots reorders, so the probe makes the reordering: it

@@ -591,6 +591,14 @@ impl Machine {
                     "protofire: window 8192 -> 0, and a byte past it was refused",
                     true,
                 ),
+                // The congestion window, on an exchange long enough to see it
+                // move: ten acknowledgements grow it and a timeout collapses
+                // it.  Every other boot exchange finishes before the window
+                // matters.
+                (
+                    "protofire: congestion 14600 -> 15240 -> 1460, grew and then collapsed",
+                    true,
+                ),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and
@@ -1219,6 +1227,14 @@ impl Machine {
                         "protofire: window 8192 -> 0, and a byte past it was refused",
                         true,
                     ),
+                    // The congestion window, on an exchange long enough to see
+                    // it move: ten acknowledgements grow it and a timeout
+                    // collapses it.  Every other boot exchange finishes before
+                    // the window matters.
+                    (
+                        "protofire: congestion 14600 -> 15240 -> 1460, grew and then collapsed",
+                        true,
+                    ),
                     // The exchange, for the reason the x86_64 list states:
                     // the child's exit status is the echo's first byte.
                     (
@@ -1556,6 +1572,14 @@ impl Machine {
                 // one, which is why this is its own exchange.
                 (
                     "protofire: window 8192 -> 0, and a byte past it was refused",
+                    true,
+                ),
+                // The congestion window, on an exchange long enough to see it
+                // move: ten acknowledgements grow it and a timeout collapses
+                // it.  Every other boot exchange finishes before the window
+                // matters.
+                (
+                    "protofire: congestion 14600 -> 15240 -> 1460, grew and then collapsed",
                     true,
                 ),
                 // The stream exchange, from ring 3: the same two programs
