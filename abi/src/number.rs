@@ -326,6 +326,16 @@ pub enum SyscallNumber {
     /// that outlived its program would make "trusted" a property of the
     /// machine's uptime.
     TrustAnchorRemove = 195,
+    /// ipv6_status, report the interface's IPv6 side: its link-local
+    /// address, whether a router configured a global one, and how many
+    /// neighbours its cache holds (#197).
+    ///
+    /// The IPv6 side is a second address family on an interface that already
+    /// has an `NetworkStatus` record, and that call's record is frozen: its
+    /// fourteen address bytes are IPv4's and a sixteen-byte address does not
+    /// fit where a four-byte one goes.  This is the additive answer the
+    /// numbering rules allow — a new number, its own record, and
+    /// `NetworkStatus` unchanged for the programs already built against it.
     /// wait_process_of, wait for **one named** process to end, answering its
     /// exit status (#196).
     ///
@@ -337,13 +347,24 @@ pub enum SyscallNumber {
     /// The argument is the pid the caller is waiting for, and a pid that has
     /// not exited is a park the pid's exit wakes.
     WaitProcessOf = 196,
+    /// ipv6_status, report the interface's IPv6 side: its link-local
+    /// address, whether a router configured a global one, and how many
+    /// neighbours its cache holds (#197).
+    ///
+    /// The IPv6 side is a second address family on an interface that already
+    /// has an `NetworkStatus` record, and that call's record is frozen: its
+    /// fourteen address bytes are IPv4's and a sixteen-byte address does not
+    /// fit where a four-byte one goes.  This is the additive answer the
+    /// numbering rules allow — a new number, its own record, and
+    /// `NetworkStatus` unchanged for the programs already built against it.
+    Ipv6Status = 197,
 }
 
 /// How many syscall numbers this build serves.
 ///
 /// The dispatch table is sized by it and a program's `SYSCALL_COUNT` must not
 /// exceed it, so it is public: it is the number both sides agree on.
-pub const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::WaitProcessOf as u32 + 1;
+pub const PUBLIC_SYSCALL_COUNT: u32 = SyscallNumber::Ipv6Status as u32 + 1;
 
 #[cfg(test)]
 mod tests {
@@ -358,10 +379,12 @@ mod tests {
     /// nothing in the build says why.
     #[test]
     fn the_public_range_ends_at_the_last_number() {
-        assert_eq!(
-            PUBLIC_SYSCALL_COUNT,
-            SyscallNumber::WaitProcessOf as u32 + 1
-        );
+        assert_eq!(PUBLIC_SYSCALL_COUNT, SyscallNumber::Ipv6Status as u32 + 1);
+        // And the two numbers the IPv6 side added are above the frozen
+        // boundary, which is what makes them experimental rather than a
+        // change to a contract a program was built against.
+        assert_eq!(SyscallNumber::WaitProcessOf as u32, 196);
+        assert_eq!(SyscallNumber::Ipv6Status as u32, 197);
     }
 
     /// The frozen numbering's boundary is where the ABI says it is.

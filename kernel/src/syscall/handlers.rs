@@ -1060,6 +1060,38 @@ pub fn network_status(
     Ok(Dispatch::complete(0))
 }
 
+/// Report the interface's IPv6 side.
+///
+/// Arguments: the buffer, then two reserved slots that must be zero — the
+/// same shape `NetworkStatus` takes, because a program reads the two the same
+/// way.  The record is [`abi::network::Ipv6StatusRecord`]'s and the offsets
+/// are that crate's, written field by field: the struct is `repr(C)` and a
+/// program reads it at the addresses the offsets name, so a writer that
+/// assumed a layout would be writing into the wrong bytes on a machine whose
+/// compiler disagreed.
+pub fn ipv6_status(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < abi::network::IPV6_STATUS_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let record = crate::net::ipv6_status().ok_or(Error::NotFound)?;
+    buffer[0..8].copy_from_slice(&record.state.to_le_bytes());
+    buffer[8..16].copy_from_slice(&record.has_global.to_le_bytes());
+    buffer[16..24].copy_from_slice(&record.neighbours.to_le_bytes());
+    buffer[abi::network::IPV6_STATUS_LINK_LOCAL_OFFSET
+        ..abi::network::IPV6_STATUS_LINK_LOCAL_OFFSET + 16]
+        .copy_from_slice(&record.link_local);
+    buffer[abi::network::IPV6_STATUS_GLOBAL_OFFSET..abi::network::IPV6_STATUS_GLOBAL_OFFSET + 16]
+        .copy_from_slice(&record.global);
+    Ok(Dispatch::complete(0))
+}
+
 /// Write a `NetworkStatus` record at the start of a validated buffer: the
 /// state word, then the fourteen address bytes the record packed.
 fn write_network_status(buffer: &mut [u8], record: &network_abi::NetworkStatusRecord) {

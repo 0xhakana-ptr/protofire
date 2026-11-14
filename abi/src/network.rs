@@ -63,6 +63,58 @@ pub struct UdpSenderRecord {
     pub port: usize,
 }
 
+/// What `Ipv6Status` answers: the interface's link-local address, whether a
+/// router configured a global one, and the two counters a boot's own
+/// exchanges leave.
+///
+/// The addresses are sixteen bytes each and the record is `repr(C)`, so a
+/// program reads them at the offsets this crate names rather than assuming
+/// an alignment.  `has_global` is a word rather than a byte because every
+/// field here is a word: a record a program reads by pointer wants its
+/// fields where the compiler puts them, and a mixed-width struct is a layout
+/// two languages can disagree about.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ipv6StatusRecord {
+    /// Whether the interface has an IPv6 side at all: 1 when it does.
+    ///
+    /// A card the kernel drives always does — the link-local address is the
+    /// MAC's by EUI-64 and needs nothing from the wire — but the field is
+    /// here so a program can tell "no card" from "a card with no address",
+    /// which are different answers.
+    pub state: usize,
+    /// Whether a router configured a global address: 1 when one has.
+    pub has_global: usize,
+    /// How many neighbours the cache holds, reachable and stale together.
+    ///
+    /// Incomplete entries are not counted: a question with no answer is not
+    /// a neighbour, and a program that read the count as "nodes I can send
+    /// to" would be wrong by exactly the entries that cannot be sent to.
+    pub neighbours: usize,
+    /// The link-local address, sixteen bytes.
+    pub link_local: [u8; 16],
+    /// The global address, meaningful only when `has_global` is 1.
+    pub global: [u8; 16],
+}
+
+impl Ipv6StatusRecord {
+    /// The record for an interface with a link-local address and no router.
+    pub fn new(link_local: [u8; 16], global: Option<[u8; 16]>, neighbours: usize) -> Self {
+        Self {
+            state: 1,
+            has_global: usize::from(global.is_some()),
+            neighbours,
+            link_local,
+            global: global.unwrap_or([0_u8; 16]),
+        }
+    }
+}
+
+pub const IPV6_STATUS_SIZE: usize = size_of::<Ipv6StatusRecord>();
+pub const IPV6_STATUS_LINK_LOCAL_OFFSET: usize = offset_of!(Ipv6StatusRecord, link_local);
+pub const IPV6_STATUS_GLOBAL_OFFSET: usize = offset_of!(Ipv6StatusRecord, global);
+pub const IPV6_STATUS_NEIGHBOURS_OFFSET: usize = offset_of!(Ipv6StatusRecord, neighbours);
+
 pub const UDP_SENDER_RECORD_SIZE: usize = size_of::<UdpSenderRecord>();
 pub const UDP_SENDER_ADDRESS_OFFSET: usize = offset_of!(UdpSenderRecord, address);
 pub const UDP_SENDER_PORT_OFFSET: usize = offset_of!(UdpSenderRecord, port);
@@ -132,5 +184,33 @@ mod tests {
         assert_eq!(record.address, 0x0A00_0202, "the first byte is the highest");
         assert_eq!(unpack_address(record.address), [10, 0, 2, 2]);
         assert_eq!(unpack_address(pack_address([255, 255, 255, 255])), [255; 4]);
+    }
+    /// The IPv6 record's layout is the wire's: three words then two
+    /// sixteen-byte addresses, and the offsets this crate names are where
+    /// the compiler put them.
+    #[test]
+    fn the_ipv6_record_carries_three_words_and_two_addresses() {
+        assert_eq!(super::IPV6_STATUS_SIZE, 24 + 32);
+        assert_eq!(super::IPV6_STATUS_LINK_LOCAL_OFFSET, 24);
+        assert_eq!(super::IPV6_STATUS_GLOBAL_OFFSET, 40);
+
+        let link_local = [
+            0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0x50, 0x54, 0, 0xFF, 0xFE, 0x12, 0x34, 0x56,
+        ];
+        let global = [
+            0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0x50, 0x54, 0, 0xFF, 0xFE, 0x12, 0x34, 0x56,
+        ];
+        let record = super::Ipv6StatusRecord::new(link_local, Some(global), 2);
+        assert_eq!(record.state, 1);
+        assert_eq!(record.has_global, 1);
+        assert_eq!(record.neighbours, 2);
+        assert_eq!(record.link_local, link_local);
+        assert_eq!(record.global, global);
+
+        // No router: the flag says zero and the address field is zeroes
+        // rather than an address a program might read as real.
+        let record = super::Ipv6StatusRecord::new(link_local, None, 0);
+        assert_eq!(record.has_global, 0);
+        assert_eq!(record.global, [0_u8; 16]);
     }
 }

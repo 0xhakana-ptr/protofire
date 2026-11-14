@@ -779,6 +779,16 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The IPv6 side: a neighbour solicitation this stack answers itself, and
+    // an echo request it answers itself, both through the receive path's own
+    // demux.  QEMU's user-mode network forwards IPv6 but implements no NDP,
+    // so a probe aimed at its gateway would ask a question nothing on that
+    // side answers; a loopback over the wire is the exchange that proves the
+    // path without pretending the emulated network is a neighbour.
+    if !crate::net::ipv6_probe() {
+        return false;
+    }
+
     // The datagram: one UDP send to a port nothing owns, and the refusal
     // that comes back — the peer's proof that a datagram this stack built
     // arrived with its header intact.

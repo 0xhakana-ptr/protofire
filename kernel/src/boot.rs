@@ -300,6 +300,14 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::NetworkStatus,
         crate::syscall::network_status,
     );
+    // The IPv6 side, beside it: the number is above the frozen boundary and
+    // the record is its own, because `NetworkStatus`'s fourteen address
+    // bytes are IPv4's and a sixteen-byte address does not fit where a
+    // four-byte one goes.
+    table.register(
+        ::syscall::SyscallNumber::Ipv6Status,
+        crate::syscall::ipv6_status,
+    );
     table.register(::syscall::SyscallNumber::BindUdp, crate::syscall::bind_udp);
     table.register(
         ::syscall::SyscallNumber::SendToUdp,

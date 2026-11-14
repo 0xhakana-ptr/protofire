@@ -1392,6 +1392,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         || number == SyscallNumber::SystemInfo as usize
         || number == SyscallNumber::AbiInfo as usize
         || number == SyscallNumber::NetworkStatus as usize
+        || number == SyscallNumber::Ipv6Status as usize
     {
         // `GetRandom` names its buffer and its length in `a0`/`a1`.  `AbiInfo`
         // and `NetworkStatus` name the record in `a0` and its length in `a1`,
@@ -1406,6 +1407,10 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             n if n == SyscallNumber::NetworkStatus as usize => {
                 (call.arguments[0], call.arguments[1])
             }
+            // The same shape as `NetworkStatus`: the record in `a0` and its
+            // length in `a1`, because this call has no selector to make room
+            // for either.
+            n if n == SyscallNumber::Ipv6Status as usize => (call.arguments[0], call.arguments[1]),
             _ => (call.arguments[1], call.arguments[2]),
         };
         if !crate::address_space::is_user_range(record, length) {
@@ -1439,6 +1444,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 n if n == SyscallNumber::GetRandom as usize => " drew random bytes, ",
                 n if n == SyscallNumber::SystemInfo as usize => " asked the system, ",
                 n if n == SyscallNumber::NetworkStatus as usize => " asked the network, ",
+                n if n == SyscallNumber::Ipv6Status as usize => " asked the ipv6 side, ",
                 _ => " asked the ABI, ",
             });
             arch::serial::write_u32(length as u32);

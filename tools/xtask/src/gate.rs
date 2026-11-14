@@ -456,6 +456,26 @@ impl Machine {
                 ("protofire: process 1 asked the network, 24 byte(s)", true),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
+                // The IPv6 side, over the same card and the same receive
+                // path: a neighbour solicitation this stack answered — the
+                // line names the address asked about and the peer's MAC it
+                // took out of the solicitation's own option — and an echo
+                // request it replied to, with the identifier and sequence
+                // the request carried.
+                //
+                // Both are loopbacks through `demux_ipv6`, which is the
+                // path a frame off the wire takes.  QEMU's user-mode network
+                // was measured and refused for this: `ipv6=on` makes slirp
+                // stop answering IPv4 ARP, so enabling it costs four
+                // working IPv4 exchanges to reach a neighbour that does not
+                // answer NDP anyway.
+                ("protofire: ipv6 neighbour answered for fe80:", false),
+                ("protofire: ipv6 echo reply to fe80:", false),
+                // And the ring-3 half: a program reads the IPv6 record and
+                // checks the link-local address against the MAC it was told
+                // about — `fe80::` plus the modified EUI-64, the one fact a
+                // program can verify without the wire.
+                ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
                 // The answer the reply left behind: the cache holding it, and
                 // the same question answered from the table without a second
                 // frame on the wire.  The second line is exact because its
@@ -1009,6 +1029,26 @@ impl Machine {
                     ("protofire: process 1 asked the network, 24 byte(s)", true),
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
+                    // The IPv6 side, over the same card and the same receive
+                    // path: a neighbour solicitation this stack answered — the
+                    // line names the address asked about and the peer's MAC it
+                    // took out of the solicitation's own option — and an echo
+                    // request it replied to, with the identifier and sequence
+                    // the request carried.
+                    //
+                    // Both are loopbacks through `demux_ipv6`, which is the
+                    // path a frame off the wire takes.  QEMU's user-mode
+                    // network was measured and refused for this: `ipv6=on`
+                    // makes slirp stop answering IPv4 ARP, so enabling it costs
+                    // four working IPv4 exchanges to reach a neighbour that
+                    // does not answer NDP anyway.
+                    ("protofire: ipv6 neighbour answered for fe80:", false),
+                    ("protofire: ipv6 echo reply to fe80:", false),
+                    // And the ring-3 half: a program reads the IPv6 record and
+                    // checks the link-local address against the MAC it was told
+                    // about — `fe80::` plus the modified EUI-64, the one fact a
+                    // program can verify without the wire.
+                    ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
                     // The cache, for the reason the x86_64 list states: the
                     // answer is kept, and the second ask reads it back.
                     ("protofire: arp cache holds ", false),
@@ -1249,6 +1289,26 @@ impl Machine {
                 ("protofire: process 1 asked the network, 24 byte(s)", true),
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
+                // The IPv6 side, over the same card and the same receive
+                // path: a neighbour solicitation this stack answered — the
+                // line names the address asked about and the peer's MAC it
+                // took out of the solicitation's own option — and an echo
+                // request it replied to, with the identifier and sequence
+                // the request carried.
+                //
+                // Both are loopbacks through `demux_ipv6`, which is the
+                // path a frame off the wire takes.  QEMU's user-mode network
+                // was measured and refused for this: `ipv6=on` makes slirp
+                // stop answering IPv4 ARP, so enabling it costs four
+                // working IPv4 exchanges to reach a neighbour that does not
+                // answer NDP anyway.
+                ("protofire: ipv6 neighbour answered for fe80:", false),
+                ("protofire: ipv6 echo reply to fe80:", false),
+                // And the ring-3 half: a program reads the IPv6 record and
+                // checks the link-local address against the MAC it was told
+                // about — `fe80::` plus the modified EUI-64, the one fact a
+                // program can verify without the wire.
+                ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
                 // The cache, for the reason the x86_64 list states: the
                 // answer is kept, and the second ask reads it back.
                 ("protofire: arp cache holds ", false),

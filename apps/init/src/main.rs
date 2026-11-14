@@ -81,6 +81,8 @@ use user_abi::sys_get_random;
 #[cfg(target_os = "none")]
 use user_abi::sys_get_time_of_day;
 #[cfg(target_os = "none")]
+use user_abi::sys_ipv6_status;
+#[cfg(target_os = "none")]
 use user_abi::sys_listen_tcp;
 #[cfg(target_os = "none")]
 use user_abi::sys_mmap;
@@ -476,6 +478,35 @@ pub extern "C" fn _start() -> ! {
         || gateway == [0, 0, 0, 0]
     {
         sys_exit(220);
+    }
+
+    // The IPv6 side, read the same way: the interface must report an address
+    // family whose link-local address is `fe80::` plus the MAC's own
+    // modified EUI-64 — the one fact a program can check without the wire,
+    // and the one that says the address was derived from this card rather
+    // than copied from somewhere.  A boot whose IPv6 side answered nothing
+    // exits here rather than letting the IPv4 lines stand in for it.
+    let mut ipv6 = [0u8; user_abi::IPV6_STATUS_BYTES];
+    insist(sys_ipv6_status(&mut ipv6));
+    let (ipv6_state, has_global, _neighbours, link_local, _global) =
+        user_abi::ipv6_status_record(&ipv6);
+    if ipv6_state != 1
+        || link_local[0] != 0xFE
+        || link_local[1] != 0x80
+        || link_local[8] != (hardware[0] ^ 0x02)
+        || link_local[9] != hardware[1]
+        || link_local[10] != hardware[2]
+        || link_local[11] != 0xFF
+        || link_local[12] != 0xFE
+        || link_local[13] != hardware[3]
+        || link_local[14] != hardware[4]
+        || link_local[15] != hardware[5]
+    {
+        // `has_global` is read and not asserted: a boot with no router is
+        // the normal case, and a program that required one would fail on
+        // every machine this tree runs on.
+        let _ = has_global;
+        sys_exit(221);
     }
 
     // The datagram exchange, between this process and a fork of it.  The

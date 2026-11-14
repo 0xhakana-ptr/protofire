@@ -88,6 +88,15 @@ impl Machine {
     fn network_arguments() -> Vec<String> {
         vec![
             "-netdev".to_string(),
+            // **Not `ipv6=on`.**  Measured: turning it on makes slirp stop
+            // answering IPv4 ARP, and the boot's whole network chain — the
+            // ARP exchange, the ping, the datagram — goes silent while the
+            // boot still exits zero.  The IPv6 exchange this tree proves is
+            // a loopback through the receive path's own demux, which needs
+            // nothing from the emulated network; a card option that costs
+            // four working IPv4 exchanges to enable a path that never uses
+            // it is the wrong trade, and the measurement is here so the next
+            // reader does not make it again.
             "user,id=net0".to_string(),
             "-device".to_string(),
             "virtio-net-pci,netdev=net0,disable-legacy=on".to_string(),

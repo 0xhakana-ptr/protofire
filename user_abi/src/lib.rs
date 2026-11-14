@@ -123,6 +123,9 @@ pub const SYS_SEND_TO_UDP: usize = SyscallNumber::SendToUdp as usize;
 pub const SYS_RECV_FROM_UDP: usize = SyscallNumber::RecvFromUdp as usize;
 /// A `NetworkStatus` record is a word of state and fourteen address bytes.
 pub const NETWORK_STATUS_BYTES: usize = core::mem::size_of::<abi::network::NetworkStatusRecord>();
+/// `ipv6_status(record)`: the interface's IPv6 side.
+pub const SYS_IPV6_STATUS: usize = SyscallNumber::Ipv6Status as usize;
+pub const IPV6_STATUS_BYTES: usize = core::mem::size_of::<abi::network::Ipv6StatusRecord>();
 /// The state word for a card the kernel drives.
 pub use abi::network::NETWORK_STATUS_UP;
 /// The machine's own counter, the only clock this build answers.
@@ -613,6 +616,22 @@ pub fn sys_network_status(record: &mut [u8; NETWORK_STATUS_BYTES]) -> usize {
     )
 }
 
+/// `ipv6_status(record)`: zero, with the record filled — the interface's
+/// link-local address, whether a router configured a global one, and how
+/// many neighbours its cache holds.
+#[cfg(target_os = "none")]
+pub fn sys_ipv6_status(record: &mut [u8; IPV6_STATUS_BYTES]) -> usize {
+    syscall6(
+        SYS_IPV6_STATUS,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
 /// `bind_udp(port)`: the descriptor the datagram calls carry back.
 #[cfg(target_os = "none")]
 pub fn sys_bind_udp(port: usize) -> usize {
@@ -717,6 +736,41 @@ pub fn network_record(record: &[u8; NETWORK_STATUS_BYTES]) -> (usize, [u8; 6], [
         hardware,
         protocol,
         gateway,
+    )
+}
+
+/// The three words and two addresses of an `Ipv6Status` record.
+///
+/// The addresses are at the offsets `abi::network` names, not at a
+/// hand-counted position: the record is `repr(C)` and this is the other side
+/// of that boundary, so the two must agree or a program reads its neighbour
+/// count out of an address.
+#[cfg(target_os = "none")]
+pub fn ipv6_status_record(
+    record: &[u8; IPV6_STATUS_BYTES],
+) -> (usize, usize, usize, [u8; 16], [u8; 16]) {
+    let mut state = [0u8; 8];
+    state.copy_from_slice(&record[..8]);
+    let mut has_global = [0u8; 8];
+    has_global.copy_from_slice(&record[8..16]);
+    let mut neighbours = [0u8; 8];
+    neighbours.copy_from_slice(&record[16..24]);
+    let mut link_local = [0u8; 16];
+    link_local.copy_from_slice(
+        &record[abi::network::IPV6_STATUS_LINK_LOCAL_OFFSET
+            ..abi::network::IPV6_STATUS_LINK_LOCAL_OFFSET + 16],
+    );
+    let mut global = [0u8; 16];
+    global.copy_from_slice(
+        &record
+            [abi::network::IPV6_STATUS_GLOBAL_OFFSET..abi::network::IPV6_STATUS_GLOBAL_OFFSET + 16],
+    );
+    (
+        usize::from_le_bytes(state),
+        usize::from_le_bytes(has_global),
+        usize::from_le_bytes(neighbours),
+        link_local,
+        global,
     )
 }
 

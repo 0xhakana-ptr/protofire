@@ -71,6 +71,7 @@ pub use handlers::create_dir;
 pub use handlers::create_dir_at;
 pub use handlers::get_random;
 pub use handlers::get_time_of_day;
+pub use handlers::ipv6_status;
 pub use handlers::listen_tcp;
 pub use handlers::mac_add_rule;
 pub use handlers::mac_get_status;

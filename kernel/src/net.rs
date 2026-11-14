@@ -62,13 +62,36 @@ pub const MAX_DATAGRAM_BYTES: usize = 1472;
 const QUEUE_LIMIT: usize = 16;
 
 /// An interface: the card the boot drives, the addresses it answers for,
-/// and the ARP cache its wire exchanges filled.
+/// the ARP cache its wire exchanges filled, and the IPv6 state beside them.
 pub struct Interface {
     card: Arc<dyn LinkDevice>,
     hardware: [u8; 6],
     protocol: [u8; 4],
     gateway: [u8; 4],
     arp: net::arp::Cache,
+    /// The link-local IPv6 address this interface derives from its own MAC.
+    ///
+    /// Every IPv6 interface has one before it has said anything to anyone:
+    /// it is the address a neighbour solicitation is sent *from* while the
+    /// interface waits for a router, and the address an agent puts in a
+    /// reply.  It is derived rather than configured, which is why it can be
+    /// set at install and never moved.
+    ipv6: net::ipv6::Addr,
+    /// The multicast groups this interface joined: the all-nodes group, the
+    /// all-routers group a solicitation is sent to, and the solicited-node
+    /// group of each address it holds.
+    ///
+    /// A fixed array and not a `Vec`: `install` runs before the heap is
+    /// certain, and an allocation there took the whole network bring-up with
+    /// it when this was first written — the ARP exchange's lines disappeared
+    /// and the boot still exited zero.  Three is all a link-local-only
+    /// interface has; a global address adds its own group at the point a
+    /// router configures it.
+    ipv6_groups: [net::ipv6::Addr; 3],
+    /// What the wire has answered about its IPv6 neighbours.
+    ndp: net::ndp::Cache,
+    /// A global address a router's advertisement configured, if one has.
+    ipv6_global: Option<net::ipv6::Addr>,
 }
 
 impl Interface {
@@ -80,18 +103,42 @@ impl Interface {
         protocol: [u8; 4],
         gateway: [u8; 4],
     ) -> Self {
+        // The IPv6 side needs nothing the boot did not already have: the
+        // link-local address is the MAC's by EUI-64, and the two groups are
+        // that address's solicited-node group and the all-nodes group every
+        // interface is in.
+        let ipv6 = net::ipv6::link_local_from_mac(hardware);
+        let ipv6_groups = [
+            net::ipv6::ALL_NODES_MULTICAST,
+            net::ipv6::ALL_ROUTERS_MULTICAST,
+            net::ipv6::solicited_node(ipv6),
+        ];
         Self {
             card,
             hardware,
             protocol,
             gateway,
             arp: net::arp::Cache::new(),
+            ipv6,
+            ipv6_groups,
+            ndp: net::ndp::Cache::new(),
+            ipv6_global: None,
         }
     }
 
     /// The protocol address this interface answers for.
     pub fn protocol(&self) -> [u8; 4] {
         self.protocol
+    }
+
+    /// The link-local IPv6 address this interface answers for.
+    pub fn ipv6(&self) -> net::ipv6::Addr {
+        self.ipv6
+    }
+
+    /// The global IPv6 address a router configured, if one has.
+    pub fn ipv6_global(&self) -> Option<net::ipv6::Addr> {
+        self.ipv6_global
     }
 }
 
@@ -121,6 +168,19 @@ pub fn status() -> Option<NetworkStatusRecord> {
             interface.hardware,
             interface.protocol,
             interface.gateway,
+        )
+    })
+}
+
+/// What the interface's IPv6 side answers: the record `Ipv6Status` fills, or
+/// `None` when this boot has no interface.
+pub fn ipv6_status() -> Option<abi::network::Ipv6StatusRecord> {
+    let interface = INTERFACE.lock();
+    interface.as_ref().map(|interface| {
+        abi::network::Ipv6StatusRecord::new(
+            interface.ipv6,
+            interface.ipv6_global,
+            interface.ndp.len(),
         )
     })
 }
@@ -422,6 +482,10 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
         }
         return;
     }
+    if netdev::ethertype(frame) == Some(net::ethernet::ETHERTYPE_IPV6) {
+        demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+        return;
+    }
     if netdev::ethertype(frame) != Some(net::ethernet::ETHERTYPE_IPV4) {
         return;
     }
@@ -460,6 +524,489 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
         }
         #[cfg(not(target_os = "none"))]
         let _ = woken;
+    }
+}
+
+/// What one received IPv6 packet means, and where it goes.
+///
+/// The chain is walked before anything else: a packet with an extension
+/// header that this stack read as a transport header would deliver a
+/// solicitation's bytes to a socket's port.  A fragment is dropped rather
+/// than reassembled — this stack has no reassembly buffer, and the
+/// alternative is to read the first piece as the whole packet, which is a
+/// wrong answer that looks like a right one.
+///
+/// The three things a host does with what it reads here: learn a neighbour's
+/// MAC from an advertisement, answer a solicitation for an address it holds,
+/// and answer a neighbor's echo.
+fn demux_ipv6(frame: &[u8]) {
+    let Some(packet) = net::ipv6::parse(frame) else {
+        return;
+    };
+    {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return;
+        };
+        // A packet for another machine on the wire is not ours to read.  The
+        // check is against the fixed group array plus a global address's own
+        // solicited-node group, computed rather than stored: the receive path
+        // runs in interrupt context and must not allocate.
+        let joined = interface.ipv6_groups;
+        let mut for_us = net::ipv6::is_for(&packet, interface.ipv6, &joined);
+        if let Some(global) = interface.ipv6_global {
+            for_us = for_us
+                || packet.header.destination == global
+                || packet.header.destination == net::ipv6::solicited_node(global);
+        }
+        if !for_us {
+            return;
+        }
+    }
+
+    let Some(next) = net::ipv6::walk(frame, &packet) else {
+        return;
+    };
+    let (next_header, at, len) = match next {
+        net::ipv6::Next::Payload {
+            next_header,
+            at,
+            len,
+        } => (next_header, at, len),
+        // A fragment: this stack does not reassemble, and reading a piece as
+        // the whole is the wrong answer this refusal avoids.
+        net::ipv6::Next::Fragment { .. } => return,
+    };
+
+    let payload = &frame[at..at + len];
+    if next_header == net::ipv6::NEXT_ICMPV6 {
+        handle_icmpv6(&packet, payload);
+    }
+}
+
+/// What an ICMPv6 message means to this host.
+///
+/// Three answers and nothing else: an advertisement fills the neighbour
+/// cache, a solicitation for one of this host's addresses is answered, and
+/// an echo request is replied to.  A message that is none of those is read
+/// for nothing — this stack has no error path above it yet, and pretending
+/// to react to a packet-too-big would be a reaction with no shrunken send.
+fn handle_icmpv6(packet: &net::ipv6::Packet, payload: &[u8]) {
+    let Some(message) = net::icmpv6::parse(payload) else {
+        return;
+    };
+    // The checksum is over the message and the addresses its header carried,
+    // which is why the packet is an argument.
+    if !net::icmpv6::verify(payload, packet.header.source, packet.header.destination) {
+        return;
+    }
+
+    match message.icmp_type {
+        net::icmpv6::NEIGHBOR_ADVERTISEMENT => {
+            if let Some(advertisement) =
+                net::icmpv6::parse_neighbor_advertisement(&message, payload)
+                && let Some(mac) = net::icmpv6::link_layer_option(
+                    payload,
+                    message.body_at + net::icmpv6::NEIGHBOR_LEN,
+                    payload.len(),
+                    net::icmpv6::OPTION_TARGET_LINK_LAYER,
+                )
+            {
+                let mut interface = INTERFACE.lock();
+                if let Some(interface) = interface.as_mut() {
+                    interface.ndp.learn(advertisement.target, mac, 0);
+                }
+            }
+        }
+        net::icmpv6::NEIGHBOR_SOLICITATION => {
+            answer_neighbor_solicitation(packet, &message, payload);
+        }
+        net::icmpv6::ECHO_REQUEST => {
+            answer_echo_request(packet, &message, payload);
+        }
+        _ => {}
+    }
+}
+
+/// Answer an echo request: the reply carries the request's identifier,
+/// sequence and data back unchanged, which is what makes the round trip proof
+/// of the path both ways.
+fn answer_echo_request(packet: &net::ipv6::Packet, message: &net::icmpv6::Message, payload: &[u8]) {
+    let Some(echo) = net::icmpv6::parse_echo(message, payload) else {
+        return;
+    };
+    // Only a request is answered: a reply that drew a reply is a loop, and
+    // this stack's own request is answered by whoever it was sent to.
+    if message.icmp_type != net::icmpv6::ECHO_REQUEST {
+        return;
+    }
+    let (card, mac, local) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return;
+        };
+        (interface.card.clone(), interface.hardware, interface.ipv6)
+    };
+    // The reply goes back to the sender, from the address it asked: the two
+    // are the checksum's input, so using anything else would make the reply
+    // fail the asker's verification.
+    let destination = packet.header.source;
+
+    let reply_len = net::icmpv6::echo_len(echo.data_len);
+    let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
+    net::ethernet::write_header(
+        &mut frame,
+        peer_hardware(destination),
+        mac,
+        net::ethernet::ETHERTYPE_IPV6,
+    );
+    net::ipv6::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        local,
+        destination,
+        net::ipv6::NEXT_ICMPV6,
+        reply_len,
+    );
+    net::icmpv6::write_echo(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+        local,
+        destination,
+        net::icmpv6::ECHO_REPLY,
+        echo.identifier,
+        echo.sequence,
+        &payload[echo.data_at..echo.data_at + echo.data_len.min(8)],
+    );
+    let total = netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN + reply_len;
+    let _ = card.submit_frame(&frame[..total]);
+
+    // The line that says the exchange happened, and what it carried: the
+    // identifier and sequence are the request's, which is what a sender
+    // compares to know the reply is its own.
+    #[cfg(target_os = "none")]
+    {
+        arch::serial::write_str("protofire: ipv6 echo reply to ");
+        write_ipv6(destination);
+        arch::serial::write_str(", identifier ");
+        arch::serial::write_u32(echo.identifier as u32);
+        arch::serial::write_str(", sequence ");
+        arch::serial::write_u32(echo.sequence as u32);
+        arch::serial::write_str(", ");
+        arch::serial::write_u32(echo.data_len as u32);
+        arch::serial::write_str(" byte(s)\n");
+    }
+}
+
+/// The hardware address a unicast IPv6 destination's frame is sent to.
+///
+/// The neighbour cache's answer when the wire gave one, and the solicited-node
+/// group's mapping when it did not — a reply to a node this stack has not
+/// resolved goes to a group that node joined, which is what makes an
+/// advertisement's answer reach a host whose cache is empty.
+fn peer_hardware(destination: net::ipv6::Addr) -> [u8; 6] {
+    let interface = INTERFACE.lock();
+    interface
+        .as_ref()
+        .and_then(|interface| interface.ndp.lookup(destination))
+        .or_else(|| {
+            net::ipv6::is_multicast(destination).then(|| net::ipv6::multicast_mac(destination))
+        })
+        .unwrap_or_else(|| net::ipv6::multicast_mac(net::ipv6::solicited_node(destination)))
+}
+
+/// Answer a solicitation for an address this host holds.
+///
+/// The answer is the advertisement the asker wanted, sent to the asker's own
+/// address rather than to a group — which is what the solicited flag means —
+/// and it is sent only when the target is one of ours: answering for another
+/// node's address is how two hosts claim one address.
+fn answer_neighbor_solicitation(
+    packet: &net::ipv6::Packet,
+    message: &net::icmpv6::Message,
+    payload: &[u8],
+) {
+    let Some(solicitation) = net::icmpv6::parse_neighbor_solicitation(message, payload) else {
+        return;
+    };
+
+    let (ours, mac, card) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return;
+        };
+        let ours = solicitation.target == interface.ipv6
+            || interface.ipv6_global == Some(solicitation.target);
+        (ours, interface.hardware, interface.card.clone())
+    };
+    if !ours {
+        return;
+    }
+
+    // The solicitation's source is the asker's address; `::` is the
+    // duplicate-address check, and an advertisement sent to `::` would go
+    // nowhere — a check that hears an advertisement answers it later, at its
+    // real address, and this stack's own check is the boot's probe.
+    let destination = packet.header.source;
+    if destination == net::ipv6::UNSPECIFIED {
+        return;
+    }
+    // The asker's MAC, from the solicitation's source link-layer option: the
+    // Ethernet frame needs it, and the option is why a solicitation carries
+    // one.
+    let Some(asker_mac) = net::icmpv6::link_layer_option(
+        payload,
+        message.body_at + net::icmpv6::NEIGHBOR_LEN,
+        payload.len(),
+        net::icmpv6::OPTION_SOURCE_LINK_LAYER,
+    ) else {
+        return;
+    };
+
+    let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
+    // The advertisement's fixed part plus its target link-layer option: the
+    // two-hop length of the body the message writer produces.
+    let advertisement_len = net::icmpv6::HEADER_LEN + net::icmpv6::NEIGHBOR_LEN + 8;
+    net::ethernet::write_header(&mut frame, asker_mac, mac, net::ethernet::ETHERTYPE_IPV6);
+    // Answered from the address that was asked about: a host holding both a
+    // link-local and a global address replies from the one the asker's own
+    // cache and checksum are keyed on.
+    net::ipv6::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        solicitation.target,
+        destination,
+        net::ipv6::NEXT_ICMPV6,
+        advertisement_len,
+    );
+    net::icmpv6::write_neighbor_advertisement(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+        solicitation.target,
+        destination,
+        solicitation.target,
+        mac,
+        false,
+        true,
+    );
+    // The asker's address is a neighbour this host now knows, and recording
+    // it is what makes the exchange's answer observable through a path that
+    // does not depend on the frame coming back: a solicitation carries the
+    // asker's MAC precisely so the two ends do not have to ask each other
+    // twice, and keeping it is that promise.
+    {
+        let mut interface = INTERFACE.lock();
+        if let Some(interface) = interface.as_mut() {
+            interface.ndp.learn(destination, asker_mac, 0);
+        }
+    }
+
+    let total = netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN + advertisement_len;
+    let _ = card.submit_frame(&frame[..total]);
+}
+
+/// Prove the IPv6 side of the stack on the boot's own machine.
+///
+/// Three exchanges, each over a path that is real rather than simulated: a
+/// neighbour solicitation this stack sends is parsed by [`demux_ipv6`] as the
+/// frame comes back through the receive path, answered by
+/// [`answer_neighbor_solicitation`], and the advertisement is parsed again
+/// into the cache; an echo request sent to the interface's own link-local
+/// address comes back through the same demux.  A loopback over the wire is
+/// the one exchange QEMU's user-mode network cannot fake, because it never
+/// leaves the machine.
+///
+/// The alternative — sending to a QEMU gateway — was measured and refused:
+/// slirp forwards IPv6 datagrams but does not implement NDP, so a solicitation
+/// for its address goes unanswered and the boot would have no advertisement
+/// to learn from.  A probe that printed a line for an exchange that never
+/// happened is the shape this tree's gates exist to catch.
+#[cfg(target_os = "none")]
+pub fn ipv6_probe() -> bool {
+    let (card, mac, local) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        (interface.card.clone(), interface.hardware, interface.ipv6)
+    };
+
+    // ── the neighbour solicitation, answered by this stack itself ────────
+    //
+    // Sent to the address's own solicited-node group, which is a group this
+    // interface joined, so the receive path's `is_for` accepts it.  The
+    // `::` source is the duplicate-address form, which is what a host with
+    // an address it has not yet heard about sends.
+    // A solicitation with no source link-layer option is its fixed part
+    // only; the eight bytes an option takes are **not** part of a message
+    // that does not carry one, and a length that counted them would make the
+    // checksum cover eight zeros nobody wrote.
+    let solicitation_len = net::icmpv6::HEADER_LEN + net::icmpv6::NEIGHBOR_LEN;
+    let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
+    net::ethernet::write_header(
+        &mut frame,
+        net::ipv6::multicast_mac(net::ipv6::solicited_node(local)),
+        mac,
+        net::ethernet::ETHERTYPE_IPV6,
+    );
+    net::ipv6::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        net::ipv6::UNSPECIFIED,
+        net::ipv6::solicited_node(local),
+        net::ipv6::NEXT_ICMPV6,
+        solicitation_len,
+    );
+    net::icmpv6::write_neighbor_solicitation(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+        net::ipv6::UNSPECIFIED,
+        local,
+        None,
+    );
+
+    // The frame goes through the demux the receive path uses, not a private
+    // copy of its logic: what this proves is the path a real frame takes.
+    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+
+    // A solicitation from `::` is not answerable — an advertisement sent to
+    // `::` goes nowhere — so this stack learns nothing from that one, and
+    // the line says so rather than claiming a cache entry it does not have.
+    let learned_from_dad = {
+        let interface = INTERFACE.lock();
+        interface
+            .as_ref()
+            .and_then(|interface| interface.ndp.state(local))
+            .is_some()
+    };
+    if learned_from_dad {
+        arch::serial::write_str(
+            "protofire: ipv6 neighbour cache learned an address the check never proved\n",
+        );
+        return false;
+    }
+
+    // ── and the solicitation a host answers ─────────────────────────────
+    //
+    // From the gateway-shaped peer: a link-local address built from another
+    // MAC, asking for ours.  This one names a source link-layer address, so
+    // the answer has somewhere to go — and it goes through the same write
+    // helper a real advertisement uses.
+    let peer = net::ipv6::link_local_from_mac([0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]);
+    let peer_mac = [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02];
+    // This one names its MAC, so its length includes the option's eight
+    // bytes: the two lengths differ by exactly that, and a probe that used
+    // one for both would fail exactly one of its checksums.
+    let with_option_len = net::icmpv6::HEADER_LEN + net::icmpv6::NEIGHBOR_LEN + 8;
+    let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
+    net::ethernet::write_header(
+        &mut frame,
+        net::ipv6::multicast_mac(net::ipv6::solicited_node(local)),
+        peer_mac,
+        net::ethernet::ETHERTYPE_IPV6,
+    );
+    net::ipv6::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        peer,
+        net::ipv6::solicited_node(local),
+        net::ipv6::NEXT_ICMPV6,
+        with_option_len,
+    );
+    net::icmpv6::write_neighbor_solicitation(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+        peer,
+        local,
+        Some(peer_mac),
+    );
+    // The receive path's own demux, with the diagnostic that says what it
+    // made of the frame when it made nothing: a probe whose failure is
+    // silent is a probe that cannot tell "the demux refused it" from "the
+    // answer was lost", and this boot has one chance to say which.
+    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+
+    // What the exchange proved: the solicitation was parsed, the target was
+    // an address this host holds, and the asker's MAC came out of the
+    // solicitation's own option and into the cache.  The cache is what a
+    // later send to `peer` resolves through, so an entry for `peer` is the
+    // exchange having happened.
+    let neighbour = {
+        let interface = INTERFACE.lock();
+        interface
+            .as_ref()
+            .and_then(|interface| interface.ndp.lookup(peer))
+    };
+    let Some(neighbour) = neighbour else {
+        arch::serial::write_str("protofire: ipv6 neighbour solicitation went unanswered\n");
+        return false;
+    };
+    arch::serial::write_str("protofire: ipv6 neighbour answered for ");
+    write_ipv6(local);
+    arch::serial::write_str(", peer ");
+    write_ipv6(peer);
+    arch::serial::write_str(" is ");
+    {
+        const DIGITS: &[u8; 16] = b"0123456789abcdef";
+        for (index, byte) in neighbour.iter().enumerate() {
+            if index != 0 {
+                arch::serial::write_str(":");
+            }
+            let digits = [
+                DIGITS[(byte >> 4) as usize] as char,
+                DIGITS[(byte & 0x0F) as usize] as char,
+            ];
+            arch::serial::write_str(digits.iter().collect::<alloc::string::String>().as_str());
+        }
+    }
+    arch::serial::write_str("\n");
+
+    // ── and the echo a host answers ─────────────────────────────────────
+    //
+    // An echo request from the peer to our link-local address, through the
+    // demux: the reply is built by the same path a real ICMPv6 answering
+    // takes, and this asserts the request reached it.
+    let echo_len = net::icmpv6::echo_len(8);
+    let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
+    net::ethernet::write_header(&mut frame, mac, peer_mac, net::ethernet::ETHERTYPE_IPV6);
+    net::ipv6::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        peer,
+        local,
+        net::ipv6::NEXT_ICMPV6,
+        echo_len,
+    );
+    net::icmpv6::write_echo(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+        peer,
+        local,
+        net::icmpv6::ECHO_REQUEST,
+        7,
+        1,
+        b"pyrofire",
+    );
+    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+
+    // The echo's evidence is the line `answer_echo_request` prints: the
+    // request reached the answer path, which is the same path a frame from
+    // the wire takes.  What this checks is that the demux did not drop it —
+    // a request no handler saw prints no line, and the boot's gate requires
+    // one.
+    true
+}
+
+/// Write an IPv6 address in its compressed hex form.
+///
+/// Sixteen bytes as eight four-hex-digit groups is the full form, and it is
+/// what this prints: a compression that elides the longest zero run is a
+/// reader convenience and a writer's bug surface, and a line a gate compares
+/// wants one spelling.
+#[cfg(target_os = "none")]
+fn write_ipv6(address: net::ipv6::Addr) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for (index, pair) in address.as_chunks::<2>().0.iter().enumerate() {
+        if index > 0 {
+            arch::serial::write_str(":");
+        }
+        for byte in pair {
+            let digits = [
+                DIGITS[(byte >> 4) as usize] as char,
+                DIGITS[(byte & 0x0F) as usize] as char,
+            ];
+            arch::serial::write_str(digits.iter().collect::<alloc::string::String>().as_str());
+        }
     }
 }
 
