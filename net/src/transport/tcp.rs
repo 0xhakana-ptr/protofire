@@ -518,6 +518,14 @@ pub struct Connection {
     /// because a path is a property of one four-tuple: a stream to one peer
     /// may cross a link a stream to another does not.
     path_mss: usize,
+    /// How many bytes the peer says its receive buffer has room for.
+    ///
+    /// The window its segments advertise, kept because it is a bound on this
+    /// side's sending and not a fact about this side's buffers.  The two
+    /// numbers were one constant for a while, [`WINDOW`] carried out and
+    /// never read in, and a sender that ignores this one sends past what the
+    /// peer said it would take.
+    peer_window: usize,
 }
 
 /// One segment waiting for its acknowledgement.
@@ -580,6 +588,7 @@ impl Connection {
             attempts: 0,
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
+            peer_window: WINDOW as usize,
             cwnd: INITIAL_CWND,
             ssthresh: MAX_CWND,
             duplicates: 0,
@@ -616,6 +625,7 @@ impl Connection {
             attempts: 0,
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
+            peer_window: WINDOW as usize,
             cwnd: INITIAL_CWND,
             ssthresh: MAX_CWND,
             duplicates: 0,
@@ -685,6 +695,11 @@ impl Connection {
         } else {
             alloc::vec::Vec::new()
         };
+        // The peer's own room, taken from the segment that stated it.  After
+        // the acknowledgement and not before, because a fast retransmission is
+        // composed from the queue the acknowledgement inspected, and the
+        // window bounds what is sent *next*.
+        self.note_window(segment);
         let (event, mut replies) = self.receive_body(segment, payload);
         // The fast retransmission goes first: it is the segment at a gap the
         // peer has already counted, and the reply this call composed is about
@@ -1007,18 +1022,47 @@ impl Connection {
 
     /// How many bytes this side may put in flight right now.
     ///
-    /// The smaller of the congestion window and what the unacknowledged queue
-    /// has room for.  A sender may send when `in_flight < min(cwnd, room)`,
-    /// which is [RFC 5681]'s rule with the receiver's window standing in as
-    /// this stack's own bound: the queue is the sender's copy of what the peer
-    /// has not taken, and [`MAX_UNACKNOWLEDGED`] is what bounds it.
+    /// The smallest of three bounds: the congestion window, the peer's
+    /// advertised window, and what the unacknowledged queue has room for.  A
+    /// sender may send when `in_flight < min(cwnd, peer, room)`, which is
+    /// [RFC 5681]'s rule with the three bounds it names: the congestion window
+    /// is this side's estimate of the path, the peer's window is the peer's
+    /// statement about its own buffers, and the queue is this side's copy of
+    /// what the peer has not taken, bounded by [`MAX_UNACKNOWLEDGED`].
+    ///
+    /// The peer's window was carried and ignored until this bound existed: a
+    /// segment's `window` field was parsed into [`Segment`] and every sender
+    /// treated the queue's size as the whole answer.  A peer that advertised
+    /// fewer bytes than `MAX_UNACKNOWLEDGED` segments were worth therefore
+    /// received more than it said it had room for, which is loss it reported
+    /// as a gap rather than as the window it had already named.
     ///
     /// [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
     pub fn send_budget(&self) -> usize {
         let room = MAX_UNACKNOWLEDGED
             .saturating_sub(self.unacknowledged.len())
             .saturating_mul(self.mss());
-        self.cwnd.saturating_sub(self.in_flight()).min(room)
+        self.cwnd
+            .min(self.peer_window)
+            .saturating_sub(self.in_flight())
+            .min(room)
+    }
+
+    /// The bytes the peer says its receive buffer has room for.
+    ///
+    /// The number its segments advertise, which [RFC 793] section 3.9 calls
+    /// `SND.WND`: a receive buffer's free room, as the peer last measured it.
+    /// It is kept as a number of bytes and never as a segment count, because a
+    /// segment's `window` field is a byte count and the two units this stack
+    /// counts in are bytes and segments, which would otherwise be confused
+    /// here.
+    ///
+    /// It starts at the full window because a handshake that has not yet
+    /// carried an ACK has not been told anything: a connection that started at
+    /// zero would wait for a statement the peer makes in the same SYN that
+    /// opens the stream.
+    pub fn peer_window(&self) -> usize {
+        self.peer_window
     }
 
     /// Open the window on an acknowledgement that carried new data.
@@ -1072,6 +1116,51 @@ impl Connection {
         }
     }
 
+    /// Note the room the peer's segment says its receive buffer has.
+    ///
+    /// The peer states a window in every segment it sends, including the ones
+    /// that carry data and the bare acknowledgements, so this reads the field
+    /// and does not wait for an acknowledgement to carry new bytes: a peer
+    /// whose buffer is full says so on the acknowledgement that emptied its
+    /// inbox, which is exactly the segment this needs to read.
+    ///
+    /// The statement is taken only from a segment whose acknowledgement is in
+    /// the range [RFC 793] section 3.9 calls acceptable, `SND.UNA <= SEG.ACK
+    /// <= SND.NXT`.  A duplicate acknowledgement sits at the low end of that
+    /// range and its window **is** read, which is the case that matters: a
+    /// peer filling its buffer answers three times with the same position and a
+    /// window that shrinks with each one, and a sender that skipped duplicate
+    /// acknowledgements would keep the largest number it had ever seen.  A
+    /// segment acknowledging something already acknowledged carries a window
+    /// from before the last update, and that is the one this refuses.
+    ///
+    /// A zero is a real value and not a refusal: [RFC 793]'s `SND.WND` may be
+    /// zero, and a sender that treated zero as "nothing was said" would ignore
+    /// the one statement that matters.  What a zero produces is a budget of
+    /// zero, which is the sender waiting for the peer to reopen, and the reopen
+    /// arrives as a later segment with a larger number in the same field.
+    fn note_window(&mut self, segment: &Segment) {
+        // A SYN has no acknowledgement to compare, and its window is the
+        // peer's statement about a stream that has carried nothing.
+        if segment.flags & FLAG_ACK != 0 {
+            // The low end of the range is the oldest queued segment's first
+            // byte, and with an empty queue the two ends of the range are one
+            // position, which only an acknowledgement of exactly that position
+            // is current at.
+            let oldest = self
+                .unacknowledged
+                .first()
+                .map(|segment| segment.sequence)
+                .unwrap_or(self.sequence);
+            if seq_before(segment.acknowledgement, oldest)
+                || seq_before(self.sequence, segment.acknowledgement)
+            {
+                return;
+            }
+        }
+        self.peer_window = segment.window as usize;
+    }
+
     /// Note an acknowledgement that covered nothing new.
     ///
     /// Three in a row is [RFC 5681]'s fast retransmit: the peer has received
@@ -1119,6 +1208,16 @@ impl Connection {
         self.acknowledgement
     }
 
+    /// The position this side will send its next byte from.
+    ///
+    /// [RFC 793] section 3.9's `SND.NXT`, which is the high end of the range an
+    /// incoming acknowledgement has to fall inside to be current.  A caller
+    /// that composes a segment on this side's behalf needs it, and so does a
+    /// test that hands this connection an acknowledgement it has to accept.
+    pub fn send_position(&self) -> u32 {
+        self.sequence
+    }
+
     /// How many bytes the peer has sent that a reader has not taken.
     pub fn held(&self) -> usize {
         self.inbox.len()
@@ -1159,10 +1258,10 @@ impl Connection {
         // that stopped acknowledging must not be able to make one write cost
         // unbounded memory.
         // The congestion window bounds this write as well as the queue does:
-        // a sender may have only `min(cwnd, queue room)` in flight, so a write
-        // that would exceed it is a partial write.  This is the rule that makes
-        // slow start mean something: an empty stream starts with ten segments
-        // of room and earns the rest.
+        // a sender may have only `min(cwnd, peer window, queue room)` in
+        // flight, so a write that would exceed it is a partial write.  This is
+        // the rule that makes slow start mean something: an empty stream
+        // starts with ten segments of room and earns the rest.
         let budget = self.send_budget();
         if budget == 0 {
             return (0, alloc::vec::Vec::new());
@@ -1174,7 +1273,16 @@ impl Connection {
             && carried < budget
             && self.unacknowledged.len() < MAX_UNACKNOWLEDGED
         {
-            let end = (carried + mss).min(bytes.len());
+            // The segment is clamped to what the budget has left, not just to
+            // what the bytes have.  A budget is a number of bytes and an MSS is
+            // a number of bytes, and the two are only equal when the budget is
+            // a whole number of segments: a first version tested `carried <
+            // budget` and then appended a whole MSS, which put up to one
+            // segment more in flight than the window allows.  A window of 8192
+            // against segments of 1460 carried 8760, and the test that names
+            // the number is the one that found it.
+            let allowance = (budget - carried).min(mss);
+            let end = (carried + allowance).min(bytes.len());
             let chunk = &bytes[carried..end];
             segments.extend(self.take_outgoing(
                 self.sequence,
@@ -2257,26 +2365,33 @@ mod tests {
     ///
     /// The count is what a caller writes again from, so a write that answered
     /// the whole length and queued part of it would lose the rest silently.
-    /// What bounds this one is the **congestion window**, which is smaller
-    /// than the queue's own bound on a fresh stream: ten segments of initial
-    /// window against sixteen the queue could hold.
+    /// The bound that stops it is the **smallest** of the three a sender
+    /// respects, and on a fresh loopback stream that is the peer's advertised
+    /// window: the congestion window starts at ten segments (14600 bytes) and
+    /// the peer advertises [`super::WINDOW`] (8192), which is the tighter of
+    /// the two.  Asserting the exact number is what says which bound worked;
+    /// asserting only "less than the write" would pass with the queue's bound,
+    /// the congestion window's, or the peer's, and this test has been all three
+    /// as the stack grew.
     #[test]
     fn a_write_stops_where_the_window_is_full() {
         let (mut client, _server) = established_on_the_loopback();
         client.advance(0);
         assert_eq!(client.unacknowledged(), 0);
         assert_eq!(client.in_flight(), 0);
-        assert!(
-            client.congestion_window() < super::MSS_DEFAULT * super::MAX_UNACKNOWLEDGED,
-            "the initial window is the tighter bound, which is what this test needs"
+        let bound = client.send_budget();
+        assert_eq!(
+            bound,
+            super::WINDOW as usize,
+            "the peer's window is the tighter bound on a fresh stream"
         );
+        assert_eq!(bound, client.peer_window());
 
         // Enough segments to fill the window and then some.
-        let window = client.congestion_window();
-        let bytes = alloc::vec![0x5A_u8; window + super::MSS_DEFAULT * 4];
+        let bytes = alloc::vec![0x5A_u8; bound + super::MSS_DEFAULT * 4];
         let (carried, outgoing) = client.send_data(&bytes);
-        assert_eq!(carried, window, "the whole window");
-        assert_eq!(client.in_flight(), window);
+        assert_eq!(carried, bound, "exactly the budget, not a segment past it");
+        assert_eq!(client.in_flight(), bound);
         assert!(outgoing.len() > 1, "and more than one segment");
         assert!(carried < bytes.len(), "the rest is the caller's to write");
 
@@ -2284,6 +2399,104 @@ mod tests {
         let (again, none) = client.send_data(b"more");
         assert_eq!(again, 0, "the window is full");
         assert!(none.is_empty());
+    }
+
+    /// A budget that is not a whole number of segments carries a short last
+    /// segment rather than overshooting.
+    ///
+    /// The defect this pins: the send loop tested `carried < budget` and then
+    /// appended a whole MSS, so a budget of 8192 against segments of 1460 put
+    /// 8760 bytes in flight, 568 past what the window allows.  No test saw it
+    /// while the congestion window was the only bound, because that one is ten
+    /// whole segments; the peer's window is an arbitrary number and made it
+    /// reachable on the first write.
+    #[test]
+    fn a_budget_that_is_not_whole_segments_carries_a_short_last_segment() {
+        let (mut client, _server) = established_on_the_loopback();
+        // A peer that states a window one byte past two segments.
+        let narrow = 2 * super::MSS_DEFAULT + 1;
+        let ack = super::Segment {
+            source_port: THEIR_PORT,
+            destination_port: OUR_PORT,
+            sequence: client.expected_position(),
+            acknowledgement: client.send_position(),
+            flags: FLAG_ACK,
+            window: narrow as u16,
+            payload_len: 0,
+        };
+        let (_, replies) = client.receive(&ack, b"");
+        assert!(replies.is_empty(), "a bare acknowledgement answers nothing");
+        assert_eq!(client.peer_window(), narrow);
+
+        let bytes = alloc::vec![0x33_u8; narrow * 2];
+        let (carried, outgoing) = client.send_data(&bytes);
+        assert_eq!(carried, narrow, "the budget, to the byte");
+        assert_eq!(
+            client.in_flight(),
+            narrow,
+            "in flight is what the peer said it would take"
+        );
+        assert_eq!(
+            outgoing.last().map(|segment| segment.payload.len()),
+            Some(1),
+            "the last segment carries the odd byte and not a whole MSS"
+        );
+        assert!(
+            outgoing
+                .iter()
+                .map(|segment| segment.payload.len())
+                .sum::<usize>()
+                == narrow,
+            "the segments add up to the budget exactly"
+        );
+    }
+
+    /// The peer's window is a bound on sending, separate from this side's.
+    ///
+    /// The field was parsed into every [`Segment`] and read by nothing: a
+    /// sender compared the congestion window and the queue's size and treated
+    /// the peer's statement as information it had already accounted for.  A
+    /// peer that shrank its window to zero said "send nothing" and was sent to
+    /// anyway.  This test is the one that would fail with the field ignored,
+    /// because a zero window and a full congestion window are different facts
+    /// that produce the same count only if one of them is not read.
+    #[test]
+    fn a_zero_peer_window_stops_the_sender() {
+        let (mut client, _server) = established_on_the_loopback();
+        let ack = super::Segment {
+            source_port: THEIR_PORT,
+            destination_port: OUR_PORT,
+            sequence: client.expected_position(),
+            acknowledgement: client.send_position(),
+            flags: FLAG_ACK,
+            window: 0,
+            payload_len: 0,
+        };
+        let _ = client.receive(&ack, b"");
+        assert_eq!(client.peer_window(), 0, "the peer said its buffer is full");
+        assert!(
+            client.congestion_window() > 0,
+            "and the path said nothing, so the two bounds disagree"
+        );
+
+        let (carried, outgoing) = client.send_data(b"blocked");
+        assert_eq!(carried, 0, "a zero window carries nothing");
+        assert!(outgoing.is_empty());
+
+        // The peer reopens, and the same write now goes.
+        let reopen = super::Segment {
+            source_port: THEIR_PORT,
+            destination_port: OUR_PORT,
+            sequence: client.expected_position(),
+            acknowledgement: client.send_position(),
+            flags: FLAG_ACK,
+            window: super::WINDOW,
+            payload_len: 0,
+        };
+        let _ = client.receive(&reopen, b"");
+        let (carried, outgoing) = client.send_data(b"blocked");
+        assert_eq!(carried, 7, "the reopen is what let it through");
+        assert_eq!(outgoing.len(), 1);
     }
 
     /// A stream starts with ten segments of window, whatever the handshake

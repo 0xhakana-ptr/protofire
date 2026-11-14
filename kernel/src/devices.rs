@@ -898,6 +898,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The other window: the one the **peer** advertises, which bounds what
+    // this side sends rather than what it holds.  Both ends of every exchange
+    // above advertise the same number, so the probe states one on the peer's
+    // behalf and reads what the sender does with it.
+    if !crate::net::peer_window_probe() {
+        return false;
+    }
+
     // The congestion window: grown by acknowledgements and collapsed by a
     // timeout, on an exchange long enough to see both.  Every other boot
     // exchange finishes before the window matters.

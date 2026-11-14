@@ -116,6 +116,12 @@
 //! [`tcp::Connection::limit_segment`] only ever shrinks.  The two readers are
 //! separate functions because the messages differ in where the quotation
 //! starts: IPv6's MTU word takes the four bytes an IPv4 error leaves unused.
+//!
+//! What a stream **does** respect is the window its peer advertises:
+//! [`tcp::Connection::send_budget`] is the smallest of the congestion window,
+//! that window, and the unacknowledged queue's room, so a peer whose buffer is
+//! full stops this side rather than being sent past what it said it would
+//! take.
 
 #![no_std]
 

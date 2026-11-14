@@ -3869,6 +3869,102 @@ pub fn window_probe() -> bool {
     bounded
 }
 
+/// Prove that the window a peer advertises bounds what this side sends.
+///
+/// A statement in a field, and nothing in a boot makes a peer state a small
+/// one: both ends here advertise [`net::tcp::WINDOW`], and every exchange is
+/// short enough that the queue's bound would stop it first.  So the probe
+/// states a window on the peer's behalf: it hands the sender a bare
+/// acknowledgement whose only interesting content is the window word, and asks
+/// how much a write carries afterwards.
+///
+/// The three numbers on the line are the probe's argument.  `8192` is the
+/// stream's own advertised window before anything is said, `0` is what the
+/// sender's budget became when the peer said its buffer was full, and `7` is
+/// what the same write carried once the peer reopened.  A sender that parsed
+/// the field and ignored it would print `8192 -> 8192` and carry the seven
+/// bytes while the peer said nothing fits, which is the defect this pins.
+#[cfg(target_os = "none")]
+pub fn peer_window_probe() -> bool {
+    let listener = match tcp_listen(9107) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let protocol = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9107) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+    let source_port = match TCP.lock().local_port_of(client) {
+        Some(port) => port,
+        None => return false,
+    };
+
+    // The statement, built here because the peer has no reason to make one:
+    // a bare acknowledgement at the position this side next sends from, which
+    // is the range's high end, carrying a zero window.
+    let (opened, blocked, reopened) = {
+        let mut table = TCP.lock();
+        let Some(sender) = table.connection_mut(client) else {
+            return false;
+        };
+        let opened = sender.peer_window();
+        let stated = net::tcp::Segment {
+            source_port: 9107,
+            destination_port: source_port,
+            sequence: 0,
+            acknowledgement: sender.send_position(),
+            flags: net::tcp::FLAG_ACK,
+            window: 0,
+            payload_len: 0,
+        };
+        let _ = sender.receive(&stated, b"");
+        let blocked = sender.send_budget();
+        // The write while the peer says it has no room.  What it carries is
+        // the number a sender that ignored the field would get wrong.
+        let (carried, outgoing) = sender.send_data(b"protofire");
+        let refused_while_full = carried == 0 && outgoing.is_empty();
+        // The reopen, and the same write again.
+        let again = net::tcp::Segment {
+            source_port: 9107,
+            destination_port: source_port,
+            sequence: 0,
+            acknowledgement: sender.send_position(),
+            flags: net::tcp::FLAG_ACK,
+            window: net::tcp::WINDOW,
+            payload_len: 0,
+        };
+        let _ = sender.receive(&again, b"");
+        let (carried, _outgoing) = sender.send_data(b"protofire");
+        let reopened = if refused_while_full { carried } else { 0 };
+        (opened, blocked, reopened)
+    };
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    let correct = opened == net::tcp::WINDOW as usize && blocked == 0 && reopened == 9;
+    arch::serial::write_str("protofire: peer window ");
+    arch::serial::write_u32(opened as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(blocked as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(reopened as u32);
+    arch::serial::write_str(if correct {
+        ", the peer's window bounded the write\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    correct
+}
+
 /// Prove that a rebinding's request is a shape a server answers.
 ///
 /// The exchange is [RFC 2131]'s third state: the lease's server has stopped

@@ -552,6 +552,32 @@ carries nine bytes or nineteen: a connection holding either advertises the same
 number whether or not anything enforces it.  The probe fills the whole buffer
 with one segment and reads the number back.
 
+**The other window, the peer's, is a bound on sending.**  The `window` field was
+in every parsed segment and read by nothing: a sender compared the congestion
+window and the queue's size, so a peer that advertised less than either was sent
+past what it said it would take.  The bound is now the smallest of the three, and
+it is kept on the connection as [RFC 793]'s `SND.WND`, read from every segment
+whose acknowledgement is in the range that section calls acceptable.
+
+Writing that bound found a second defect, in the send loop rather than in the
+window: the loop tested `carried < budget` and then appended a whole MSS, so a
+3012-byte budget sent 4380, one segment past the window.  No test had seen it,
+because the congestion window is ten whole segments and was the only bound that
+was ever smaller; the peer's window is an arbitrary number and made it reachable
+on the first write.  A segment is now clamped to what the budget has left.
+
+```
+protofire: peer window 8192 -> 0 -> 9, the peer's window bounded the write
+```
+
+The probe states a window on the peer's behalf, because both ends of every other
+exchange advertise `WINDOW` and nothing in a boot makes a peer say a small
+number: a bare acknowledgement carrying zero, a write that carries nothing, and
+the same write carrying nine bytes once the peer reopens.  Removing the bound
+prints `8192 -> 14600 -> 0, MISMATCH`.
+
+[RFC 793]: https://www.rfc-editor.org/rfc/rfc793
+
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and
 `ListenTcp` (56) answer through the registry; `AcceptTcp` (57) is served by
 the trap path, because it parks, and a stream's data rides the same `Read`

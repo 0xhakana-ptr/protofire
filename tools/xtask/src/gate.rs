@@ -610,6 +610,15 @@ impl Machine {
                     "protofire: window 8192 -> 0, and a byte past it was refused",
                     true,
                 ),
+                // The window the peer advertises: a bare acknowledgement
+                // states a full buffer, a write carries nothing, and the same
+                // write carries nine bytes once the peer reopens.  A sender
+                // that parsed the field and ignored it would print the same
+                // number three times.
+                (
+                    "protofire: peer window 8192 -> 0 -> 9, the peer's window bounded the write",
+                    true,
+                ),
                 // The congestion window, on an exchange long enough to see it
                 // move: ten acknowledgements grow it and a timeout collapses
                 // it.  Every other boot exchange finishes before the window
@@ -1271,6 +1280,13 @@ impl Machine {
                         "protofire: window 8192 -> 0, and a byte past it was refused",
                         true,
                     ),
+                    // The window the peer advertises: a bare acknowledgement
+                    // states a full buffer, a write carries nothing, and the
+                    // same write carries nine bytes once the peer reopens.
+                    (
+                        "protofire: peer window 8192 -> 0 -> 9, the peer's window bounded the write",
+                        true,
+                    ),
                     // The congestion window, on an exchange long enough to see
                     // it move: ten acknowledgements grow it and a timeout
                     // collapses it.  Every other boot exchange finishes before
@@ -1640,6 +1656,15 @@ impl Machine {
                 // one, which is why this is its own exchange.
                 (
                     "protofire: window 8192 -> 0, and a byte past it was refused",
+                    true,
+                ),
+                // The window the peer advertises: a bare acknowledgement
+                // states a full buffer, a write carries nothing, and the same
+                // write carries nine bytes once the peer reopens.  A sender
+                // that parsed the field and ignored it would print the same
+                // number three times.
+                (
+                    "protofire: peer window 8192 -> 0 -> 9, the peer's window bounded the write",
                     true,
                 ),
                 // The congestion window, on an exchange long enough to see it
