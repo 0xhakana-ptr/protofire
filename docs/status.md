@@ -437,12 +437,26 @@ party on the path has said the path does not exist; a report about a packet
 that did not leave from this machine is refused, because a four-tuple match
 alone would let a stranger end a connection by guessing a port.
 
-**Not here yet, on this side.**  ICMPv6 errors are still dropped unread, so
-[RFC 8201]'s packet-too-big has no consumer and an IPv6 stream does not learn a
-path's size.  The IPv4 path is where the shape was worked out; the IPv6 one is
-a separate change because the message and its MTU field are laid out
-differently.
+**The IPv6 side of the same answer.**  `demux_ipv6` dropped every ICMPv6 error
+unread, so [RFC 8201]'s packet-too-big had no consumer.  It reads them now, and
+the reader is a second function rather than the IPv4 one with a flag, because
+the layouts differ in the place the reading starts: an IPv4 error leaves four
+bytes unused after its header word and quotes from eight, and IPv6's MTU word
+**takes** those four, so its quotation starts at eight for a different reason
+and its message ends four bytes later.
 
+```
+protofire: path mtu6 1460 -> 1220, the report reached the stream
+```
+
+1220 is 1280 less both headers, and 1280 is the floor [RFC 8200] guarantees, so
+the number is checkable rather than measured.  The probe's first version
+reported no change at all, and the reason was the same one the IPv4 probe had:
+the quoted header's payload length claimed twenty bytes of transport while the
+quotation carried eight, and a reader that takes the sender's word for a
+length reads past what it was given.
+
+[RFC 8200]: https://www.rfc-editor.org/rfc/rfc8200
 [RFC 8201]: https://www.rfc-editor.org/rfc/rfc8201
 
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and

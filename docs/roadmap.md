@@ -492,9 +492,8 @@ is the other one, and it waits on a path with a round trip and a loss on it,
 which neither a loopback nor QEMU's user-mode network is.  Two things came off
 this list: out-of-order receive, because a segment ahead of the expected
 position is held and delivered in sequence order when the gap closes, and
-IPv4 path-MTU discovery, because a fragmentation-needed report now shrinks the
-stream it quotes.  IPv6's version of the second is still missing: an ICMPv6
-packet-too-big is dropped unread.
+path-MTU discovery in both families, because a fragmentation-needed or
+packet-too-big report now shrinks the stream it quotes.
 
 ### The rest of the road: rewriting what the previous kernel had
 

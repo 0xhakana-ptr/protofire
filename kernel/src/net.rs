@@ -849,9 +849,12 @@ fn handle_icmp(packet: &net::ipv4::Packet, payload: &[u8]) {
         }
         net::icmp::PORT_UNREACHABLE | net::icmp::HOST_UNREACHABLE => {
             let aborted = TCP.lock().abort_path(report.remote, report.local_port);
+            #[cfg(target_os = "none")]
             if aborted {
                 arch::serial::write_str("protofire: an icmp error ended a stream\n");
             }
+            #[cfg(not(target_os = "none"))]
+            let _ = aborted;
         }
         _ => {}
     }
@@ -1200,8 +1203,118 @@ fn handle_icmpv6(packet: &net::ipv6::Packet, payload: &[u8]) {
         net::icmpv6::ROUTER_ADVERTISEMENT => {
             learn_from_router(&message, payload);
         }
+        // A packet-too-big or a destination-unreachable report names one of
+        // this machine's packets by quoting it, and the two messages whose
+        // answer is a stream are handled together because the reading is the
+        // same: where the quotation starts, which four-tuple it names, and
+        // whether the packet it quotes left from this machine.
+        net::icmpv6::PACKET_TOO_BIG
+        | net::icmpv6::DESTINATION_UNREACHABLE
+        | net::icmpv6::TIME_EXCEEDED
+        | net::icmpv6::PARAMETER_PROBLEM => {
+            handle_icmpv6_error(packet, payload);
+        }
         _ => {}
     }
+}
+
+/// What one received ICMPv6 error means to this stack.
+///
+/// The same two answers the IPv4 side gives: a **packet-too-big** report is
+/// the path's size and shrinks every stream its quotation names, and a
+/// **destination unreachable** ends the stream it names.  Time-exceeded and
+/// parameter-problem are read and dropped: the first is a loop or a hop limit
+/// the path could not cross, and this stack has no route to look for a loop
+/// on; the second names a header field, and this stack writes no option a
+/// router could refuse.
+///
+/// The quotation starts eight bytes in, not four: this message's MTU word
+/// occupies the space an IPv4 error leaves unused, which is the layout
+/// difference that makes this a second function rather than the IPv4 one with
+/// a flag.
+fn handle_icmpv6_error(packet: &net::ipv6::Packet, payload: &[u8]) {
+    let Some(error) = net::icmpv6::parse_error(payload) else {
+        return;
+    };
+    let Some(report) = quoted_report6(packet.header.destination, &error, payload) else {
+        return;
+    };
+    match error.kind {
+        net::icmpv6::PACKET_TOO_BIG => {
+            // IPv6 has no router fragmentation, so this report is the only
+            // way a sender learns a path is smaller than what it sent, and
+            // the MTU it states is a whole packet's.  A report with no usable
+            // number falls back to the protocol's floor, which [RFC 8200]
+            // guarantees every link carries.
+            //
+            // [RFC 8200]: https://www.rfc-editor.org/rfc/rfc8200
+            let mtu = error
+                .mtu
+                .map(|mtu| mtu as usize)
+                .filter(|mtu| *mtu >= net::ipv6::HEADER_LEN + net::tcp::HEADER_LEN)
+                .unwrap_or(net::ipv6::MIN_MTU);
+            let limit = mtu
+                .saturating_sub(net::ipv6::HEADER_LEN)
+                .saturating_sub(net::tcp::HEADER_LEN);
+            let _ = TCP
+                .lock()
+                .limit_path(report.remote, report.local_port, limit);
+        }
+        net::icmpv6::DESTINATION_UNREACHABLE => {
+            let aborted = TCP.lock().abort_path(report.remote, report.local_port);
+            #[cfg(target_os = "none")]
+            if aborted {
+                arch::serial::write_str("protofire: an icmpv6 error ended a stream\n");
+            }
+            #[cfg(not(target_os = "none"))]
+            let _ = aborted;
+        }
+        _ => {}
+    }
+}
+
+/// What an ICMPv6 report says about one of this machine's streams.
+///
+/// The same reading the IPv4 side does, over a different quotation offset and
+/// a different header: the quoted packet is one this machine **sent**, so the
+/// port it names first is ours, and the address it was sent to is the peer's.
+fn quoted_report6(
+    our_address: net::ipv6::Addr,
+    error: &net::icmpv6::Error,
+    payload: &[u8],
+) -> Option<Report> {
+    let quoted = payload.get(error.quoted_at..error.quoted_at + error.quoted_len)?;
+    let original = net::ipv6::parse(quoted)?;
+    // The same check the IPv4 side makes, and for the same reason: the quoted
+    // packet must have left from this machine, or the report is a stranger's
+    // claim about somebody else's packet.
+    if original.header.source != our_address {
+        return None;
+    }
+    // The chain is walked, because a quotation may carry an extension header
+    // between the fixed header and the transport: a report about a packet with
+    // one would otherwise have its ports read out of the extension, and the
+    // base header's `next_header` names the extension rather than the
+    // transport.
+    let next = net::ipv6::walk(quoted, &original)?;
+    let (protocol, transport_at) = match next {
+        net::ipv6::Next::Payload {
+            next_header, at, ..
+        } => (next_header, at),
+        // A quotation that stops inside its own extension chain names no
+        // transport, and a report about it names no stream this stack can
+        // match.
+        net::ipv6::Next::Fragment { .. } => return None,
+    };
+    let transport = quoted.get(transport_at..)?;
+    let ports = quoted_segment(protocol, transport)?;
+    Some(Report {
+        remote: (
+            net::address::Address::V6(original.header.destination),
+            ports.destination_port,
+        ),
+        local_port: ports.source_port,
+    })
 }
 
 /// Configure a global address from a router's advertisement.
@@ -3142,6 +3255,130 @@ pub fn path_mtu_probe() -> bool {
     let _ = tcp_close(accepted);
 
     arch::serial::write_str("protofire: path mtu ");
+    arch::serial::write_u32(before as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(after as u32);
+    arch::serial::write_str(if shrank {
+        ", the report reached the stream\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    shrank
+}
+
+/// Prove that an ICMPv6 packet-too-big report reaches the stream it names.
+///
+/// The IPv6 half of [`path_mtu_probe`], and a separate exchange for a reason
+/// the layout makes: this message's MTU word takes the four bytes an IPv4
+/// error leaves unused, so the quotation starts **eight** bytes in rather than
+/// four.  A reader that used the IPv4 offset would read the MTU as the first
+/// four bytes of the quoted packet and find a four-tuple nothing names, which
+/// is a defect that only a report of this shape can find.
+///
+/// The report is built here because no wire this gate boots sends one, and the
+/// frame goes through the same `demux_ipv6` a received one does.
+#[cfg(target_os = "none")]
+pub fn path_mtu6_probe() -> bool {
+    let (local, hardware) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        (interface.ipv6, interface.hardware)
+    };
+    let listener = match tcp_listen(9104) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V6(local), 9104) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+
+    let before = match TCP.lock().connection(client) {
+        Some(connection) => connection.segment_limit(),
+        None => return false,
+    };
+    let client_port = match TCP.lock().local_port_of(client) {
+        Some(port) => port,
+        None => return false,
+    };
+
+    // The report quotes a TCP segment this machine sent: its source is the
+    // link-local address this machine answers from, and its destination is the
+    // peer.  The peer is this machine too, which is what a loopback exchange
+    // is, and the quotation is still shaped the way a router's would be.
+    let mut quoted_header = [0_u8; net::ipv6::HEADER_LEN];
+    net::ipv6::write_header(
+        &mut quoted_header,
+        local,
+        local,
+        net::ipv6::NEXT_TCP,
+        // Eight bytes of transport, which is what a report quotes: the header's
+        // payload length says so, and a reader that took a larger one would
+        // read past the quotation, which is how this probe's first version
+        // reported no change.
+        net::icmp::QUOTED_PAYLOAD,
+    );
+    let mut quoted_payload = [0_u8; 8];
+    quoted_payload[0..2].copy_from_slice(&client_port.to_be_bytes());
+    quoted_payload[2..4].copy_from_slice(&9104u16.to_be_bytes());
+
+    // The report: packet too big, and the path's MTU in the word every other
+    // error leaves unused.  1280 is [RFC 8200]'s floor, so the payload it
+    // implies is 1280 less both headers.
+    //
+    // [RFC 8200]: https://www.rfc-editor.org/rfc/rfc8200
+    const PATH_MTU: u32 = 1_280;
+    let message_len = net::icmpv6::QUOTED_AT + quoted_header.len() + quoted_payload.len();
+    let mut message = alloc::vec![0_u8; message_len];
+    message[0] = net::icmpv6::PACKET_TOO_BIG;
+    message[1] = 0;
+    message[net::icmpv6::MTU_AT..net::icmpv6::MTU_AT + 4].copy_from_slice(&PATH_MTU.to_be_bytes());
+    message[net::icmpv6::QUOTED_AT..net::icmpv6::QUOTED_AT + quoted_header.len()]
+        .copy_from_slice(&quoted_header);
+    let payload_at = net::icmpv6::QUOTED_AT + quoted_header.len();
+    message[payload_at..payload_at + quoted_payload.len()].copy_from_slice(&quoted_payload);
+    // The checksum covers the pseudo-header the two addresses make, so it is
+    // computed after the message is otherwise whole.
+    let sum = net::ipv6::checksum_with_pseudo(local, local, net::ipv6::NEXT_ICMPV6, &message);
+    message[2..4].copy_from_slice(&sum.to_be_bytes());
+
+    let mut frame =
+        alloc::vec![0_u8; netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN + message_len];
+    net::ethernet::write_header(
+        &mut frame,
+        hardware,
+        hardware,
+        net::ethernet::ETHERTYPE_IPV6,
+    );
+    net::ipv6::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        local,
+        local,
+        net::ipv6::NEXT_ICMPV6,
+        message_len,
+    );
+    frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..][..message_len]
+        .copy_from_slice(&message);
+    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+
+    let after = match TCP.lock().connection(client) {
+        Some(connection) => connection.segment_limit(),
+        None => return false,
+    };
+
+    let expected = PATH_MTU as usize - net::ipv6::HEADER_LEN - net::tcp::HEADER_LEN;
+    let shrank = before == net::tcp::MSS_DEFAULT && after == expected;
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    arch::serial::write_str("protofire: path mtu6 ");
     arch::serial::write_u32(before as u32);
     arch::serial::write_str(" -> ");
     arch::serial::write_u32(after as u32);

@@ -541,6 +541,82 @@ pub fn option_at(bytes: &[u8], at: usize, end: usize) -> Option<(NdpOption, usiz
 /// The link-layer address a message's source or target option carries, if it
 /// has one.
 ///
+/// Where a packet-too-big message holds the path's MTU.
+///
+/// Four bytes past the fixed header, and four bytes long: [RFC 4443] gives
+/// this message a word where every other error leaves four unused bytes, which
+/// is why the MTU is read from this message's type and nothing else's.  The
+/// value is the largest packet the path carries, so the payload one segment
+/// can carry is it less IPv6's and TCP's headers.
+///
+/// [RFC 4443]: https://www.rfc-editor.org/rfc/rfc4443
+pub const MTU_AT: usize = HEADER_LEN;
+
+/// Where an IPv6 error message holds the packet it is about.
+///
+/// Eight bytes in for every error, because this message's four-byte MTU word
+/// occupies what the other errors leave unused: [RFC 4443] says "as much of
+/// the invoking packet as possible without the ICMPv6 packet exceeding the
+/// minimum IPv6 MTU", and a reader that took the IPv4 offset of eight would
+/// read the MTU word as the first four bytes of the quotation.
+///
+/// [RFC 4443]: https://www.rfc-editor.org/rfc/rfc4443
+pub const QUOTED_AT: usize = HEADER_LEN + 4;
+
+/// An IPv6 error message, as far as this stack reads one.
+///
+/// The two messages that change anything are [`PACKET_TOO_BIG`], which states
+/// the path's size, and [`DESTINATION_UNREACHABLE`], which says the path does
+/// not exist.  Both quote the packet they are about, which is how a sender
+/// matches one to a connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Error {
+    /// The message's type.
+    pub kind: u8,
+    /// The code that says why, for the types that have one.
+    pub code: u8,
+    /// The path's MTU, when this is the message that states one.
+    pub mtu: Option<u32>,
+    /// Where the quoted original packet begins.
+    pub quoted_at: usize,
+    /// How many bytes of the original this message carries.
+    pub quoted_len: usize,
+}
+
+/// Read an ICMPv6 error message.
+///
+/// Only the five error types are errors: an echo or an NDP message is not about
+/// a packet that failed, and a reader that treated one as an error would act on
+/// a ping.  The MTU is read from [`PACKET_TOO_BIG`] alone, because that is the
+/// one type whose fourth word is not unused.
+pub fn parse_error(bytes: &[u8]) -> Option<Error> {
+    let message = parse(bytes)?;
+    let is_error = matches!(
+        message.icmp_type,
+        DESTINATION_UNREACHABLE | PACKET_TOO_BIG | TIME_EXCEEDED | PARAMETER_PROBLEM
+    );
+    if !is_error || bytes.len() < QUOTED_AT {
+        return None;
+    }
+    let mtu = if message.icmp_type == PACKET_TOO_BIG {
+        Some(u32::from_be_bytes([
+            bytes[MTU_AT],
+            bytes[MTU_AT + 1],
+            bytes[MTU_AT + 2],
+            bytes[MTU_AT + 3],
+        ]))
+    } else {
+        None
+    };
+    Some(Error {
+        kind: message.icmp_type,
+        code: message.code,
+        mtu,
+        quoted_at: QUOTED_AT,
+        quoted_len: bytes.len() - QUOTED_AT,
+    })
+}
+
 /// `option_type` is [`OPTION_SOURCE_LINK_LAYER`] for a solicitation or a
 /// router advertisement's source, or [`OPTION_TARGET_LINK_LAYER`] for an
 /// advertisement's answer.
@@ -914,5 +990,66 @@ mod tests {
         assert_eq!(parsed.icmp_type, DESTINATION_UNREACHABLE);
         assert_eq!(parsed.code, PORT_UNREACHABLE);
         assert!(verify(&message, target, sender));
+    }
+
+    /// A packet-too-big message states the path's MTU, and no other error's
+    /// message does.
+    ///
+    /// The word it sits in is unused in every other error, so a reader that
+    /// took the MTU from all of them would act on whatever the sender left
+    /// there.  The quotation's offset is the second half: it is eight bytes in,
+    /// not the four an IPv4 error uses, because this message's MTU word takes
+    /// the space the others leave empty.
+    #[test]
+    fn a_packet_too_big_states_the_paths_mtu() {
+        // Eight fixed bytes and a four-byte quotation, which is the smallest
+        // message this parser has to read: a report may quote as little as the
+        // path's MTU allows, and the reader must not require more.
+        let mut message = [0_u8; QUOTED_AT + 4];
+        message[0] = PACKET_TOO_BIG;
+        message[1] = 0;
+        message[MTU_AT..MTU_AT + 4].copy_from_slice(&1_280u32.to_be_bytes());
+        // The quoted packet, four bytes of something recognisable.
+        message[QUOTED_AT..QUOTED_AT + 4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let error = super::parse_error(&message).expect("an error");
+        assert_eq!(error.kind, PACKET_TOO_BIG);
+        assert_eq!(error.mtu, Some(1_280));
+        assert_eq!(error.quoted_at, QUOTED_AT);
+        assert_eq!(error.quoted_len, 4);
+        assert_eq!(
+            &message[error.quoted_at..error.quoted_at + error.quoted_len],
+            &[0xDE, 0xAD, 0xBE, 0xEF],
+            "the quotation starts past the MTU word"
+        );
+
+        // The same bytes under a destination-unreachable are an error with no
+        // MTU, because those four bytes mean nothing there.
+        let mut other = message;
+        other[0] = DESTINATION_UNREACHABLE;
+        other[1] = PORT_UNREACHABLE;
+        let error = super::parse_error(&other).expect("an error");
+        assert_eq!(error.mtu, None, "an unused word is not a measurement");
+    }
+
+    /// An echo or an NDP message is not an error, and a reader that treated
+    /// one as an error would act on a ping.
+    #[test]
+    fn only_an_error_type_is_an_error() {
+        let mut message = [0_u8; 48];
+        message[0] = ECHO_REQUEST;
+        assert_eq!(super::parse_error(&message), None);
+
+        message[0] = NEIGHBOR_ADVERTISEMENT;
+        assert_eq!(super::parse_error(&message), None);
+
+        message[0] = ROUTER_ADVERTISEMENT;
+        assert_eq!(super::parse_error(&message), None);
+
+        // And an error shorter than its own header plus the MTU word is not
+        // one this stack can read.
+        let mut short = [0_u8; 6];
+        short[0] = PACKET_TOO_BIG;
+        assert_eq!(super::parse_error(&short), None);
     }
 }

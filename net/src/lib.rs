@@ -105,12 +105,11 @@
 //! round trip on it to make, and this one's exchanges are a loopback and a
 //! user-mode network.
 //!
-//! [`ipv6`] has no path-MTU discovery of its own: [RFC 8201]'s packet-too-big
-//! arrives as an ICMPv6 error, and this stack's IPv6 receive path drops ICMPv6
-//! errors unread, which is the same gap the IPv4 side had before it grew a
-//! branch for them.
-//!
-//! [RFC 8201]: https://www.rfc-editor.org/rfc/rfc8201
+//! Path-MTU discovery is both families': [`icmp::FRAGMENTATION_NEEDED`] states
+//! a path's size on IPv4 and [`icmpv6::PACKET_TOO_BIG`] on IPv6, and
+//! [`tcp::Connection::limit_segment`] only ever shrinks.  The two readers are
+//! separate functions because the messages differ in where the quotation
+//! starts: IPv6's MTU word takes the four bytes an IPv4 error leaves unused.
 
 #![no_std]
 

@@ -881,7 +881,13 @@ pub fn exercise_network() -> bool {
     // wire this gate boots sends one, handed to the demux a received frame
     // goes through.  A stream that read the report has a smaller segment size
     // afterwards, which is the number on the line.
-    crate::net::path_mtu_probe()
+    if !crate::net::path_mtu_probe() {
+        return false;
+    }
+
+    // The IPv6 half of the same question, and a separate exchange because the
+    // message's MTU word moves the quotation eight bytes in rather than four.
+    crate::net::path_mtu6_probe()
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the

@@ -575,6 +575,14 @@ impl Machine {
                     "protofire: path mtu 1460 -> 536, the report reached the stream",
                     true,
                 ),
+                // The IPv6 half, and the layout difference that makes it a
+                // separate exchange: a packet-too-big report's MTU word takes
+                // the four bytes an IPv4 error leaves unused, so the quotation
+                // starts eight bytes in.
+                (
+                    "protofire: path mtu6 1460 -> 1220, the report reached the stream",
+                    true,
+                ),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and
@@ -1186,6 +1194,14 @@ impl Machine {
                         "protofire: path mtu 1460 -> 536, the report reached the stream",
                         true,
                     ),
+                    // The IPv6 half, and the layout difference that makes it a
+                    // separate exchange: a packet-too-big report's MTU word
+                    // takes the four bytes an IPv4 error leaves unused, so the
+                    // quotation starts eight bytes in.
+                    (
+                        "protofire: path mtu6 1460 -> 1220, the report reached the stream",
+                        true,
+                    ),
                     // The exchange, for the reason the x86_64 list states:
                     // the child's exit status is the echo's first byte.
                     (
@@ -1507,6 +1523,14 @@ impl Machine {
                 // number twice.
                 (
                     "protofire: path mtu 1460 -> 536, the report reached the stream",
+                    true,
+                ),
+                // The IPv6 half, and the layout difference that makes it a
+                // separate exchange: a packet-too-big report's MTU word takes
+                // the four bytes an IPv4 error leaves unused, so the quotation
+                // starts eight bytes in.
+                (
+                    "protofire: path mtu6 1460 -> 1220, the report reached the stream",
                     true,
                 ),
                 // The stream exchange, from ring 3: the same two programs
