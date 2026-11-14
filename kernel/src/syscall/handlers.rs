@@ -959,13 +959,26 @@ pub fn send_to_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> R
     let descriptor = arguments.context.arg(0);
     let destination = arguments.context.arg(1);
     let destination_port = arguments.context.arg(4);
-    validate_zeroed_args(arguments.context, 5)?;
-    if destination > u32::MAX as usize
-        || destination_port == 0
-        || destination_port > u16::MAX as usize
-    {
+    // The flags word is `a5`, and zero is what every caller before the IPv6
+    // side passed: `validate_known_flags` refuses a bit this build does not
+    // define, so a program cannot ask for a shape the kernel would silently
+    // ignore.
+    let flags = arguments.context.arg(5);
+    validate_known_flags(flags, network_abi::SEND_TO_UDP_KNOWN_FLAGS)?;
+    if destination_port == 0 || destination_port > u16::MAX as usize {
         return Err(Error::InvalidArgument);
     }
+    let destination = if flags & network_abi::NETWORK_FLAG_IPV6 != 0 {
+        // `a1` is a pointer to sixteen bytes in the caller's memory, and the
+        // address is read before anything is built: a refused pointer costs
+        // no frame.
+        net::address::Address::V6(read_user_address6(destination)?)
+    } else {
+        if destination > u32::MAX as usize {
+            return Err(Error::InvalidArgument);
+        }
+        net::address::Address::V4(network_abi::unpack_address(destination))
+    };
     let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
     if buffer.len() > crate::net::MAX_DATAGRAM_BYTES {
         return Err(Error::InvalidArgument);
@@ -974,13 +987,29 @@ pub fn send_to_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> R
         .udp_socket(descriptor, arguments.context.caller_pid)
         .ok_or(Error::InvalidArgument)?;
 
-    crate::net::send_datagram(
-        abi::network::unpack_address(destination),
-        destination_port as u16,
-        socket.port(),
-        buffer,
-    )?;
+    crate::net::send_datagram(destination, destination_port as u16, socket.port(), buffer)?;
     Ok(Dispatch::complete(buffer.len()))
+}
+
+/// Read a sixteen-byte IPv6 address from the caller's memory.
+///
+/// The window is checked here rather than by the caller, because this is where
+/// the number stops being a number: `a1` is an address only when the flag says
+/// it is one, and the two cases are one branch apart.
+///
+/// A pointer outside the user window, or a length the window cannot hold, is
+/// [`Error::InvalidArgument`] — the ABI's own refusal, and not a fault.
+fn read_user_address6(pointer: usize) -> Result<[u8; 16]> {
+    if !crate::address_space::is_user_range(pointer, 16) {
+        return Err(Error::InvalidArgument);
+    }
+    // SAFETY: the range is inside the user window, which `is_user_range`
+    // checked, and the pages behind it are the calling task's own mappings,
+    // installed on this CPU.  Sixteen bytes are read and nothing past them.
+    let bytes = unsafe { core::slice::from_raw_parts(pointer as *const u8, 16) };
+    let mut address = [0_u8; 16];
+    address.copy_from_slice(bytes);
+    Ok(address)
 }
 
 /// Open a listening port, and answer the descriptor an accept is called on.
@@ -1017,11 +1046,21 @@ pub fn listen_tcp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Re
 pub fn connect_tcp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let destination = arguments.context.arg(0);
     let port = arguments.context.arg(1);
-    validate_zeroed_args(arguments.context, 2)?;
-    if destination > u32::MAX as usize || port == 0 || port > u16::MAX as usize {
+    let flags = arguments.context.arg(2);
+    validate_known_flags(flags, network_abi::CONNECT_TCP_KNOWN_FLAGS)?;
+    validate_zeroed_args(arguments.context, 3)?;
+    if port == 0 || port > u16::MAX as usize {
         return Err(Error::InvalidArgument);
     }
-    let stream = crate::net::tcp_connect(abi::network::unpack_address(destination), port as u16)?;
+    let destination = if flags & network_abi::NETWORK_FLAG_IPV6 != 0 {
+        net::address::Address::V6(read_user_address6(destination)?)
+    } else {
+        if destination > u32::MAX as usize {
+            return Err(Error::InvalidArgument);
+        }
+        net::address::Address::V4(abi::network::unpack_address(destination))
+    };
+    let stream = crate::net::tcp_connect(destination, port as u16)?;
     let owner = arguments
         .context
         .caller_pid

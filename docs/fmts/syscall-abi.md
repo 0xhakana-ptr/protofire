@@ -299,13 +299,14 @@ The calls a ring-3 program can make today, and the slots each carries.
   exit ends.
 - **`SendToUdp`** — `a0` the descriptor; `a1` the destination's address,
   packed by `pack_address` (`10.0.2.2` is `0x0A000202`); `a2` the buffer;
-  `a3` its length; `a4` the destination's port; `a5` reserved zero.  Answers
-  the bytes accepted, which is all a datagram send ever promises.  A
-  datagram addressed to this machine is delivered through the kernel's own
-  demux — that is what loopback is — and one for another machine leaves
-  through the gateway.
+  `a3` its length; `a4` the destination's port; `a5` the flags word, zero or
+  [`NETWORK_FLAG_IPV6`](../../abi/src/network.rs).  Answers the bytes
+  accepted, which is all a datagram send ever promises.  A datagram addressed
+  to this machine is delivered through the kernel's own demux — that is what
+  loopback is — and one for another machine leaves through the gateway.
 - **`ConnectTcp`** — `a0` the destination's address, packed by
-  `pack_address`; `a1` the destination's port; `a2`-`a5` reserved zero.
+  `pack_address`; `a1` the destination's port; `a2` the flags word, zero or
+  [`NETWORK_FLAG_IPV6`](../../abi/src/network.rs); `a3`-`a5` reserved zero.
   Answers the descriptor the stream is read and written through.  The
   handshake runs inside the call, so the first write cannot race its own
   opening; a destination that is not this machine answers `Unsupported`,
@@ -322,15 +323,48 @@ The calls a ring-3 program can make today, and the slots each carries.
   the call.  Answers the new stream's descriptor, whose data — if the
   client wrote before the accept ran — is already in the stream's inbox.
 - **`RecvFromUdp`** — `a0` the descriptor; `a1` the buffer; `a2` its length;
-  `a3` the sender record; `a4` its length, at least
-  `UDP_SENDER_RECORD_SIZE`; `a5` reserved zero.  **Blocks** until a datagram
-  answers, and this is why it has no registry handler: a handler that
-  cannot park does not hold a number whose caller may have to wait, so the
-  trap path serves it, parks the caller on the socket's queue, and the
-  delivery's wake retries the call.  The sender record is two words — the
-  address packed as `SendToUdp` carries it, then the port.  A datagram
-  longer than the buffer is refused with the datagram kept, because a take
-  that discarded the bytes would make the loss permanent.
+  `a3` the sender record; `a4` its length, at least the record's size; `a5`
+  the flags word, zero or [`NETWORK_FLAG_IPV6`](../../abi/src/network.rs).
+  **Blocks** until a datagram answers, and this is why it has no registry
+  handler: a handler that cannot park does not hold a number whose caller may
+  have to wait, so the trap path serves it, parks the caller on the socket's
+  queue, and the delivery's wake retries the call.  The sender record is two
+  words — the address packed as `SendToUdp` carries it, then the port.  A
+  datagram longer than the buffer is refused with the datagram kept, because
+  a take that discarded the bytes would make the loss permanent.
+
+### The IPv6 flag, and why it is a flag
+
+`SendToUdp` (59), `ConnectTcp` (38) and `RecvFromUdp` (60) are all inside the
+frozen range, so their semantics and layouts may not change.  A flag is the
+shape the frozen rule permits: §3.2 names **additive optional behaviour** as
+the one change allowed there, and a caller passing zero is a caller whose
+behaviour did not move.
+
+With [`NETWORK_FLAG_IPV6`](../../abi/src/network.rs) set:
+
+- **`SendToUdp`'s `a1`** is a pointer to sixteen bytes of IPv6 address in the
+  caller's own memory instead of a packed word.  The pointer is checked
+  against the user window before it is read, and the address is read before
+  any frame exists.
+- **`ConnectTcp`'s `a0`** is the same: a pointer to sixteen bytes.
+- **`RecvFromUdp`'s record** is `UDP_SENDER6_RECORD_SIZE` bytes — the sixteen
+  address bytes at `UDP_SENDER6_ADDRESS_OFFSET`, then the port — and `a4`
+  must be at least that, which the call checks before it writes.  A caller
+  that set the flag and passed the two-word record is refused with
+  `InvalidArgument` rather than having sixteen bytes written past the end of
+  its buffer.
+
+A flag bit this build does not define is refused by `validate_known_flags`,
+not ignored: a program that asked for a shape the kernel silently dropped
+would read a record it did not get.
+
+**Why not a second number.**  A `SendToUdp6` beside each call would have spent
+numbers from the experimental range to say something the flags word already
+had room for, and left two spellings of one operation to keep in step.  The
+flags word was reserved zero in each of these calls precisely so that a use
+like this would not have to.  `AcceptTcp` needs no flag: an accepted stream's
+family is the client's, which the connection already knows.
 
 A handled, unmasked signal is **delivered** rather than queued: the target's
 context is redirected to the handler at its next install, with the record in

@@ -38,6 +38,7 @@ use alloc::vec::Vec;
 use abi::Error;
 use abi::Result;
 
+use crate::address::Address;
 use crate::tcp::Connection;
 use crate::tcp::FLAG_ACK;
 use crate::tcp::FLAG_SYN;
@@ -171,7 +172,7 @@ impl Table {
     pub fn connection_for(
         &self,
         destination_port: u16,
-        source: [u8; 4],
+        source: Address,
         source_port: u16,
     ) -> Option<usize> {
         self.connections
@@ -188,7 +189,7 @@ impl Table {
     /// The port and the sequence number are taken here rather than passed in,
     /// because they are the table's to give: two callers that named their own
     /// could name the same one.
-    pub fn connect(&mut self, remote: ([u8; 4], u16)) -> (usize, Vec<Outgoing>) {
+    pub fn connect(&mut self, remote: (Address, u16)) -> (usize, Vec<Outgoing>) {
         let local_port = self.take_ephemeral();
         let sequence = self.take_sequence();
         let (connection, outgoing) = Connection::connect(local_port, remote, sequence);
@@ -211,7 +212,7 @@ impl Table {
     pub fn accept_syn(
         &mut self,
         segment: &Segment,
-        remote: ([u8; 4], u16),
+        remote: (Address, u16),
     ) -> Option<(usize, Vec<Outgoing>)> {
         // The listener is found first and held by index: the counters and
         // the connection list are this table's too, and a borrow of one
@@ -251,7 +252,7 @@ impl Table {
     /// A caller about to put a segment on a wire asks this rather than
     /// reaching into the connection: the wire needs the address and the port,
     /// and nothing else about the end.
-    pub fn remote_of(&self, id: usize) -> Option<([u8; 4], u16)> {
+    pub fn remote_of(&self, id: usize) -> Option<(Address, u16)> {
         self.connection(id).map(Connection::remote)
     }
 
@@ -316,6 +317,7 @@ impl Default for Table {
 #[cfg(test)]
 mod tests {
     use super::Table;
+    use crate::address::Address;
     use crate::tcp::FLAG_ACK;
     use crate::tcp::FLAG_FIN;
     use crate::tcp::FLAG_SYN;
@@ -325,6 +327,11 @@ mod tests {
 
     const LOCAL: [u8; 4] = [10, 0, 2, 15];
     const PEER: [u8; 4] = [10, 0, 2, 2];
+
+    /// The same address as the type the table keys on.
+    fn address(bytes: [u8; 4]) -> Address {
+        Address::V4(bytes)
+    }
 
     /// A segment with the fields a test cares about, and nothing else.
     fn segment(flags: u8, sequence: u32, source_port: u16, destination_port: u16) -> Segment {
@@ -344,7 +351,7 @@ mod tests {
     fn connected(port: u16) -> (Table, usize, usize) {
         let mut table = Table::new();
         let listener = table.listen(port).expect("a listener");
-        let (client, _) = table.connect((LOCAL, port));
+        let (client, _) = table.connect((address(LOCAL), port));
         (table, listener, client)
     }
 
@@ -367,14 +374,14 @@ mod tests {
     #[test]
     fn the_counters_hand_out_distinct_numbers() {
         let mut table = Table::new();
-        let (first, outgoing) = table.connect((LOCAL, 80));
+        let (first, outgoing) = table.connect((address(LOCAL), 80));
         let first_port = table.local_port_of(first).expect("the first stream's port");
         assert_eq!(first_port, super::EPHEMERAL_FIRST);
         // The SYN carries the sequence the connection was built with.
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].sequence, super::SEQUENCE_FIRST);
 
-        let (second, outgoing) = table.connect((LOCAL, 80));
+        let (second, outgoing) = table.connect((address(LOCAL), 80));
         let second_port = table
             .local_port_of(second)
             .expect("the second stream's port");
@@ -394,17 +401,17 @@ mod tests {
         let (table, _, client) = connected(7000);
         let port = table.local_port_of(client).expect("the stream's port");
         assert_eq!(
-            table.connection_for(port, LOCAL, 7000),
+            table.connection_for(port, address(LOCAL), 7000),
             Some(client),
             "the port and the peer name the one stream"
         );
         assert_eq!(
-            table.connection_for(port, PEER, 7000),
+            table.connection_for(port, address(PEER), 7000),
             None,
             "a different peer on the same port is not this stream"
         );
         assert_eq!(
-            table.connection_for(port.wrapping_add(1), LOCAL, 7000),
+            table.connection_for(port.wrapping_add(1), address(LOCAL), 7000),
             None,
             "a different port is not this stream"
         );
@@ -421,7 +428,7 @@ mod tests {
 
         let opening = segment(FLAG_SYN, 4000, 5555, 7000);
         let (accepted, answer) = table
-            .accept_syn(&opening, (PEER, 5555))
+            .accept_syn(&opening, (address(PEER), 5555))
             .expect("the listener opens it");
         assert_eq!(answer.len(), 1, "the SYN with ACK");
         assert_eq!(answer[0].flags, FLAG_SYN | FLAG_ACK);
@@ -435,7 +442,7 @@ mod tests {
 
         let elsewhere = segment(FLAG_SYN, 4000, 5555, 7001);
         assert_eq!(
-            table.accept_syn(&elsewhere, (PEER, 5555)),
+            table.accept_syn(&elsewhere, (address(PEER), 5555)),
             None,
             "a SYN for a port nothing owns opens nothing"
         );
@@ -481,7 +488,7 @@ mod tests {
         // The peer is the end whose own port is the segment's destination
         // and whose remote is this end: this machine is `LOCAL`, so the
         // segment's source address is, and the source port is this end's.
-        let Some(peer) = table.connection_for(peer_port, LOCAL, own_port) else {
+        let Some(peer) = table.connection_for(peer_port, address(LOCAL), own_port) else {
             return;
         };
         let (_, replies) = table
@@ -501,7 +508,7 @@ mod tests {
         let client_port = table.local_port_of(client).expect("the client's port");
         let opening = segment(FLAG_SYN, super::SEQUENCE_FIRST, client_port, 7000);
         let (accepted, handshake) = table
-            .accept_syn(&opening, (LOCAL, client_port))
+            .accept_syn(&opening, (address(LOCAL), client_port))
             .expect("a listener");
         assert!(table.has_pending(listener));
 

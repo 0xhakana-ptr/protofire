@@ -41,6 +41,7 @@
 //! than held, because holding one asks for the reassembly buffer and the
 //! timers that retransmission would have brought.
 
+use crate::address::Address;
 use crate::ethernet::get_u16;
 use crate::ethernet::put_u16;
 use crate::ipv4::PROTOCOL_TCP;
@@ -318,7 +319,7 @@ fn one(
 pub struct Connection {
     state: State,
     local_port: u16,
-    remote: ([u8; 4], u16),
+    remote: (Address, u16),
     /// The position this side sends from: advanced by every byte the peer's
     /// acknowledgement covers, with SYN and FIN each counting as one.
     sequence: u32,
@@ -333,7 +334,7 @@ impl Connection {
     /// The client's end of a handshake: open the stream and send the SYN.
     pub fn connect(
         local_port: u16,
-        remote: ([u8; 4], u16),
+        remote: (Address, u16),
         initial_sequence: u32,
     ) -> (Self, alloc::vec::Vec<Outgoing>) {
         let mut connection = Self {
@@ -359,7 +360,7 @@ impl Connection {
     /// that arrives before the accept queues in this connection's inbox.
     pub fn accept_syn(
         local_port: u16,
-        remote: ([u8; 4], u16),
+        remote: (Address, u16),
         initial_sequence: u32,
         client_sequence: u32,
     ) -> (Self, alloc::vec::Vec<Outgoing>) {
@@ -393,7 +394,7 @@ impl Connection {
     }
 
     /// The peer this stream runs to.
-    pub fn remote(&self) -> ([u8; 4], u16) {
+    pub fn remote(&self) -> (Address, u16) {
         self.remote
     }
 
@@ -582,6 +583,7 @@ mod tests {
     use super::State;
     use super::parse;
     use super::write_segment;
+    use crate::address::Address;
 
     const US: [u8; 4] = [10, 0, 2, 15];
     const OUR_PORT: u16 = 50000;
@@ -635,7 +637,8 @@ mod tests {
     /// The handshake's first three moves, run once and returned in the open
     /// state.
     fn handshake() -> (Connection, Connection) {
-        let (mut client, mut client_out) = Connection::connect(OUR_PORT, (US, THEIR_PORT), 1000);
+        let (mut client, mut client_out) =
+            Connection::connect(OUR_PORT, (Address::V4(US), THEIR_PORT), 1000);
         assert_eq!(client.state(), State::SynSent);
         assert_eq!(client_out.len(), 1, "the SYN");
         assert_eq!(client_out[0].flags, FLAG_SYN);
@@ -644,7 +647,7 @@ mod tests {
         // answers with its own SYN with ACK.
         let syn = client_out.pop().expect("the SYN");
         let (mut server, mut server_out) =
-            Connection::accept_syn(THEIR_PORT, (US, OUR_PORT), 5000, syn.sequence);
+            Connection::accept_syn(THEIR_PORT, (Address::V4(US), OUR_PORT), 5000, syn.sequence);
         assert_eq!(server.state(), State::SynReceived);
 
         drain(&mut client_out, &mut server_out, &mut client, &mut server);

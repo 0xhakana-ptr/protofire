@@ -257,7 +257,7 @@ impl UdpSocket {
     /// a caller whose buffer is small learns that from the error and asks
     /// again with a larger one, and a take that discarded the bytes would
     /// make the loss permanent.
-    pub fn try_recv(&self, into: &mut [u8]) -> Result<Option<([u8; 4], u16, usize)>> {
+    pub fn try_recv(&self, into: &mut [u8]) -> Result<Option<(net::address::Address, u16, usize)>> {
         Ok(self
             .queue
             .lock()
@@ -266,7 +266,7 @@ impl UdpSocket {
     }
 
     /// Put one datagram in the queue, or refuse when it is full.
-    fn push(&self, source: [u8; 4], source_port: u16, bytes: &[u8]) -> Result<()> {
+    fn push(&self, source: net::address::Address, source_port: u16, bytes: &[u8]) -> Result<()> {
         self.queue.lock().push(source, source_port, bytes)
     }
 }
@@ -308,17 +308,35 @@ pub fn bind_udp(port: u16) -> Result<Arc<UdpSocket>> {
     Ok(socket)
 }
 
-/// Whether `destination` names this machine, and the datagram is delivered
-/// through the demux rather than the card.
+/// Whether an IPv4 `destination` names this machine, and the packet is
+/// delivered through the demux rather than the card.
 ///
 /// The interface's own address, and the loopback network every IP stack
 /// shares: a datagram to either is this machine's conversation with itself.
-fn is_loopback(destination: [u8; 4]) -> bool {
+fn is_loopback_v4(destination: [u8; 4]) -> bool {
     let interface = INTERFACE.lock();
     let Some(interface) = interface.as_ref() else {
         return false;
     };
     destination == interface.protocol || destination[0] == 127
+}
+
+/// Whether an address of either family names this machine.
+///
+/// The IPv6 side has no `127`-shaped range to inherit: a link-local or global
+/// address this interface holds is the only thing that makes it this machine,
+/// and a global one a router configured counts for the same reason.
+fn is_loopback(destination: net::address::Address) -> bool {
+    match destination {
+        net::address::Address::V4(bytes) => is_loopback_v4(bytes),
+        net::address::Address::V6(bytes) => {
+            let interface = INTERFACE.lock();
+            let Some(interface) = interface.as_ref() else {
+                return false;
+            };
+            bytes == interface.ipv6 || interface.ipv6_global == Some(bytes)
+        }
+    }
 }
 
 /// Deliver one datagram to the socket bound for it, and wake what waits.
@@ -330,9 +348,9 @@ fn is_loopback(destination: [u8; 4]) -> bool {
 /// answer for a silent port is the wire's port-unreachable, not an error
 /// from this call.
 pub fn deliver_udp(
-    destination: [u8; 4],
+    destination: net::address::Address,
     destination_port: u16,
-    source: [u8; 4],
+    source: net::address::Address,
     source_port: u16,
     bytes: &[u8],
 ) -> Result<usize> {
@@ -387,61 +405,95 @@ pub fn deliver_udp(
 /// `NotFound`, because a frame with no destination address is a frame the
 /// card cannot carry.
 pub fn send_datagram(
-    destination: [u8; 4],
+    destination: net::address::Address,
     destination_port: u16,
     source_port: u16,
     bytes: &[u8],
 ) -> Result<()> {
     if is_loopback(destination) {
-        let protocol = {
+        let local = {
             let interface = INTERFACE.lock();
             let Some(interface) = interface.as_ref() else {
                 return Err(Error::NotFound);
             };
-            interface.protocol
+            match destination {
+                net::address::Address::V4(_) => net::address::Address::V4(interface.protocol),
+                net::address::Address::V6(_) => net::address::Address::V6(interface.ipv6),
+            }
         };
         // The sender the datagram names is this machine: the wire would have
         // seen the frame leave with this address, and the receiver's answer
         // says the same thing.
-        return deliver_udp(destination, destination_port, protocol, source_port, bytes)
-            .map(|_| ());
+        return deliver_udp(destination, destination_port, local, source_port, bytes).map(|_| ());
     }
 
     let interface = INTERFACE.lock();
     let Some(interface) = interface.as_ref() else {
         return Err(Error::NotFound);
     };
-    let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
-        return Err(Error::NotFound);
-    };
     let (hardware, protocol) = (interface.hardware, interface.protocol);
     let card = interface.card.clone();
 
     let udp_len = net::udp::datagram_len(bytes.len());
-    let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
-    let mut frame = alloc::vec![0; packet_len];
-    net::ethernet::write_header(
-        &mut frame,
-        gateway_hardware,
-        hardware,
-        net::ethernet::ETHERTYPE_IPV4,
-    );
-    net::ipv4::write_header(
-        &mut frame[netdev::ETHERNET_HEADER_LEN..],
-        protocol,
-        destination,
-        net::ipv4::PROTOCOL_UDP,
-        udp_len,
-    );
-    net::udp::write_datagram(
-        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
-        protocol,
-        destination,
-        source_port,
-        destination_port,
-        bytes,
-    );
-    card.submit_frame(&frame)
+    match destination {
+        net::address::Address::V4(destination) => {
+            let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
+                return Err(Error::NotFound);
+            };
+            let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
+            let mut frame = alloc::vec![0; packet_len];
+            net::ethernet::write_header(
+                &mut frame,
+                gateway_hardware,
+                hardware,
+                net::ethernet::ETHERTYPE_IPV4,
+            );
+            net::ipv4::write_header(
+                &mut frame[netdev::ETHERNET_HEADER_LEN..],
+                protocol,
+                destination,
+                net::ipv4::PROTOCOL_UDP,
+                udp_len,
+            );
+            net::udp::write_datagram(
+                &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+                protocol,
+                destination,
+                source_port,
+                destination_port,
+                bytes,
+            );
+            card.submit_frame(&frame)
+        }
+        net::address::Address::V6(destination) => {
+            let destination_hardware = peer_hardware(destination);
+            let local = interface.ipv6;
+            let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN + udp_len;
+            let mut frame = alloc::vec![0; packet_len];
+            net::ethernet::write_header(
+                &mut frame,
+                destination_hardware,
+                hardware,
+                net::ethernet::ETHERTYPE_IPV6,
+            );
+            net::ipv6::write_header(
+                &mut frame[netdev::ETHERNET_HEADER_LEN..],
+                local,
+                destination,
+                net::ipv6::NEXT_UDP,
+                udp_len,
+            );
+            net::udp::write_datagram6(
+                &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+                local,
+                destination,
+                source_port,
+                destination_port,
+                bytes,
+            );
+            card.submit_frame(&frame)
+        }
+    }
 }
 
 /// Drain the card's receive ring into the demux, answering how many frames
@@ -507,9 +559,9 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
     {
         let data_at = net::udp::HEADER_LEN;
         let _ = deliver_udp(
-            packet.header.destination,
+            net::address::Address::V4(packet.header.destination),
             datagram.destination_port,
-            packet.header.source,
+            net::address::Address::V4(packet.header.source),
             datagram.source_port,
             &payload[data_at..data_at + datagram.payload_len],
         );
@@ -583,8 +635,27 @@ fn demux_ipv6(frame: &[u8]) {
     };
 
     let payload = &frame[at..at + len];
-    if next_header == net::ipv6::NEXT_ICMPV6 {
-        handle_icmpv6(&packet, payload);
+    match next_header {
+        net::ipv6::NEXT_ICMPV6 => handle_icmpv6(&packet, payload),
+        net::ipv6::NEXT_UDP => {
+            // The pseudo-header a datagram's checksum covers over IPv6 is
+            // forty bytes of addresses, so the parse takes them: a datagram
+            // is accepted only if it was built for this pair.
+            if let Some(datagram) =
+                net::udp::parse6(payload, packet.header.source, packet.header.destination)
+            {
+                let at = net::udp::HEADER_LEN;
+                let _ = deliver_udp(
+                    net::address::Address::V6(packet.header.destination),
+                    datagram.destination_port,
+                    net::address::Address::V6(packet.header.source),
+                    datagram.source_port,
+                    &payload[at..at + datagram.payload_len],
+                );
+            }
+        }
+        net::ipv6::NEXT_TCP => route_stream6(&packet, payload),
+        _ => {}
     }
 }
 
@@ -1013,7 +1084,9 @@ pub fn tcp_accept(listener: usize) -> Result<Option<usize>> {
 /// wire, which is a wait this build does not make a call do — the answer
 /// for a destination that is not this machine is `Unsupported`, and the
 /// exchange that proves the layer runs where the proof is, on loopback.
-pub fn tcp_connect(destination: [u8; 4], destination_port: u16) -> Result<usize> {
+pub fn tcp_connect(destination: net::address::Address, destination_port: u16) -> Result<usize> {
+    // A connect whose peer is not this machine would have to wait for its
+    // answer on the wire, which is a wait this build does not make a call do.
     if !is_loopback(destination) {
         return Err(Error::Unsupported);
     }
@@ -1163,12 +1236,16 @@ fn tcp_exchange(
         };
 
         if is_loopback(address) {
-            let protocol = {
-                let interface = INTERFACE.lock();
-                interface.as_ref().map(|interface| interface.protocol)
-            };
-            let Some(protocol) = protocol else {
+            let interface = INTERFACE.lock();
+            let Some(interface) = interface.as_ref() else {
                 return Err(Error::NotFound);
+            };
+            // The address this machine's own end of a loopback exchange is
+            // known by: the protocol address for IPv4, the link-local one for
+            // IPv6, which is the address a solicitation is answered from.
+            let local = match address {
+                net::address::Address::V4(_) => net::address::Address::V4(interface.protocol),
+                net::address::Address::V6(_) => net::address::Address::V6(interface.ipv6),
             };
             // A SYN for a listening port opens a connection right here: the
             // listener answers inside the same exchange, whose SYN with ACK
@@ -1177,7 +1254,7 @@ fn tcp_exchange(
             if outgoing.flags & net::tcp::FLAG_SYN != 0
                 && outgoing.flags & net::tcp::FLAG_ACK == 0
                 && table
-                    .connection_for(destination_port, protocol, sender_port)
+                    .connection_for(destination_port, local, sender_port)
                     .is_none()
             {
                 let Some((id, replies)) = table.accept_syn(
@@ -1190,7 +1267,7 @@ fn tcp_exchange(
                         window: net::tcp::WINDOW,
                         payload_len: outgoing.payload.len(),
                     },
-                    (protocol, sender_port),
+                    (local, sender_port),
                 ) else {
                     // A SYN for a port nothing listens on: dropped, the way
                     // a datagram for an unbound port is.
@@ -1200,8 +1277,7 @@ fn tcp_exchange(
                 queue.extend(replies.into_iter().map(|reply| (id, reply)));
                 continue;
             }
-            let Some(peer_id) = table.connection_for(destination_port, protocol, sender_port)
-            else {
+            let Some(peer_id) = table.connection_for(destination_port, local, sender_port) else {
                 // A segment for a stream this table does not hold: the peer
                 // is gone, and a wire that carried the segment would be a
                 // wire talking to nobody.  Dropped, the way a segment to a
@@ -1238,7 +1314,7 @@ fn tcp_exchange(
 fn tcp_send_on_wire(
     table: &mut net::tcp_table::Table,
     sender_port: u16,
-    address: [u8; 4],
+    address: net::address::Address,
     destination_port: u16,
     outgoing: &net::tcp::Outgoing,
 ) -> Result<()> {
@@ -1247,38 +1323,78 @@ fn tcp_send_on_wire(
     let Some(interface) = interface.as_ref() else {
         return Err(Error::NotFound);
     };
-    let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
-        return Err(Error::NotFound);
-    };
-    let (our_protocol, our_hardware) = (interface.protocol, interface.hardware);
+    let (our_hardware, our_protocol) = (interface.hardware, interface.protocol);
     let tcp_len = net::tcp::HEADER_LEN + outgoing.payload.len();
-    let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + tcp_len;
-    let mut frame = alloc::vec![0; packet_len];
-    net::ethernet::write_header(
-        &mut frame,
-        gateway_hardware,
-        our_hardware,
-        net::ethernet::ETHERTYPE_IPV4,
-    );
-    net::ipv4::write_header(
-        &mut frame[netdev::ETHERNET_HEADER_LEN..],
-        our_protocol,
-        address,
-        net::ipv4::PROTOCOL_TCP,
-        tcp_len,
-    );
-    net::tcp::write_segment(
-        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
-        our_protocol,
-        address,
-        sender_port,
-        destination_port,
-        outgoing.sequence,
-        outgoing.acknowledgement,
-        outgoing.flags,
-        &outgoing.payload,
-    );
-    interface.card.submit_frame(&frame)
+    match address {
+        net::address::Address::V4(destination) => {
+            // The gateway's hardware address is this build's whole routing
+            // decision for IPv4: one interface, one gateway.
+            let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
+                return Err(Error::NotFound);
+            };
+            let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + tcp_len;
+            let mut frame = alloc::vec![0; packet_len];
+            net::ethernet::write_header(
+                &mut frame,
+                gateway_hardware,
+                our_hardware,
+                net::ethernet::ETHERTYPE_IPV4,
+            );
+            net::ipv4::write_header(
+                &mut frame[netdev::ETHERNET_HEADER_LEN..],
+                our_protocol,
+                destination,
+                net::ipv4::PROTOCOL_TCP,
+                tcp_len,
+            );
+            net::tcp::write_segment(
+                &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+                our_protocol,
+                destination,
+                sender_port,
+                destination_port,
+                outgoing.sequence,
+                outgoing.acknowledgement,
+                outgoing.flags,
+                &outgoing.payload,
+            );
+            interface.card.submit_frame(&frame)
+        }
+        net::address::Address::V6(destination) => {
+            // No router address to route by yet: an IPv6 packet for another
+            // machine goes to the neighbour cache's answer for its own
+            // address, which is the neighbour discovery this stack has.
+            let destination_hardware = peer_hardware(destination);
+            let local = interface.ipv6;
+            let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN + tcp_len;
+            let mut frame = alloc::vec![0; packet_len];
+            net::ethernet::write_header(
+                &mut frame,
+                destination_hardware,
+                our_hardware,
+                net::ethernet::ETHERTYPE_IPV6,
+            );
+            net::ipv6::write_header(
+                &mut frame[netdev::ETHERNET_HEADER_LEN..],
+                local,
+                destination,
+                net::ipv6::NEXT_TCP,
+                tcp_len,
+            );
+            net::tcp::write_segment6(
+                &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
+                local,
+                destination,
+                sender_port,
+                destination_port,
+                outgoing.sequence,
+                outgoing.acknowledgement,
+                outgoing.flags,
+                &outgoing.payload,
+            );
+            interface.card.submit_frame(&frame)
+        }
+    }
 }
 
 /// What the pump does with a TCP segment: route it to the connection it
@@ -1299,9 +1415,13 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) -> bool {
 
     // A SYN for a listening port opens a connection.
     if net::tcp_table::Table::is_opening(&segment) {
-        let Some((id, outgoing)) =
-            table.accept_syn(&segment, (packet.header.source, segment.source_port))
-        else {
+        let Some((id, outgoing)) = table.accept_syn(
+            &segment,
+            (
+                net::address::Address::V4(packet.header.source),
+                segment.source_port,
+            ),
+        ) else {
             return false;
         };
         let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
@@ -1312,7 +1432,7 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) -> bool {
 
     let Some(id) = table.connection_for(
         segment.destination_port,
-        packet.header.source,
+        net::address::Address::V4(packet.header.source),
         segment.source_port,
     ) else {
         return false;
@@ -1332,6 +1452,177 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) -> bool {
     // holds the table's, so the answer is returned and the wake happens
     // where the lock is no longer held.
     noteworthy
+}
+
+/// Route one IPv6 segment, and wake what a parked reader was waiting for.
+///
+/// The wake is here rather than inside [`demux_tcp6`] because that function
+/// holds the connection table's lock, and the scheduler's is never taken while
+/// it is held: the routing answers whether anything a parked caller cares
+/// about happened, the table's lock drops when that function returns, and this
+/// one wakes after it.
+fn route_stream6(packet: &net::ipv6::Packet, payload: &[u8]) {
+    if !demux_tcp6(packet, payload) {
+        return;
+    }
+    let woken = crate::scheduler::wake_blocked();
+    #[cfg(target_os = "none")]
+    if woken > 0 {
+        // SAFETY: the boot's own IPI path, installed before any program ran.
+        unsafe { arch::send_ipi_to_others() };
+    }
+    #[cfg(not(target_os = "none"))]
+    let _ = woken;
+}
+
+/// What the pump does with a TCP segment that arrived over IPv6.
+///
+/// The same routing the IPv4 demux does, against the same table: a connection
+/// is keyed by the port it answers on and the peer it answers for, and the
+/// family is part of the peer because [`net::address::Address`] carries it.
+/// A SYN for a listening port opens a connection; anything else joins one, and
+/// a segment for a stream this table does not hold is dropped.
+fn demux_tcp6(packet: &net::ipv6::Packet, payload: &[u8]) -> bool {
+    let Some(segment) = net::tcp::parse6(payload, packet.header.source, packet.header.destination)
+    else {
+        return false;
+    };
+    let peer = net::address::Address::V6(packet.header.source);
+    let mut table = TCP.lock();
+    table.prune();
+
+    if net::tcp_table::Table::is_opening(&segment) {
+        let Some((id, outgoing)) = table.accept_syn(&segment, (peer, segment.source_port)) else {
+            return false;
+        };
+        let queued = outgoing.into_iter().map(|segment| (id, segment)).collect();
+        let _ = tcp_exchange(&mut table, queued);
+        return true;
+    }
+
+    let Some(id) = table.connection_for(segment.destination_port, peer, segment.source_port) else {
+        return false;
+    };
+    let noteworthy = table.has_data(id) || segment.flags & net::tcp::FLAG_FIN != 0;
+    let connection = table
+        .connection_mut(id)
+        .expect("the id came from this table");
+    let (answer, replies) = connection.receive(&segment, payload);
+    let _ = answer;
+    if !replies.is_empty() {
+        let queued = replies.into_iter().map(|segment| (id, segment)).collect();
+        let _ = tcp_exchange(&mut table, queued);
+    }
+    noteworthy
+}
+
+/// The boot's IPv6 exchange: a datagram and a stream, both to this machine's
+/// own link-local address, both through the receive path the wire uses.
+///
+/// What this proves is the part a loopback cannot fake: a datagram and a
+/// segment written by [`send_datagram`] and [`tcp_connect`] with an IPv6
+/// address, framed for the card's ethertype, parsed back by [`demux_ipv6`] and
+/// routed to the socket or the connection the address names.  The exchange
+/// never touches the card — QEMU's user-mode network forwards IPv6 but does
+/// not answer NDP, so a probe aimed at its gateway would ask a question
+/// nothing answers.
+///
+/// The IPv4 side's own probe answers the same question for the other family,
+/// which is why the two lines are asserted separately by a gate: one family
+/// working says nothing about the other.
+#[cfg(target_os = "none")]
+pub fn ipv6_transport_probe() -> bool {
+    let (local, card) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        (interface.ipv6, interface.card.clone())
+    };
+    let _ = &card;
+
+    // ── a datagram to this machine, through the demux ───────────────────
+    let socket = match bind_udp(9100) {
+        Ok(socket) => socket,
+        Err(_) => {
+            arch::serial::write_str("protofire: ipv6 udp could not bind port 9100\n");
+            return false;
+        }
+    };
+    if send_datagram(net::address::Address::V6(local), 9100, 9101, b"protofire6").is_err() {
+        arch::serial::write_str("protofire: ipv6 udp could not send\n");
+        return false;
+    }
+    let mut buffer = [0_u8; 32];
+    let (source, source_port, count) = match socket.try_recv(&mut buffer) {
+        Ok(Some((source, port, count))) => (source, port, count),
+        _ => {
+            arch::serial::write_str("protofire: ipv6 udp went unanswered\n");
+            return false;
+        }
+    };
+    // The sender the record names is this machine, over IPv6: a record that
+    // said something else would mean the demux routed by the wrong address.
+    let expected = net::address::Address::V6(local);
+    let sender_is_this_machine = source == expected && source_port == 9101;
+    arch::serial::write_str("protofire: ipv6 udp received ");
+    arch::serial::write_u32(count as u32);
+    arch::serial::write_str(" byte(s) from ");
+    arch::serial::write_str(if sender_is_this_machine {
+        "this machine\n"
+    } else {
+        "an address the send did not name\n"
+    });
+    if !sender_is_this_machine || count != 10 {
+        return false;
+    }
+
+    // ── a stream to this machine, through the demux ─────────────────────
+    let listener = match tcp_listen(9102) {
+        Ok(id) => id,
+        Err(_) => {
+            arch::serial::write_str("protofire: ipv6 tcp could not listen\n");
+            return false;
+        }
+    };
+    let client = match tcp_connect(net::address::Address::V6(local), 9102) {
+        Ok(id) => id,
+        Err(_) => {
+            arch::serial::write_str("protofire: ipv6 tcp could not connect\n");
+            return false;
+        }
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => {
+            arch::serial::write_str("protofire: ipv6 tcp accepted nothing\n");
+            return false;
+        }
+    };
+    let sent = tcp_write(client, b"v6").unwrap_or_default();
+    let mut stream_buffer = [0_u8; 8];
+    let echoed = match tcp_read(accepted, &mut stream_buffer) {
+        Ok(Some(count)) => count,
+        _ => 0,
+    };
+    let back = tcp_write(accepted, &stream_buffer[..echoed]).unwrap_or_default();
+    let received = match tcp_read(client, &mut stream_buffer) {
+        Ok(Some(count)) => count,
+        _ => 0,
+    };
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+    let round_trip = sent == 2 && echoed == 2 && back == 2 && received == 2;
+    arch::serial::write_str("protofire: ipv6 tcp echoed ");
+    arch::serial::write_u32(received as u32);
+    arch::serial::write_str(" byte(s) of ");
+    arch::serial::write_u32(sent as u32);
+    arch::serial::write_str(if round_trip {
+        ", round trip\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    round_trip
 }
 
 /// The boot's stream exchange: a listener on this machine, a client to it,
@@ -1356,7 +1647,7 @@ pub fn tcp_probe() -> bool {
         Some(interface) => interface.protocol,
         None => return false,
     };
-    let client = match tcp_connect(protocol, 9000) {
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9000) {
         Ok(id) => id,
         Err(_) => {
             arch::serial::write_str("protofire: tcp could not connect to the listener\n");
@@ -1512,15 +1803,21 @@ mod tests {
     #[test]
     fn a_delivered_datagram_is_what_the_receive_answers() {
         let socket = bind_udp(PORT_B).expect("a bind");
-        let _ = deliver_udp([10, 0, 2, 2], PORT_B, [10, 0, 2, 9], 77, b"protofire")
-            .expect("a delivery");
+        let _ = deliver_udp(
+            net::address::Address::V4([10, 0, 2, 2]),
+            PORT_B,
+            net::address::Address::V4([10, 0, 2, 9]),
+            77,
+            b"protofire",
+        )
+        .expect("a delivery");
 
         let mut buffer = [0_u8; 16];
         let (source, source_port, count) = socket
             .try_recv(&mut buffer)
             .expect("a receive")
             .expect("a datagram");
-        assert_eq!(source, [10, 0, 2, 9]);
+        assert_eq!(source, net::address::Address::V4([10, 0, 2, 9]));
         assert_eq!(source_port, 77);
         assert_eq!(count, 9);
         assert_eq!(&buffer[..count], b"protofire");
@@ -1530,8 +1827,14 @@ mod tests {
     /// nothing; the receive that follows answers nothing.
     #[test]
     fn a_datagram_for_an_unbound_port_is_dropped() {
-        let woken =
-            deliver_udp([10, 0, 2, 15], PORT_E, [10, 0, 2, 9], 77, b"nobody").expect("a delivery");
+        let woken = deliver_udp(
+            net::address::Address::V4([10, 0, 2, 15]),
+            PORT_E,
+            net::address::Address::V4([10, 0, 2, 9]),
+            77,
+            b"nobody",
+        )
+        .expect("a delivery");
         assert_eq!(woken, 0, "and nobody was waiting");
         let socket = bind_udp(PORT_E).expect("a bind after the drop");
         let mut buffer = [0_u8; 16];
@@ -1547,9 +1850,9 @@ mod tests {
         assert_eq!(socket.try_recv(&mut buffer), Ok(None), "nothing yet");
 
         deliver_udp(
-            [10, 0, 2, 2],
+            net::address::Address::V4([10, 0, 2, 2]),
             PORT_C,
-            [10, 0, 2, 9],
+            net::address::Address::V4([10, 0, 2, 9]),
             77,
             b"way too long for this buffer",
         )
@@ -1567,7 +1870,7 @@ mod tests {
             .expect("a receive")
             .expect("the datagram was kept");
         assert_eq!(count, 28);
-        assert_eq!(source, [10, 0, 2, 9]);
+        assert_eq!(source, net::address::Address::V4([10, 0, 2, 9]));
     }
 
     /// A full queue refuses the next datagram with `Busy`, which is what a
@@ -1576,11 +1879,24 @@ mod tests {
     fn a_full_queue_refuses_with_busy() {
         let _socket = bind_udp(PORT_D).expect("a bind");
         for index in 0..QUEUE_LIMIT {
-            deliver_udp([10, 0, 2, 2], PORT_D, [10, 0, 2, 9], 77, &[index as u8; 4])
-                .expect("a delivery");
+            deliver_udp(
+                net::address::Address::V4([10, 0, 2, 2]),
+                PORT_D,
+                net::address::Address::V4([10, 0, 2, 9]),
+                77,
+                &[index as u8; 4],
+            )
+            .expect("a delivery");
         }
         assert_eq!(
-            deliver_udp([10, 0, 2, 2], PORT_D, [10, 0, 2, 9], 77, b"one more").unwrap_err(),
+            deliver_udp(
+                net::address::Address::V4([10, 0, 2, 2]),
+                PORT_D,
+                net::address::Address::V4([10, 0, 2, 9]),
+                77,
+                b"one more",
+            )
+            .unwrap_err(),
             abi::Error::Busy
         );
     }
@@ -1603,7 +1919,8 @@ mod tests {
 
         // Loopback, as a datagram: to this machine's own address.
         let socket = bind_udp(PORT_F).expect("a bind");
-        super::send_datagram(protocol, PORT_F, 50000, b"self").expect("a loopback send");
+        super::send_datagram(net::address::Address::V4(protocol), PORT_F, 50000, b"self")
+            .expect("a loopback send");
         assert!(
             card.sent.lock().is_empty(),
             "a datagram to this machine does not touch the card"
@@ -1613,13 +1930,23 @@ mod tests {
             .try_recv(&mut buffer)
             .expect("a receive")
             .expect("the loopback datagram");
-        assert_eq!(source, protocol, "the sender is this machine");
+        assert_eq!(
+            source,
+            net::address::Address::V4(protocol),
+            "the sender is this machine"
+        );
         assert_eq!(&buffer[..count], b"self");
 
         // The wire, as a datagram: the frame names the gateway's hardware
         // address and the destination's protocol address, which is the
         // whole of this build's routing.
-        super::send_datagram([10, 9, 9, 7], 9004, 50000, b"out").expect("a send");
+        super::send_datagram(
+            net::address::Address::V4([10, 9, 9, 7]),
+            9004,
+            50000,
+            b"out",
+        )
+        .expect("a send");
         {
             let sent = card.sent.lock();
             assert_eq!(sent.len(), 1);
@@ -1669,7 +1996,7 @@ mod tests {
             .try_recv(&mut buffer)
             .expect("a receive")
             .expect("the datagram the frame carried");
-        assert_eq!(source, [10, 9, 9, 9]);
+        assert_eq!(source, net::address::Address::V4([10, 9, 9, 9]));
         assert_eq!(source_port, 77);
         assert_eq!(&buffer[..count], b"hello");
 
@@ -1677,7 +2004,8 @@ mod tests {
         // calls, the same demux, and a card that records nothing, because a
         // loopback stream touches none of it.
         let listener = super::tcp_listen(9002).expect("a listen");
-        let client = super::tcp_connect(protocol, 9002).expect("a connect");
+        let client =
+            super::tcp_connect(net::address::Address::V4(protocol), 9002).expect("a connect");
         assert_eq!(
             card.sent.lock().len(),
             1,
@@ -1775,7 +2103,7 @@ mod tests {
             .try_recv(&mut buffer)
             .expect("a receive")
             .expect("the datagram the frame carried");
-        assert_eq!(source, [10, 9, 9, 9]);
+        assert_eq!(source, net::address::Address::V4([10, 9, 9, 9]));
         assert_eq!(source_port, 77);
         assert_eq!(&buffer[..count], b"hello");
     }

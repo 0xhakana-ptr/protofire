@@ -476,6 +476,19 @@ impl Machine {
                 // about — `fe80::` plus the modified EUI-64, the one fact a
                 // program can verify without the wire.
                 ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
+                // And the two transports over IPv6: a datagram and a stream,
+                // both to this machine's own link-local address, both
+                // through the receive path.  The lines above prove the
+                // answering paths; these prove a datagram and a segment
+                // carry over IPv6 at all, which nothing else here does.
+                (
+                    "protofire: ipv6 udp received 10 byte(s) from this machine",
+                    true,
+                ),
+                (
+                    "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
+                    true,
+                ),
                 // The answer the reply left behind: the cache holding it, and
                 // the same question answered from the table without a second
                 // frame on the wire.  The second line is exact because its
@@ -1049,6 +1062,19 @@ impl Machine {
                     // about — `fe80::` plus the modified EUI-64, the one fact a
                     // program can verify without the wire.
                     ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
+                    // And the two transports over IPv6: a datagram and a
+                    // stream, both to this machine's own link-local address,
+                    // both through the receive path.  The lines above prove the
+                    // answering paths; these prove a datagram and a segment
+                    // carry over IPv6 at all, which nothing else here does.
+                    (
+                        "protofire: ipv6 udp received 10 byte(s) from this machine",
+                        true,
+                    ),
+                    (
+                        "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
+                        true,
+                    ),
                     // The cache, for the reason the x86_64 list states: the
                     // answer is kept, and the second ask reads it back.
                     ("protofire: arp cache holds ", false),
@@ -1309,6 +1335,19 @@ impl Machine {
                 // about — `fe80::` plus the modified EUI-64, the one fact a
                 // program can verify without the wire.
                 ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
+                // And the two transports over IPv6: a datagram and a stream,
+                // both to this machine's own link-local address, both
+                // through the receive path.  The lines above prove the
+                // answering paths; these prove a datagram and a segment
+                // carry over IPv6 at all, which nothing else here does.
+                (
+                    "protofire: ipv6 udp received 10 byte(s) from this machine",
+                    true,
+                ),
+                (
+                    "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
+                    true,
+                ),
                 // The cache, for the reason the x86_64 list states: the
                 // answer is kept, and the second ask reads it back.
                 ("protofire: arp cache holds ", false),

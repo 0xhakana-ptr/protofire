@@ -27,6 +27,8 @@ use alloc::vec::Vec;
 use abi::Error;
 use abi::Result;
 
+use crate::address::Address;
+
 /// How many datagrams one socket may hold before it refuses more.
 ///
 /// Sixteen, and the number is a policy rather than a limit of the wire: a
@@ -39,7 +41,7 @@ pub const QUEUE_LIMIT: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Datagram {
     /// The sender's address, as the packet's header carried it.
-    pub source: [u8; 4],
+    pub source: Address,
     /// The sender's port, as the datagram's header carried it.
     pub source_port: u16,
     /// The bytes, copied: the frame they arrived in is the card's ring's and
@@ -51,7 +53,7 @@ pub struct Datagram {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Taken {
     /// Where the datagram came from.
-    pub source: [u8; 4],
+    pub source: Address,
     /// The port it came from.
     pub source_port: u16,
     /// How many bytes were written into the caller's buffer.
@@ -87,7 +89,7 @@ impl Queue {
     /// [`Error::Busy`] rather than a dropped datagram: the sender can act on
     /// a refusal, and a queue that silently discarded its oldest would lose a
     /// datagram the receiver was about to take.
-    pub fn push(&mut self, source: [u8; 4], source_port: u16, bytes: &[u8]) -> Result<()> {
+    pub fn push(&mut self, source: Address, source_port: u16, bytes: &[u8]) -> Result<()> {
         if self.datagrams.len() >= QUEUE_LIMIT {
             return Err(Error::Busy);
         }
@@ -136,7 +138,12 @@ mod tests {
     use super::Queue;
     use abi::Error;
 
-    const PEER: [u8; 4] = [10, 0, 2, 2];
+    use crate::address::Address;
+
+    /// The peer a test's datagrams come from.
+    fn peer() -> Address {
+        Address::V4([10, 0, 2, 2])
+    }
 
     /// An empty queue answers nothing rather than an error, which is the
     /// difference a parking receive depends on.
@@ -154,8 +161,8 @@ mod tests {
     #[test]
     fn datagrams_keep_their_order() {
         let mut queue = Queue::new();
-        queue.push(PEER, 77, b"first").expect("the first");
-        queue.push(PEER, 78, b"second").expect("the second");
+        queue.push(peer(), 77, b"first").expect("the first");
+        queue.push(peer(), 78, b"second").expect("the second");
         assert_eq!(queue.len(), 2);
 
         let mut buffer = [0_u8; 16];
@@ -174,7 +181,7 @@ mod tests {
     #[test]
     fn a_small_buffer_is_refused_and_the_datagram_kept() {
         let mut queue = Queue::new();
-        queue.push(PEER, 77, b"way too long").expect("a push");
+        queue.push(peer(), 77, b"way too long").expect("a push");
 
         let mut small = [0_u8; 4];
         assert_eq!(queue.take(&mut small), Err(Error::InvalidArgument));
@@ -183,7 +190,7 @@ mod tests {
         let mut whole = [0_u8; 32];
         let taken = queue.take(&mut whole).expect("a take").expect("one");
         assert_eq!(&whole[..taken.count], b"way too long");
-        assert_eq!(taken.source, PEER);
+        assert_eq!(taken.source, peer());
     }
 
     /// The queue has a bound, and the refusal is `Busy` rather than a dropped
@@ -193,11 +200,11 @@ mod tests {
         let mut queue = Queue::new();
         for index in 0..QUEUE_LIMIT {
             queue
-                .push(PEER, 77, &[index as u8])
+                .push(peer(), 77, &[index as u8])
                 .expect("a delivery inside the bound");
         }
         assert_eq!(queue.len(), QUEUE_LIMIT);
-        assert_eq!(queue.push(PEER, 77, b"one more"), Err(Error::Busy));
+        assert_eq!(queue.push(peer(), 77, b"one more"), Err(Error::Busy));
         assert_eq!(queue.len(), QUEUE_LIMIT, "and nothing was dropped for it");
 
         // What is held is the first QUEUE_LIMIT, in order, and the refused
@@ -216,8 +223,8 @@ mod tests {
     #[test]
     fn a_clear_empties_the_queue() {
         let mut queue = Queue::new();
-        queue.push(PEER, 77, b"a").expect("a push");
-        queue.push(PEER, 77, b"b").expect("a push");
+        queue.push(peer(), 77, b"a").expect("a push");
+        queue.push(peer(), 77, b"b").expect("a push");
         queue.clear();
         assert!(queue.is_empty());
         let mut buffer = [0_u8; 8];

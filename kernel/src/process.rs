@@ -1530,9 +1530,25 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let length = call.arguments[2];
         let sender_record = call.arguments[3];
         let sender_len = call.arguments[4];
+        // `a5` is the flags word, and zero is what every caller before the
+        // IPv6 side passed.  A bit this build does not define is refused
+        // rather than ignored: a program that asked for a shape the kernel
+        // silently dropped would read the record it did not get.
+        let flags = call.arguments[5];
+        if syscall::validate_known_flags(flags, abi::network::RECV_FROM_UDP_KNOWN_FLAGS).is_err() {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        // The record's required size follows the flag: a caller that set it is
+        // asking for the sixteen-byte sender and gets refused if it passed a
+        // record that cannot hold one.
+        let record_size = if flags & abi::network::NETWORK_FLAG_IPV6 != 0 {
+            abi::network::UDP_SENDER6_RECORD_SIZE
+        } else {
+            abi::network::UDP_SENDER_RECORD_SIZE
+        };
         if !crate::address_space::is_user_range(buffer, length)
             || !crate::address_space::is_user_range(sender_record, sender_len)
-            || sender_len < abi::network::UDP_SENDER_RECORD_SIZE
+            || sender_len < record_size
         {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
         }
@@ -1817,12 +1833,30 @@ fn receive_datagram_answer(
         Err(error) => Some(abi::syscall::encode_error(error)),
         Ok(None) => None,
         Ok(Some((source, source_port, count))) => {
-            let record = abi::network::UdpSenderRecord {
-                address: abi::network::pack_address(source),
-                port: source_port as usize,
-            };
-            sender[..8].copy_from_slice(&record.address.to_le_bytes());
-            sender[8..16].copy_from_slice(&record.port.to_le_bytes());
+            // The record's shape follows the address's family.  A caller that
+            // passes the flag gets the sixteen-byte record it asked for; one
+            // that passes zero gets the two-word record it always did, and a
+            // datagram from an IPv6 peer has no two-word form — which is why
+            // this answers `InvalidArgument` rather than truncating an
+            // address into a word a program would read as something else.
+            match source {
+                net::address::Address::V4(bytes) => {
+                    let record = abi::network::UdpSenderRecord {
+                        address: abi::network::pack_address(bytes),
+                        port: source_port as usize,
+                    };
+                    sender[..8].copy_from_slice(&record.address.to_le_bytes());
+                    sender[8..16].copy_from_slice(&record.port.to_le_bytes());
+                }
+                net::address::Address::V6(bytes) => {
+                    if sender.len() < abi::network::UDP_SENDER6_RECORD_SIZE {
+                        return Some(abi::syscall::encode_error(abi::Error::InvalidArgument));
+                    }
+                    sender[..16].copy_from_slice(&bytes);
+                    sender[16..16 + core::mem::size_of::<usize>()]
+                        .copy_from_slice(&source_port.to_le_bytes());
+                }
+            }
             Some(count)
         }
     }

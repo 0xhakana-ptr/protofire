@@ -658,6 +658,32 @@ pub fn sys_send_to_udp(descriptor: usize, destination: usize, buffer: &[u8], por
     )
 }
 
+/// `send_to_udp6(descriptor, destination, buffer, port)`: the bytes sent to an
+/// IPv6 destination.
+///
+/// The same number and the same slots as `sys_send_to_udp`; what differs is
+/// that `a1` is a pointer to the sixteen-byte address and `a5` carries
+/// [`NETWORK_FLAG_IPV6`](abi::network::NETWORK_FLAG_IPV6).  A program that
+/// calls the IPv4 form keeps passing zero, which is the whole of what makes
+/// this additive.
+#[cfg(target_os = "none")]
+pub fn sys_send_to_udp6(
+    descriptor: usize,
+    destination: &[u8; 16],
+    buffer: &[u8],
+    port: usize,
+) -> usize {
+    syscall6(
+        SYS_SEND_TO_UDP,
+        descriptor,
+        destination.as_ptr() as usize,
+        buffer.as_ptr() as usize,
+        buffer.len(),
+        port,
+        abi::network::NETWORK_FLAG_IPV6,
+    )
+}
+
 /// `recv_from_udp(descriptor, buffer, sender)`: the bytes received, with
 /// `sender` filled by the sender record the ABI defines.  Blocks until a
 /// datagram arrives.
@@ -678,6 +704,44 @@ pub fn sys_recv_from_udp(
     )
 }
 
+/// A `UdpSender6Record` is a sixteen-byte address and a word of port.
+pub const UDP_SENDER6_RECORD_BYTES: usize = core::mem::size_of::<abi::network::UdpSender6Record>();
+
+/// `recv_from_udp6(descriptor, buffer, sender)`: a datagram whose sender may
+/// be an IPv6 address.
+///
+/// The same number as `sys_recv_from_udp`, with the flag set: `a4` names the
+/// wider record's length, which is what the kernel checks before it writes.
+#[cfg(target_os = "none")]
+pub fn sys_recv_from_udp6(
+    descriptor: usize,
+    buffer: &mut [u8],
+    sender: &mut [u8; UDP_SENDER6_RECORD_BYTES],
+) -> usize {
+    syscall6(
+        SYS_RECV_FROM_UDP,
+        descriptor,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        sender.as_mut_ptr() as usize,
+        sender.len(),
+        abi::network::NETWORK_FLAG_IPV6,
+    )
+}
+
+/// A filled `UdpSender6Record`, read back: where the datagram came from.
+#[cfg(target_os = "none")]
+pub fn sender6_record(record: &[u8; UDP_SENDER6_RECORD_BYTES]) -> ([u8; 16], usize) {
+    let mut address = [0_u8; 16];
+    address.copy_from_slice(&record[..16]);
+    let port = usize::from_le_bytes(
+        record[16..16 + core::mem::size_of::<usize>()]
+            .try_into()
+            .expect("the port word"),
+    );
+    (address, port)
+}
+
 /// `listen_tcp(port)`: the descriptor the accept is called on.
 #[cfg(target_os = "none")]
 pub fn sys_listen_tcp(port: usize) -> usize {
@@ -689,6 +753,23 @@ pub fn sys_listen_tcp(port: usize) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_connect_tcp(destination: usize, port: usize) -> usize {
     syscall6(SYS_CONNECT_TCP, destination, port, 0, 0, 0, 0)
+}
+
+/// `connect_tcp6(destination, port)`: a stream to an IPv6 peer.
+///
+/// The same number as `sys_connect_tcp`, with `a0` a pointer to sixteen bytes
+/// instead of a packed word and `a2` carrying the flag.
+#[cfg(target_os = "none")]
+pub fn sys_connect_tcp6(destination: &[u8; 16], port: usize) -> usize {
+    syscall6(
+        SYS_CONNECT_TCP,
+        destination.as_ptr() as usize,
+        port,
+        abi::network::NETWORK_FLAG_IPV6,
+        0,
+        0,
+        0,
+    )
 }
 
 /// `accept_tcp(listener)`: the descriptor of one stream from the listener's

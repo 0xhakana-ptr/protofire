@@ -789,6 +789,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The IPv6 transports: a datagram and a stream to this machine's own
+    // link-local address, both through the demux.  The exchange above proved
+    // the IPv6 *answering* paths; this proves the two transports carry over
+    // IPv6 at all, which is a separate claim and a separate line.
+    if !crate::net::ipv6_transport_probe() {
+        return false;
+    }
+
     // The datagram: one UDP send to a port nothing owns, and the refusal
     // that comes back — the peer's proof that a datagram this stack built
     // arrived with its header intact.

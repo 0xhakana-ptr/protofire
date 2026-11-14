@@ -65,6 +65,7 @@
 
 extern crate alloc;
 
+pub mod address;
 pub mod arp;
 pub mod ethernet;
 pub mod icmp;

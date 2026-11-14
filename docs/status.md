@@ -401,6 +401,42 @@ learn that by failing.
 `kernel/src/net.rs` is 196 lines smaller across the three moves, and every
 line that left is arithmetic a host can now run.
 
+**The transports carry over IPv6.**  Until this change the IPv6 side answered
+a neighbour and an echo and stopped: a datagram or a segment could be parsed
+and never routed, because a socket and a connection were keyed on four bytes.
+The state is now keyed on `net::address::Address`, which carries its family
+with its bytes, and the demux routes `NEXT_UDP` and `NEXT_TCP` as well as
+`NEXT_ICMPV6`.
+
+Two lines say so, and both are asserted on all four machines:
+
+```
+protofire: ipv6 udp received 10 byte(s) from this machine
+protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip
+```
+
+Each is a real round trip through the receive path, not a claim about code: a
+datagram written by `send_datagram` with an IPv6 address, framed for the
+card's ethertype, parsed back by `demux_ipv6`, routed to the socket the
+address names, and read off it — and a stream that opens, carries two bytes,
+echoes them and closes, all over IPv6.  The sender the datagram answers with
+is checked to be this machine, so a demux that routed by the wrong address
+would print the other line and fail.
+
+**Crossing the syscall boundary cost no numbers.**  `SendToUdp` (59),
+`ConnectTcp` (38) and `RecvFromUdp` (60) all sit below the frozen boundary, and
+all three had a reserved word that must be zero.  That word is now a flags
+word, and `NETWORK_FLAG_IPV6` is the only bit: with it set, the address slot
+is a pointer to sixteen bytes instead of a packed word, and the sender record
+is the wider one.  A caller passing zero behaves exactly as it did before,
+which is what `docs/fmts/syscall-abi.md` §3.2 permits in the frozen range —
+"additive *optional* behaviour is the only permitted change" — and the section
+there now states the flag's meaning per call.
+
+A second number per call was the alternative.  It would have spent
+experimental-range numbers to say something the flags word had room for, and
+left two spellings of one operation to keep in step.
+
 **Services — built, and deliberately parked.**  A table from a name to a
 service, installed during boot and frozen before anything looks one up; a caller
 asks for a name and drives what it gets through one trait, without knowing which

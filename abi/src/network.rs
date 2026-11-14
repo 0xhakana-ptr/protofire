@@ -143,6 +143,73 @@ pub const fn unpack_address(word: usize) -> [u8; 4] {
     ]
 }
 
+/// The flag that makes a datagram call carry a sixteen-byte address.
+///
+/// ## Why a flag and not a second number
+///
+/// `SendToUdp` and `RecvFromUdp` are below 120, so their semantics and their
+/// layout are frozen.  A flag is what the frozen rule permits: a caller that
+/// passes zero behaves exactly as it did before this constant existed, and a
+/// caller that passes the bit opts into the wider shape.  The alternative — a
+/// `SendToUdp6` beside each call — would have spent numbers from the
+/// experimental range to say something the flags word already had room for,
+/// and left two spellings of one operation to keep in step.
+///
+/// ## What each call means when the bit is set
+///
+/// - **`SendToUdp`** — `a1` is a **pointer** to sixteen bytes of IPv6 address
+///   in the caller's memory, not a packed IPv4 word.  When it is a pointer the
+///   call reads the address before it builds anything, so a refused address is
+///   refused before a frame exists.
+/// - **`RecvFromUdp`** — the sender record is [`UDP_SENDER6_RECORD_SIZE`] bytes
+///   and its address field is a pointer-free sixteen bytes at
+///   [`UDP_SENDER6_ADDRESS_OFFSET`].  `a4` must be at least that size, which
+///   the call checks: a caller that set the bit and passed a two-word record
+///   would be asking the kernel to write past the end of it.
+///
+/// Both bits are the same bit, named twice because the two calls are two calls:
+/// a program that sets it on one and not the other is a program whose sends and
+/// receives disagree about their family, and the kernel refuses nothing for
+/// that — a socket can carry both, and which one a datagram is comes from the
+/// address it names.
+pub const NETWORK_FLAG_IPV6: usize = 1 << 0;
+
+/// The flags `SendToUdp` knows.
+pub const SEND_TO_UDP_KNOWN_FLAGS: usize = NETWORK_FLAG_IPV6;
+
+/// The flags `RecvFromUdp` knows.
+pub const RECV_FROM_UDP_KNOWN_FLAGS: usize = NETWORK_FLAG_IPV6;
+
+/// The flags `ConnectTcp` knows.
+///
+/// `ConnectTcp`'s address is `a0`, and with this bit set it is a **pointer** to
+/// sixteen bytes rather than a packed word — the same reading `SendToUdp`
+/// gives its `a1`.  `AcceptTcp` needs no flag: an accepted stream's family is
+/// the client's, which the connection already knows.
+pub const CONNECT_TCP_KNOWN_FLAGS: usize = NETWORK_FLAG_IPV6;
+
+/// Where a datagram came from when its address is sixteen bytes: the address,
+/// then the port, each a word, and the address is the sixteen bytes at the
+/// offset rather than a packed one.
+///
+/// `repr(C)` with two pointer-width fields, so a sixteen-byte address does not
+/// fit in one word on any machine this tree builds for.  The record is what a
+/// caller that set [`NETWORK_FLAG_IPV6`] on `RecvFromUdp` passes, and its size
+/// is what `a4` must be at least.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UdpSender6Record {
+    /// The sender's address: sixteen bytes, at
+    /// [`UDP_SENDER6_ADDRESS_OFFSET`].
+    pub address: [u8; 16],
+    /// The sender's port, as the datagram's header carried it.
+    pub port: usize,
+}
+
+pub const UDP_SENDER6_RECORD_SIZE: usize = size_of::<UdpSender6Record>();
+pub const UDP_SENDER6_ADDRESS_OFFSET: usize = offset_of!(UdpSender6Record, address);
+pub const UDP_SENDER6_PORT_OFFSET: usize = offset_of!(UdpSender6Record, port);
+
 #[cfg(test)]
 mod tests {
     use super::NETWORK_ADDRESSES_BYTES;
@@ -212,5 +279,40 @@ mod tests {
         let record = super::Ipv6StatusRecord::new(link_local, None, 0);
         assert_eq!(record.has_global, 0);
         assert_eq!(record.global, [0_u8; 16]);
+    }
+
+    /// The IPv6 flag is one bit, the two sender records differ by a word, and
+    /// the wider record's address is sixteen bytes at the offset this crate
+    /// names — the shape a caller with the flag set passes.
+    #[test]
+    fn the_ipv6_flag_and_the_wider_sender_record() {
+        assert_eq!(super::NETWORK_FLAG_IPV6, 1);
+        assert_eq!(super::SEND_TO_UDP_KNOWN_FLAGS, super::NETWORK_FLAG_IPV6);
+        assert_eq!(super::RECV_FROM_UDP_KNOWN_FLAGS, super::NETWORK_FLAG_IPV6);
+        assert_eq!(super::CONNECT_TCP_KNOWN_FLAGS, super::NETWORK_FLAG_IPV6);
+
+        // The frozen record is still two words and still the size it was:
+        // this change is additive and the assertion is what says so.
+        assert_eq!(super::UDP_SENDER_RECORD_SIZE, 16);
+        // The wider one is an address and a word.
+        assert_eq!(
+            super::UDP_SENDER6_RECORD_SIZE,
+            16 + core::mem::size_of::<usize>()
+        );
+        assert_eq!(super::UDP_SENDER6_ADDRESS_OFFSET, 0);
+        // The port follows the address, aligned up to the word it lives in.
+        assert_eq!(
+            super::UDP_SENDER6_PORT_OFFSET,
+            16usize.next_multiple_of(core::mem::align_of::<usize>())
+        );
+
+        let record = super::UdpSender6Record {
+            address: [
+                0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x50, 0x54, 0, 0xff, 0xfe, 0x12, 0x34, 0x56,
+            ],
+            port: 8612,
+        };
+        assert_eq!(record.address[0], 0xfe);
+        assert_eq!(record.port, 8612);
     }
 }

@@ -55,7 +55,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **143,446 lines of Rust across 40 crates**, which is
+The tree is **144,305 lines of Rust across 40 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -371,7 +371,7 @@ What landed, in the order a packet needs it:
 | the packet | `net/src/ipv6.rs` | the fixed header, the extension-header chain walked to the first consumer, the fragment header reported rather than reassembled, and the forty-byte pseudo-header sum |
 | the messages | `net/src/icmpv6.rs` | echo, the error types a sender reacts to, and the four NDP messages — neighbour and router, solicitation and advertisement — with the option walk |
 | what is remembered | `net/src/ndp.rs` | a neighbour cache with three states, the duplicate-address check, and the two addresses a host computes rather than asks for |
-| the transports | `net/src/udp.rs`, `net/src/tcp.rs` | an IPv6 writer and reader each, a **second function** rather than the IPv4 one with a flag |
+| the transports | `net/src/udp.rs`, `net/src/tcp.rs`, `net/src/address.rs` | an IPv6 writer and reader each, a **second function** rather than the IPv4 one with a flag, and an address type that carries its family so a socket and a connection can be keyed on either |
 | the interface | `kernel/src/net.rs` | a link-local address derived at install, the groups joined, the cache, and a demux branch that walks the chain before it reads a transport |
 | the program's view | `AbiInfo`-shaped record in `abi/src/network.rs` | `Ipv6Status` (197), a new number above the frozen boundary, because `NetworkStatus`'s fourteen address bytes are IPv4's |
 
@@ -410,17 +410,42 @@ exchanges to reach a neighbour that does not answer NDP either.  The
 measurement is in `tools/xtask/src/machine.rs` beside the option that is
 deliberately absent, so the next reader does not make it again.
 
+**UDP and TCP carry over IPv6.**  The state that could not describe them — a
+socket keyed on four bytes, a connection keyed on four bytes — is keyed on
+`net::address::Address` now, which carries its family with its bytes, and the
+receive path routes `NEXT_UDP` and `NEXT_TCP` as well as `NEXT_ICMPv6`.  Two
+lines prove it, on every machine:
+
+```
+protofire: ipv6 udp received 10 byte(s) from this machine
+protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip
+```
+
+Each is a loopback through the demux rather than a claim about code: a
+datagram written with an IPv6 address, framed, parsed back and read off the
+socket the address names, and a stream that opens, carries, echoes and closes.
+The datagram's line names the sender it read out of the record, so a demux
+that routed by the wrong address would print the refusal instead.
+
+**The boundary cost no numbers.**  `SendToUdp` (59), `ConnectTcp` (38) and
+`RecvFromUdp` (60) all sit below the frozen line and all three had a reserved
+word that must be zero.  That word is a flags word now, and its one bit says
+the address slot is a pointer to sixteen bytes rather than a packed word.  A
+caller passing zero is unchanged, which is what §3.2's "additive *optional*
+behaviour" permits in the frozen range; `docs/fmts/syscall-abi.md` states the
+reading per call.  A second number per call would have spent
+experimental-range numbers to say something the flags word had room for.
+
 What is **not** here, and is its own step: a router advertisement actually
 configuring a global address on this boot (the code path is in
 `net/src/ndp.rs` and the interface holds the field, but no machine this tree
-boots on sends one); reassembly of a fragmented packet; and UDP or TCP over
-IPv6 **through the syscall interface**, which would need addresses to cross the
-boundary in a family-tagged form the frozen socket calls do not have.
+boots on sends one); reassembly of a fragmented packet; and path-MTU
+discovery, so a peer that shrinks a path has no way to tell this stack.
 
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-143,446 across 40 crates.  The difference is not lost work — it is work the new
+144,305 across 40 crates.  The difference is not lost work — it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 
