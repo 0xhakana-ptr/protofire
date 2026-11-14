@@ -291,6 +291,108 @@ pub fn ipv6_status() -> Option<abi::network::Ipv6StatusRecord> {
     })
 }
 
+/// This machine's name, if a program set one.
+///
+/// A fixed array behind the same lock the interface uses, and for the same
+/// reason: a name is a fact about this boot's machine, and the one place that
+/// answers questions about the machine is here.  An empty length is "no name",
+/// which `GetHostName` reports as an empty string rather than an error: a
+/// machine that was never named is not a machine whose name is missing, and a
+/// caller that treated the two the same would fail to start on a machine that
+/// simply had not been told.
+static HOST_NAME: Mutex<HostName> = Mutex::new(HostName::new());
+
+/// The name a program set, or none.
+struct HostName {
+    bytes: [u8; abi::network::HOST_NAME_MAX],
+    len: usize,
+}
+
+impl HostName {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; abi::network::HOST_NAME_MAX],
+            len: 0,
+        }
+    }
+}
+
+/// Set this machine's name.
+///
+/// The name is copied rather than borrowed: a caller's buffer is the caller's,
+/// and a stored pointer into it would outlive the call that passed it.  A name
+/// too long for the ABI's bound is refused rather than truncated, because a
+/// truncated name is a different name.
+pub fn set_host_name(name: &[u8]) -> Result<()> {
+    if name.len() > abi::network::HOST_NAME_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    // A name is text a program will print, so the bytes are checked here
+    // rather than at every reader: a name with a control character in it is a
+    // program's output being rewritten by the name it set.
+    if !name
+        .iter()
+        .all(|byte| byte.is_ascii_graphic() || *byte == b'-' || *byte == b'.')
+    {
+        return Err(Error::InvalidArgument);
+    }
+    let mut stored = HOST_NAME.lock();
+    stored.bytes[..name.len()].copy_from_slice(name);
+    stored.bytes[name.len()..].fill(0);
+    stored.len = name.len();
+    Ok(())
+}
+
+/// This machine's name, as many bytes as it has.
+pub fn host_name(into: &mut [u8]) -> Result<usize> {
+    let stored = HOST_NAME.lock();
+    if into.len() < stored.len {
+        return Err(Error::InvalidArgument);
+    }
+    into[..stored.len].copy_from_slice(&stored.bytes[..stored.len]);
+    Ok(stored.len)
+}
+
+/// Where a stream of this caller's is, which end is asked for.
+pub enum SocketEnd {
+    /// The address this machine's end answers on.
+    Local,
+    /// The address the peer is.
+    Peer,
+}
+
+/// Ask a stream or a datagram socket where one of its ends is.
+///
+/// The answer is a [`abi::network::SockAddrIn`], and only a four-byte address
+/// fits it: a socket over IPv6 answers `Unsupported`, which is what this ABI's
+/// call has always meant for an address its record cannot hold.  The port is
+/// the caller's own for [`SocketEnd::Local`] and the peer's for
+/// [`SocketEnd::Peer`], and a datagram socket has no peer at all because it
+/// never connected to one.
+pub fn socket_address(
+    port: u16,
+    peer: Option<(net::address::Address, u16)>,
+    end: SocketEnd,
+) -> Result<abi::network::SockAddrIn> {
+    let interface = INTERFACE.lock();
+    let interface = interface.as_ref().ok_or(Error::NotFound)?;
+    let (address, port) = match end {
+        SocketEnd::Local => (interface.protocol, port),
+        SocketEnd::Peer => match peer {
+            Some((net::address::Address::V4(address), port)) => (address, port),
+            // A datagram socket has no peer, and a stream over IPv6 has one
+            // this record cannot hold.
+            _ => return Err(Error::Unsupported),
+        },
+    };
+    Ok(abi::network::SockAddrIn {
+        family: abi::network::SOCKADDR_IN_FAMILY,
+        port: port.to_be_bytes(),
+        address,
+        padding: [0; 8],
+    })
+}
+
 /// The hardware address the ARP cache holds for `protocol`, if the wire
 /// answered for it.
 pub fn arp_hardware_for(protocol: [u8; 4]) -> Option<[u8; 6]> {
@@ -1893,6 +1995,16 @@ pub fn tcp_write(id: usize, bytes: &[u8]) -> Result<usize> {
     // The bytes a stream carried are what a parked reader was waiting for.
     note_stream_wake(noteworthy);
     Ok(count)
+}
+
+/// Where a stream's two ends are: this machine's own port and the peer.
+///
+/// One call rather than two because the two are a single fact about one
+/// connection and a caller asking for both would otherwise take the lock twice.
+pub fn stream_ends(id: usize) -> Option<(u16, (net::address::Address, u16))> {
+    let table = TCP.lock();
+    let connection = table.connection(id)?;
+    Some((connection.local_port(), connection.remote()))
 }
 
 /// Whether a stream has bytes its reader has not taken.

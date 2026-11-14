@@ -495,6 +495,41 @@ holds and asserts the answer came from the **router's** group rather than the
 destination's.  Removing the route makes that line print `MISMATCH` and the
 boot fail, which is the mutation this was checked with.
 
+**Five network numbers moved out of `NotImplemented`.**  They are the frozen
+range's own, with the contracts the previous tree assigned them, so none of them
+is a new decision: `GetHostName` (71) and `SetHostName` (72) are a name this
+machine holds, `GetSockName` (73) and `GetPeerName` (74) are a `sockaddr_in`
+written from the connection's own four-tuple, and `ResolveHostname` (93) is the
+lookup the boot's DNS probe already runs.
+
+```
+protofire: process 1 set the machine's name, 0
+protofire: process 1 socket is 10.0.2.15:9003
+protofire: process 1 peer is 10.0.2.15:49160
+protofire: process 1 resolved a name to 1746147226
+```
+
+All four are printed from a program at ring 3, not from the kernel: `init` sets
+a name and reads it back, asks its own accepted stream where both ends are, and
+resolves `example.com`.  That last number is `104.20.23.154`, which is the
+address the boot's own DNS probe reports on the line above it, so the two
+independently reached the same server.
+
+Writing them found a deadlock that would have hung any handler of this shape.
+`serve` holds the registry's lock for the length of a call, and the socket
+lookups beside it (`tcp_stream_for`, `udp_socket_for`) take that same lock.  A
+handler that reached for the free function instead of the `&mut SyscallTable`
+the dispatcher hands it would take one lock twice in one thread, and the
+symptom was a boot that stopped between two lines with nothing refused.  The
+handlers take the table now, and `docs/fmts/syscall-abi.md`'s handler rule is
+what made the difference visible: a handler's arguments include the table for
+exactly this reason.
+
+`GetPeerName` on a datagram socket answers `Unsupported`, because a datagram
+socket has no peer: it never connected to one.  A stream over IPv6 answers the
+same, because the ABI's record is fourteen address bytes and a sixteen-byte
+address does not fit it.
+
 [RFC 8200]: https://www.rfc-editor.org/rfc/rfc8200
 [RFC 8201]: https://www.rfc-editor.org/rfc/rfc8201
 

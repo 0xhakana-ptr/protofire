@@ -210,6 +210,51 @@ pub const UDP_SENDER6_RECORD_SIZE: usize = size_of::<UdpSender6Record>();
 pub const UDP_SENDER6_ADDRESS_OFFSET: usize = offset_of!(UdpSender6Record, address);
 pub const UDP_SENDER6_PORT_OFFSET: usize = offset_of!(UdpSender6Record, port);
 
+/// A socket's address, as `GetSockName` and `GetPeerName` write it.
+///
+/// The layout every program already knows: a family, a port in network order,
+/// four address bytes, and eight of padding.  It is sixteen bytes, which is
+/// what those calls answer as their return value, and the padding is not
+/// slack: a program that read this record as the `sockaddr_in` its own libc
+/// defines compares it byte for byte.
+///
+/// The family is [`SOCKADDR_IN_FAMILY`] for IPv4.  An IPv6 address does not
+/// fit and is not what these calls answer, which is why the record names the
+/// family it is rather than carrying a union.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SockAddrIn {
+    /// [`SOCKADDR_IN_FAMILY`].
+    pub family: u16,
+    /// The port in network byte order, which is what `sockaddr_in` carries.
+    pub port: [u8; 2],
+    /// The address.
+    pub address: [u8; 4],
+    /// Eight bytes a program compares against zero.
+    pub padding: [u8; 8],
+}
+
+/// The family word a `sockaddr_in` carries for IPv4.
+///
+/// Two, in the host's own byte order: the field is the one part of the record
+/// that is not network order, which is the detail a hand-written record gets
+/// wrong and a program's `connect` then refuses.
+pub const SOCKADDR_IN_FAMILY: u16 = 2;
+
+pub const SOCKADDR_IN_SIZE: usize = size_of::<SockAddrIn>();
+pub const SOCKADDR_IN_FAMILY_OFFSET: usize = offset_of!(SockAddrIn, family);
+pub const SOCKADDR_IN_PORT_OFFSET: usize = offset_of!(SockAddrIn, port);
+pub const SOCKADDR_IN_ADDRESS_OFFSET: usize = offset_of!(SockAddrIn, address);
+
+/// The longest host name this ABI moves in one call.
+///
+/// `GetHostName`, `SetHostName` and `ResolveHostname` all take or write a name
+/// in one buffer, and this is its bound: the longest label a DNS name may
+/// carry is sixty-three bytes and the longest name is two hundred and
+/// fifty-three, so a buffer larger than that is a caller describing something
+/// that is not a name.
+pub const HOST_NAME_MAX: usize = 255;
+
 #[cfg(test)]
 mod tests {
     use super::NETWORK_ADDRESSES_BYTES;

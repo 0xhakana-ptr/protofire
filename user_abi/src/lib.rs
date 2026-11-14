@@ -125,6 +125,66 @@ pub const SYS_RECV_FROM_UDP: usize = SyscallNumber::RecvFromUdp as usize;
 pub const NETWORK_STATUS_BYTES: usize = core::mem::size_of::<abi::network::NetworkStatusRecord>();
 /// `ipv6_status(record)`: the interface's IPv6 side.
 pub const SYS_IPV6_STATUS: usize = SyscallNumber::Ipv6Status as usize;
+/// Whether a status word means failure.
+///
+/// Re-exported so a program that calls these wrappers does not also have to
+/// name `abi`: the two crates are one ABI seen from two sides, and a program
+/// that had to import both would be choosing between them for no reason.
+pub use abi::syscall::is_error_status;
+
+/// Decode a status word into the error it carries, or `None` when it is a
+/// success.
+///
+/// Re-exported with `is_error_status` for the same reason: a program that
+/// calls these wrappers and checks a status needs the error the status means,
+/// and it should not have to name `abi` to find out.
+pub fn decode_error(status: usize) -> Option<abi::Error> {
+    abi::syscall::decode_result(status).err()
+}
+
+/// Whether a status word is the refusal a number this build does not serve
+/// answers.
+///
+/// The one answer that means "this call was never wired", which is what a
+/// program checking that a number reached a handler must rule out: every other
+/// refusal says something about the arguments or the machine, and this one says
+/// something about the build.
+pub fn is_not_implemented(status: usize) -> bool {
+    decode_error(status) == Some(abi::Error::NotImplemented)
+}
+
+/// The size of the `sockaddr_in` record `GetSockName` and `GetPeerName`
+/// write, derived from the ABI's own type rather than restated.
+pub const SOCKADDR_IN_BYTES: usize = abi::network::SOCKADDR_IN_SIZE;
+
+/// The family word of a `sockaddr_in` record, in the host's byte order.
+pub fn sockaddr_family(record: &[u8]) -> u16 {
+    u16::from_ne_bytes([
+        record[abi::network::SOCKADDR_IN_FAMILY_OFFSET],
+        record[abi::network::SOCKADDR_IN_FAMILY_OFFSET + 1],
+    ])
+}
+
+/// The port of a `sockaddr_in` record, read back out of network order into the
+/// host's.
+pub fn sockaddr_port(record: &[u8]) -> u16 {
+    u16::from_be_bytes([
+        record[abi::network::SOCKADDR_IN_PORT_OFFSET],
+        record[abi::network::SOCKADDR_IN_PORT_OFFSET + 1],
+    ])
+}
+
+/// The address of a `sockaddr_in` record.
+pub fn sockaddr_address(record: &[u8]) -> [u8; 4] {
+    let at = abi::network::SOCKADDR_IN_ADDRESS_OFFSET;
+    [record[at], record[at + 1], record[at + 2], record[at + 3]]
+}
+
+pub const SYS_GET_HOST_NAME: usize = SyscallNumber::GetHostName as usize;
+pub const SYS_SET_HOST_NAME: usize = SyscallNumber::SetHostName as usize;
+pub const SYS_GET_SOCK_NAME: usize = SyscallNumber::GetSockName as usize;
+pub const SYS_GET_PEER_NAME: usize = SyscallNumber::GetPeerName as usize;
+pub const SYS_RESOLVE_HOSTNAME: usize = SyscallNumber::ResolveHostname as usize;
 pub const IPV6_STATUS_BYTES: usize = core::mem::size_of::<abi::network::Ipv6StatusRecord>();
 /// The state word for a card the kernel drives.
 pub use abi::network::NETWORK_STATUS_UP;
@@ -609,6 +669,80 @@ pub fn sys_network_status(record: &mut [u8; NETWORK_STATUS_BYTES]) -> usize {
         SYS_NETWORK_STATUS,
         record.as_mut_ptr() as usize,
         record.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// `get_host_name(buffer)`: the name's length, or an error status.
+///
+/// A machine that was never named answers zero, which is not an error: the
+/// name is empty and the caller has nothing to print.
+#[cfg(target_os = "none")]
+pub fn sys_get_host_name(buffer: &mut [u8]) -> usize {
+    syscall6(
+        SYS_GET_HOST_NAME,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// `set_host_name(name)`: zero, or an error status.
+#[cfg(target_os = "none")]
+pub fn sys_set_host_name(name: &str) -> usize {
+    syscall6(
+        SYS_SET_HOST_NAME,
+        name.as_ptr() as usize,
+        name.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// `get_sock_name(descriptor, buffer)`: the record's size, or an error.
+#[cfg(target_os = "none")]
+pub fn sys_get_sock_name(descriptor: usize, buffer: &mut [u8]) -> usize {
+    syscall6(
+        SYS_GET_SOCK_NAME,
+        descriptor,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `get_peer_name(descriptor, buffer)`: the record's size, or an error.
+#[cfg(target_os = "none")]
+pub fn sys_get_peer_name(descriptor: usize, buffer: &mut [u8]) -> usize {
+    syscall6(
+        SYS_GET_PEER_NAME,
+        descriptor,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `resolve_hostname(name)`: the address as one word in network order, or an
+/// error status.
+#[cfg(target_os = "none")]
+pub fn sys_resolve_hostname(name: &str) -> usize {
+    syscall6(
+        SYS_RESOLVE_HOSTNAME,
+        name.as_ptr() as usize,
+        name.len(),
         0,
         0,
         0,

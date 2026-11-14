@@ -564,6 +564,18 @@ impl Machine {
                     "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
                     true,
                 ),
+                // A program setting and reading back the machine's name, from
+                // ring 3: the pair of calls a program can make about this
+                // machine and cannot see any other way.  The status is exact,
+                // because the call answering anything else is the one that says
+                // it was not wired.
+                ("protofire: process 1 set the machine's name, 0", true),
+                // A socket's two ends, read back by the program that owns it.
+                // The own end is exact: the port it listened on and the address
+                // the boot's lease gave.  The peer's port is the table's to
+                // choose, so that line is a prefix.
+                ("protofire: process 1 socket is 10.0.2.15:9003", true),
+                ("protofire: process 1 peer is 10.0.2.15:", false),
                 // The reordering: a stream's two halves delivered the wrong way
                 // round, which no wire this gate boots does on its own.  The
                 // held count is the cache taking the early half; the byte count
@@ -1212,6 +1224,18 @@ impl Machine {
                         "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
                         true,
                     ),
+                    // A program setting and reading back the machine's name,
+                    // from ring 3: the pair of calls a program can make about
+                    // this machine and cannot see any other way.  The status is
+                    // exact, because the call answering anything else is the
+                    // one that says it was not wired.
+                    ("protofire: process 1 set the machine's name, 0", true),
+                    // A socket's two ends, read back by the program that owns
+                    // it.  The own end is exact: the port it listened on and
+                    // the address the boot's lease gave.  The peer's port is
+                    // the table's to choose, so that line is a prefix.
+                    ("protofire: process 1 socket is 10.0.2.15:9003", true),
+                    ("protofire: process 1 peer is 10.0.2.15:", false),
                     // The reordering: a stream's two halves delivered the wrong
                     // way round, which no wire this gate boots does on its own.
                     // The held count is the cache taking the early half; the
@@ -1572,6 +1596,18 @@ impl Machine {
                     "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
                     true,
                 ),
+                // A program setting and reading back the machine's name, from
+                // ring 3: the pair of calls a program can make about this
+                // machine and cannot see any other way.  The status is exact,
+                // because the call answering anything else is the one that says
+                // it was not wired.
+                ("protofire: process 1 set the machine's name, 0", true),
+                // A socket's two ends, read back by the program that owns it.
+                // The own end is exact: the port it listened on and the address
+                // the boot's lease gave.  The peer's port is the table's to
+                // choose, so that line is a prefix.
+                ("protofire: process 1 socket is 10.0.2.15:9003", true),
+                ("protofire: process 1 peer is 10.0.2.15:", false),
                 // The reordering: a stream's two halves delivered the wrong way
                 // round, which no wire this gate boots does on its own.  The
                 // held count is the cache taking the early half; the byte count

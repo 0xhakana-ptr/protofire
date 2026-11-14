@@ -1385,6 +1385,39 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // same slot its buffer does not: `a0` is the buffer and `a1` the length,
     // which is the shape the ABI published for it and the shape the handler
     // reads.  The other three take the record and its length in `a1`/`a2` (and
+    // The calls that name a host take a pointer and a length, so their string
+    // is copied the way a path is and their answer is a word rather than a
+    // record.
+    if number == SyscallNumber::SetHostName as usize
+        || number == SyscallNumber::ResolveHostname as usize
+    {
+        let mut name_bytes = [0u8; NAME_MAX];
+        let Ok(name) = copy_user_name(call.arguments[0], call.arguments[1], &mut name_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, Some(name), None, None);
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            if number == SyscallNumber::SetHostName as usize {
+                arch::serial::write_str(" set the machine's name, ");
+            } else {
+                arch::serial::write_str(" resolved a name to ");
+            }
+            if refused {
+                arch::serial::write_str("refused\n");
+            } else {
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return outcome;
+    }
+
     // `a0` is the clock or the selector), so the pair to validate is the second
     // and third words rather than the first two.
     if number == SyscallNumber::GetTimeOfDay as usize
@@ -1393,6 +1426,11 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         || number == SyscallNumber::AbiInfo as usize
         || number == SyscallNumber::NetworkStatus as usize
         || number == SyscallNumber::Ipv6Status as usize
+        // The name and a socket's two ends are records too, and they park
+        // nothing: what they report is a fact the kernel already holds.
+        || number == SyscallNumber::GetHostName as usize
+        || number == SyscallNumber::GetSockName as usize
+        || number == SyscallNumber::GetPeerName as usize
     {
         // `GetRandom` names its buffer and its length in `a0`/`a1`.  `AbiInfo`
         // and `NetworkStatus` name the record in `a0` and its length in `a1`,
@@ -1411,6 +1449,18 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             // length in `a1`, because this call has no selector to make room
             // for either.
             n if n == SyscallNumber::Ipv6Status as usize => (call.arguments[0], call.arguments[1]),
+            // A name is written where `NetworkStatus` writes its record: the
+            // buffer in `a0` and its length in `a1`.
+            n if n == SyscallNumber::GetHostName as usize => (call.arguments[0], call.arguments[1]),
+            // A socket's ends name the descriptor first, so the record and its
+            // length move to `a1` and `a2`: reading the wrong pair validates a
+            // descriptor as an address, and the refusal that produces is
+            // indistinguishable from a machine that does not serve the call.
+            n if n == SyscallNumber::GetSockName as usize
+                || n == SyscallNumber::GetPeerName as usize =>
+            {
+                (call.arguments[1], call.arguments[2])
+            }
             _ => (call.arguments[1], call.arguments[2]),
         };
         if !crate::address_space::is_user_range(record, length) {
@@ -1425,6 +1475,36 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // record and nothing past it, which is what their length check is for.
         let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         let outcome = through_registry(&mut context, None, None, Some(destination));
+        // A socket's own end prints what it answered, because it is the one of
+        // these records whose content is a fact about a connection rather than
+        // about the machine: the port and the address a program reads back are
+        // the ones the kernel's table holds, and a handler that wrote zeros
+        // would pass a check that only looked at the size.
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+            && (number == SyscallNumber::GetSockName as usize
+                || number == SyscallNumber::GetPeerName as usize)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if number == SyscallNumber::GetSockName as usize {
+                " socket is "
+            } else {
+                " peer is "
+            });
+            write_ipv4_word(u32::from_be_bytes([
+                destination[abi::network::SOCKADDR_IN_ADDRESS_OFFSET],
+                destination[abi::network::SOCKADDR_IN_ADDRESS_OFFSET + 1],
+                destination[abi::network::SOCKADDR_IN_ADDRESS_OFFSET + 2],
+                destination[abi::network::SOCKADDR_IN_ADDRESS_OFFSET + 3],
+            ]) as usize);
+            arch::serial::write_str(":");
+            arch::serial::write_u32(u16::from_be_bytes([
+                destination[abi::network::SOCKADDR_IN_PORT_OFFSET],
+                destination[abi::network::SOCKADDR_IN_PORT_OFFSET + 1],
+            ]) as u32);
+            arch::serial::write_str("\n");
+        }
         // The evidence, printed by the kernel because a program has no way to
         // print one.  The line names the call and the first word of what it
         // answered, which is the part that cannot be a constant: a time's
@@ -1796,6 +1876,36 @@ fn write_signal_record(buffer: &mut [u8], signal: usize, sender_pid: u32, payloa
 /// for the length of the call, which is what makes the rest of the handler
 /// ordinary kernel code.  The buffer is the caller's: the borrow must not
 /// outlive the stack slot the copied bytes live in.
+/// Read a length-delimited name out of the caller's memory.
+///
+/// The calls that name a host take a pointer and a length rather than a
+/// NUL-terminated string, which is the one difference between them and a
+/// path: a name is bytes and its length is the caller's, so there is nothing
+/// to scan for.  The bytes are checked to be UTF-8 here, because a name is
+/// text a program will print and a handler that took a byte string would put
+/// a program's chosen garbage into the log.
+#[cfg(target_os = "none")]
+fn copy_user_name(
+    name_ptr: usize,
+    length: usize,
+    bytes: &mut [u8; NAME_MAX],
+) -> Result<&str, abi::Error> {
+    if length == 0 || length > NAME_MAX || !crate::address_space::is_user_range(name_ptr, length) {
+        return Err(abi::Error::InvalidArgument);
+    }
+    // SAFETY: the range is inside the user window and not empty, which
+    // `is_user_range` checked, and the pages behind it are the calling task's
+    // own mappings, installed on this CPU.
+    let source = unsafe { core::slice::from_raw_parts(name_ptr as *const u8, length) };
+    bytes[..length].copy_from_slice(source);
+    core::str::from_utf8(&bytes[..length]).map_err(|_| abi::Error::InvalidArgument)
+}
+
+/// The longest name a call that names a host moves in one buffer, from the
+/// ABI that states it.
+#[cfg(target_os = "none")]
+const NAME_MAX: usize = abi::network::HOST_NAME_MAX;
+
 #[cfg(target_os = "none")]
 fn copy_user_path(path_ptr: usize, bytes: &mut [u8; OPEN_PATH_MAX]) -> Result<&str, abi::Error> {
     let mut length = 0;

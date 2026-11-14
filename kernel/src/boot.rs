@@ -308,6 +308,36 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::Ipv6Status,
         crate::syscall::ipv6_status,
     );
+    // The machine's name, and the lookup a program asks by one.  A name is
+    // not a socket and needs none of the calls below: it is a fact about this
+    // boot's machine, which is why the two calls that set and read it are here
+    // beside the status records.
+    table.register(
+        ::syscall::SyscallNumber::GetHostName,
+        crate::syscall::get_host_name,
+    );
+    table.register(
+        ::syscall::SyscallNumber::SetHostName,
+        crate::syscall::set_host_name,
+    );
+    // A socket's two ends.  The handlers answer at once, which is what the
+    // table is for: where a socket is is a fact the table holds, not a wait.
+    table.register(
+        ::syscall::SyscallNumber::GetSockName,
+        crate::syscall::get_sock_name,
+    );
+    table.register(
+        ::syscall::SyscallNumber::GetPeerName,
+        crate::syscall::get_peer_name,
+    );
+    // The lookup runs a socket exchange, so it is a handler that answers as
+    // soon as the wire does rather than one that parks: the wait inside it is
+    // bounded and the caller's own frame keeps running.
+    #[cfg(target_os = "none")]
+    table.register(
+        ::syscall::SyscallNumber::ResolveHostname,
+        crate::syscall::resolve_hostname,
+    );
     table.register(::syscall::SyscallNumber::BindUdp, crate::syscall::bind_udp);
     table.register(
         ::syscall::SyscallNumber::SendToUdp,

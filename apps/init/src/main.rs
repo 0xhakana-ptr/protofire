@@ -77,7 +77,14 @@ use user_abi::sys_exit;
 #[cfg(target_os = "none")]
 use user_abi::sys_fork;
 #[cfg(target_os = "none")]
+#[cfg(target_os = "none")]
+use user_abi::sys_get_host_name;
+#[cfg(target_os = "none")]
+use user_abi::sys_get_peer_name;
+#[cfg(target_os = "none")]
 use user_abi::sys_get_random;
+#[cfg(target_os = "none")]
+use user_abi::sys_get_sock_name;
 #[cfg(target_os = "none")]
 use user_abi::sys_get_time_of_day;
 #[cfg(target_os = "none")]
@@ -103,10 +110,14 @@ use user_abi::sys_remove_path_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_rename_at;
 #[cfg(target_os = "none")]
+use user_abi::sys_resolve_hostname;
+#[cfg(target_os = "none")]
 use user_abi::sys_send_signal;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use user_abi::sys_send_to_udp;
+#[cfg(target_os = "none")]
+use user_abi::sys_set_host_name;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_signal_mask;
 #[cfg(target_os = "none")]
@@ -480,6 +491,27 @@ pub extern "C" fn _start() -> ! {
         sys_exit(220);
     }
 
+    // The machine's name: set one, read it back, and the two must agree.  The
+    // name is the one fact about this machine a program can set itself, and a
+    // call that answered but stored nothing would read back an empty string,
+    // which is what a machine nobody named answers.
+    const NAME: &str = "protofire";
+    let mut name = [0u8; 64];
+    let written = sys_get_host_name(&mut name);
+    // The boot set no name, so the first answer is an empty string and not an
+    // error: a name is not a permission and a machine that was never named is
+    // not a machine that failed.
+    if user_abi::is_error_status(written) || written != 0 {
+        sys_exit(226);
+    }
+    if user_abi::is_error_status(sys_set_host_name(NAME)) {
+        sys_exit(227);
+    }
+    let written = sys_get_host_name(&mut name);
+    if written != NAME.len() || name[..NAME.len()] != *NAME.as_bytes() {
+        sys_exit(228);
+    }
+
     // The IPv6 side, read the same way: the interface must report an address
     // family whose link-local address is `fe80::` plus the MAC's own
     // modified EUI-64, the one fact a program can check without the wire,
@@ -575,6 +607,34 @@ pub extern "C" fn _start() -> ! {
     // The parent's side.  The accept may park until the child's handshake
     // opens one; the child's connect is what wakes it.
     let stream = insist(sys_accept_tcp(listener));
+
+    // The stream's two ends, which is a fact the kernel holds and a program
+    // cannot see any other way: this end answers on the port it listened on,
+    // and the peer's port is the one the child connected from.  Both are
+    // sixteen-byte `sockaddr_in` records, and the family word is read in host
+    // order while the port is read in network order, which is the one detail a
+    // hand-written record gets wrong.
+    let mut socket = [0u8; user_abi::SOCKADDR_IN_BYTES];
+    let size = insist(sys_get_sock_name(stream, &mut socket));
+    if size != user_abi::SOCKADDR_IN_BYTES
+        || user_abi::sockaddr_family(&socket) != 2
+        || user_abi::sockaddr_port(&socket) != 9003
+        || user_abi::sockaddr_address(&socket) != protocol
+    {
+        sys_exit(229);
+    }
+    let size = insist(sys_get_peer_name(stream, &mut socket));
+    if size != user_abi::SOCKADDR_IN_BYTES
+        || user_abi::sockaddr_family(&socket) != 2
+        // The child's own port is the table's to choose, so this asserts that
+        // it is **a** port and not zero: a record that answered nothing would
+        // be all zeros and pass a check that only looked at the family.
+        || user_abi::sockaddr_port(&socket) == 0
+        || user_abi::sockaddr_address(&socket) != protocol
+    {
+        sys_exit(230);
+    }
+
     let mut buffer = [0u8; 16];
     let count = insist(sys_read(stream, &mut buffer));
     if count != DATAGRAM_TEXT.len() || &buffer[..count] != DATAGRAM_TEXT {
@@ -587,6 +647,20 @@ pub extern "C" fn _start() -> ! {
     }
     insist(sys_close(stream));
     insist(sys_close(listener));
+
+    // The lookup a program asks by name.  Its answer is not asserted: the
+    // name is resolved by whatever server the wire has, and a machine whose
+    // network is not QEMU's may have none.  What the call proves either way is
+    // that a program can reach it and that its answer is a status rather than
+    // a refusal this build would give an unimplemented number.
+    let resolved = sys_resolve_hostname("example.com");
+    if user_abi::is_not_implemented(resolved) {
+        // The number this build does not serve answers `NotImplemented`, and
+        // that is the one answer a lookup must never give: it would mean the
+        // call was never wired, which is exactly what this program is here to
+        // rule out.
+        sys_exit(231);
+    }
 
     // The anchors are done with, and a slot closed is a slot the kernel got
     // back: the exit's release line reports what this program left open,

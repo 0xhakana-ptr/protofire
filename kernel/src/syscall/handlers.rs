@@ -1131,6 +1131,126 @@ pub fn ipv6_status(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> 
     Ok(Dispatch::complete(0))
 }
 
+/// Report this machine's name.
+///
+/// Arguments: a buffer and its length.  The answer is the length written, which
+/// may be zero: a machine that was never named has no name and not a failure,
+/// and a program that treated the two the same would refuse to start on a
+/// machine nobody had named.
+pub fn get_host_name(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    let written = crate::net::host_name(buffer)?;
+    Ok(Dispatch::complete(written))
+}
+
+/// Set this machine's name.
+///
+/// Arguments: the name and its length.  The name is copied, and one that
+/// carries a byte a program would not print is refused: a name is text a
+/// program will show, and a control character in it is that program's output
+/// being rewritten by the name it set.
+pub fn set_host_name(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+    let name = arguments.path.ok_or(Error::InvalidArgument)?;
+    crate::net::set_host_name(name.as_bytes())?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Resolve a name to an IPv4 address.
+///
+/// Arguments: the name and its length, and the answer is the address packed
+/// into one word in network order, which is the shape this call has always
+/// answered with.  The lookup itself is [`crate::net::resolve`], which the
+/// boot's own probe already runs against a real server.
+///
+/// A machine's resolution is a socket, a clock and a retry schedule, and a host
+/// build has none of the three, which is why this handler carries the same gate
+/// the function it calls does.
+#[cfg(target_os = "none")]
+pub fn resolve_hostname(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+    let name = arguments.path.ok_or(Error::InvalidArgument)?;
+    let address = crate::net::resolve(name, net::dns::TYPE_A).ok_or(Error::NotFound)?;
+    match address {
+        net::address::Address::V4(bytes) => {
+            Ok(Dispatch::complete(u32::from_be_bytes(bytes) as usize))
+        }
+        // The lookup asked for an A record, so a six-byte answer is a
+        // resolver that answered a question it was not asked.
+        net::address::Address::V6(_) => Err(Error::Unsupported),
+    }
+}
+
+/// Report where one of a socket's ends is.
+///
+/// Arguments: the descriptor, a buffer and its length, which is the shape
+/// `GetSockName` and `GetPeerName` share.  The answer is the record's size,
+/// which is what a caller needs to know how much of its buffer was written.
+fn socket_end(
+    table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+    end: crate::net::SocketEnd,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 3)?;
+    let descriptor = arguments.context.args[0];
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < abi::network::SOCKADDR_IN_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+    let caller = arguments.context.caller_pid;
+    // A stream and a datagram socket answer differently: a stream's own port
+    // is the one it listens on or connected from, and its peer's is the far
+    // end; a datagram socket has an own port and no peer.
+    //
+    // The lookup goes through the table the dispatcher handed in, and **not**
+    // through the free functions beside it: those take the registry's lock,
+    // and `serve` is already holding it for the length of this call.  A
+    // handler that reached for `tcp_stream_for` would take one lock twice in
+    // one thread, which is a hang rather than a second read, and the symptom
+    // was a boot that stopped between two lines with nothing refused.
+    let (port, peer) = if let Some(id) = table.tcp_stream(descriptor, caller) {
+        let ends = crate::net::stream_ends(id).ok_or(Error::InvalidArgument)?;
+        (ends.0, Some(ends.1))
+    } else if let Some(socket) = table.udp_socket(descriptor, caller) {
+        (socket.port(), None)
+    } else {
+        return Err(Error::InvalidArgument);
+    };
+    let record = crate::net::socket_address(port, peer, end)?;
+    // Written byte by byte at the ABI's offsets, because the struct is
+    // `repr(C)` and a program reads it at those addresses: a writer that
+    // copied the struct would depend on this build's layout matching the one
+    // the program was compiled against.
+    buffer[abi::network::SOCKADDR_IN_FAMILY_OFFSET..abi::network::SOCKADDR_IN_FAMILY_OFFSET + 2]
+        .copy_from_slice(&record.family.to_ne_bytes());
+    buffer[abi::network::SOCKADDR_IN_PORT_OFFSET..abi::network::SOCKADDR_IN_PORT_OFFSET + 2]
+        .copy_from_slice(&record.port);
+    buffer[abi::network::SOCKADDR_IN_ADDRESS_OFFSET..abi::network::SOCKADDR_IN_ADDRESS_OFFSET + 4]
+        .copy_from_slice(&record.address);
+    buffer[12..abi::network::SOCKADDR_IN_SIZE].fill(0);
+    Ok(Dispatch::complete(abi::network::SOCKADDR_IN_SIZE))
+}
+
+/// Report the address this machine's end of a socket answers on.
+pub fn get_sock_name(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    socket_end(table, arguments, crate::net::SocketEnd::Local)
+}
+
+/// Report the address a socket's peer is.
+pub fn get_peer_name(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    socket_end(table, arguments, crate::net::SocketEnd::Peer)
+}
+
 /// Write a `NetworkStatus` record at the start of a validated buffer: the
 /// state word, then the fourteen address bytes the record packed.
 fn write_network_status(buffer: &mut [u8], record: &network_abi::NetworkStatusRecord) {
