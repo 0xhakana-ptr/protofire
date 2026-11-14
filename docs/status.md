@@ -363,6 +363,27 @@ promise stands: the twenty-three protocol numbers beside them, routing
 beyond one gateway, DNS beyond a hosts table, and a stream connect to
 another machine — each its own level's decision.
 
+**Where the connection table lives.**  The streams a machine holds — the id
+per end, the port a listener reserves, the queue a completed handshake waits
+in, and the counters that hand out ids and sequence numbers — are
+`net::tcp_table::Table`, not `kernel/src/net.rs`.  All of it is protocol
+state: the four fields a segment is keyed on are the wire's, and nothing in
+the table needs a card, a scheduler or a lock.  What stayed in the kernel is
+the part that does: the one lock, whether an address is this machine, which
+hardware address a frame goes to, and when a parked task wakes.
+
+The split is what made the table testable off a machine.  Seven host tests
+now run the lookups, the id and sequence counters, the listener's pending
+queue, the prune, and the rule that only a SYN with no ACK opens a
+connection — none of which a boot could isolate.  One of them found a defect
+on its first run: `accept_syn` built the SYN with ACK and **dropped** it, so
+a caller had no way to answer a client whose handshake it had just accepted.
+The function answers the reply now, which is the same shape every other move
+in that crate has — compute a value, let the caller decide its wire.
+
+`kernel/src/net.rs` is 138 lines smaller for it, and the crate that grew is
+the one a host can test.
+
 **Services — built, and deliberately parked.**  A table from a name to a
 service, installed during boot and frozen before anything looks one up; a caller
 asks for a name and drives what it gets through one trait, without knowing which

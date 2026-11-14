@@ -47,7 +47,8 @@ protofire/
 │
 │   ── the subsystems ─────────────────────────────────────────────────
 ├── fs/              the VFS: PyroFS, tmpfs, ISO 9660
-├── net/             the protocol stack: Ethernet, ARP, IPv4, ICMP, UDP, TCP
+├── net/             the protocol stack: Ethernet, ARP, IPv4, IPv6, ICMP,
+│                    ICMPv6, NDP, UDP, TCP, and the connection table
 ├── power/           the frequency governor policy
 ├── security/        identities, tokens, the MAC policy
 ├── sound/           reserved: audio, filled when a machine has a device
@@ -116,7 +117,8 @@ The large things a kernel exists to do, one directory each.  `fs` holds
 the VFS, PyroFS and tmpfs, and the ten Level 6 formats — six writing and
 four (`xfs`, `squashfs`, `erofs` and `btrfs`) reading, with `fuse` a protocol
 whose writes are its server's.  `net` is the protocol stack —
-Ethernet, ARP, IPv4, ICMP, UDP, TCP — sent through the trait in
+Ethernet, ARP, IPv4, IPv6, ICMP, ICMPv6, neighbour discovery, UDP, TCP
+and the connection table — sent through the trait in
 `devices/netdev`.  `power` is the governor policy: a load sample and a
 frequency range in, a target frequency out.  `security` labels subjects
 and objects and refuses what the policy refuses.  `sound` and `virt` are

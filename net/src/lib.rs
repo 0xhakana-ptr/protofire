@@ -24,6 +24,13 @@
 //! parsers and no lock anywhere — which is what lets every one of them be a
 //! host test without a card.
 //!
+//! [`tcp_table`] is the one module that holds state, and it holds it as a
+//! **value** a caller owns rather than as a `static`: which streams exist, the
+//! port a listener reserved, the queue a finished handshake waits in, and the
+//! counters that name them.  Nothing there takes a lock either — how a table
+//! is shared is the caller's decision about its own concurrency — which is why
+//! its arithmetic is a host test too.
+//!
 //! The transports are the same code for both families: [`udp::write_datagram6`]
 //! and [`tcp::write_segment6`] differ from their IPv4 twins only in the
 //! pseudo-header, which is the one place the two versions of a checksum
@@ -31,10 +38,11 @@
 //!
 //! ## What this crate does not decide
 //!
-//! Which address a machine has, which neighbours it can reach, which sockets
-//! exist, and when a task waiting on one wakes.  Those are choices about a
-//! boot's state, and they live in `kernel/src/net.rs`: this crate computes
-//! what a frame means, the kernel keeps what the machine knows.
+//! Which address a machine has, which neighbours it can reach, and when a task
+//! waiting on a socket wakes.  Those are choices about a boot's state, and they
+//! live in `kernel/src/net.rs`: this crate computes what a frame means and
+//! keeps the table a caller hands it, and the kernel keeps what the machine
+//! knows.
 //!
 //! ## What is not here yet
 //!
@@ -54,4 +62,5 @@ pub mod ipv4;
 pub mod ipv6;
 pub mod ndp;
 pub mod tcp;
+pub mod tcp_table;
 pub mod udp;

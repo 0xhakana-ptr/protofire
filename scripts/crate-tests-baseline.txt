@@ -56,7 +56,7 @@ irq                   463   12
 kernel              18930  134 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
 netdev                  137    3
 memory               2289   36
-net                  5014   89
+net                  5564   96   # the connection table moved in from the kernel: the ids, ports, listener queue and counters are protocol state, and seven host tests run them where a boot could not
 paging                779   13
 pci                  2596   44
 power                 324   12

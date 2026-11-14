@@ -55,7 +55,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **142,245 lines of Rust across 40 crates**, which is
+The tree is **142,729 lines of Rust across 40 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -140,7 +140,7 @@ whose "reachable" column used to say no, which is why this table is now short.
 | shorten a file, `SetLength` and truncate | yes, `VNode::set_len` | **no** — one handler and one registration |
 | stat or list by descriptor, `StatFd`/`ReadDirFd` | yes | **no** — the descriptor carries `path`, so the anchor exists |
 | seek, duplicate, poll a descriptor | the offset is per descriptor | **no** |
-| **the network** | the stack — IPv4, ICMP, UDP, TCP — and 7 of its numbers served | **yes** for 7 — the status call, the three datagram calls, the three stream calls; 36 socket and protocol numbers still answer `NotImplemented` |
+| **the network** | the stack — IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP — and 8 of its numbers served | **yes** for 8 — the two status calls, the three datagram calls, the three stream calls; 36 socket and protocol numbers still answer `NotImplemented` |
 | **shared memory** | no | no — `ShmGet` and its three siblings |
 | **threads** | no — one task per process | no |
 | **pass a handle to another process** | no — `Descriptor` has two variants | no |
@@ -420,7 +420,7 @@ boundary in a family-tagged form the frozen socket calls do not have.
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-142,245 across 40 crates.  The difference is not lost work — it is work the new
+142,729 across 40 crates.  The difference is not lost work — it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 
