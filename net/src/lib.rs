@@ -96,6 +96,12 @@
 //!
 //! ## What is not here yet
 //!
+//! What is not here is a **route table**: [`ipv6`] has one default router,
+//! learned from an advertisement, and [`ipv4`] has one gateway, configured.  A
+//! second route, a prefix routed somewhere other than its link, or a metric
+//! that chooses between two are all absent, and a stack with one of each needs
+//! none of them: this tree boots one interface.
+//!
 //! What a stream does not do is **measure**: its timeout is
 //! [`tcp::RTO_INITIAL_MICROS`]'s constant rather than a smoothed round trip,
 //! because one exchange per boot is not a sample and an estimate from a single

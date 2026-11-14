@@ -473,6 +473,28 @@ the quoted header's payload length claimed twenty bytes of transport while the
 quotation carried eight, and a reader that takes the sender's word for a
 length reads past what it was given.
 
+**An off-link address now has somewhere to go.**  IPv6 had no default route:
+`peer_hardware` answered every destination it did not have in its neighbour
+cache with that destination's solicited-node group, so a frame for a machine on
+another link went to a group no machine on this link answers.  A router
+advertisement's **source** is a router willing to be a default, and its lifetime
+says so; the interface records it when the lifetime is non-zero and the source
+is link-local, and an address outside this link is now asked for through it.
+
+The advertisement's two facts were entangled, which is why this was one change:
+`learn_from_router` returned early when the advertisement carried no prefix, so
+a router that offered only a default route taught nothing.  A prefix and a route
+are separate, and the function reads both before it returns.
+
+```
+protofire: ipv6 route via fe80:0000:0000:0000:5055:0aff:fe00:0202, and an off-link address is asked for through it
+```
+
+The probe asks for the hardware address of an address no machine on this link
+holds and asserts the answer came from the **router's** group rather than the
+destination's.  Removing the route makes that line print `MISMATCH` and the
+boot fail, which is the mutation this was checked with.
+
 [RFC 8200]: https://www.rfc-editor.org/rfc/rfc8200
 [RFC 8201]: https://www.rfc-editor.org/rfc/rfc8201
 

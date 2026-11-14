@@ -122,6 +122,14 @@ pub struct Interface {
     /// Kept here rather than in a socket because it is a fact about this
     /// machine's network, and a lookup asks it once per name.
     dns: Option<[u8; 4]>,
+    /// The default router a router advertisement named, if one has.
+    ///
+    /// IPv6 has no configured default route the way IPv4's DHCP hands one out:
+    /// a router says it exists with an advertisement, and the source address of
+    /// that advertisement is the address a host sends off-link traffic to.
+    /// Zero lifetime is a router saying it is **not** a default router, which
+    /// is why the lifetime is checked rather than the message's arrival.
+    ipv6_router: Option<net::ipv6::Addr>,
     /// The lease this interface is running under, if the address came from
     /// one.
     ///
@@ -162,6 +170,7 @@ impl Interface {
             ipv6_groups,
             ndp: net::ndp::Cache::new(),
             ipv6_global: None,
+            ipv6_router: None,
             dns: None,
             lease: None,
         }
@@ -188,6 +197,28 @@ impl Interface {
         // The lease itself is kept, because its clocks are what say when this
         // address has to be asked for again.
         self.lease = Some(*lease);
+    }
+
+    /// Whether an IPv6 destination is on this link.
+    ///
+    /// Two answers, and both are facts the interface already holds.  A
+    /// link-local address is by definition here, on the link the interface's
+    /// own link-local address is on.  A global address is here when it shares
+    /// its first sixty-four bits with the one a router configured: IPv6's
+    /// subnet boundary is sixty-four bits for every address this stack is
+    /// given, which is what a router advertisement's prefix is.
+    ///
+    /// An interface with no global address yet has only its link: nothing else
+    /// can be reached without a router, and an off-link destination is one the
+    /// router has to answer for.
+    fn is_on_link(&self, destination: net::ipv6::Addr) -> bool {
+        if net::ipv6::is_link_local(destination) {
+            return true;
+        }
+        match self.ipv6_global {
+            Some(global) => net::ndp::same_prefix(global, destination, 64),
+            None => false,
+        }
     }
 
     /// The link-local IPv6 address this interface answers for.
@@ -1201,7 +1232,7 @@ fn handle_icmpv6(packet: &net::ipv6::Packet, payload: &[u8]) {
             answer_echo_request(packet, &message, payload);
         }
         net::icmpv6::ROUTER_ADVERTISEMENT => {
-            learn_from_router(&message, payload);
+            learn_from_router(packet, &message, payload);
         }
         // A packet-too-big or a destination-unreachable report names one of
         // this machine's packets by quoting it, and the two messages whose
@@ -1332,19 +1363,39 @@ fn quoted_report6(
 /// that may not be there.  An advertisement that arrives is used; one that
 /// never arrives leaves the interface with its link-local address, which is
 /// the state this stack can guarantee.
-fn learn_from_router(message: &net::icmpv6::Message, payload: &[u8]) {
+fn learn_from_router(packet: &net::ipv6::Packet, message: &net::icmpv6::Message, payload: &[u8]) {
     let Some(advertisement) = net::icmpv6::parse_router_advertisement(message, payload) else {
         return;
     };
+    let mut interface = INTERFACE.lock();
+    let Some(interface) = interface.as_mut() else {
+        return;
+    };
+    // The router itself, learned whether or not the advertisement carries a
+    // prefix.  The address is the message's **source**, which is what a router
+    // sends from and what a host sends off-link traffic to; the lifetime is
+    // what says whether it is willing to be one, and zero is a router saying
+    // it is not.  A prefix and a default route are two separate facts and an
+    // advertisement may carry either, which is why the first version of this
+    // learned neither when the prefix was absent: it returned before reading
+    // the lifetime.
+    //
+    // Only a **link-local** source is taken: a router that advertises from a
+    // global address is one a host would have to route to reach, which is the
+    // question this field answers.  A lifetime of zero withdraws the route the
+    // same router may have offered before, which is how a router says it is
+    // going away.
+    interface.ipv6_router = (advertisement.router_lifetime > 0
+        && net::ipv6::is_link_local(packet.header.source))
+    .then_some(packet.header.source);
+
     let Some(prefix) = net::icmpv6::prefix_information(
         payload,
         advertisement.options_at,
         advertisement.options_at + advertisement.options_len,
     ) else {
-        return;
-    };
-    let mut interface = INTERFACE.lock();
-    let Some(interface) = interface.as_mut() else {
+        // No prefix: the advertisement's whole content was the default route,
+        // and that is already recorded.
         return;
     };
     let Some(configuration) = net::ndp::configure_from(&prefix, payload, interface.hardware) else {
@@ -1430,13 +1481,45 @@ fn answer_echo_request(packet: &net::ipv6::Packet, message: &net::icmpv6::Messag
 /// advertisement's answer reach a host whose cache is empty.
 fn peer_hardware(destination: net::ipv6::Addr) -> [u8; 6] {
     let interface = INTERFACE.lock();
-    interface
-        .as_ref()
-        .and_then(|interface| interface.ndp.lookup(destination))
-        .or_else(|| {
-            net::ipv6::is_multicast(destination).then(|| net::ipv6::multicast_mac(destination))
-        })
-        .unwrap_or_else(|| net::ipv6::multicast_mac(net::ipv6::solicited_node(destination)))
+    let interface = match interface.as_ref() {
+        Some(interface) => interface,
+        // No interface: nothing has an answer, and a solicited-node group is
+        // the frame's best chance of reaching whoever holds the address.
+        None => return net::ipv6::multicast_mac(net::ipv6::solicited_node(destination)),
+    };
+    // A multicast destination goes to the group's own hardware address, which
+    // is arithmetic rather than discovery.
+    if net::ipv6::is_multicast(destination) {
+        return net::ipv6::multicast_mac(destination);
+    }
+    // A neighbour the cache knows.
+    if let Some(mac) = interface.ndp.lookup(destination) {
+        return mac;
+    }
+    // A neighbour on this link that the cache does not know: the solicitation
+    // for its own address is the frame that will teach it, and the Mac is the
+    // solicited-node group's.
+    if interface.is_on_link(destination) {
+        return net::ipv6::multicast_mac(net::ipv6::solicited_node(destination));
+    }
+    // Off this link: the default router, and the cache's answer for **it**.
+    // This is the routing decision IPv6 has and the one this stack was
+    // missing: without it an off-link destination resolved to a solicited-node
+    // group on this link, which is a frame no machine answers because the
+    // machine that holds it is not here.
+    match interface
+        .ipv6_router
+        .and_then(|router| interface.ndp.lookup(router))
+    {
+        Some(mac) => mac,
+        // The router's hardware address is not known yet, so the frame goes to
+        // the solicited-node group of the **router's** address: its own answer
+        // is what fills the cache, and the next frame takes the branch above.
+        None => interface
+            .ipv6_router
+            .map(|router| net::ipv6::multicast_mac(net::ipv6::solicited_node(router)))
+            .unwrap_or_else(|| net::ipv6::multicast_mac(net::ipv6::solicited_node(destination))),
+    }
 }
 
 /// Answer a solicitation for an address this host holds.
@@ -2866,7 +2949,62 @@ pub fn slaac_probe() -> bool {
     } else {
         ", which is not the identifier this mac makes\n"
     });
-    correct
+
+    // The default route, and the next hop a destination off this link gets.
+    //
+    // This is the half of a router advertisement that has nothing to do with
+    // the address: the advertisement's **source** is a router willing to be a
+    // default, and a destination outside this link is a frame sent to it.  The
+    // probe asks for the hardware address of an address no machine on this
+    // link holds, and asserts that the answer is derived from the **router's**
+    // solicited-node group rather than the destination's: a stack with no
+    // default route answers with the latter, which is a frame the router never
+    // receives.
+    let off_link: net::ipv6::Addr = [
+        0x20, 0x01, 0x0d, 0xb8, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x99,
+    ];
+    // The router is read and the lock released before the next hop is asked
+    // for: `peer_hardware` takes the same lock, and one lock taken twice in
+    // one thread is a deadlock rather than a second read.
+    let learned_router = {
+        let interface = INTERFACE.lock();
+        match interface.as_ref() {
+            Some(interface) => interface.ipv6_router,
+            None => return false,
+        }
+    };
+    let next_hop = peer_hardware(off_link);
+    let router_learned = learned_router == Some(router);
+    // Two answers are both "through the router": its own hardware address when
+    // the neighbour cache holds it, and the solicited-node group of its
+    // address when it does not, which is the frame that asks for it.  What
+    // this rejects is the stack with no route, which answers with the
+    // **destination's** group and sends the frame to a machine that is not on
+    // this link.
+    let via_router_mac = learned_router
+        .and_then(|router| {
+            INTERFACE
+                .lock()
+                .as_ref()
+                .and_then(|interface| interface.ndp.lookup(router))
+        })
+        .is_some_and(|mac| next_hop == mac);
+    let via_router_group = learned_router.is_some_and(|router| {
+        next_hop == net::ipv6::multicast_mac(net::ipv6::solicited_node(router))
+    });
+    let goes_to_router = via_router_mac || via_router_group;
+    let routed = correct && router_learned && goes_to_router;
+    arch::serial::write_str("protofire: ipv6 route via ");
+    match learned_router {
+        Some(router) => write_ipv6(router),
+        None => arch::serial::write_str("none"),
+    }
+    arch::serial::write_str(if routed {
+        ", and an off-link address is asked for through it\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    routed
 }
 
 /// The boot's reassembly exchange: a datagram split into pieces, delivered to

@@ -494,7 +494,9 @@ so its timeout is a constant.  Two things came off
 this list: out-of-order receive, because a segment ahead of the expected
 position is held and delivered in sequence order when the gap closes, and
 path-MTU discovery in both families, because a fragmentation-needed or
-packet-too-big report now shrinks the stream it quotes.  The window is off the
+packet-too-big report now shrinks the stream it quotes, and IPv6's default route,
+because a router advertisement is now read for the route as well as the
+prefix.  The window is off the
 list too: a stream advertises the room it has and refuses a byte past it.
 
 ### The rest of the road: rewriting what the previous kernel had

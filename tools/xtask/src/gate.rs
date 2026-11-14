@@ -500,6 +500,13 @@ impl Machine {
                 // because CI has no internet is a gate nobody can fix.
                 ("protofire: dhcp leased ", false),
                 ("protofire: slaac configured ", false),
+                // The other half of the same advertisement: its source is a
+                // default router, and an address off this link is asked for
+                // through it rather than sent to its own solicited-node group.
+                (
+                    "protofire: ipv6 route via fe80:0000:0000:0000:5055:0aff:fe00:0202, ",
+                    false,
+                ),
                 (
                     "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                     true,
@@ -1150,6 +1157,14 @@ impl Machine {
                     ("protofire: fragments reassembled 20 byte(s), intact", true),
                     ("protofire: dhcp leased ", false),
                     ("protofire: slaac configured ", false),
+                    // The other half of the same advertisement: its source is a
+                    // default router, and an address off this link is asked for
+                    // through it rather than sent to its own solicited-node
+                    // group.
+                    (
+                        "protofire: ipv6 route via fe80:0000:0000:0000:5055:0aff:fe00:0202, ",
+                        false,
+                    ),
                     (
                         "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                         true,
@@ -1495,6 +1510,13 @@ impl Machine {
                 // because CI has no internet is a gate nobody can fix.
                 ("protofire: dhcp leased ", false),
                 ("protofire: slaac configured ", false),
+                // The other half of the same advertisement: its source is a
+                // default router, and an address off this link is asked for
+                // through it rather than sent to its own solicited-node group.
+                (
+                    "protofire: ipv6 route via fe80:0000:0000:0000:5055:0aff:fe00:0202, ",
+                    false,
+                ),
                 (
                     "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                     true,
