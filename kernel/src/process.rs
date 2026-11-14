@@ -2422,7 +2422,36 @@ fn through_registry(
         buffer,
     };
     match crate::syscall::serve(&mut arguments) {
-        Some(Ok(dispatch)) => arch::CallOutcome::Return(dispatch.value),
+        Some(Ok(dispatch)) => {
+            // A call that made something a parked task waits for wakes
+            // **here**, after the registry's lock is gone: a handler runs with
+            // that lock held, and the scheduler's lock is one a parked task
+            // holds while it re-checks its fact, so a wake from inside the
+            // handler is a lock order two CPUs can invert.
+            if dispatch.wake {
+                // The wake is here and not in the handler: a handler runs with
+                // the registry's lock held, and a parked task holds the
+                // scheduler's while it re-checks its fact, so a wake from
+                // inside one is a lock order two CPUs can invert.
+                #[cfg(target_os = "none")]
+                {
+                    let woken = crate::scheduler::wake_blocked();
+                    if woken > 0 {
+                        // SAFETY: the boot's own IPI path, installed before
+                        // any program ran.
+                        unsafe { arch::send_ipi_to_others() };
+                    }
+                    arch::serial::write_str("protofire: a local connect woke ");
+                    arch::serial::write_u32(woken as u32);
+                    arch::serial::write_str(" blocked task(s), descriptor ");
+                    arch::serial::write_u32(dispatch.value as u32);
+                    arch::serial::write_str("\n");
+                }
+                #[cfg(not(target_os = "none"))]
+                let _ = dispatch.value;
+            }
+            arch::CallOutcome::Return(dispatch.value)
+        }
         Some(Err(error)) => arch::CallOutcome::Return(abi::syscall::encode_error(error)),
         None => arch::CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotImplemented)),
     }

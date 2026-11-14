@@ -133,6 +133,19 @@ pub enum SyscallAction {
 pub struct SyscallDispatch {
     pub value: usize,
     pub action: SyscallAction,
+    /// Whether the call made something a parked task was waiting for.
+    ///
+    /// A handler cannot raise a task itself: it runs with the registry's lock
+    /// held, and the scheduler's lock is one a parked task holds while it
+    /// re-checks the fact it is parked on.  Taking both in one thread is a
+    /// deadlock, and taking them in the two orders two CPUs do is one too.
+    ///
+    /// So a handler that made a fact says so here, and the caller of the
+    /// registry wakes after its lock is released.  This is
+    /// a flag rather than a call because the order is the whole point: the
+    /// wake must happen **outside** the lock, and a handler running inside it
+    /// cannot arrange that.
+    pub wake: bool,
 }
 
 impl SyscallDispatch {
@@ -140,6 +153,16 @@ impl SyscallDispatch {
         Self {
             value,
             action: SyscallAction::None,
+            wake: false,
+        }
+    }
+
+    /// The same answer, saying that something a parked task waits for changed.
+    pub const fn completing(value: usize) -> Self {
+        Self {
+            value,
+            action: SyscallAction::None,
+            wake: true,
         }
     }
 
@@ -147,6 +170,7 @@ impl SyscallDispatch {
         Self {
             value: 0,
             action: SyscallAction::Yield,
+            wake: false,
         }
     }
 
@@ -154,6 +178,7 @@ impl SyscallDispatch {
         Self {
             value: status,
             action: SyscallAction::Exit { status },
+            wake: false,
         }
     }
 
@@ -161,6 +186,7 @@ impl SyscallDispatch {
         Self {
             value: 0,
             action: SyscallAction::ReturnFromException { frame_pointer },
+            wake: false,
         }
     }
 
@@ -168,6 +194,7 @@ impl SyscallDispatch {
         Self {
             value: 0,
             action: SyscallAction::ExecProcess,
+            wake: false,
         }
     }
 }

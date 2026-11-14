@@ -583,6 +583,35 @@ carries nine bytes or nineteen: a connection holding either advertises the same
 number whether or not anything enforces it.  The probe fills the whole buffer
 with one segment and reads the number back.
 
+**A deadlock that happened once in seven boots, and the lock order that made
+it.**  `ConnectLocal` woke a parked accept from inside its handler, and a
+handler runs with the registry's lock held: `serve` takes it for the length of
+the call.  So that path was `registry -> scheduler`.  `AcceptLocal`'s park
+re-checks the queue from inside the scheduler's lock, which its own comment
+argues is what closes the race between a fact and a park, and the re-check
+attaches the accepted end, which takes the registry's lock: `scheduler ->
+registry`.  One CPU could not do both at once, but two could, and did.
+
+The first symptom was a boot that stopped after `forked a process, child pid
+9` with nothing refused, which is a deadlock's shape: no fault, no error, no
+line.  Twenty consecutive boots did not reproduce it before the fix, so the
+rate was under one in twenty rather than the one in seven that sent me looking.
+
+What replaced it is a flag.  A handler that makes something a parked task waits
+for says so (`Dispatch::completing`) instead of waking, and the caller of
+`serve` wakes **after** the registry's lock is released.  A handler cannot
+arrange that itself, which is why the flag is the mechanism: the order is the
+whole point.
+
+```
+protofire: a local connect woke 0 blocked task(s), descriptor 12
+```
+
+The line is a gate line again, with the descriptor the last field.  It was not
+one before because whether a read parks or finds its bytes already there is the
+scheduler's choice; the wake itself is not, and it is now printed on every
+boot.
+
 **A route table, and the longest match decides.**  The stack had one IPv4
 gateway and one IPv6 default router, both fields on the interface: a table with
 one entry, which is enough for a machine on one link with one way out and

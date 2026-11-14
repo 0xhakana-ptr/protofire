@@ -1290,33 +1290,16 @@ pub fn connect_local(table: &mut SyscallTable, arguments: &mut Arguments<'_>) ->
         .unwrap_or(crate::programs::BOOT_PROCESS);
     let halves = crate::local::connect(name.as_bytes())?;
     let descriptor = table.insert_local(halves, owner)?;
-    // The connection this call put in the listener's queue is what a parked
-    // accept was waiting for.  The wake is here and not in `crate::local`
-    // because raising a task is the scheduler's act and this file is the one
-    // layer that may name it; the alternative, a connect that queued and said
-    // nothing, is a server parked for ever, which is what the first boot of
-    // this change did.
-    let woken = crate::scheduler::wake_blocked();
-    if woken > 0 {
-        // The task that woke may be held by another CPU, and that CPU is
-        // parked in a wait whose own clock may not move: without this, the
-        // woken task stays Runnable and unclaimed for ever.  A host build has
-        // no second CPU and no IPI, which is why this is gated.
-        #[cfg(target_os = "none")]
-        // SAFETY: the boot's own IPI path, installed before any program ran.
-        unsafe {
-            arch::send_ipi_to_others()
-        };
-        #[cfg(target_os = "none")]
-        {
-            arch::serial::write_str("protofire: a local connect woke ");
-            arch::serial::write_u32(woken as u32);
-            arch::serial::write_str(" blocked task(s)\n");
-        }
-        #[cfg(not(target_os = "none"))]
-        let _ = woken;
-    }
-    Ok(Dispatch::complete(descriptor))
+    // The connection is what a parked accept was waiting for, and this call
+    // **says so** rather than waking: the dispatcher holds the registry's lock
+    // for the length of this function, and the scheduler's lock is one a
+    // parked task holds while it re-checks the queue.  Taking both here would
+    // be a deadlock, and the two CPUs can take them in opposite orders, which
+    // is worse: it is a deadlock that happens once in seven boots.
+    //
+    // The caller of `serve` wakes after the lock is released, and
+    // `Dispatch::completing` is the flag that tells it to.
+    Ok(Dispatch::completing(descriptor))
 }
 
 /// Take a waiting connection on a listener, if there is one.

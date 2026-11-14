@@ -699,6 +699,11 @@ impl Machine {
                     "protofire: process 9 connected to the local name, descriptor ",
                     false,
                 ),
+                // The wake the connect makes.  Its count is zero when the
+                // accept had not parked yet, so it is a prefix: what the line
+                // proves is that the call answered a descriptor and woke
+                // whatever was waiting.
+                ("protofire: a local connect woke ", false),
                 (
                     "protofire: process 1 accepted a local connection as descriptor ",
                     false,
@@ -1410,6 +1415,7 @@ impl Machine {
                         "protofire: process 9 connected to the local name, descriptor ",
                         false,
                     ),
+                    ("protofire: a local connect woke ", false),
                     (
                         "protofire: process 1 accepted a local connection as descriptor ",
                         false,
@@ -1444,6 +1450,7 @@ impl Machine {
                         "protofire: process 9 connected to the local name, descriptor ",
                         false,
                     ),
+                    ("protofire: a local connect woke ", false),
                     (
                         "protofire: process 1 accepted a local connection as descriptor ",
                         false,
@@ -1899,6 +1906,11 @@ impl Machine {
                     "protofire: process 9 connected to the local name, descriptor ",
                     false,
                 ),
+                // The wake the connect makes.  Its count is zero when the
+                // accept had not parked yet, so it is a prefix: what the line
+                // proves is that the call answered a descriptor and woke
+                // whatever was waiting.
+                ("protofire: a local connect woke ", false),
                 (
                     "protofire: process 1 accepted a local connection as descriptor ",
                     false,
