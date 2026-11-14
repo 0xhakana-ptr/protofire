@@ -1352,22 +1352,62 @@ fn write_ipv6(address: net::ipv6::Addr) {
 /// bound lives beside the arithmetic rather than at this call site.
 static FRAGMENTS: Mutex<net::reassembly::Cache> = Mutex::new(net::reassembly::Cache::new());
 
-/// The clock the fragment cache expires against.
+/// The clock the fragment cache expires against, in microseconds.
 ///
-/// The timer's own count, which is the only clock a boot has that moves
-/// without a task running.  A cache with no clock could not expire anything,
-/// and a peer that never sent its last piece would hold its entry for the
-/// rest of the boot.
+/// The conversion is [`micros_of_ticks`]'s, which is a pure function so that
+/// the arithmetic can be a host test: the cache's own tests measure against
+/// whatever clock they are handed, which is what let a caller pass ticks to a
+/// constant that means microseconds and have every test still pass.  The
+/// mismatch was a thirty-second window that was three hundred milliseconds on
+/// a clock counting ten thousand times a second.
 fn fragment_now() -> u64 {
     #[cfg(target_os = "none")]
     {
-        crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64
+        let ticks = crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64;
+        micros_of_ticks(ticks)
     }
     #[cfg(not(target_os = "none"))]
     {
+        // A host test has no timer.  A cache that is never told the time
+        // never expires anything, which is the honest answer without a clock.
         0
     }
 }
+
+/// A count of timer interrupts, as elapsed microseconds.
+///
+/// `saturating_mul` and not `*`: the product is the one a `u64` would wrap
+/// at an uptime long enough that the wrap is not the interesting number.
+///
+/// A free function rather than three lines inside [`fragment_now`] because
+/// the arithmetic is the thing that was wrong: the caller handed the cache
+/// raw ticks and the cache's constant was a duration, and no test could see
+/// the join because the tests measured against a clock they supplied.  This
+/// is the join, and
+/// [`tests::the_tick_is_a_duration_and_the_timeout_is_measured_in_one`] is what
+/// reads it.
+///
+/// The slice is written here rather than read from `tick`, because
+/// `TIME_SLICE_US` is the boot's and a host test has no boot: the test
+/// asserts the two agree, which is the comparison that would have caught the
+/// mismatch this function exists for.
+#[cfg(any(test, target_os = "none"))]
+fn micros_of_ticks(ticks: u64) -> u64 {
+    ticks.saturating_mul(MICROS_PER_TICK)
+}
+
+/// How long one timer interrupt is, in microseconds.
+///
+/// The same value [`crate::tick::TIME_SLICE_US`] carries on a machine, and
+/// deliberately a second name: a host test compiles `tick` with no timer and
+/// no slice, and the assertion that the two agree is
+/// [`tests::the_tick_is_a_duration_and_the_timeout_is_measured_in_one`]'s.
+///
+/// `cfg(test)` on the host only because that is the only place this copy is
+/// read: a machine reads the boot's constant through `fragment_now`, and a
+/// host build has no boot to read one from.
+#[cfg(any(test, target_os = "none"))]
+const MICROS_PER_TICK: u64 = 100;
 
 static TCP: Mutex<net::tcp_table::Table> = Mutex::new(net::tcp_table::Table::new());
 
@@ -2970,5 +3010,57 @@ mod tests {
         assert_eq!(source, net::address::Address::V4([10, 9, 9, 9]));
         assert_eq!(source_port, 77);
         assert_eq!(&buffer[..count], b"hello");
+    }
+
+    /// The clock the fragment cache is given is a duration, and the cache's
+    /// constant is the same duration.
+    ///
+    /// This is the join no test could see before: the cache's own tests
+    /// measure against a clock they supply, so a caller that handed it raw
+    /// ticks satisfied every one of them while the window it actually offered
+    /// was a hundred times shorter than the constant describing it.  The
+    /// assertion is the comparison a reader would make by hand, and it is
+    /// deliberately in one place: the cache holds microseconds, the conversion
+    /// answers microseconds, and the number the RFC names is seconds.
+    #[test]
+    fn the_tick_is_a_duration_and_the_timeout_is_measured_in_one() {
+        // The machine's slice and this file's copy are the same number.  On a
+        // host only one of them compiles, so the comparison is made where the
+        // machine's exists; what this test can always check is that the cache
+        // holds a duration and that the conversion is a duration too.
+        #[cfg(target_os = "none")]
+        assert_eq!(
+            super::crate::tick::TIME_SLICE_US,
+            super::MICROS_PER_TICK,
+            "the boot's slice and the conversion's copy are one number"
+        );
+
+        assert_eq!(
+            super::micros_of_ticks(1),
+            super::MICROS_PER_TICK,
+            "one timer interrupt is one slice"
+        );
+
+        // The reassembly timeout, converted back to seconds, is RFC 1122's
+        // thirty.  A factor of a hundred wrong either way fails here: too
+        // small and the window is 0.3 s, too large and it is fifty minutes.
+        let timeout_seconds = net::reassembly::TIMEOUT_MICROS / 1_000_000;
+        assert_eq!(
+            timeout_seconds, 30,
+            "RFC 1122's floor for reassembly is thirty seconds"
+        );
+
+        // And the count of interrupts that thirty seconds is, which is what a
+        // caller passing ticks instead of a duration would have got wrong.
+        let ticks_in_the_window = net::reassembly::TIMEOUT_MICROS / super::MICROS_PER_TICK;
+        assert_eq!(
+            super::micros_of_ticks(ticks_in_the_window),
+            net::reassembly::TIMEOUT_MICROS,
+            "the window, measured in ticks and converted back, is itself"
+        );
+        assert_eq!(
+            ticks_in_the_window, 300_000,
+            "ten kilohertz for thirty seconds"
+        );
     }
 }

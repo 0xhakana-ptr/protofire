@@ -61,14 +61,20 @@ pub const MAX_PAYLOAD: usize = 65_535 - 20;
 /// dropped, which is what an unfragmented path would have done anyway.
 pub const MAX_ENTRIES: usize = 16;
 
-/// How long an entry may wait for its last piece, in the caller's units.
+/// How long an entry may wait for its last piece, in microseconds.
 ///
-/// The value is the RFC's own floor for IPv4 reassembly, a minute is too long
-/// for a stack that boots in seconds, so this is [RFC 1122]'s "at least
-/// thirty seconds" against a hundred-hertz clock: three thousand ticks.
+/// The value is [RFC 1122]'s own floor for IPv4 reassembly, "at least thirty
+/// seconds".  It is in **microseconds** and not in ticks, and that unit is a
+/// correction: the caller's clock counts timer interrupts, this kernel's
+/// slice is a hundred microseconds, and a constant written as a count of ticks
+/// is a duration that moves when the slice does.  The first version said three
+/// thousand ticks and its comment said a hundred-hertz clock, which was the
+/// previous tree's; at ten kilohertz it was three hundred milliseconds, a
+/// hundred times shorter than the sentence describing it, so pieces arriving a
+/// third of a second apart were pieces this stack threw away.
 ///
 /// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
-pub const TIMEOUT_TICKS: u64 = 3_000;
+pub const TIMEOUT_MICROS: u64 = 30_000_000;
 
 /// What one fragment says about the packet it is a piece of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,14 +280,14 @@ impl Cache {
         self.entries.is_empty()
     }
 
-    /// Drop every entry that has waited past [`TIMEOUT_TICKS`].
+    /// Drop every entry that has waited past [`TIMEOUT_MICROS`].
     ///
     /// Called by the caller's own clock, which is why the tick is an argument:
     /// a cache that expired itself would need a timer, and a timer here would
     /// be a crate that could not be tested without one.
     pub fn expire(&mut self, now: u64) {
         self.entries
-            .retain(|(_, entry)| now.wrapping_sub(entry.created_at) < TIMEOUT_TICKS);
+            .retain(|(_, entry)| now.wrapping_sub(entry.created_at) < TIMEOUT_MICROS);
     }
 
     /// Whether a datagram is being held under this key.
@@ -402,7 +408,7 @@ mod tests {
     use super::Outcome;
     use super::Piece;
     use super::Refusal;
-    use super::TIMEOUT_TICKS;
+    use super::TIMEOUT_MICROS;
     use crate::address::Address;
     use alloc::vec::Vec;
 
@@ -597,14 +603,14 @@ mod tests {
         cache.accept(key, piece(b"abcdefgh", 0, true), 0);
         assert!(cache.holds(&key));
 
-        cache.expire(TIMEOUT_TICKS);
+        cache.expire(TIMEOUT_MICROS);
         assert!(!cache.holds(&key), "the clock took it");
         assert!(cache.is_empty());
 
         // The late piece opens a new entry, and the datagram it belonged to
         // is gone, which is the RFC's "silently discarded".
         assert_eq!(
-            cache.accept(key, piece(b"ijkl", 8, false), TIMEOUT_TICKS),
+            cache.accept(key, piece(b"ijkl", 8, false), TIMEOUT_MICROS),
             Outcome::Collected
         );
         assert!(cache.holds(&key));
