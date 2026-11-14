@@ -25,11 +25,11 @@ grep -cE '^\s{4}[A-Z][A-Za-z0-9]* = [0-9]+,' abi/src/number.rs
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **50 of the 195 numbers are served**, after the memory,
+Four machines boot, and **51 of the 196 numbers are served**, after the memory,
 filesystem, process, time and network levels.  That is the number the census
 command above answers, and it is the one to re-take rather than trust.
 
-The boot's own line, `syscall table installed, 25 number(s) served`, counts
+The boot's own line, `syscall table installed, 31 number(s) served`, counts
 only the registry's half — the numbers whose handler functions live in
 `boot.rs`'s table.  The rest are the ones `process.rs` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
@@ -69,7 +69,7 @@ machine crates twice, inside `arch/` and on their own.
 | `unicode` | character conversion and normalisation |
 | `rights` | two constants and **no consumer** |
 | `audit` | an audit record and its ring |
-| `abi` | error codes, the 195 syscall numbers, the wire records, boot information |
+| `abi` | error codes, the 196 syscall numbers, the wire records, boot information |
 
 ### Tools a host can test
 
@@ -150,13 +150,16 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 195 numbers, **50 are served**.  The 145 that are not fall into these
+Of 196 numbers, **51 are served**.  The 145 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
+The unserved count is the same 145 it was before the IPv6 side landed, because
+that change added a number and served it: `Ipv6Status` (197) is the one row here
+the network level did not have when this table was first taken.
 
 | family | numbers | in the kernel today |
 |---|---|---|
 | filesystem metadata and mutation still unserved (`SetLength`, `StatFd`, `ReadDirFd`, `Fsync`, `Fallocate`, xattrs, file flags, the access and permission queries) | 19 | **all of it** — the filesystem implements every operation |
-| sockets and the network stack still unserved (raw, local domain, DCCP, TLS, IPsec, MRT, the packet filter, the host-name and address calls beside them, and the rest of the stream and datagram surface) | 36 | **the seven Level 5 serves** — the status call, the three datagram calls, the three stream calls |
+| sockets and the network stack still unserved (raw, local domain, DCCP, TLS, IPsec, MRT, the packet filter, the host-name and address calls beside them, and the rest of the stream and datagram surface) | 36 | **the eight the network level serves** — the two status calls, the three datagram calls, the three stream calls |
 | process, signal and scheduling still unserved (`Futex`, `SchedSetAffinity`, `Ptrace`, `Seccomp`, `Prctl`, the introspection calls) | 10 | fork/exit/wait/pid/signals landed; these did not |
 | shared memory and synchronisation primitives (`Shm*`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 20 | none |
 | GPU | 9 | none |
@@ -437,10 +440,10 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `arch` | 95,361 | **done** — three ports, trap paths, timers, SMP, ring 3 (20,645 lines here, a third of the size) |
 | `fs` | 68,494 | **moved** — PyroFS, tmpfs and the ten Level 6 formats; four of them are readers, which the old tree's were too |
 | `kernel` | 39,704 | **mostly done** — scheduler, processes, COW, pipes, signals, memory |
-| `network` | 39,240 | **partial** — the stack is one tenth of it: IPv4, ICMP, UDP, TCP, and the seven calls a program reaches |
+| `network` | 39,240 | **partial** — the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP and TCP, and the eight calls a program reaches |
 | `drivers` | 18,828 | **partial** — virtio-blk and virtio-net; the rest are not here |
 | `user` | 19,145 | **partial** — three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial** — 50 of 195 numbers |
+| `syscall` | 15,647 | **partial** — 51 of 196 numbers |
 | `abi` | 4,725 | **done** — the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
@@ -453,9 +456,17 @@ the order is the part that cannot be chosen.
 
 #### The syscall gap is the whole of the old tree's coverage
 
-Measured: the previous kernel served **194 of the 195** numbers.  The one it did
-not serve is `WaitProcessOf` (196), which was added after that kernel stopped.
-This tree serves **50**.
+Measured: the previous kernel's enum held **194** numbers — 0 through 195 with
+141 and 142 retired — and **every one of them had a registered handler**.  That
+is what "the old tree served everything it declared" means, and it is worth
+stating precisely because "served" there was not "works": a handler was allowed
+to answer `Error::Unsupported` for a shape it did not implement, and reading the
+number's presence as a capability is the mistake this tree's `Handler::Unimplemented`
+exists to avoid.
+
+This tree declares **196** — the same 194 plus `WaitProcessOf` (196) and
+`Ipv6Status` (197), with the same two retirements — and serves **51** of them.
+The other 145 are what the levels below are about.
 
 That single number is the clearest statement of what is left.  The old tree's
 15,647-line syscall tree is the work list, and its modules are named by what
