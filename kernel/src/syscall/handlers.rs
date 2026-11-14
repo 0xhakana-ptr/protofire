@@ -1951,6 +1951,188 @@ fn write_ipsec_stats(
     }
 }
 
+/// Binds a DCCP port for listening? No: `DccpBind` names the local port a
+/// connection is to be made from, and answers a descriptor the four other calls
+/// carry back.
+///
+/// Arguments: the port, then five reserved slots.  Port zero is refused, for
+/// the reason `BindUdp` refuses it: it is the wire's "any port" and this stack
+/// has no allocator to choose one.
+pub fn dccp_bind(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let port = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if port == 0 || port > u16::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let descriptor = table.insert_dccp_bound(port as u16, owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Listen on a DCCP port, and answer the descriptor an accept is called on.
+///
+/// Arguments: the port, the service code, then four reserved slots.  The
+/// service code is the field [RFC 4340] uses to tell two services apart on one
+/// port, and zero means any: a listener that named one refuses a Request for
+/// another.
+///
+/// [RFC 4340]: https://www.rfc-editor.org/rfc/rfc4340
+pub fn dccp_listen(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let port = arguments.context.arg(0);
+    let service_code = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+    if port == 0 || port > u16::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    if service_code > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let code = if service_code == 0 {
+        None
+    } else {
+        Some(service_code as u32)
+    };
+    let listener = crate::net::dccp_listen(port as u16, code)?;
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let descriptor = table.insert_dccp_listener(port as u16, listener, owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Open a DCCP connection, and answer the descriptor it is read and written
+/// through.
+///
+/// Arguments: the bound descriptor, the peer's address, its port, the service
+/// code, the flags, then one reserved slot.  The bound descriptor names the
+/// local port: a connection has two ports, and a call that named only the
+/// peer's would be one this machine could not answer on.
+pub fn dccp_connect(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let peer = arguments.context.arg(1);
+    let peer_port = arguments.context.arg(2);
+    let service_code = arguments.context.arg(3);
+    let flags = arguments.context.arg(4);
+    validate_known_flags(flags, network_abi::NETWORK_DCCP_KNOWN_FLAGS)?;
+    validate_zeroed_args(arguments.context, 5)?;
+    if peer_port == 0 || peer_port > u16::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    if service_code > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let local_port = table
+        .dccp_bound_port(descriptor, arguments.context.caller_pid)
+        .ok_or(Error::InvalidArgument)?;
+    let peer = if flags & network_abi::NETWORK_DCCP_FLAG_IPV6 != 0 {
+        net::address::Address::V6(read_user_address6(peer)?)
+    } else {
+        if peer > u32::MAX as usize {
+            return Err(Error::InvalidArgument);
+        }
+        net::address::Address::V4(network_abi::unpack_address(peer))
+    };
+    let id = crate::net::dccp_connect(local_port, peer, peer_port as u16, service_code as u32)?;
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let descriptor = table.insert_dccp_connection(id, owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Accept the next DCCP Request at a listener.
+///
+/// Arguments: the listener descriptor, the sender record, its length, then
+/// three reserved slots.  **Blocks** until a Request answers, so its branch is
+/// the trap path's, where the scheduler's parking machinery is.  The sender
+/// record is two words, the peer's address packed and its port, and a caller
+/// that passes nothing gets none: the length may be zero, which is a program
+/// that does not care who called.
+pub fn dccp_accept(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let local_port = table
+        .dccp_listener_port(descriptor, arguments.context.caller_pid)
+        .ok_or(Error::InvalidArgument)?;
+    let Some(id) = crate::net::dccp_accept(local_port)? else {
+        // Nothing waiting: the trap path parks the caller, and this word is
+        // its signal, the same one `AcceptLocal` and `RecvFromUdp` answer.
+        return Ok(Dispatch::complete(usize::MAX));
+    };
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let descriptor = table.insert_dccp_connection(id, owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Send one DCCP datagram on a connection.
+///
+/// Arguments: the descriptor, the buffer, its length, then three reserved
+/// slots.  Answers the bytes accepted.  A connection that is not open refuses,
+/// which is the state machine's rule and not this handler's: a datagram sent
+/// before the handshake finished would carry a sequence number the peer's
+/// window has no place for.
+pub fn dccp_send(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 4)?;
+    let id = table
+        .dccp_connection(descriptor, arguments.context.caller_pid)
+        .ok_or(Error::InvalidArgument)?;
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if buffer.len() > net::dccp::MAX_DATAGRAM {
+        return Err(Error::InvalidArgument);
+    }
+    crate::net::dccp_send(id, buffer)?;
+    Ok(Dispatch::complete(buffer.len()))
+}
+
+/// Read one DCCP datagram, or park until one arrives.
+///
+/// Arguments: the descriptor, the buffer, its length, then three reserved
+/// slots.  Answers the bytes read, or `usize::MAX` for "nothing yet", which is
+/// the trap path's signal to park the caller.  A finished connection with an
+/// empty inbox answers zero, which is end of file and not a wait: the
+/// difference is the one a reader's loop turns on.
+pub fn dccp_recv(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let id = table
+        .dccp_connection(descriptor, arguments.context.caller_pid)
+        .ok_or(Error::InvalidArgument)?;
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.is_empty() {
+        return Err(Error::InvalidArgument);
+    }
+    match crate::net::dccp_read(id, buffer)? {
+        Some(count) => Ok(Dispatch::complete(count)),
+        None => Ok(Dispatch::complete(usize::MAX)),
+    }
+}
+
+/// Close a DCCP connection by descriptor.
+///
+/// Arguments: the descriptor, then five reserved slots.  Answers zero.  The
+/// connection's entry goes with it, and a `Close` goes to the peer, which is
+/// what makes the close visible on the wire rather than only here.
+pub fn dccp_close(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    let id = table
+        .dccp_connection(descriptor, arguments.context.caller_pid)
+        .ok_or(Error::InvalidArgument)?;
+    crate::net::dccp_close(id)?;
+    table.close(descriptor)?;
+    Ok(Dispatch::complete(0))
+}
+
 /// The socket a descriptor names, or the error that says why there is none.
 ///
 /// A descriptor that names a file or a pipe is `InvalidArgument` and not

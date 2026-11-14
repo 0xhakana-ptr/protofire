@@ -391,6 +391,58 @@ the way a pipe's reader parks, and answers zero, end of file, once the
 stream's connection is gone, which an orderly close's last acknowledgement
 is what leaves behind.
 
+DCCP's seven calls are a second datagram transport: [RFC 4340]'s protocol, whose
+difference from UDP is congestion control and whose difference from TCP is that
+a lost datagram stays lost.  Its port space is its own, so a DCCP port and a
+datagram socket's port are not a conflict: the IP header's protocol number is
+what tells the two apart.
+
+- **`DccpBind`**, `a0` the port; `a1`-`a5` reserved zero.  Answers a descriptor.
+  The port a connection is made **from**: a connection has two ports, and a call
+  that named only the peer's would leave this machine with nothing to answer on.
+- **`DccpListen`**, `a0` the port; `a1` the service code; `a2`-`a5` reserved
+  zero.  Answers the descriptor an accept is called on.  The service code is
+  [RFC 4340]'s field for telling two services apart on one port, and zero is
+  "any": a listener that named one refuses a Request for another.
+- **`DccpConnect`**, `a0` the bound descriptor; `a1` the peer's address, packed
+  or a pointer to sixteen bytes under [`NETWORK_DCCP_FLAG_IPV6`]; `a2` its port;
+  `a3` the service code; `a4` the flags; `a5` reserved zero.  Answers the
+  descriptor the connection is read and written through.  The Request is sent
+  inside the call.
+- **`DccpAccept`**, `a0` the listener descriptor; `a1`-`a2` a sender record and
+  its length; `a3`-`a5` reserved zero.  **Blocks** until a Request answers.
+- **`DccpSend`**, `a0` the descriptor; `a1` the buffer; `a2` its length; `a3`-`a5`
+  reserved zero.  Answers the bytes accepted.  Refused unless the connection is
+  open: a datagram sent before the handshake finished would carry a sequence
+  number the peer's window has no place for.
+- **`DccpRecv`**, `a0` the descriptor; `a1` the buffer; `a2` its length; `a3`-`a5`
+  reserved zero.  **Blocks** until a datagram arrives; a finished connection
+  with an empty inbox answers **zero**, which is end of file and not a wait.
+- **`DccpClose`**, `a0` the descriptor; `a1`-`a5` reserved zero.  Sends a `Close`
+  and releases the entry.
+
+**The header is written extended and read both ways.**  Sixteen bytes with a
+forty-eight-bit sequence number, because a short form's twenty-four bits wrap in
+minutes at a stream's rate and a wrapped number cannot tell a new datagram from
+an old one.  The reader accepts both, which is what makes this a peer rather
+than a dialect, and it checks the **redundant `X` bit**: byte eight's bit 4 and
+byte nine's bit 7 carry one value, and a reader that read one and ignored the
+other would take a short packet's sequence number from the wrong bytes.
+
+**The state machine's one non-obvious transition**: a server in `ResponseSent`
+opens on a **`DataAck`** that acknowledges its Response, because a client's Ack
+and its first datagram are one packet.  A server that refused it would refuse
+the first thing the client ever sent, which is a defect the probe found rather
+than a reading this document chose.
+
+**No CCID is implemented.**  Congestion control is [RFC 4340]'s pluggable part
+and this module carries the field a negotiation names and no algorithm.  A CCID
+is a controller with its own state and its own loss response, and driving one
+from here would be a transport whose congestion control was this module's
+opinion.
+
+[RFC 4340]: https://www.rfc-editor.org/rfc/rfc4340
+
 IPsec's five calls install the two databases ESP reads.  They are a manager's
 interface like the multicast ones: nothing here negotiates, and IKE is the
 protocol that would.

@@ -947,6 +947,13 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // DCCP: a whole connection on this machine through the real demux, which
+    // is the one path that exercises the state machine without a peer.  A
+    // stack that stored headers and had no states passes nothing here.
+    if !crate::net::dccp_probe() {
+        return false;
+    }
+
     // IPsec: ESP sealing what leaves, the demux recovering it, and the replay
     // window dropping the second copy.  The three are one exchange because a
     // tunnel is broken three ways and each looks like a working one: a

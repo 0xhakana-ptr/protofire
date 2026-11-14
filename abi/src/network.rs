@@ -459,6 +459,30 @@ pub const FILTER_STATS_SIZE: usize = size_of::<FilterStats>();
 /// it.
 pub const FILTER_STATS_ALLOWED_OFFSET: usize = offset_of!(FilterStats, packets_allowed);
 
+/// The flag that makes `DccpConnect` carry a sixteen-byte address.
+///
+/// The same shape the frozen `SendToUdp` and `ConnectTcp` use, and for the
+/// same reason: `DccpConnect` is above the frozen range and could spend a
+/// second number, but a flag in a word the call already has is what the
+/// neighbouring calls do and a program that learned one has learned this.
+pub const NETWORK_DCCP_FLAG_IPV6: usize = 1 << 0;
+
+/// The flags `DccpConnect` knows.
+pub const NETWORK_DCCP_KNOWN_FLAGS: usize = NETWORK_DCCP_FLAG_IPV6;
+
+/// `DccpBind` knows no flags.
+pub const NETWORK_DCCP_BIND_KNOWN_FLAGS: usize = 0;
+
+/// `DccpListen`, `DccpAccept`, `DccpSend` and `DccpRecv` know no flags.
+pub const NETWORK_DCCP_KNOWN_FLAGS_NONE: usize = 0;
+
+/// Where a DCCP datagram came from, as `DccpRecv` answers it.
+///
+/// Two words, the same shape [`UdpSenderRecord`] is: an address packed by
+/// [`pack_address`] and a port.  DCCP's port space is its own, so the record
+/// names the peer's DCCP port and not a datagram socket's.
+pub const DCCP_SENDER_RECORD_SIZE: usize = size_of::<UdpSenderRecord>();
+
 /// What a security policy does with a packet.
 pub const IPSEC_ACTION_BYPASS: u32 = 0;
 

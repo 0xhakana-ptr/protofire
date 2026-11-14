@@ -147,10 +147,9 @@
 //! there are two interfaces, the route gains one field and the lookup one
 //! comparison.
 //!
-//! What is also absent is every protocol this crate does not name: DCCP and
-//! TLS.  Those are numbers above the frozen range
-//! and each is its own stack, which is why `docs/roadmap.md` lists them as
-//! work rather than as gaps in this one.
+//! What is also absent is the one protocol this crate does not name: TLS.
+//! Those are numbers above the frozen range and each is its own stack, which is
+//! why `docs/roadmap.md` lists them as work rather than as gaps in this one.
 //!
 //! [`multicast`] is the other, and its shape is different from a protocol's:
 //! two tables, one from virtual interface to what it does with a frame and one
@@ -189,6 +188,7 @@
 extern crate alloc;
 
 pub mod address;
+pub mod dccp;
 pub mod dhcp;
 pub mod dns;
 pub mod filter;
@@ -231,6 +231,10 @@ pub use ipsec::Aead;
 pub use ipsec::Association;
 pub use ipsec::Outcome;
 pub use ipsec::Tables;
+
+pub use dccp::PacketType;
+pub use dccp::Segment;
+pub use dccp::Table as DccpTable;
 
 pub use transport::local;
 pub use transport::options;

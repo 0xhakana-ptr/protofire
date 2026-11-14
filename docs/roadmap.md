@@ -340,14 +340,15 @@ lands before anything in the kernel depends on it.
 
 #### What Level 5 does not promise
 
-- **Fifteen of the 23 protocol numbers are now served, and 8 are not.**
-  `Filter*` (122-125), `Mrt*` (169-174) and `Ipsec*` (164-168) landed first,
-  because each has a mechanism this machine can observe end to end: a rule
-  either keeps a packet out or it does not, a forwarded frame either leaves the
-  card with a spent hop or it does not, and an ESP payload either carries no
-  plaintext or it does.  `Dccp*` (157-163) and `TlsConnect` (121) are still
-  named in the ABI and unserved; each is its own stack rather than more calls on
-  this one.
+- **Twenty-two of the 23 protocol numbers are now served, and one is not.**
+  `Filter*` (122-125), `Mrt*` (169-174), `Ipsec*` (164-168) and `Dccp*`
+  (157-163) are served, each with a mechanism the boot observes end to end: a
+  rule either keeps a packet out or it does not, a forwarded frame either leaves
+  the card with a spent hop or it does not, an ESP payload either carries no
+  plaintext or it does, and a DCCP connection either reaches `Open` or it does
+  not.  `TlsConnect` (121) is the one left, and it is the largest: a handshake,
+  a record layer and a certificate chain, each with state no other call in this
+  range has.
 - **Routing.**  One interface, one address, one gateway.  A routing table is a
   decision for a tree with two networks.
 - **DNS beyond the literal.**  `ResolveHostname` (93) can answer from a hosts

@@ -1683,6 +1683,137 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // DCCP's two buffer calls: `DccpSend` reads a buffer and `DccpRecv`
+    // writes one, and the descriptor, the buffer address and the length are
+    // `a0`, `a1` and `a2` for both.
+    if number == SyscallNumber::DccpSend as usize || number == SyscallNumber::DccpRecv as usize {
+        let buffer = call.arguments[1];
+        let length = call.arguments[2];
+        if length == 0
+            || length > net::dccp::MAX_DATAGRAM.max(64 * 1024)
+            || !crate::address_space::is_user_range(buffer, length)
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The send reads the
+        // buffer and the receive writes it, each inside the length checked
+        // above.
+        let buffer = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(buffer));
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if number == SyscallNumber::DccpSend as usize {
+                " sent a dccp datagram, "
+            } else {
+                " read a dccp datagram, "
+            });
+            arch::serial::write_u32(length as u32);
+            arch::serial::write_str(if refused {
+                " byte(s) asked, refused\n"
+            } else {
+                " byte(s) of room\n"
+            });
+        }
+        return outcome;
+    }
+
+    // DCCP's five calls that name words.  `DccpConnect` names an address and
+    // the three others a port or a descriptor; none needs a buffer.
+    if number == SyscallNumber::DccpBind as usize
+        || number == SyscallNumber::DccpListen as usize
+        || number == SyscallNumber::DccpConnect as usize
+        || number == SyscallNumber::DccpClose as usize
+    {
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(match number {
+                n if n == SyscallNumber::DccpBind as usize => " bound a dccp port, descriptor ",
+                n if n == SyscallNumber::DccpListen as usize => {
+                    " listened on a dccp port, descriptor "
+                }
+                n if n == SyscallNumber::DccpConnect as usize => {
+                    " connected with dccp, descriptor "
+                }
+                _ => " closed a dccp connection, ",
+            });
+            if refused {
+                arch::serial::write_str("refused\n");
+            } else {
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return outcome;
+    }
+
+    // `DccpAccept` is a second accept, and it parks for the same reason
+    // `AcceptLocal` does: the Request that answers it arrives on another CPU or
+    // in an interrupt, and a handler cannot wait.  The wake is the one
+    // `deliver_dccp` makes, after its table's lock is down.
+    if number == SyscallNumber::DccpAccept as usize {
+        let descriptor = call.arguments[0];
+        let owner = crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS);
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(owner);
+        let mut answer = through_registry(&mut context, None, None, None);
+        if matches!(answer, CallOutcome::Return(value) if value == usize::MAX) {
+            // Nothing was waiting.  The re-check asks the same handler again
+            // under the scheduler's lock, and every answer but `usize::MAX` is
+            // the call's answer.
+            let port = crate::syscall::dccp_listener_port_for(descriptor, Some(owner));
+            let retried = crate::scheduler::block_unless(frame, || {
+                let port = port?;
+                match crate::syscall::accept_dccp(port, owner) {
+                    Ok(value) => Some(value),
+                    Err(error) => Some(abi::syscall::encode_error(error)),
+                }
+            });
+            answer = match retried {
+                Some(value) => CallOutcome::Return(value),
+                None => {
+                    arch::serial::write_str(
+                        "protofire: a program waits to accept a dccp request\n",
+                    );
+                    if !crate::scheduler::has_selectable() {
+                        crate::scheduler::idle_until_woken();
+                    }
+                    return crate::scheduler::switch_without_saving(frame);
+                }
+            };
+        }
+        if let CallOutcome::Return(value) = answer {
+            let refused = abi::syscall::is_error_status(value);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(owner);
+            arch::serial::write_str(" accepted a dccp request as descriptor ");
+            if refused {
+                arch::serial::write_str("refused\n");
+            } else {
+                arch::serial::write_u32(value as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return answer;
+    }
+
+    // `DccpAccept` is the parking one, and it is handled with the other
+    // accept below: a handler that cannot park does not hold a number whose
+    // caller may have to wait.
+
     // The IPsec records: three calls take one and the other two name words.
     // `IpsecAddSp` and `IpsecAddSa` read a record, and `IpsecGetStats` writes
     // one, so all three take the buffer the trap path can validate; one branch

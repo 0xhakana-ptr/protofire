@@ -331,6 +331,37 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::IpsecGetStats,
         crate::syscall::ipsec_get_stats,
     );
+    // DCCP's seven.  `DccpAccept` and `DccpRecv` park, so their branches are
+    // the trap path's: a handler that cannot park does not hold a number whose
+    // caller may have to wait.  The other five answer at once.
+    table.register(
+        ::syscall::SyscallNumber::DccpBind,
+        crate::syscall::dccp_bind,
+    );
+    table.register(
+        ::syscall::SyscallNumber::DccpListen,
+        crate::syscall::dccp_listen,
+    );
+    table.register(
+        ::syscall::SyscallNumber::DccpConnect,
+        crate::syscall::dccp_connect,
+    );
+    table.register(
+        ::syscall::SyscallNumber::DccpAccept,
+        crate::syscall::dccp_accept,
+    );
+    table.register(
+        ::syscall::SyscallNumber::DccpSend,
+        crate::syscall::dccp_send,
+    );
+    table.register(
+        ::syscall::SyscallNumber::DccpRecv,
+        crate::syscall::dccp_recv,
+    );
+    table.register(
+        ::syscall::SyscallNumber::DccpClose,
+        crate::syscall::dccp_close,
+    );
     table.register(
         ::syscall::SyscallNumber::MacSetMode,
         crate::syscall::mac_set_mode,

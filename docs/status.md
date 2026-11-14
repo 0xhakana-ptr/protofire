@@ -797,6 +797,66 @@ peer's policy drops in silence.
 [RFC 4106]: https://www.rfc-editor.org/rfc/rfc4106
 [RFC 7634]: https://www.rfc-editor.org/rfc/rfc7634
 
+**DCCP: a second datagram transport, with a state machine that runs.**  The
+seven `Dccp*` calls (157-163) were named in the ABI and served by nothing.  All
+seven are served, over `net::dccp`: [RFC 4340]'s generic header, the ten packet
+types, the nine states, and a connection table with a listener's backlog.
+
+```
+protofire: dccp client open, carried 4 byte(s)
+```
+
+One line and two claims, because the probe drives a whole connection through
+**the function the demux calls**: a Request arrives at a listener, the accept
+takes it, the Response opens the client, and the first datagram lands in the
+server's inbox.  A stack that stored headers and had no states prints a table of
+ports and passes nothing.  Mutation-tested: removing the transition below prints
+`carried 0 byte(s), MISMATCH`, and so does delivering no data at all.
+
+**The probe found a state-machine gap, and it is fixed.**  A server in
+`ResponseSent` was refusing a `DataAck`, which is the packet a client sends when
+its acknowledgement and its first datagram are one segment, so the server refused
+the first thing the client ever sent.  `RESPOND -> OPEN` on an acknowledging
+`DataAck` is now the transition, and `a_data_ack_opens_a_server_that_sent_its_response`
+is the test.
+
+**Three deadlocks were found the same way, and each is a rule now.**  All three
+were a lock held across a call that takes it again, on a mutex that is not
+reentrant:
+
+- a guard created inside a call's **argument** lives until the whole statement
+  ends, so `dccp_connect(..., INTERFACE.lock().as_ref()..., ...)` held the lock
+  while `dccp_connect` took it;
+- `dccp_send_segment` read the interface and then handed the segment to
+  `deliver_dccp`, which reads it too;
+- a reply handed back to the demux answers itself, forever, so a segment this
+  stack composes for a peer never re-enters `deliver_dccp`.
+
+The probe drives both directions through `deliver_dccp` directly rather than
+through the card, and that is stated where the probe is: a frame this machine
+addresses to itself comes back through QEMU's network ring, and a probe that
+depended on that would be measuring the emulator's reflection rule rather than
+this stack.
+
+**The header is written extended and read both ways.**  Sixteen bytes with a
+forty-eight-bit sequence number.  A short form's twenty-four bits wrap in
+minutes at a stream's rate, and the reader accepts both forms because a peer may
+send either.  The **redundant `X` bit** is checked: byte eight's bit 4 and byte
+nine's bit 7 carry one value, and a reader that took one and ignored the other
+would read a short packet's sequence number from the wrong bytes.
+
+**No CCID**, and the module says so: congestion control is [RFC 4340]'s
+pluggable part, and a connection here has what the protocol requires of every
+implementation, a sequence space, a window and acknowledgements, and no
+algorithm.
+
+`net::dccp` is 28 host tests: the header's round trip for all ten types, the
+short form, the reserved types, the redundant bit, a data offset inside the
+header, the wrap-safe sequence comparison, and every state transition including
+the one above.
+
+[RFC 4340]: https://www.rfc-editor.org/rfc/rfc4340
+
 **The timeout is measured now, not assumed.**  `RTO_INITIAL_MICROS` was the
 timeout for every stream on every path, and one second is right for no path: a
 machine on a fast wire retransmits a segment that was merely in flight, and one

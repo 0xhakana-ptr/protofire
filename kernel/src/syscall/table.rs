@@ -183,6 +183,30 @@ pub(crate) enum Descriptor {
         /// The process that holds it, so its exit can release it.
         owner: u32,
     },
+    /// A DCCP port a connection is to be made from.
+    ///
+    /// The bound end of a connection, which is what `DccpBind` answers: a
+    /// connection has two ports, and the call that names only the peer's would
+    /// leave this machine with nothing to answer on.
+    DccpBound {
+        port: u16,
+        /// The process that holds it, so its exit can release it.
+        owner: u32,
+    },
+    /// A DCCP listening port, the thing an accept is called on.
+    DccpListener {
+        port: u16,
+        /// The listener's id in the kernel's own table.
+        listener: usize,
+        /// The process that holds it, so its exit can release it.
+        owner: u32,
+    },
+    /// One end of a DCCP connection: the id names it in the kernel's table.
+    DccpConnection {
+        connection: usize,
+        /// The process that holds it, so its exit can close it.
+        owner: u32,
+    },
     /// A raw socket: one IP protocol number's packets, queued for its reader.
     ///
     /// Shares the `Arc` with the table in `crate::net`, so a fork's copy reads
@@ -276,6 +300,19 @@ impl Descriptor {
                 socket: Arc::clone(socket),
                 owner,
             },
+            // A DCCP handle is a number the kernel's table owns, so the copy is
+            // the number: two descriptors naming one connection is what a fork
+            // means, and the connection answers both.
+            Descriptor::DccpBound { port, .. } => Descriptor::DccpBound { port: *port, owner },
+            Descriptor::DccpListener { port, listener, .. } => Descriptor::DccpListener {
+                port: *port,
+                listener: *listener,
+                owner,
+            },
+            Descriptor::DccpConnection { connection, .. } => Descriptor::DccpConnection {
+                connection: *connection,
+                owner,
+            },
             Descriptor::LocalListener { name, .. } => Descriptor::LocalListener {
                 name: name.clone(),
                 owner,
@@ -343,7 +380,10 @@ impl SyscallTable {
             | Some(Descriptor::TcpStream { owner, .. })
             | Some(Descriptor::Local { owner, .. })
             | Some(Descriptor::LocalListener { owner, .. })
-            | Some(Descriptor::Raw { owner, .. }) => Some(*owner),
+            | Some(Descriptor::Raw { owner, .. })
+            | Some(Descriptor::DccpBound { owner, .. })
+            | Some(Descriptor::DccpListener { owner, .. })
+            | Some(Descriptor::DccpConnection { owner, .. }) => Some(*owner),
             None => None,
         }
     }
@@ -526,6 +566,61 @@ impl SyscallTable {
         self.insert(Descriptor::Raw { socket, owner })
     }
 
+    /// Insert a bound DCCP port, answering its descriptor.
+    pub(crate) fn insert_dccp_bound(&mut self, port: u16, owner: u32) -> Result<usize> {
+        self.insert(Descriptor::DccpBound { port, owner })
+    }
+
+    /// Insert a DCCP listening port, answering its descriptor.
+    pub(crate) fn insert_dccp_listener(
+        &mut self,
+        port: u16,
+        listener: usize,
+        owner: u32,
+    ) -> Result<usize> {
+        self.insert(Descriptor::DccpListener {
+            port,
+            listener,
+            owner,
+        })
+    }
+
+    /// Insert one end of a DCCP connection, answering its descriptor.
+    pub(crate) fn insert_dccp_connection(
+        &mut self,
+        connection: usize,
+        owner: u32,
+    ) -> Result<usize> {
+        self.insert(Descriptor::DccpConnection { connection, owner })
+    }
+
+    /// The port a bound DCCP descriptor names.
+    pub(crate) fn dccp_bound_port(&self, descriptor: usize, caller: Option<u32>) -> Option<u16> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::DccpBound { port, .. }) => Some(*port),
+            _ => None,
+        }
+    }
+
+    /// The port a DCCP listener descriptor names.
+    pub(crate) fn dccp_listener_port(&self, descriptor: usize, caller: Option<u32>) -> Option<u16> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::DccpListener { port, .. }) => Some(*port),
+            _ => None,
+        }
+    }
+
+    /// The connection id a DCCP connection descriptor names.
+    pub(crate) fn dccp_connection(&self, descriptor: usize, caller: Option<u32>) -> Option<usize> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::DccpConnection { connection, .. }) => Some(*connection),
+            _ => None,
+        }
+    }
+
     /// The raw socket a descriptor names, cloned, if it names one and the
     /// caller owns it.
     pub(crate) fn raw_socket(
@@ -673,7 +768,10 @@ impl SyscallTable {
                 | Descriptor::TcpStream { owner, .. }
                 | Descriptor::Local { owner, .. }
                 | Descriptor::LocalListener { owner, .. }
-                | Descriptor::Raw { owner, .. } = descriptor
+                | Descriptor::Raw { owner, .. }
+                | Descriptor::DccpBound { owner, .. }
+                | Descriptor::DccpListener { owner, .. }
+                | Descriptor::DccpConnection { owner, .. } = descriptor
                 && *owner == parent
             {
                 inherited.push(descriptor.for_owner(child));
@@ -726,7 +824,10 @@ impl SyscallTable {
                 | Some(Descriptor::TcpStream { owner: held, .. })
                 | Some(Descriptor::Local { owner: held, .. })
                 | Some(Descriptor::LocalListener { owner: held, .. })
-                | Some(Descriptor::Raw { owner: held, .. }) => *held == owner,
+                | Some(Descriptor::Raw { owner: held, .. })
+                | Some(Descriptor::DccpBound { owner: held, .. })
+                | Some(Descriptor::DccpListener { owner: held, .. })
+                | Some(Descriptor::DccpConnection { owner: held, .. }) => *held == owner,
                 None => false,
             };
             if owned {
@@ -952,6 +1053,35 @@ pub fn release_owned(owner: u32) -> Option<usize> {
         .lock()
         .as_mut()
         .map(|table| table.release_owned(owner))
+}
+
+/// The DCCP listening port a descriptor names, if it names one and the
+/// registry is up.
+///
+/// The trap path's way in for the accept's re-check: the re-check runs under
+/// the scheduler's lock, so it reads a value here rather than a handler, and
+/// the value is the port a retry would ask the kernel's table again.
+pub fn dccp_listener_port_for(descriptor: usize, caller: Option<u32>) -> Option<u16> {
+    REGISTRY
+        .lock()
+        .as_ref()?
+        .dccp_listener_port(descriptor, caller)
+}
+
+/// Accept the next DCCP Request at `port`, answering the descriptor it became.
+///
+/// The accept's whole, for the trap path's re-check and its first ask: the
+/// listener is found by port, the connection it answers is pushed into the
+/// kernel's table, and the descriptor the caller gets is the one the registry
+/// makes.  A port with nothing waiting is `usize::MAX`, which is the park's
+/// signal.
+pub fn accept_dccp(port: u16, owner: u32) -> abi::Result<usize> {
+    let mut registry = REGISTRY.lock();
+    let table = registry.as_mut().ok_or(abi::Error::NotFound)?;
+    match crate::net::dccp_accept(port)? {
+        Some(id) => table.insert_dccp_connection(id, owner),
+        None => Ok(usize::MAX),
+    }
 }
 
 /// The pipe end a descriptor names, if it names one and the registry is up.
