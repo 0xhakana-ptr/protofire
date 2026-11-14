@@ -53,10 +53,10 @@ fs::tmpfs               -   10
 init                  493    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 ipc                   344    9
 irq                   463   12
-kernel              22810  148 # fell from 32 in the change that moved the program's bytes into `arch`: the five tests that had decoded aarch64's words now live in `arch_aarch64` and `arch_x86_64`, where each machine's encoding is
+kernel              23220  149
 netdev                  137    3
 memory               2289   36
-net                  6569  112   # the connection table, the datagram queue and the two reply frames moved in from the kernel, and an address that carries its family: each is the wire's arithmetic rather than a boot's state, and twenty-three host tests run them where a boot could not
+net                  7442  126   # the connection table, the datagram queue, the reply frames, the address type and the reassembly cache: each is the wire's arithmetic rather than a boot's state, and thirty-seven host tests run them where a boot could not
 paging                779   13
 pci                  2596   44
 power                 324   12

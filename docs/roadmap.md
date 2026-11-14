@@ -55,7 +55,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **144,305 lines of Rust across 40 crates**, which is
+The tree is **145,603 lines of Rust across 40 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -436,16 +436,41 @@ behaviour" permits in the frozen range; `docs/fmts/syscall-abi.md` states the
 reading per call.  A second number per call would have spent
 experimental-range numbers to say something the flags word had room for.
 
+**Fragments are reassembled, and a closed port is told.**  Both were
+correctness gaps rather than missing features: a fragmented datagram used to be
+dropped piece by piece (IPv4 kept no pieces at all; IPv6 refused the fragment
+header), and a datagram for a port nothing owned vanished without the
+port-unreachable report its sender is owed.
+
+`net::reassembly::Cache` holds the pieces, bounded in every direction a sender
+controls — a payload ceiling, an entry count, an expiry on the caller's clock,
+and [RFC 5722]'s rule that an overlapping piece takes the whole datagram with
+it.  The boot proves it on every machine:
+
+```
+protofire: fragments reassembled 20 byte(s), intact
+```
+
+The ICMP error path is `net::icmp::write_destination_unreachable`, and its
+evidence is a host test rather than a boot line, because a report only goes to
+a sender that sent something and this stack's own senders are the loopback:
+the test builds the frame the kernel would send and reads the sender's own
+ports back out of the quote.  `deliver_udp` answers `Delivery::Unbound` now,
+which is the distinction the error needs — "nobody was waiting" and "nobody
+owns the port" used to be the same `Ok(0)`.
+
+[RFC 5722]: https://www.rfc-editor.org/rfc/rfc5722
+
 What is **not** here, and is its own step: a router advertisement actually
 configuring a global address on this boot (the code path is in
 `net/src/ndp.rs` and the interface holds the field, but no machine this tree
-boots on sends one); reassembly of a fragmented packet; and path-MTU
-discovery, so a peer that shrinks a path has no way to tell this stack.
+boots on sends one), and path-MTU discovery, so a peer that shrinks a path has
+no way to tell this stack.
 
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-144,305 across 40 crates.  The difference is not lost work — it is work the new
+145,603 across 40 crates.  The difference is not lost work — it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 

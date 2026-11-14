@@ -55,11 +55,21 @@
 //! keeps the table a caller hands it, and the kernel keeps what the machine
 //! knows.
 //!
+//! [`reassembly`] is the other place a peer's word costs memory: the pieces
+//! of a fragmented datagram, held until the last one arrives, bounded in every
+//! direction a sender controls — a fixed payload budget, a fixed entry count,
+//! an expiry on the caller's clock, and [RFC 5722]'s rule that an overlapping
+//! piece takes the whole datagram with it.  A piece that is *the same bytes*
+//! again is a retransmission and changes nothing, which is the distinction
+//! coverage alone cannot make.
+//!
+//! [RFC 5722]: https://www.rfc-editor.org/rfc/rfc5722
+//!
 //! ## What is not here yet
 //!
-//! Fragmentation and reassembly, path-MTU discovery, and the ICMP error
-//! messages a stack **sends** rather than parses.  Each is a documented
-//! refusal in the module it belongs to, with the reason beside it.
+//! Path-MTU discovery, and ICMP errors beyond the one a closed port produces.
+//! Both are documented refusals in the module they belong to, with the reason
+//! beside them.
 
 #![no_std]
 
@@ -73,6 +83,7 @@ pub mod icmpv6;
 pub mod ipv4;
 pub mod ipv6;
 pub mod ndp;
+pub mod reassembly;
 pub mod reply;
 pub mod tcp;
 pub mod tcp_table;

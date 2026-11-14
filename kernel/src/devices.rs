@@ -789,6 +789,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The reassembly: a datagram split the way a shrinking path splits one,
+    // delivered through the demux, and read back whole.  Every later
+    // datagram sizable enough to be split arrives through this path, and
+    // without it such a datagram is dropped in pieces.
+    if !crate::net::reassembly_probe() {
+        return false;
+    }
+
     // The IPv6 transports: a datagram and a stream to this machine's own
     // link-local address, both through the demux.  The exchange above proved
     // the IPv6 *answering* paths; this proves the two transports carry over

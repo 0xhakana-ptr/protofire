@@ -485,6 +485,11 @@ impl Machine {
                     "protofire: ipv6 udp received 10 byte(s) from this machine",
                     true,
                 ),
+                // And the reassembly: a datagram split the way a shrinking
+                // path splits one, put back together through the demux, and
+                // read whole.  Without it a fragment is a datagram dropped in
+                // pieces, which no line here shows.
+                ("protofire: fragments reassembled 20 byte(s), intact", true),
                 (
                     "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                     true,
@@ -1071,6 +1076,11 @@ impl Machine {
                         "protofire: ipv6 udp received 10 byte(s) from this machine",
                         true,
                     ),
+                    // And the reassembly: a datagram split the way a
+                    // shrinking path splits one, put back together through the
+                    // demux, and read whole.  Without it a fragment is a
+                    // datagram dropped in pieces, which no line here shows.
+                    ("protofire: fragments reassembled 20 byte(s), intact", true),
                     (
                         "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                         true,
@@ -1344,6 +1354,11 @@ impl Machine {
                     "protofire: ipv6 udp received 10 byte(s) from this machine",
                     true,
                 ),
+                // And the reassembly: a datagram split the way a shrinking
+                // path splits one, put back together through the demux, and
+                // read whole.  Without it a fragment is a datagram dropped in
+                // pieces, which no line here shows.
+                ("protofire: fragments reassembled 20 byte(s), intact", true),
                 (
                     "protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip",
                     true,

@@ -339,21 +339,34 @@ fn is_loopback(destination: net::address::Address) -> bool {
     }
 }
 
+/// What a delivery did, which is three different facts the caller acts on
+/// differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// A socket took it, and this many tasks were woken by it — zero when
+    /// nobody was parked on the socket, which is a fact and not a failure.
+    Queued(usize),
+    /// No socket owns the port, which is the one case a sender can be told
+    /// about: [RFC 792]'s port-unreachable names a port that does not exist,
+    /// and this is how a caller learns the port does not exist.
+    ///
+    /// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+    Unbound,
+}
+
 /// Deliver one datagram to the socket bound for it, and wake what waits.
 ///
-/// The source is the wire's answer to "who sent this", and the return is
-/// how many tasks the delivery woke — zero when nobody was parked on the
-/// socket, which is a fact and not a failure.  A datagram for a port
-/// nothing owns is dropped, because UDP promised nothing: the sender's
-/// answer for a silent port is the wire's port-unreachable, not an error
-/// from this call.
+/// The source is the wire's answer to "who sent this".  A datagram for a
+/// port nothing owns answers [`Delivery::Unbound`] rather than an error:
+/// delivering it is not this call's failure, and the answer is what a caller
+/// turns into the report the sender is owed.
 pub fn deliver_udp(
     destination: net::address::Address,
     destination_port: u16,
     source: net::address::Address,
     source_port: u16,
     bytes: &[u8],
-) -> Result<usize> {
+) -> Result<Delivery> {
     let socket = {
         let mut sockets = UDP_SOCKETS.lock();
         prune_sockets(&mut sockets);
@@ -364,7 +377,7 @@ pub fn deliver_udp(
     };
     let Some(socket) = socket else {
         let _ = destination;
-        return Ok(0);
+        return Ok(Delivery::Unbound);
     };
     socket.push(source, source_port, bytes)?;
 
@@ -391,7 +404,7 @@ pub fn deliver_udp(
     {
         let _ = destination_port;
     }
-    Ok(woken)
+    Ok(Delivery::Queued(woken))
 }
 
 /// Send one datagram out through the interface, to `destination`'s port.
@@ -553,18 +566,59 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
     }
     let at = netdev::ETHERNET_HEADER_LEN + packet.payload_at;
     let payload = &frame[at..at + packet.payload_len];
+
+    // A piece of a larger packet is held rather than read as the whole: the
+    // bytes at an offset are not a segment, and parsing them as one is how a
+    // stack answers with a truncated segment that looks complete.  The last
+    // piece completes the datagram, and what comes back is the payload as the
+    // sender wrote it — which then takes the same path an unfragmented
+    // packet's payload takes.
+    let whole;
+    let payload = if packet.is_fragment() {
+        let key = net::reassembly::Key {
+            family: 4,
+            source: net::address::Address::V4(packet.header.source),
+            destination: net::address::Address::V4(packet.header.destination),
+            identification: packet.identification as u32,
+            next_header: packet.header.protocol,
+        };
+        let piece = net::reassembly::Piece {
+            data: payload,
+            offset: packet.fragment_offset,
+            more: packet.more_fragments,
+        };
+        let outcome = FRAGMENTS.lock().accept(key, piece, fragment_now());
+        match outcome {
+            net::reassembly::Outcome::Complete(assembled) => {
+                whole = assembled;
+                &whole[..]
+            }
+            net::reassembly::Outcome::Collected => return,
+            net::reassembly::Outcome::Refused(_) => return,
+        }
+    } else {
+        payload
+    };
+
     if packet.header.protocol == net::ipv4::PROTOCOL_UDP
         && let Some(datagram) =
             net::udp::parse(payload, packet.header.source, packet.header.destination)
     {
         let data_at = net::udp::HEADER_LEN;
-        let _ = deliver_udp(
+        let data = &payload[data_at..data_at + datagram.payload_len];
+        let delivered = deliver_udp(
             net::address::Address::V4(packet.header.destination),
             datagram.destination_port,
             net::address::Address::V4(packet.header.source),
             datagram.source_port,
-            &payload[data_at..data_at + datagram.payload_len],
+            data,
         );
+        // A datagram for a port nothing owns is the one error this stack can
+        // be sure a sender can act on: the report says which port and quotes
+        // the datagram, and the sender's own call is what failed.
+        if matches!(delivered, Ok(Delivery::Unbound)) {
+            answer_port_unreachable(&packet, &payload[data_at..]);
+        }
     }
     if packet.header.protocol == net::ipv4::PROTOCOL_TCP && demux_tcp(packet, payload) {
         // The same wake a datagram delivery makes, from the same kind of
@@ -581,6 +635,108 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
         #[cfg(not(target_os = "none"))]
         let _ = woken;
     }
+}
+
+/// Tell a sender that the port its datagram named has nothing bound.
+///
+/// [RFC 792]'s message, and the only ICMP error this stack sends: a datagram
+/// for a port nothing owns is the case a sender provokes by dialling a port
+/// that is closed, and silence would leave it waiting.  The original's header
+/// and the first eight payload bytes are quoted back so the sender can match
+/// the report to its socket.
+///
+/// Nothing is sent for a datagram that was itself addressed to a group or to
+/// the broadcast address, which is [RFC 1122]'s rule: a report about a
+/// broadcast would be a report to everyone, and every one of them would be
+/// entitled to answer it.
+///
+/// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+/// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+fn answer_port_unreachable(packet: &net::ipv4::Packet, payload: &[u8]) {
+    let destination = packet.header.destination;
+    // A group or broadcast destination is not a socket's, so a report about
+    // one would go to everyone who could answer it.
+    if destination[0] & 0xF0 == 0xE0 || destination[3] == 0xFF {
+        return;
+    }
+    // The sender's own hardware address, which the ARP cache holds because
+    // this machine answered or asked it: a report with no address to send to
+    // is a report this stack cannot deliver.
+    let Some(sender_hardware) = peer_hardware_v4(packet.header.source) else {
+        return;
+    };
+    let (card, our_protocol, our_hardware) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return;
+        };
+        (
+            interface.card.clone(),
+            interface.protocol,
+            interface.hardware,
+        )
+    };
+
+    let frame =
+        port_unreachable_frame(packet, payload, our_protocol, our_hardware, sender_hardware);
+    let _ = card.submit_frame(&frame);
+}
+
+/// Build the port-unreachable report for a datagram, as the frame that carries
+/// it.
+///
+/// Apart from the send so a host test can read what it built: a report whose
+/// quote a sender cannot match is a report that changed nothing, and the only
+/// way to check the quote is to compare it against the datagram it is about.
+fn port_unreachable_frame(
+    packet: &net::ipv4::Packet,
+    payload: &[u8],
+    our_protocol: [u8; 4],
+    our_hardware: [u8; 6],
+    sender_hardware: [u8; 6],
+) -> Vec<u8> {
+    let mut original_header = [0_u8; net::ipv4::HEADER_LEN];
+    original_header[0] = 0x45;
+    original_header[9] = packet.header.protocol;
+    original_header[12..16].copy_from_slice(&packet.header.source);
+    original_header[16..20].copy_from_slice(&packet.header.destination);
+    let message_len = net::icmp::HEADER_LEN + net::ipv4::HEADER_LEN + net::icmp::QUOTED_PAYLOAD;
+    let mut message = alloc::vec![0_u8; message_len];
+    net::icmp::write_destination_unreachable(
+        &mut message,
+        net::icmp::PORT_UNREACHABLE,
+        &original_header,
+        payload,
+    );
+
+    // The report goes back to the sender, from this machine: the addresses
+    // are the original packet's, swapped.
+    let frame_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + message_len;
+    let mut frame = alloc::vec![0_u8; frame_len];
+    net::ethernet::write_header(
+        &mut frame,
+        sender_hardware,
+        our_hardware,
+        net::ethernet::ETHERTYPE_IPV4,
+    );
+    net::ipv4::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        our_protocol,
+        packet.header.source,
+        net::ipv4::PROTOCOL_ICMP,
+        message_len,
+    );
+    frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..].copy_from_slice(&message);
+    frame
+}
+
+/// The hardware address a peer's IPv4 address resolves to, if the ARP cache
+/// holds one.
+fn peer_hardware_v4(address: [u8; 4]) -> Option<[u8; 6]> {
+    let mut interface = INTERFACE.lock();
+    interface
+        .as_mut()
+        .and_then(|interface| interface.arp.hardware_for(address))
 }
 
 /// What one received IPv6 packet means, and where it goes.
@@ -623,18 +779,52 @@ fn demux_ipv6(frame: &[u8]) {
     let Some(next) = net::ipv6::walk(frame, &packet) else {
         return;
     };
-    let (next_header, at, len) = match next {
+    // A piece of a larger packet is held rather than read as the whole: the
+    // bytes at an offset are not a segment, and parsing them as one is how a
+    // stack answers with a truncated segment that looks complete.  The piece
+    // that says no more follow, plus every byte before it, is the datagram.
+    let assembled: alloc::vec::Vec<u8>;
+    let (next_header, payload) = match next {
         net::ipv6::Next::Payload {
             next_header,
             at,
             len,
-        } => (next_header, at, len),
-        // A fragment: this stack does not reassemble, and reading a piece as
-        // the whole is the wrong answer this refusal avoids.
-        net::ipv6::Next::Fragment { .. } => return,
+        } => (next_header, &frame[at..at + len]),
+        net::ipv6::Next::Fragment {
+            next_header,
+            offset,
+            more,
+            identification,
+            at,
+            len,
+        } => {
+            let key = net::reassembly::Key {
+                family: 6,
+                source: net::address::Address::V6(packet.header.source),
+                destination: net::address::Address::V6(packet.header.destination),
+                identification,
+                next_header,
+            };
+            let piece = net::reassembly::Piece {
+                data: &frame[at..at + len],
+                offset: offset as usize,
+                more,
+            };
+            match FRAGMENTS.lock().accept(key, piece, fragment_now()) {
+                net::reassembly::Outcome::Complete(bytes) => {
+                    // The transport header is at the front of the assembled
+                    // payload, which is exactly what a whole packet's payload
+                    // would be.  The bytes move into a binding that outlives
+                    // this arm, because the match's own binding would not.
+                    assembled = bytes;
+                    (next_header, &assembled[..])
+                }
+                net::reassembly::Outcome::Collected => return,
+                net::reassembly::Outcome::Refused(_) => return,
+            }
+        }
     };
 
-    let payload = &frame[at..at + len];
     match next_header {
         net::ipv6::NEXT_ICMPV6 => handle_icmpv6(&packet, payload),
         net::ipv6::NEXT_UDP => {
@@ -1051,6 +1241,32 @@ fn write_ipv6(address: net::ipv6::Addr) {
 /// re-entrant — a segment delivered to a peer's state machine is answered
 /// inside the same call — and a per-connection lock is a deadlock the first
 /// full-duplex exchange would find.
+/// The pieces of fragmented datagrams this machine is holding, and the clock
+/// they expire on.
+///
+/// The cache is `net`'s — the bounds, the overlap rule and the completion
+/// test are the wire's — and what is here is the lock and the tick it is
+/// given.  A piece is memory a peer spends by sending, which is why the
+/// bound lives beside the arithmetic rather than at this call site.
+static FRAGMENTS: Mutex<net::reassembly::Cache> = Mutex::new(net::reassembly::Cache::new());
+
+/// The clock the fragment cache expires against.
+///
+/// The timer's own count, which is the only clock a boot has that moves
+/// without a task running.  A cache with no clock could not expire anything,
+/// and a peer that never sent its last piece would hold its entry for the
+/// rest of the boot.
+fn fragment_now() -> u64 {
+    #[cfg(target_os = "none")]
+    {
+        crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        0
+    }
+}
+
 static TCP: Mutex<net::tcp_table::Table> = Mutex::new(net::tcp_table::Table::new());
 
 /// Open a listening port, answering the listener's id.
@@ -1516,6 +1732,101 @@ fn demux_tcp6(packet: &net::ipv6::Packet, payload: &[u8]) -> bool {
     noteworthy
 }
 
+/// The boot's reassembly exchange: a datagram split into pieces, delivered to
+/// this machine's own socket, and the payload read back whole.
+///
+/// The split is the one a shrinking path forces — the first piece carries the
+/// transport header and some data with more to follow, the second carries the
+/// rest and says it is the last — and the delivery goes through the same
+/// `demux` a frame from the wire takes, so the reassembly under test is the
+/// one a real fragment meets.  What the line names is the payload's length and
+/// its first and last byte, which only a correctly reassembled datagram could
+/// produce.
+#[cfg(target_os = "none")]
+pub fn reassembly_probe() -> bool {
+    const PORT: u16 = 9200;
+    const PAYLOAD: &[u8] = b"protofire-fragmented";
+    // Eight-byte alignment, because the wire's offset field counts in
+    // eight-octet units and a sender that ignored that would be sending a
+    // datagram no receiver could place.
+    const SPLIT: usize = 16;
+
+    let protocol = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        interface.protocol
+    };
+    let socket = match bind_udp(PORT) {
+        Ok(socket) => socket,
+        Err(_) => {
+            arch::serial::write_str("protofire: fragments could not bind a port\n");
+            return false;
+        }
+    };
+
+    // Each piece is a UDP datagram's bytes at an offset, framed the way a
+    // router that split the original would have framed them.
+    let udp_len = net::udp::datagram_len(PAYLOAD.len());
+    let mut datagram = alloc::vec![0_u8; udp_len];
+    net::udp::write_datagram(&mut datagram, protocol, protocol, 9300, PORT, PAYLOAD);
+    let pieces: [(usize, usize, bool); 2] = [(0, SPLIT, true), (SPLIT, udp_len - SPLIT, false)];
+    for (offset, length, more) in pieces {
+        let mut frame =
+            alloc::vec![0_u8; netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + length];
+        net::ethernet::write_header(
+            &mut frame,
+            [0x02; 6],
+            [0x02; 6],
+            net::ethernet::ETHERTYPE_IPV4,
+        );
+        net::ipv4::write_header(
+            &mut frame[netdev::ETHERNET_HEADER_LEN..],
+            protocol,
+            protocol,
+            net::ipv4::PROTOCOL_UDP,
+            length,
+        );
+        // The fragment fields are the point, so they are written here rather
+        // than by `write_header`: an unfragmented header is exactly what a
+        // reassembly test must not send.
+        let identification: u16 = 0x51A7;
+        let flags = if more { 0x2000u16 } else { 0 };
+        net::ethernet::put_u16(&mut frame[netdev::ETHERNET_HEADER_LEN..], 4, identification);
+        net::ethernet::put_u16(
+            &mut frame[netdev::ETHERNET_HEADER_LEN..],
+            6,
+            flags | (offset as u16 / 8),
+        );
+        // The IPv4 checksum covers the header, and these two fields just
+        // changed inside it.
+        let header = &mut frame
+            [netdev::ETHERNET_HEADER_LEN..netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN];
+        net::ethernet::put_u16(header, 10, 0);
+        let sum = net::ipv4::checksum(header);
+        net::ethernet::put_u16(header, 10, sum);
+        frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..]
+            .copy_from_slice(&datagram[offset..offset + length]);
+        demux(&frame, protocol);
+    }
+
+    let mut buffer = [0_u8; 64];
+    let count = match socket.try_recv(&mut buffer) {
+        Ok(Some((_, _, count))) => count,
+        _ => {
+            arch::serial::write_str("protofire: fragments did not reassemble\n");
+            return false;
+        }
+    };
+    let intact = count == PAYLOAD.len() && buffer[..count] == *PAYLOAD;
+    arch::serial::write_str("protofire: fragments reassembled ");
+    arch::serial::write_u32(count as u32);
+    arch::serial::write_str(" byte(s), ");
+    arch::serial::write_str(if intact { "intact\n" } else { "MISMATCH\n" });
+    intact
+}
+
 /// The boot's IPv6 exchange: a datagram and a stream, both to this machine's
 /// own link-local address, both through the receive path the wire uses.
 ///
@@ -1780,6 +2091,10 @@ mod tests {
 
     /// Each test binds its own ports, because the port table is one boot's
     /// state and the tests run beside each other.
+    /// The two protocol addresses these tests speak between.
+    const OUR_PROTOCOL: [u8; 4] = [10, 9, 9, 15];
+    const PEER_PROTOCOL: [u8; 4] = [10, 9, 9, 2];
+
     const PORT_A: u16 = 40001;
     const PORT_B: u16 = 40002;
     const PORT_C: u16 = 40003;
@@ -1835,7 +2150,11 @@ mod tests {
             b"nobody",
         )
         .expect("a delivery");
-        assert_eq!(woken, 0, "and nobody was waiting");
+        assert_eq!(
+            woken,
+            super::Delivery::Unbound,
+            "and no socket owned the port"
+        );
         let socket = bind_udp(PORT_E).expect("a bind after the drop");
         let mut buffer = [0_u8; 16];
         assert_eq!(socket.try_recv(&mut buffer), Ok(None), "nothing arrived");
@@ -2050,6 +2369,88 @@ mod tests {
         // The stream never touched the card, and the wire datagram's frame
         // is still the only thing the card carries.
         assert_eq!(card.sent.lock().len(), 1, "loopback is not the wire");
+    }
+
+    /// A datagram for a port nothing owns is answered with a report that
+    /// quotes the datagram, and the sender can read its own ports back out of
+    /// the quote.
+    ///
+    /// This is the assertion a boot cannot make: the boot sees no report,
+    /// because a report only goes to a sender that sent something.  What the
+    /// test can do is build the report the kernel would send and check the
+    /// bytes a sender acts on — its own source port and destination port, at
+    /// the offsets its own header layout puts them.
+    #[test]
+    fn a_port_unreachable_report_quotes_the_datagram_it_answers() {
+        // A datagram from a peer to a port on this machine, with a UDP header
+        // whose ports the test can read back.
+        const SOURCE_PORT: u16 = 9300;
+        const DESTINATION_PORT: u16 = 9400;
+        const PAYLOAD: &[u8] = b"nobody";
+        let udp_len = net::udp::datagram_len(PAYLOAD.len());
+        let mut datagram = alloc::vec![0_u8; udp_len];
+        net::udp::write_datagram(
+            &mut datagram,
+            PEER_PROTOCOL,
+            OUR_PROTOCOL,
+            SOURCE_PORT,
+            DESTINATION_PORT,
+            PAYLOAD,
+        );
+
+        let mut header = [0_u8; net::ipv4::HEADER_LEN];
+        header[0] = 0x45;
+        header[2..4].copy_from_slice(&((net::ipv4::HEADER_LEN + udp_len) as u16).to_be_bytes());
+        header[8] = 64;
+        header[9] = net::ipv4::PROTOCOL_UDP;
+        header[12..16].copy_from_slice(&PEER_PROTOCOL);
+        header[16..20].copy_from_slice(&OUR_PROTOCOL);
+        let sum = net::ipv4::checksum(&header);
+        header[10..12].copy_from_slice(&sum.to_be_bytes());
+        // `parse` cross-checks the total length against the bytes it was
+        // given, so the header has to arrive with the payload it claims.
+        let mut wire = alloc::vec![0_u8; net::ipv4::HEADER_LEN + udp_len];
+        wire[..net::ipv4::HEADER_LEN].copy_from_slice(&header);
+        wire[net::ipv4::HEADER_LEN..].copy_from_slice(&datagram);
+        let packet = net::ipv4::parse(&wire).expect("the packet a peer wrote");
+
+        let frame =
+            super::port_unreachable_frame(&packet, &datagram, OUR_PROTOCOL, [0x02; 6], [0x54; 6]);
+
+        // The frame is addressed to the sender, from this machine.
+        assert_eq!(&frame[0..6], &[0x54; 6], "to the sender's own address");
+        assert_eq!(&frame[6..12], &[0x02; 6]);
+        let answer = net::ipv4::parse(&frame[netdev::ETHERNET_HEADER_LEN..])
+            .expect("the report's own header");
+        assert_eq!(answer.header.protocol, net::ipv4::PROTOCOL_ICMP);
+        assert_eq!(answer.header.source, OUR_PROTOCOL, "from this machine");
+        assert_eq!(answer.header.destination, PEER_PROTOCOL, "to the sender");
+
+        // The message is a port-unreachable, verifies, and quotes the
+        // datagram's ports where the sender looks for them: eight fixed
+        // bytes, then the quoted twenty-byte header, then the UDP header.
+        let message = &frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..];
+        let error = net::icmp::parse_error(message).expect("an error message");
+        assert_eq!(error.kind, net::icmp::DESTINATION_UNREACHABLE);
+        assert_eq!(error.code, net::icmp::PORT_UNREACHABLE);
+        let quote = &message[error.quoted_at..error.quoted_at + error.quoted_len];
+        assert_eq!(quote[0] >> 4, 4, "the quoted packet is IPv4");
+        assert_eq!(quote[9], net::ipv4::PROTOCOL_UDP);
+        assert_eq!(
+            &quote[12..16],
+            &PEER_PROTOCOL,
+            "the sender's address came back"
+        );
+        assert_eq!(
+            &quote[20..22],
+            &SOURCE_PORT.to_be_bytes(),
+            "its source port, where its own UDP header puts it"
+        );
+        assert_eq!(
+            &quote[22..24],
+            &DESTINATION_PORT.to_be_bytes(),
+            "and the port nothing owned"
+        );
     }
 
     /// A frame the card received is a datagram in a socket's queue after the

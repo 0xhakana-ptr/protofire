@@ -24,7 +24,7 @@ The census, re-taken at the end of this session:
   | sed 's/.*:://' | sort -u | wc -l    # 43 served
 grep -c 'table.register' kernel/src/boot.rs   # 25 in the registry
 grep -cE '^\s{4}[A-Z][A-Za-z0-9]* = [0-9]+,' abi/src/number.rs   # 195 in the enum
-find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l  # 144,305 lines
+find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l  # 145,603 lines
 grep -cE '^[0-9]+ ' scripts/layering.txt     # 40 crates
 ```
 
@@ -72,7 +72,7 @@ because a filesystem would be wrong to come first.
   grows its first module.
 - **The number that sizes everything after it.**  The previous kernel served
   **194 of 195** syscall numbers; this one serves **43**.  Its nine module trees
-  were 301,718 lines against this tree's 144,305.
+  were 301,718 lines against this tree's 145,603.
 - **`SetLength` (20), `StatFd` (30), `ReadDirFd` (31)** — three numbers the
   filesystem already implements and the ABI has not been given.  They are the
   first item of Level 8 and the cheapest row on the whole road.

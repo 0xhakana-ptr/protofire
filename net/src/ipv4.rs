@@ -58,9 +58,14 @@ pub const PROTOCOL_UDP: u8 = 17;
 
 /// The don't-fragment flag, set on every packet this stack sends.
 ///
-/// A packet this stack sends fits one frame; asking a router to split one
-/// would produce pieces nothing here reassembles.
-const FLAGS_DONT_FRAGMENT: u16 = 0x4000;
+/// A packet this stack sends fits one frame, so nothing it emits ever needs
+/// splitting; the bit is still the right one to set, because a path router
+/// that had to split such a packet would be splitting something this stack
+/// says it does not want split.
+pub const FLAGS_DONT_FRAGMENT: u16 = 0x4000;
+
+/// The more-fragments flag: this packet is a piece, and more follow.
+pub const FLAGS_MORE_FRAGMENTS: u16 = 0x2000;
 
 /// The time-to-live this stack sends with.
 ///
@@ -142,6 +147,27 @@ pub struct Packet {
     /// How many payload bytes the sender claimed.  The frame may hold more —
     /// Ethernet's padding — and the claim is the one to trust.
     pub payload_len: usize,
+    /// The number the sender chose to tell this packet's pieces apart, which
+    /// only an unfragmented packet and a fragment's first piece agree on.
+    pub identification: u16,
+    /// Whether more pieces of this datagram follow.
+    pub more_fragments: bool,
+    /// Where this piece's payload starts in the whole datagram's payload, in
+    /// bytes.  Zero for an unfragmented packet and for a datagram's first
+    /// piece.
+    pub fragment_offset: usize,
+}
+
+impl Packet {
+    /// Whether this packet is one piece of a larger one.
+    ///
+    /// The two fields that decide it are the fragment header's: a packet with
+    /// more pieces following, or with a piece that does not start at zero, is
+    /// a piece.  A packet with neither is the whole of what it claims — the
+    /// common case, and the one every unfragmented sender produces.
+    pub fn is_fragment(&self) -> bool {
+        self.more_fragments || self.fragment_offset != 0
+    }
 }
 
 /// Write the twenty bytes that carry `payload_len` bytes of `protocol` from
@@ -215,6 +241,10 @@ pub fn parse(frame: &[u8]) -> Option<Packet> {
     let mut destination = [0_u8; 4];
     destination.copy_from_slice(&frame[16..20]);
 
+    // The fragment fields: bit 0x2000 is "more fragments", the low thirteen
+    // bits are the offset in eight-byte units, and the offset is multiplied
+    // here so every caller sees bytes.
+    let flags_and_offset = get_u16(frame, 6);
     Some(Packet {
         header: Header {
             source,
@@ -223,6 +253,9 @@ pub fn parse(frame: &[u8]) -> Option<Packet> {
         },
         payload_at: header_len,
         payload_len: total_len - header_len,
+        identification: get_u16(frame, 4),
+        more_fragments: flags_and_offset & FLAGS_MORE_FRAGMENTS != 0,
+        fragment_offset: (flags_and_offset as usize & 0x1FFF) * 8,
     })
 }
 

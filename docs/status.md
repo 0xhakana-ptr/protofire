@@ -423,6 +423,48 @@ echoes them and closes, all over IPv6.  The sender the datagram answers with
 is checked to be this machine, so a demux that routed by the wrong address
 would print the other line and fail.
 
+**A fragmented datagram is put back together.**  Both families' receive paths
+used to read a piece as the whole or drop it: IPv4 had no reassembly, and IPv6
+refused the fragment header outright.  `net::reassembly::Cache` holds the
+pieces now — bounded in every direction a sender controls, and asserted on
+every machine:
+
+```
+protofire: fragments reassembled 20 byte(s), intact
+```
+
+The boot's own exchange splits one UDP datagram at an eight-byte-aligned
+offset, sends both pieces through the demux the wire uses, and reads the
+payload back out of the socket.  The line names the payload's length and that
+it is intact, which only a correct reassembly produces.
+
+Two bounds are worth naming because a peer chooses them.  A payload past
+sixty-five thousand five hundred and fifteen less a header is refused before
+anything is held, and a piece that covers bytes another piece already covered
+**and disagrees with them** takes the whole datagram with it — [RFC 5722]'s
+rule, and the reason the cache keeps the bytes rather than a bitmap of what
+arrived: coverage alone cannot tell a retransmission from an attack, and the
+first version of this code could not either until a test failed.
+
+[RFC 5722]: https://www.rfc-editor.org/rfc/rfc5722
+
+**A closed port is now told, not silent.**  `deliver_udp` answers
+`Delivery::Unbound` when no socket owns the port — a fact it could not report
+before, because "nobody was waiting" and "nobody owns it" were the same
+`Ok(0)`.  The demux turns that into [RFC 792]'s port-unreachable report: the
+sender's own header and the first eight payload bytes quoted back, so the
+sender can match the report to its socket.  Nothing is sent about a datagram
+addressed to a group or to the broadcast address, which is [RFC 1122]'s rule.
+
+A boot cannot check the report's contents — a report only goes to a sender
+that sent something, and this stack's own senders are the loopback — so the
+assertion is a host test that builds the frame `answer_port_unreachable` would
+send and reads the sender's source and destination ports back out of the
+quote, at the offsets the sender's own header layout puts them.
+
+[RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+[RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+
 **Crossing the syscall boundary cost no numbers.**  `SendToUdp` (59),
 `ConnectTcp` (38) and `RecvFromUdp` (60) all sit below the frozen boundary, and
 all three had a reserved word that must be zero.  That word is now a flags

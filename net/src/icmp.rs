@@ -21,13 +21,21 @@
 //! being asked to, which is what makes the exchange a real one on every
 //! machine this tree boots.
 //!
-//! ## What is not here yet
+//! ## The errors, and why a stack must send them
 //!
-//! The error messages a stack is asked about — destination unreachable, time
-//! exceeded — and the answer to a stranger's ping.  The first arrives with the
-//! UDP layer, which is the protocol that makes an unbound port a thing to
-//! report; the second needs a demux that answers, which is the socket layer's
-//! shape and not this module's.
+//! A datagram for a port nothing owns is the one error a sender is guaranteed
+//! to be able to provoke, and a stack that parses port-unreachable but never
+//! sends it is a stack whose peers wait forever.
+//! [`write_destination_unreachable`] is that message: the sender's own header
+//! and the first eight bytes of its payload, quoted back, which is what lets
+//! the sender match the report to the datagram it sent.
+//!
+//! [RFC 1812] is the rule for how much to quote — as much of the original
+//! packet as fits without making the message larger than the smallest MTU a
+//! path may have — and it is here rather than at the caller because the
+//! arithmetic is the message's own layout.
+//!
+//! [RFC 1812]: https://www.rfc-editor.org/rfc/rfc1812
 
 use crate::ethernet::get_u16;
 use crate::ethernet::put_u16;
@@ -74,6 +82,95 @@ pub const fn echo_len(data_len: usize) -> usize {
 /// before the sum and written after it.
 pub fn write_echo_request(into: &mut [u8], identifier: u16, sequence: u16, data: &[u8]) {
     write_echo(into, ECHO_REQUEST, identifier, sequence, data);
+}
+
+/// How many bytes of the original datagram an error quotes back.
+///
+/// [RFC 792] requires the internet header plus the first sixty-four bits of
+/// the original datagram's payload, which is what lets the sender match the
+/// report to a socket.  Eight is also all a UDP or TCP header's first fields
+/// need — the ports — which is the part a caller acts on.
+///
+/// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+pub const QUOTED_PAYLOAD: usize = 8;
+
+/// The length an error message has when it quotes `payload_quoted` bytes of
+/// the original payload after `header_quoted` bytes of its header.
+pub const fn error_len(header_quoted: usize, payload_quoted: usize) -> usize {
+    HEADER_LEN + header_quoted + payload_quoted
+}
+
+/// Write a destination-unreachable message, quoting the datagram that caused
+/// it.
+///
+/// `into` is the message's bytes and must be at least
+/// `error_len(header_quoted, payload_quoted)`.  The writer fills the eight
+/// fixed bytes, then the quoted header, then the quoted payload — which is
+/// [RFC 792]'s layout, and the order a sender's own header has to come back
+/// in for it to recognise its datagram.
+///
+/// The four bytes an error leaves unused between the checksum and the quote
+/// are written as zero: the RFC says they must be, and a peer that compared
+/// them would otherwise be comparing whatever the buffer held.
+///
+/// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+pub fn write_destination_unreachable(
+    into: &mut [u8],
+    code: u8,
+    original_header: &[u8],
+    original_payload: &[u8],
+) {
+    let quoted_payload = original_payload.len().min(QUOTED_PAYLOAD);
+    let total = error_len(original_header.len(), quoted_payload);
+    if into.len() < total {
+        return;
+    }
+    into[0] = DESTINATION_UNREACHABLE;
+    into[1] = code;
+    put_u16(into, 2, 0);
+    // The unused word: zero, because the RFC says so and a buffer is not.
+    put_u16(into, 4, 0);
+    put_u16(into, 6, 0);
+    into[HEADER_LEN..HEADER_LEN + original_header.len()].copy_from_slice(original_header);
+    let payload_at = HEADER_LEN + original_header.len();
+    into[payload_at..payload_at + quoted_payload]
+        .copy_from_slice(&original_payload[..quoted_payload]);
+    put_u16(into, 2, checksum(&into[..total]));
+}
+
+/// An error message, as this stack reads one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Error {
+    /// The message's `type`: [`DESTINATION_UNREACHABLE`] for the one this
+    /// stack acts on.
+    pub kind: u8,
+    /// The `code` that says why, such as [`PORT_UNREACHABLE`].
+    pub code: u8,
+    /// Where the quoted original packet begins.
+    pub quoted_at: usize,
+    /// How many bytes of the original this message carries.
+    pub quoted_len: usize,
+}
+
+/// Read an error message, or `None` when the bytes are not one this stack
+/// can interpret.
+///
+/// The checksum is verified: an error about a datagram that is itself corrupt
+/// is not an error a sender can act on, and a stack that acted on one would
+/// close a connection because a stranger said so.
+pub fn parse_error(message: &[u8]) -> Option<Error> {
+    if message.len() < HEADER_LEN {
+        return None;
+    }
+    if checksum(message) != 0 {
+        return None;
+    }
+    Some(Error {
+        kind: message[0],
+        code: message[1],
+        quoted_at: ORIGINAL_DATAGRAM_AT,
+        quoted_len: message.len() - ORIGINAL_DATAGRAM_AT,
+    })
 }
 
 /// The writer both echo kinds share, so a reply this stack answers with is
@@ -254,4 +351,93 @@ mod tests {
     /// The request's own constants, spelled once for the two tests above.
     const REQUEST_ID: u16 = 1;
     const REQUEST_SEQUENCE: u16 = 1;
+
+    /// An error message quotes the original's header and the first eight
+    /// bytes of its payload, and a sender can read its own ports back out of
+    /// the quote — which is the whole reason the RFC requires it.
+    #[test]
+    fn an_error_quotes_the_datagram_it_is_about() {
+        // A minimal original: a twenty-byte IPv4 header and a UDP header.
+        let mut original_header = [0_u8; 20];
+        original_header[0] = 0x45;
+        original_header[9] = crate::ipv4::PROTOCOL_UDP;
+        original_header[12..16].copy_from_slice(&[10, 0, 2, 15]);
+        original_header[16..20].copy_from_slice(&[10, 0, 2, 2]);
+        let mut original_payload = [0_u8; 12];
+        original_payload[0..2].copy_from_slice(&40000u16.to_be_bytes());
+        original_payload[2..4].copy_from_slice(&9u16.to_be_bytes());
+
+        let total = super::error_len(original_header.len(), super::QUOTED_PAYLOAD);
+        let mut message = [0_u8; 64];
+        super::write_destination_unreachable(
+            &mut message,
+            super::PORT_UNREACHABLE,
+            &original_header,
+            &original_payload,
+        );
+
+        // The message verifies: its checksum covers the quote too.
+        assert_eq!(crate::ipv4::checksum(&message[..total]), 0);
+        let parsed = super::parse_error(&message[..total]).expect("an error");
+        assert_eq!(parsed.kind, super::DESTINATION_UNREACHABLE);
+        assert_eq!(parsed.code, super::PORT_UNREACHABLE);
+        assert_eq!(parsed.quoted_len, original_header.len() + 8);
+
+        // The ports are readable at the offset a sender knows: eight bytes of
+        // quoted IP header, then the UDP header's first field.
+        let quote = &message[parsed.quoted_at..parsed.quoted_at + parsed.quoted_len];
+        assert_eq!(&quote[..20], &original_header, "the header came back");
+        assert_eq!(&quote[20..22], &40000u16.to_be_bytes(), "the source port");
+        assert_eq!(&quote[22..24], &9u16.to_be_bytes(), "the destination port");
+
+        // The unused word is zero, which is what a peer comparing it needs.
+        assert_eq!(&message[4..8], &[0, 0, 0, 0]);
+    }
+
+    /// A quote is truncated to what the RFC requires and no more, so an
+    /// error about a large datagram stays small.
+    #[test]
+    fn an_error_quotes_only_eight_payload_bytes() {
+        let header = [0_u8; 20];
+        let payload = [0xAB_u8; 1500];
+        let mut message = [0_u8; 1600];
+        super::write_destination_unreachable(
+            &mut message,
+            super::PORT_UNREACHABLE,
+            &header,
+            &payload,
+        );
+        let total = super::error_len(header.len(), super::QUOTED_PAYLOAD);
+        assert_eq!(total, 8 + 20 + 8);
+        let parsed = super::parse_error(&message[..total]).expect("an error");
+        assert_eq!(parsed.quoted_len, 28);
+    }
+
+    /// A corrupted error message is refused: a stack that acted on one would
+    /// close a connection because a stranger said so.
+    #[test]
+    fn a_corrupted_error_is_refused() {
+        let header = [0_u8; 20];
+        let payload = [0x01_u8; 8];
+        let mut message = [0_u8; 40];
+        super::write_destination_unreachable(
+            &mut message,
+            super::PORT_UNREACHABLE,
+            &header,
+            &payload,
+        );
+        let total = super::error_len(header.len(), 8);
+        assert!(super::parse_error(&message[..total]).is_some());
+
+        let mut corrupt = message;
+        corrupt[total - 1] ^= 0xFF;
+        assert!(
+            super::parse_error(&corrupt[..total]).is_none(),
+            "a flipped quote byte fails the checksum"
+        );
+        assert!(
+            super::parse_error(&message[..HEADER_LEN - 1]).is_none(),
+            "short"
+        );
+    }
 }
