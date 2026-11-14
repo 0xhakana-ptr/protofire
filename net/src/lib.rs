@@ -24,12 +24,23 @@
 //! parsers and no lock anywhere — which is what lets every one of them be a
 //! host test without a card.
 //!
-//! [`tcp_table`] is the one module that holds state, and it holds it as a
-//! **value** a caller owns rather than as a `static`: which streams exist, the
-//! port a listener reserved, the queue a finished handshake waits in, and the
-//! counters that name them.  Nothing there takes a lock either — how a table
-//! is shared is the caller's decision about its own concurrency — which is why
-//! its arithmetic is a host test too.
+//! Two modules hold state rather than reading a byte slice, and both hold it
+//! as a **value** a caller owns rather than as a `static`: [`tcp_table`] is
+//! which streams exist, the port a listener reserved, the queue a finished
+//! handshake waits in, and the counters that name them; [`udp_socket`] is one
+//! bound port's queue, its bound, and the rule that a too-small receive is
+//! refused with the datagram kept.  Neither takes a lock — how a value is
+//! shared is the caller's decision about its own concurrency — which is why
+//! their arithmetic is a host test too.
+//!
+//! [`reply`] is the other direction from the parsers: it **writes** the two
+//! frames a host sends on its own — an echo reply and a neighbour
+//! advertisement — plus the request and solicitation a boot's probe sends to
+//! exercise them.  It is here because a reply is three headers stacked, and a
+//! kernel composing one would be a kernel that knew where an ICMPv6 header
+//! begins inside a frame.  Its checksums are verified in its own tests against
+//! the ends the frames name, because that is the class of mistake a boot can
+//! only find by failing.
 //!
 //! The transports are the same code for both families: [`udp::write_datagram6`]
 //! and [`tcp::write_segment6`] differ from their IPv4 twins only in the
@@ -61,6 +72,8 @@ pub mod icmpv6;
 pub mod ipv4;
 pub mod ipv6;
 pub mod ndp;
+pub mod reply;
 pub mod tcp;
 pub mod tcp_table;
 pub mod udp;
+pub mod udp_socket;

@@ -381,8 +381,25 @@ a caller had no way to answer a client whose handshake it had just accepted.
 The function answers the reply now, which is the same shape every other move
 in that crate has — compute a value, let the caller decide its wire.
 
-`kernel/src/net.rs` is 138 lines smaller for it, and the crate that grew is
-the one a host can test.
+Two more pieces followed it, by the same test: does it need a card, a
+scheduler or a lock?
+
+| moved | to | why it was not the kernel's |
+|---|---|---|
+| a datagram socket's queue | `net::udp_socket::Queue` | the ordering, the `QUEUE_LIMIT`, and the rule that a too-small buffer is refused with the datagram **kept** are the wire's; only the `Arc`, the `Weak` port entry and the wake stayed |
+| the echo reply, the advertisement, the echo request and the solicitation | `net::reply` | they are three headers stacked, and composing them in the kernel meant the kernel knew where an ICMPv6 header begins inside a frame |
+
+The second is not tidiness.  A neighbour advertisement's checksum covers a
+pseudo-header built from the addresses the answer is sent from and to, and
+the first IPv6 round had already produced one wrong checksum — eight bytes of
+an option the message did not contain, counted into the length.  Four host
+tests now compose each frame and **verify it against the ends it names**, and
+one asserts the solicitation's length difference is exactly the option's
+eight bytes, which is the defect that round found.  A boot could only ever
+learn that by failing.
+
+`kernel/src/net.rs` is 196 lines smaller across the three moves, and every
+line that left is arithmetic a host can now run.
 
 **Services — built, and deliberately parked.**  A table from a name to a
 service, installed during boot and frozen before anything looks one up; a caller

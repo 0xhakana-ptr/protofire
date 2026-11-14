@@ -7,10 +7,12 @@
 //!
 //! The `net` crate computes what a frame means: it parses a header, builds a
 //! request, checks a sum, and every one of its functions is a pure call over a
-//! byte slice.  The one piece of state it does hold —
-//! [`net::tcp_table::Table`], the streams a machine owns — it holds as a
-//! **value** its caller owns, with no lock and no `static`, which is what lets
-//! that arithmetic be a host test as well.
+//! byte slice.  The state it does hold — [`net::tcp_table::Table`], the streams
+//! a machine owns, and [`net::udp_socket::Queue`], what arrived for one bound
+//! port — it holds as **values** its caller owns, with no lock and no
+//! `static`, which is what lets that arithmetic be a host test as well.  So
+//! does the writing of a reply frame: [`net::reply`] composes one from
+//! addresses, and this file decides **whose** addresses and when.
 //!
 //! This file holds everything `net` deliberately does not: **which** address
 //! this machine answers for, **which** neighbours the wire has answered about,
@@ -76,12 +78,13 @@ use abi::network::NetworkStatusRecord;
 /// and once on the wire.
 pub const MAX_DATAGRAM_BYTES: usize = 1472;
 
-/// How many datagrams one socket's queue holds.
+/// How many datagrams one socket's queue holds, from the crate that owns the
+/// rule.
 ///
-/// A queue a sender could grow is a queue a sender could fill, and the
-/// answer to a full queue is the same one the wire gives a full card:
-/// `Busy`, which a sender can act on.
-const QUEUE_LIMIT: usize = 16;
+/// Re-exported rather than restated: a queue a sender could grow is a queue a
+/// sender could fill, and the bound and the refusal for it are one decision
+/// that `net::udp_socket` makes.
+pub use net::udp_socket::QUEUE_LIMIT;
 
 /// An interface: the card the boot drives, the addresses it answers for,
 /// the ARP cache its wire exchanges filled, and the IPv6 state beside them.
@@ -224,23 +227,20 @@ pub fn arp_learn(protocol: [u8; 4], hardware: [u8; 6]) {
     }
 }
 
-/// A datagram that arrived for a socket, held until the socket's caller
-/// takes it.
-struct Received {
-    source: [u8; 4],
-    source_port: u16,
-    bytes: Vec<u8>,
-}
-
 /// One datagram socket: a bound port and the queue of what arrived for it.
 ///
 /// The `Arc` is the socket's life: the descriptor table holds one, the port
 /// table holds a `Weak`, and the socket lives while either is alive — which
 /// is what makes a fork's copy of a descriptor keep the bound port
 /// routable, and the last close take it off the wire.
+///
+/// The queue itself is [`net::udp_socket::Queue`]: the ordering, the bound
+/// and the too-small-buffer rule are the wire's, and a host test can run them
+/// without a card.  What is here is the lock two callers share and the port
+/// the demux routes by.
 pub struct UdpSocket {
     port: u16,
-    queue: Mutex<Vec<Received>>,
+    queue: Mutex<net::udp_socket::Queue>,
 }
 
 impl UdpSocket {
@@ -258,34 +258,16 @@ impl UdpSocket {
     /// again with a larger one, and a take that discarded the bytes would
     /// make the loss permanent.
     pub fn try_recv(&self, into: &mut [u8]) -> Result<Option<([u8; 4], u16, usize)>> {
-        let mut queue = self.queue.lock();
-        let Some(received) = queue.first() else {
-            return Ok(None);
-        };
-        if received.bytes.len() > into.len() {
-            return Err(Error::InvalidArgument);
-        }
-        let received = queue.remove(0);
-        into[..received.bytes.len()].copy_from_slice(&received.bytes);
-        Ok(Some((
-            received.source,
-            received.source_port,
-            received.bytes.len(),
-        )))
+        Ok(self
+            .queue
+            .lock()
+            .take(into)?
+            .map(|taken| (taken.source, taken.source_port, taken.count)))
     }
 
     /// Put one datagram in the queue, or refuse when it is full.
     fn push(&self, source: [u8; 4], source_port: u16, bytes: &[u8]) -> Result<()> {
-        let mut queue = self.queue.lock();
-        if queue.len() >= QUEUE_LIMIT {
-            return Err(Error::Busy);
-        }
-        queue.push(Received {
-            source,
-            source_port,
-            bytes: Vec::from(bytes),
-        });
-        Ok(())
+        self.queue.lock().push(source, source_port, bytes)
     }
 }
 
@@ -320,7 +302,7 @@ pub fn bind_udp(port: u16) -> Result<Arc<UdpSocket>> {
     }
     let socket = Arc::new(UdpSocket {
         port,
-        queue: Mutex::new(Vec::new()),
+        queue: Mutex::new(net::udp_socket::Queue::new()),
     });
     sockets.push((port, Arc::downgrade(&socket)));
     Ok(socket)
@@ -674,31 +656,19 @@ fn answer_echo_request(packet: &net::ipv6::Packet, message: &net::icmpv6::Messag
     // fail the asker's verification.
     let destination = packet.header.source;
 
-    let reply_len = net::icmpv6::echo_len(echo.data_len);
     let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
-    net::ethernet::write_header(
+    let data = &payload[echo.data_at..echo.data_at + echo.data_len.min(8)];
+    let Some(total) = net::reply::echo_reply(
         &mut frame,
-        peer_hardware(destination),
+        local,
         mac,
-        net::ethernet::ETHERTYPE_IPV6,
-    );
-    net::ipv6::write_header(
-        &mut frame[netdev::ETHERNET_HEADER_LEN..],
-        local,
         destination,
-        net::ipv6::NEXT_ICMPV6,
-        reply_len,
-    );
-    net::icmpv6::write_echo(
-        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
-        local,
-        destination,
-        net::icmpv6::ECHO_REPLY,
-        echo.identifier,
-        echo.sequence,
-        &payload[echo.data_at..echo.data_at + echo.data_len.min(8)],
-    );
-    let total = netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN + reply_len;
+        peer_hardware(destination),
+        &echo,
+        data,
+    ) else {
+        return;
+    };
     let _ = card.submit_frame(&frame[..total]);
 
     // The line that says the exchange happened, and what it carried: the
@@ -784,29 +754,19 @@ fn answer_neighbor_solicitation(
     };
 
     let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
-    // The advertisement's fixed part plus its target link-layer option: the
-    // two-hop length of the body the message writer produces.
-    let advertisement_len = net::icmpv6::HEADER_LEN + net::icmpv6::NEIGHBOR_LEN + 8;
-    net::ethernet::write_header(&mut frame, asker_mac, mac, net::ethernet::ETHERTYPE_IPV6);
     // Answered from the address that was asked about: a host holding both a
     // link-local and a global address replies from the one the asker's own
     // cache and checksum are keyed on.
-    net::ipv6::write_header(
-        &mut frame[netdev::ETHERNET_HEADER_LEN..],
-        solicitation.target,
-        destination,
-        net::ipv6::NEXT_ICMPV6,
-        advertisement_len,
-    );
-    net::icmpv6::write_neighbor_advertisement(
-        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
-        solicitation.target,
-        destination,
+    let Some(total) = net::reply::neighbor_advertisement(
+        &mut frame,
         solicitation.target,
         mac,
-        false,
-        true,
-    );
+        destination,
+        asker_mac,
+        solicitation.target,
+    ) else {
+        return;
+    };
     // The asker's address is a neighbour this host now knows, and recording
     // it is what makes the exchange's answer observable through a path that
     // does not depend on the frame coming back: a solicitation carries the
@@ -819,7 +779,6 @@ fn answer_neighbor_solicitation(
         }
     }
 
-    let total = netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN + advertisement_len;
     let _ = card.submit_frame(&frame[..total]);
 }
 
@@ -859,31 +818,27 @@ pub fn ipv6_probe() -> bool {
     // only; the eight bytes an option takes are **not** part of a message
     // that does not carry one, and a length that counted them would make the
     // checksum cover eight zeros nobody wrote.
-    let solicitation_len = net::icmpv6::HEADER_LEN + net::icmpv6::NEIGHBOR_LEN;
+    let group = net::ipv6::solicited_node(local);
     let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
-    net::ethernet::write_header(
+    let Some(total) = net::reply::neighbor_solicitation(
         &mut frame,
-        net::ipv6::multicast_mac(net::ipv6::solicited_node(local)),
+        net::ipv6::UNSPECIFIED,
         mac,
-        net::ethernet::ETHERTYPE_IPV6,
-    );
-    net::ipv6::write_header(
-        &mut frame[netdev::ETHERNET_HEADER_LEN..],
-        net::ipv6::UNSPECIFIED,
-        net::ipv6::solicited_node(local),
-        net::ipv6::NEXT_ICMPV6,
-        solicitation_len,
-    );
-    net::icmpv6::write_neighbor_solicitation(
-        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
-        net::ipv6::UNSPECIFIED,
+        group,
+        net::ipv6::multicast_mac(group),
         local,
         None,
-    );
+    ) else {
+        arch::serial::write_str("protofire: the ipv6 probe's frame is too small\n");
+        return false;
+    };
 
     // The frame goes through the demux the receive path uses, not a private
     // copy of its logic: what this proves is the path a real frame takes.
-    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+    // The slice is the frame's true length — a buffer's trailing zeros parse
+    // only because the header carries the length, and a probe that relied on
+    // that would be hiding a wrong length behind a right one.
+    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..total]);
 
     // A solicitation from `::` is not answerable — an advertisement sent to
     // `::` goes nowhere — so this stack learns nothing from that one, and
@@ -913,32 +868,24 @@ pub fn ipv6_probe() -> bool {
     // This one names its MAC, so its length includes the option's eight
     // bytes: the two lengths differ by exactly that, and a probe that used
     // one for both would fail exactly one of its checksums.
-    let with_option_len = net::icmpv6::HEADER_LEN + net::icmpv6::NEIGHBOR_LEN + 8;
     let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
-    net::ethernet::write_header(
+    let Some(total) = net::reply::neighbor_solicitation(
         &mut frame,
-        net::ipv6::multicast_mac(net::ipv6::solicited_node(local)),
+        peer,
         peer_mac,
-        net::ethernet::ETHERTYPE_IPV6,
-    );
-    net::ipv6::write_header(
-        &mut frame[netdev::ETHERNET_HEADER_LEN..],
-        peer,
-        net::ipv6::solicited_node(local),
-        net::ipv6::NEXT_ICMPV6,
-        with_option_len,
-    );
-    net::icmpv6::write_neighbor_solicitation(
-        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
-        peer,
+        group,
+        net::ipv6::multicast_mac(group),
         local,
         Some(peer_mac),
-    );
+    ) else {
+        arch::serial::write_str("protofire: the ipv6 probe's frame is too small\n");
+        return false;
+    };
     // The receive path's own demux, with the diagnostic that says what it
     // made of the frame when it made nothing: a probe whose failure is
     // silent is a probe that cannot tell "the demux refused it" from "the
     // answer was lost", and this boot has one chance to say which.
-    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..total]);
 
     // What the exchange proved: the solicitation was parsed, the target was
     // an address this host holds, and the asker's MAC came out of the
@@ -980,26 +927,14 @@ pub fn ipv6_probe() -> bool {
     // An echo request from the peer to our link-local address, through the
     // demux: the reply is built by the same path a real ICMPv6 answering
     // takes, and this asserts the request reached it.
-    let echo_len = net::icmpv6::echo_len(8);
     let mut frame = alloc::vec![0_u8; card.maximum_frame_len()];
-    net::ethernet::write_header(&mut frame, mac, peer_mac, net::ethernet::ETHERTYPE_IPV6);
-    net::ipv6::write_header(
-        &mut frame[netdev::ETHERNET_HEADER_LEN..],
-        peer,
-        local,
-        net::ipv6::NEXT_ICMPV6,
-        echo_len,
-    );
-    net::icmpv6::write_echo(
-        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv6::HEADER_LEN..],
-        peer,
-        local,
-        net::icmpv6::ECHO_REQUEST,
-        7,
-        1,
-        b"pyrofire",
-    );
-    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..]);
+    let Some(total) =
+        net::reply::echo_request(&mut frame, peer, peer_mac, local, mac, 7, 1, b"pyrofire")
+    else {
+        arch::serial::write_str("protofire: the ipv6 probe's frame is too small\n");
+        return false;
+    };
+    demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..total]);
 
     // The echo's evidence is the line `answer_echo_request` prints: the
     // request reached the answer path, which is the same path a frame from
