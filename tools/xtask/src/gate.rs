@@ -651,6 +651,17 @@ impl Machine {
                     "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
                     true,
                 ),
+                // The frame path's data offset: two TCP segments through the
+                // demux, one carrying an option and one not, and a stream
+                // holding their data and neither header.  Every other exchange
+                // runs on the loopback, which hands a connection the payload
+                // it built and never a frame, so this is the only line that
+                // can tell a demux which slices the segment from one that
+                // passes the packet.
+                (
+                    "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
+                    true,
+                ),
                 // And the same exchange between two ring-3 processes, which is
                 // the claim a probe cannot make: a bind, a connect, an accept,
                 // and a read and a write each way.
@@ -1366,6 +1377,10 @@ impl Machine {
                         true,
                     ),
                     (
+                        "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
+                        true,
+                    ),
+                    (
                         "protofire: process 1 bound the local name, descriptor ",
                         false,
                     ),
@@ -1391,6 +1406,10 @@ impl Machine {
                     ),
                     (
                         "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
+                        true,
+                    ),
+                    (
+                        "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                         true,
                     ),
                     (
@@ -1815,6 +1834,17 @@ impl Machine {
                 // what says the header was not the caller's.
                 (
                     "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
+                    true,
+                ),
+                // The frame path's data offset: two TCP segments through the
+                // demux, one carrying an option and one not, and a stream
+                // holding their data and neither header.  Every other exchange
+                // runs on the loopback, which hands a connection the payload
+                // it built and never a frame, so this is the only line that
+                // can tell a demux which slices the segment from one that
+                // passes the packet.
+                (
+                    "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                     true,
                 ),
                 // And the same exchange between two ring-3 processes, which is

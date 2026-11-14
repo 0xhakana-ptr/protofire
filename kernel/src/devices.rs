@@ -906,6 +906,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The frame path's data offset: two TCP segments through the demux, one
+    // with an option and one without, and a stream's inbox that holds their
+    // data and neither header.  Every other exchange runs on the loopback,
+    // which hands a connection the payload it built and never a frame.
+    if !crate::net::frame_data_probe() {
+        return false;
+    }
+
     // The raw socket: a protocol number instead of a port, a packet this
     // machine sends itself, and the demux handing it back.  The source address
     // on the packet it receives is the stack's, which is what says the header

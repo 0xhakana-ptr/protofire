@@ -583,6 +583,46 @@ carries nine bytes or nineteen: a connection holding either advertises the same
 number whether or not anything enforces it.  The probe fills the whole buffer
 with one segment and reads the number back.
 
+**The frame path had a defect the loopback could not show.**  Every TCP
+exchange this tree runs is a loopback, and a loopback hands a connection the
+payload it built: no frame, no header, no data offset.  A frame from a card is
+the other path, and both demux functions handed `receive` the **whole packet**,
+so a stream fed by a real card carried its peer's twenty-byte TCP header as the
+first twenty bytes of data.  QEMU's user-mode network is a real peer, so this
+would have been the first thing a non-loopback exchange saw.
+
+The fix is one slice, and the segment says where: `Segment::payload_at` is the
+data offset times four, and `payload_len` is the packet less that offset rather
+than less a constant `HEADER_LEN`.  The IPv6 parser already did this; the IPv4
+one did not, which is the sort of difference a second reader does not see until
+a segment carries an option.
+
+```
+protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream
+```
+
+The probe builds two frames the way the card would carry them, one with the MSS
+option and one without, and sends both through `demux`: a reader that used a
+constant header length would take the first segment's option as data and be
+right about the second.  Handing `receive` the whole packet prints
+`8 byte(s) sent, 52 held, MISMATCH`, which is forty extra bytes: two twenty-byte
+headers and one twenty-four.
+
+**A SYN states its MSS, and the option is read.**  The header was always five
+words, so this stack never told a peer what it can receive, and never learned
+what a peer can: a sender assumed `MSS_DEFAULT` and a peer using RFC 1122's
+536-byte default would have discovered the difference as loss.  A SYN now
+carries the option, `parse` walks the option list (walked, not searched: a value
+byte of an earlier option may be the MSS kind's own number), and
+`Connection::note_send_move` applies the peer's number through the same
+`limit_segment` a path report uses, so it only ever shrinks.
+
+`TCP_NODELAY` was in the options table and read by nothing, which is the exact
+defect that table's own module documents.  It now decides Nagle's rule: a small
+write with anything in flight is held unless the option is set.  Three tests
+hold the three halves apart, and removing any one of them fails exactly one:
+the rule, the option, and the "a full segment is not small" exception.
+
 **The other window, the peer's, is a bound on sending.**  The `window` field was
 in every parsed segment and read by nothing: a sender compared the congestion
 window and the queue's size, so a peer that advertised less than either was sent

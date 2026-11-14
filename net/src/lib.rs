@@ -102,6 +102,14 @@
 //! that chooses between two are all absent, and a stack with one of each needs
 //! none of them: this tree boots one interface.
 //!
+//! What a stream states is what it can take: a SYN carries the MSS option, and
+//! the peer's answer to it bounds every segment this side builds.  A stream
+//! holds a small write while anything is in flight unless
+//! [`options::Options::no_delay`] says otherwise, which is [RFC 1122]'s rule
+//! and the one behaviour `TCP_NODELAY` was written for.
+//!
+//! [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+//!
 //! What a stream does not do is **measure**: its timeout is
 //! [`tcp::RTO_INITIAL_MICROS`]'s constant rather than a smoothed round trip,
 //! because one exchange per boot is not a sample and an estimate from a single

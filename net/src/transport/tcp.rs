@@ -234,10 +234,66 @@ pub struct Segment {
     /// The flags the segment carries: [`FLAG_SYN`], [`FLAG_ACK`], and the
     /// rest.
     pub flags: u8,
-    /// The peer's advertised window, carried but never enforced.
+    /// The peer's advertised window, which bounds what this side may send.
     pub window: u16,
     /// How many data bytes the segment carries.
+    ///
+    /// The bytes **past the header**, which is not the packet's length less
+    /// [`HEADER_LEN`]: a segment may carry options, and a reader that took the
+    /// whole packet for data would count them as the peer's bytes and deliver
+    /// a stream's first segment twenty bytes too long.  The header's own
+    /// length is `data offset`, and [`parse`] subtracts it.
     pub payload_len: usize,
+    /// Where the data starts in the packet, in bytes.
+    ///
+    /// `data offset` times four, and [`HEADER_LEN`] for a segment with no
+    /// options.  A caller that hands the whole packet to
+    /// [`Connection::receive`] needs this: that function's `payload` is the
+    /// segment's data and not its header, and passing the packet is the defect
+    /// this field exists to make visible at the call site.
+    pub payload_at: usize,
+    /// The largest segment the sender says it can receive, if it said.
+    ///
+    /// The MSS option's value from a SYN, and `None` from any segment that did
+    /// not carry one.  A SYN without the option is a peer using [RFC 1122]'s
+    /// default of 536 bytes for an address it does not know, which is the
+    /// number a stream that learned nothing has to assume.
+    ///
+    /// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+    pub mss: Option<u16>,
+}
+
+impl Segment {
+    /// A segment built from the fields a caller has, with the rest at their
+    /// defaults.
+    ///
+    /// The defaults are the ones a segment with **no options** has: the data
+    /// starts at [`HEADER_LEN`], nothing is stated about a receive buffer, and
+    /// the payload is whatever the caller says it carried.  A caller that has
+    /// a real packet should use [`parse`], which reads all of it; this exists
+    /// for the caller that is composing or simulating a segment and should not
+    /// have to restate four fields every time the struct grows one.
+    pub const fn new(
+        source_port: u16,
+        destination_port: u16,
+        sequence: u32,
+        acknowledgement: u32,
+        flags: u8,
+        window: u16,
+        payload_len: usize,
+    ) -> Self {
+        Self {
+            source_port,
+            destination_port,
+            sequence,
+            acknowledgement,
+            flags,
+            window,
+            payload_len,
+            payload_at: HEADER_LEN,
+            mss: None,
+        }
+    }
 }
 
 /// Write a segment: header, data, and the checksum over both and the
@@ -258,23 +314,114 @@ pub fn write_segment(
     window: u16,
     data: &[u8],
 ) {
-    let length = (HEADER_LEN + data.len()) as u16;
-    put_u16(into, 0, source_port);
-    put_u16(into, 2, destination_port);
-    into[4..8].copy_from_slice(&sequence.to_be_bytes());
-    into[8..12].copy_from_slice(&acknowledgement.to_be_bytes());
-    // Data offset: five words, the header with no options.
-    into[12] = 5 << 4;
-    into[13] = flags;
-    put_u16(into, 14, window);
-    put_u16(into, 16, 0);
-    put_u16(into, 18, 0);
-    into[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
+    write_segment_with_mss(
+        into,
+        source,
+        destination,
+        source_port,
+        destination_port,
+        sequence,
+        acknowledgement,
+        flags,
+        window,
+        data,
+        // A SYN states this side's largest segment, and only a SYN: the
+        // option is a handshake's, and a peer that saw one on a data segment
+        // would be a peer reading a header it did not expect.
+        (flags & FLAG_SYN != 0).then_some(MSS_DEFAULT as u16),
+    );
+}
+
+/// Write a segment, stating `mss` in the option field when it is given.
+///
+/// [`write_segment`] is this with the SYN's own rule; this exists so a caller
+/// that is building a **fault** can put an option on a segment whose flags do
+/// not say SYN, which is what a probe needs to tell "the data offset is read"
+/// from "the flags happen to make the header longer".
+#[allow(clippy::too_many_arguments)]
+pub fn write_segment_with_mss(
+    into: &mut [u8],
+    source: [u8; 4],
+    destination: [u8; 4],
+    source_port: u16,
+    destination_port: u16,
+    sequence: u32,
+    acknowledgement: u32,
+    flags: u8,
+    window: u16,
+    data: &[u8],
+    mss: Option<u16>,
+) {
+    let header = match mss {
+        Some(mss) => write_mss_option(into, mss),
+        None => HEADER_LEN,
+    };
+    let length = fill_segment(
+        into,
+        header,
+        source_port,
+        destination_port,
+        sequence,
+        acknowledgement,
+        flags,
+        window,
+        data,
+    );
     let sum = checksum_of(&[
         &pseudo_header(source, destination, length),
         &into[..length as usize],
     ]);
     put_u16(into, 16, sum);
+}
+
+/// Write the MSS option into the header's option field, answering the header's
+/// length.
+///
+/// Four bytes, which keeps the header a whole number of words: a kind, a
+/// length of four, and the value.  The header then occupies six words rather
+/// than five, which is why every writer takes its length from this and not
+/// from [`HEADER_LEN`].
+fn write_mss_option(into: &mut [u8], mss: u16) -> usize {
+    into[HEADER_LEN] = OPTION_MSS;
+    into[HEADER_LEN + 1] = 4;
+    put_u16(into, HEADER_LEN + 2, mss);
+    HEADER_LEN + 4
+}
+
+/// Fill in every field of a segment whose options have already been written,
+/// answering the segment's length.
+///
+/// The checksum is **not** computed here: the two families' pseudo-headers
+/// differ in length and content, so a body that summed one of them would be a
+/// body that silently wrote an IPv4 sum into an IPv6 segment.  It leaves the
+/// field zero, which is what the computation reads it as, and each writer sums
+/// its own.
+#[allow(clippy::too_many_arguments)]
+fn fill_segment(
+    into: &mut [u8],
+    header: usize,
+    source_port: u16,
+    destination_port: u16,
+    sequence: u32,
+    acknowledgement: u32,
+    flags: u8,
+    window: u16,
+    data: &[u8],
+) -> u16 {
+    let length = (header + data.len()) as u16;
+    put_u16(into, 0, source_port);
+    put_u16(into, 2, destination_port);
+    into[4..8].copy_from_slice(&sequence.to_be_bytes());
+    into[8..12].copy_from_slice(&acknowledgement.to_be_bytes());
+    // The data offset is the header's length in four-byte words, which is what
+    // lets a reader find the data past an option.
+    into[12] = ((header / 4) as u8) << 4;
+    into[13] = flags;
+    put_u16(into, 14, window);
+    put_u16(into, 16, 0);
+    put_u16(into, 18, 0);
+    into[header..header + data.len()].copy_from_slice(data);
+    length
 }
 
 /// Write a segment over IPv6, with its checksum over the forty-byte
@@ -297,17 +444,22 @@ pub fn write_segment6(
     window: u16,
     data: &[u8],
 ) {
-    let length = (HEADER_LEN + data.len()) as u16;
-    put_u16(into, 0, source_port);
-    put_u16(into, 2, destination_port);
-    into[4..8].copy_from_slice(&sequence.to_be_bytes());
-    into[8..12].copy_from_slice(&acknowledgement.to_be_bytes());
-    into[12] = 5 << 4;
-    into[13] = flags;
-    put_u16(into, 14, window);
-    put_u16(into, 16, 0);
-    put_u16(into, 18, 0);
-    into[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
+    let header = if flags & FLAG_SYN != 0 {
+        write_mss_option(into, MSS_DEFAULT as u16)
+    } else {
+        HEADER_LEN
+    };
+    let length = fill_segment(
+        into,
+        header,
+        source_port,
+        destination_port,
+        sequence,
+        acknowledgement,
+        flags,
+        window,
+        data,
+    );
     let sum = crate::ipv6::checksum_with_pseudo(
         source,
         destination,
@@ -328,13 +480,7 @@ pub fn parse6(
     source: crate::ipv6::Addr,
     destination: crate::ipv6::Addr,
 ) -> Option<Segment> {
-    if packet.len() < HEADER_LEN {
-        return None;
-    }
-    let data_offset = (packet[12] >> 4) as usize * 4;
-    if data_offset < HEADER_LEN || data_offset > packet.len() {
-        return None;
-    }
+    let data_offset = header_len(packet)?;
     // Over IPv6 the packet is exactly the segment: the header's payload
     // length says so, and nothing pads it the way Ethernet pads a short
     // frame, which is why the whole slice is what the sum covers.
@@ -349,6 +495,8 @@ pub fn parse6(
         flags: packet[13],
         window: get_u16(packet, 14),
         payload_len: packet.len() - data_offset,
+        payload_at: data_offset,
+        mss: mss_option(&packet[HEADER_LEN..data_offset]),
     })
 }
 
@@ -371,13 +519,83 @@ fn pseudo_header(source: [u8; 4], destination: [u8; 4], length: u16) -> [u8; 12]
 /// the data offset is checked against the packet's length, because a header
 /// that claimed more words than the packet holds is a segment that ends
 /// before it begins.
-pub fn parse(packet: &[u8], source: [u8; 4], destination: [u8; 4]) -> Option<Segment> {
+/// How many bytes a SYN's header occupies, MSS option included.
+///
+/// A SYN carries the option and every other segment does not, so a caller that
+/// reserves room for a **segment** has to know which it is building.  The
+/// number is [`HEADER_LEN`] plus the option's four bytes, and it is a constant
+/// rather than arithmetic at each call site because a buffer one byte short is
+/// an out-of-bounds write and not a short segment.
+pub const SYN_HEADER_LEN: usize = HEADER_LEN + 4;
+
+/// The kind number of the MSS option, [RFC 9293]'s.
+///
+/// Two bytes of kind and length, then the value: the peer's receive buffer's
+/// largest segment, which is what a sender's segment size must not exceed.
+///
+/// [RFC 9293]: https://www.rfc-editor.org/rfc/rfc9293
+pub const OPTION_MSS: u8 = 2;
+
+/// How many bytes a segment's header occupies, from the data offset.
+///
+/// The `data offset` field is the high nibble of byte twelve, counted in
+/// **four-byte words**, so the header's length in bytes is that number times
+/// four.  A value below five is a header shorter than the fixed part, which is
+/// a segment no peer sent; a value past the packet is a header that claims
+/// bytes the packet does not have.  Both are refused, because a reader that
+/// took either would index past what it was given.
+fn header_len(packet: &[u8]) -> Option<usize> {
     if packet.len() < HEADER_LEN {
         return None;
     }
-    if packet[12] >> 4 < 5 {
+    let words = (packet[12] >> 4) as usize;
+    let length = words * 4;
+    if length < HEADER_LEN || length > packet.len() {
         return None;
     }
+    Some(length)
+}
+
+/// The MSS option's value, if `options` carries one.
+///
+/// Every option is a kind byte alone (end, no-op) or a kind, a length and the
+/// bytes between; a length below two would make the walk step nowhere and a
+/// kind of zero ends the list.  Both are [RFC 9293]'s rules, and both are why
+/// this cannot be a search for the byte `2`: a value byte of an earlier option
+/// may be `2` itself, and reading it as the kind would report a segment size
+/// from a number that means something else entirely.
+///
+/// [RFC 9293]: https://www.rfc-editor.org/rfc/rfc9293
+fn mss_option(options: &[u8]) -> Option<u16> {
+    let mut at = 0;
+    while at < options.len() {
+        match options[at] {
+            // End of the option list, and the no-op that pads an alignment.
+            0 => return None,
+            1 => {
+                at += 1;
+                continue;
+            }
+            kind => {
+                let length = *options.get(at + 1)? as usize;
+                // A length below two is a walk that never advances; one past
+                // the buffer is an option the sender did not finish.
+                if length < 2 || at + length > options.len() {
+                    return None;
+                }
+                if kind == OPTION_MSS && length == 4 {
+                    return Some(get_u16(options, at + 2));
+                }
+                at += length;
+            }
+        }
+    }
+    None
+}
+
+/// Read the segment at the start of an IPv4 packet's payload.
+pub fn parse(packet: &[u8], source: [u8; 4], destination: [u8; 4]) -> Option<Segment> {
+    let data_offset = header_len(packet)?;
     if checksum_of(&[
         &pseudo_header(source, destination, packet.len() as u16),
         packet,
@@ -393,7 +611,13 @@ pub fn parse(packet: &[u8], source: [u8; 4], destination: [u8; 4]) -> Option<Seg
         acknowledgement: u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]),
         flags: packet[13],
         window: get_u16(packet, 14),
-        payload_len: packet.len() - HEADER_LEN,
+        // The bytes past the **header**, which is not the packet less
+        // [`HEADER_LEN`]: a segment that carried options would otherwise count
+        // them as the peer's data, and the first segment of a stream would
+        // arrive with a header's worth of bytes in front of its payload.
+        payload_len: packet.len() - data_offset,
+        payload_at: data_offset,
+        mss: mss_option(&packet[HEADER_LEN..data_offset]),
     })
 }
 
@@ -723,7 +947,7 @@ impl Connection {
         // the acknowledgement and not before, because a fast retransmission is
         // composed from the queue the acknowledgement inspected, and the
         // window bounds what is sent *next*.
-        self.note_window(segment);
+        self.note_send_move(segment);
         let (event, mut replies) = self.receive_body(segment, payload);
         // The fast retransmission goes first: it is the segment at a gap the
         // peer has already counted, and the reply this call composed is about
@@ -1194,6 +1418,21 @@ impl Connection {
     /// the one statement that matters.  What a zero produces is a budget of
     /// zero, which is the sender waiting for the peer to reopen, and the reopen
     /// arrives as a later segment with a larger number in the same field.
+    /// Take the move the segment makes to this side's **sending**, which is
+    /// two statements: the room the peer's buffer has, and the largest segment
+    /// it can receive.
+    ///
+    /// A SYN states the second and a segment without the option states
+    /// nothing, so an absent option leaves the limit where it was rather than
+    /// resetting it to a default: a data segment that carried no option is a
+    /// peer repeating no news, not a peer retracting what its handshake said.
+    fn note_send_move(&mut self, segment: &Segment) {
+        self.note_window(segment);
+        if let Some(mss) = segment.mss {
+            self.limit_segment(mss as usize);
+        }
+    }
+
     fn note_window(&mut self, segment: &Segment) {
         // A SYN has no acknowledgement to compare, and its window is the
         // peer's statement about a stream that has carried nothing.
@@ -1306,6 +1545,24 @@ impl Connection {
         }
         let open = matches!(self.state, State::Established | State::CloseWait);
         if !open {
+            return (0, alloc::vec::Vec::new());
+        }
+
+        // Nagle's rule, and `TCP_NODELAY` is what turns it off.  A small write
+        // with bytes already in flight is **held**, not sent: the first small
+        // segment goes out at once and the ones after it wait for the
+        // acknowledgement, so a program that writes a byte at a time costs one
+        // segment per round trip rather than one per byte.  [RFC 1122] section
+        // 4.2.3.4 states it, and the option is the caller's way out: `some
+        // writes are late and want to be` is a real property, which is why the
+        // standard has the switch at all.
+        //
+        // A write at least a segment long is sent whatever the rule says: the
+        // rule is about small writes, and holding a full segment would be
+        // holding data the path is waiting for.
+        //
+        // [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+        if !self.options.no_delay() && bytes.len() < self.mss() && !self.unacknowledged.is_empty() {
             return (0, alloc::vec::Vec::new());
         }
 
@@ -1705,15 +1962,15 @@ mod tests {
     /// An outgoing segment as the peer reads it: the header's fields with
     /// the ports set from the direction it travels.
     fn segment(source_port: u16, destination_port: u16, outgoing: &Outgoing) -> Segment {
-        Segment {
+        Segment::new(
             source_port,
             destination_port,
-            sequence: outgoing.sequence,
-            acknowledgement: outgoing.acknowledgement,
-            flags: outgoing.flags,
-            window: super::WINDOW,
-            payload_len: outgoing.payload.len(),
-        }
+            outgoing.sequence,
+            outgoing.acknowledgement,
+            outgoing.flags,
+            super::WINDOW,
+            outgoing.payload.len(),
+        )
     }
 
     /// The handshake's first three moves, run once and returned in the open
@@ -1829,15 +2086,15 @@ mod tests {
         let base = server.acknowledgement;
 
         // Four bytes past the hole.
-        let second = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base + 4,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 4,
-        };
+        let second = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base + 4,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            4,
+        );
         let (answer, replies) = server.receive(&second, b"wxyz");
         assert_eq!(answer, Ok(Event::None), "nothing reached a reader yet");
         assert_eq!(replies.len(), 1, "the duplicate ACK that names the hole");
@@ -1849,15 +2106,15 @@ mod tests {
         assert_eq!(server.out_of_order(), 1, "the segment is held");
 
         // The hole fills, and both runs land in order.
-        let first = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 4,
-        };
+        let first = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            4,
+        );
         let (answer, _) = server.receive(&first, b"abcd");
         assert_eq!(answer, Ok(Event::Data(8)), "both runs reached the inbox");
         assert_eq!(server.out_of_order(), 0, "the held segment was taken");
@@ -1877,29 +2134,29 @@ mod tests {
         let base = server.acknowledgement;
 
         for (offset, data) in [(12u32, &b"mnop"[..]), (8, b"ijkl"), (4, b"efgh")] {
-            let segment = Segment {
-                source_port: OUR_PORT,
-                destination_port: THEIR_PORT,
-                sequence: base + offset,
-                acknowledgement: 5001,
-                flags: FLAG_ACK | FLAG_PSH,
-                window: super::WINDOW,
-                payload_len: 4,
-            };
+            let segment = Segment::new(
+                OUR_PORT,
+                THEIR_PORT,
+                base + offset,
+                5001,
+                FLAG_ACK | FLAG_PSH,
+                super::WINDOW,
+                4,
+            );
             let (answer, _) = server.receive(&segment, data);
             assert_eq!(answer, Ok(Event::None));
         }
         assert_eq!(server.out_of_order(), 3);
 
-        let first = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 4,
-        };
+        let first = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            4,
+        );
         let (answer, _) = server.receive(&first, b"abcd");
         assert_eq!(answer, Ok(Event::Data(16)), "every held byte arrived");
         assert_eq!(server.out_of_order(), 0);
@@ -1919,15 +2176,15 @@ mod tests {
         let (_client, mut server) = handshake();
         let base = server.acknowledgement;
 
-        let whole = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 4,
-        };
+        let whole = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            4,
+        );
         let (answer, _) = server.receive(&whole, b"abcd");
         assert_eq!(answer, Ok(Event::Data(4)));
 
@@ -1936,15 +2193,15 @@ mod tests {
         // that are not.  Only the new four count, which is what a peer's
         // retransmission after a partial loss looks like: a stack that
         // dropped the whole segment would lose the new half.
-        let straddling = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 8,
-        };
+        let straddling = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            8,
+        );
         let (answer, _) = server.receive(&straddling, b"abcdefgh");
         assert_eq!(answer, Ok(Event::Data(4)), "only the new half");
         assert_eq!(server.inbox_len(), 8);
@@ -1959,15 +2216,15 @@ mod tests {
     fn a_repeated_segment_adds_nothing() {
         let (_client, mut server) = handshake();
         let base = server.acknowledgement;
-        let segment = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 8,
-        };
+        let segment = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            8,
+        );
         let (answer, _) = server.receive(&segment, b"abcdefgh");
         assert_eq!(answer, Ok(Event::Data(8)));
 
@@ -1990,30 +2247,30 @@ mod tests {
 
         // Nine bytes past the gap, ten bytes long: its start is past the
         // position this side expects, so it is a run to hold.
-        let second = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base + 9,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 10,
-        };
+        let second = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base + 9,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            10,
+        );
         let (answer, _) = server.receive(&second, b"secondhalf");
         assert_eq!(answer, Ok(Event::None), "held, not delivered");
         assert_eq!(server.out_of_order(), 1, "the run is held");
         assert_eq!(server.inbox_len(), 0, "and nothing reached the inbox");
 
         // The first nine bytes, and the whole run lands in order.
-        let first = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 9,
-        };
+        let first = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            9,
+        );
         let (answer, _) = server.receive(&first, b"firsthalf");
         assert_eq!(answer, Ok(Event::Data(19)), "both runs");
         let mut buffer = [0_u8; 19];
@@ -2043,15 +2300,15 @@ mod tests {
 
         // Half the buffer arrives, and the next segment says so.
         let half = (super::WINDOW as usize) / 2;
-        let full = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: half,
-        };
+        let full = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            half,
+        );
         let (answer, replies) = server.receive(&full, &alloc::vec![0x41_u8; half]);
         assert_eq!(answer, Ok(Event::Data(half)));
         assert_eq!(
@@ -2085,30 +2342,30 @@ mod tests {
 
         // One segment fills the whole window.
         let window = super::WINDOW as usize;
-        let filling = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: window,
-        };
+        let filling = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            window,
+        );
         let (answer, _) = server.receive(&filling, &alloc::vec![0x42_u8; window]);
         assert_eq!(answer, Ok(Event::Data(window)));
         assert_eq!(server.advertised_window(), 0, "nothing left");
         assert_eq!(server.held(), window);
 
         // One more byte arrives, and there is nowhere for it.
-        let extra = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base + window as u32,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 1,
-        };
+        let extra = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base + window as u32,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            1,
+        );
         let (answer, _) = server.receive(&extra, b"x");
         assert_eq!(answer, Ok(Event::None), "past the window");
         assert_eq!(server.held(), window, "the buffer did not grow");
@@ -2126,15 +2383,15 @@ mod tests {
 
         // A run more than the whole window, entirely ahead of the gap.
         let too_much = super::WINDOW as usize + 1;
-        let segment = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base + 4,
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: too_much,
-        };
+        let segment = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base + 4,
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            too_much,
+        );
         let (answer, _) = server.receive(&segment, &alloc::vec![0x43_u8; too_much]);
         assert_eq!(answer, Ok(Event::None));
         assert_eq!(
@@ -2154,29 +2411,29 @@ mod tests {
 
         // Every held segment starts a hole of its own: one byte, two apart.
         for index in 0..super::MAX_OUT_OF_ORDER {
-            let segment = Segment {
-                source_port: OUR_PORT,
-                destination_port: THEIR_PORT,
-                sequence: base + 2 + (index as u32 * 2),
-                acknowledgement: 5001,
-                flags: FLAG_ACK | FLAG_PSH,
-                window: super::WINDOW,
-                payload_len: 1,
-            };
+            let segment = Segment::new(
+                OUR_PORT,
+                THEIR_PORT,
+                base + 2 + (index as u32 * 2),
+                5001,
+                FLAG_ACK | FLAG_PSH,
+                super::WINDOW,
+                1,
+            );
             let (answer, _) = server.receive(&segment, b"x");
             assert_eq!(answer, Ok(Event::None));
         }
         assert_eq!(server.out_of_order(), super::MAX_OUT_OF_ORDER);
 
-        let overflow = Segment {
-            source_port: OUR_PORT,
-            destination_port: THEIR_PORT,
-            sequence: base + 2 + (super::MAX_OUT_OF_ORDER as u32 * 2),
-            acknowledgement: 5001,
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 1,
-        };
+        let overflow = Segment::new(
+            OUR_PORT,
+            THEIR_PORT,
+            base + 2 + (super::MAX_OUT_OF_ORDER as u32 * 2),
+            5001,
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            1,
+        );
         let (_, _) = server.receive(&overflow, b"y");
         assert_eq!(
             server.out_of_order(),
@@ -2254,6 +2511,176 @@ mod tests {
         );
         assert_eq!(buffer[12] >> 4, 5, "five words of header");
     }
+
+    /// A SYN carries the MSS option, and the data offset says so.
+    ///
+    /// The option is a handshake's, and without it a peer has to assume
+    /// [RFC 1122]'s 536-byte default: this stack would send segments the peer
+    /// cannot receive and learn that from a loss rather than from the SYN.
+    ///
+    /// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+    #[test]
+    fn a_syn_states_the_largest_segment_this_side_takes() {
+        let mut buffer = [0_u8; super::SYN_HEADER_LEN];
+        write_segment(
+            &mut buffer,
+            US,
+            US,
+            OUR_PORT,
+            THEIR_PORT,
+            1,
+            0,
+            FLAG_SYN,
+            super::WINDOW,
+            &[],
+        );
+        assert_eq!(
+            buffer[12] >> 4,
+            6,
+            "six words of header: five, and the option's one"
+        );
+        let options = &buffer[HEADER_LEN..super::SYN_HEADER_LEN];
+        assert_eq!(options[0], super::OPTION_MSS, "kind");
+        assert_eq!(options[1], 4, "length");
+        assert_eq!(
+            u16::from_be_bytes([options[2], options[3]]),
+            super::MSS_DEFAULT as u16,
+            "the value the peer may send"
+        );
+
+        // And the parser reads it back as the segment's own statement.
+        let parsed = parse(&buffer, US, US).expect("a segment");
+        assert_eq!(parsed.mss, Some(super::MSS_DEFAULT as u16));
+        assert_eq!(parsed.payload_at, super::SYN_HEADER_LEN);
+        assert_eq!(parsed.payload_len, 0, "a SYN with options carries no data");
+    }
+
+    /// A segment with options is read with its data starting past them.
+    ///
+    /// The defect this pins: the IPv4 parser used to take the whole packet
+    /// less [`HEADER_LEN`] for the payload, so a segment carrying an option
+    /// had the option counted as the peer's data.  The segment here is a SYN
+    /// with the option **and five bytes of data**, which is what makes the two
+    /// readings differ: a segment with no data gives the same answer either
+    /// way, and the earlier version of this test asserted only that and so
+    /// could not tell them apart.
+    #[test]
+    fn a_segment_with_options_puts_its_data_after_them() {
+        let mut buffer = [0_u8; super::SYN_HEADER_LEN + 5];
+        write_segment(
+            &mut buffer,
+            US,
+            US,
+            OUR_PORT,
+            THEIR_PORT,
+            1,
+            0,
+            FLAG_SYN,
+            super::WINDOW,
+            b"hello",
+        );
+        assert_eq!(buffer[12] >> 4, 6, "the writer emitted six words");
+        assert_eq!(buffer[20], super::OPTION_MSS, "and the option is there");
+        let parsed = parse(&buffer, US, US).expect("a segment");
+        assert_eq!(
+            parsed.payload_at, 24,
+            "the data starts past the twenty-four-byte header"
+        );
+        assert_eq!(
+            parsed.payload_len, 5,
+            "and is the five bytes that followed it, not nine: this is the \
+             assertion that distinguishes the data offset from a constant \
+             header length, because the writer's own data is what it counts"
+        );
+        assert_eq!(
+            &buffer[parsed.payload_at..parsed.payload_at + parsed.payload_len],
+            b"hello"
+        );
+    }
+
+    /// A peer's MSS is a limit on what this side sends, and it only shrinks.
+    ///
+    /// The handshake's SYN is where a peer states its receive buffer's largest
+    /// segment, and a sender that ignored it would build segments past what
+    /// the peer said it takes.  The value goes through the same `limit_segment`
+    /// a path report uses, so a later statement cannot grow it back: a limit
+    /// that could rise would repeat the loss that taught it.
+    #[test]
+    fn a_peers_stated_segment_size_limits_what_this_side_sends() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.limit_segment(super::MSS_DEFAULT);
+        assert_eq!(client.segment_limit(), super::MSS_DEFAULT);
+
+        let stated = super::Segment {
+            source_port: THEIR_PORT,
+            destination_port: OUR_PORT,
+            sequence: client.expected_position(),
+            acknowledgement: client.send_position(),
+            flags: FLAG_ACK,
+            window: super::WINDOW,
+            payload_len: 0,
+            payload_at: HEADER_LEN,
+            mss: Some(536),
+        };
+        let _ = client.receive(&stated, b"");
+        assert_eq!(
+            client.segment_limit(),
+            536,
+            "the peer's number is the limit"
+        );
+
+        // A larger statement afterwards does not grow it back.
+        let larger = super::Segment {
+            mss: Some(super::MSS_DEFAULT as u16),
+            ..stated
+        };
+        let _ = client.receive(&larger, b"");
+        assert_eq!(client.segment_limit(), 536, "it only ever shrinks");
+    }
+
+    /// A segment that states no MSS leaves the limit alone.
+    ///
+    /// A data segment carries no option, and reading its silence as "the
+    /// default" would shrink a stream every time a plain acknowledgement
+    /// arrived: the limit is a statement, and a segment that makes none says
+    /// nothing about it.
+    #[test]
+    fn a_segment_without_the_option_leaves_the_limit_alone() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.limit_segment(536);
+        let silent = super::Segment::new(
+            THEIR_PORT,
+            OUR_PORT,
+            client.expected_position(),
+            client.send_position(),
+            FLAG_ACK,
+            super::WINDOW,
+            0,
+        );
+        assert_eq!(silent.mss, None);
+        let _ = client.receive(&silent, b"");
+        assert_eq!(client.segment_limit(), 536, "unchanged");
+    }
+
+    /// An option list is walked, not searched for the MSS kind's byte.
+    ///
+    /// A value byte of an earlier option may be `2`, and a reader that scanned
+    /// for that byte would report a segment size out of a number that means
+    /// something else.  The first list here is a no-op and an option whose
+    /// value happens to be two: no MSS may be found in it.
+    #[test]
+    fn an_option_list_is_walked_and_not_searched() {
+        let options = [1_u8, 3, 3, 2, 0];
+        assert_eq!(
+            super::mss_option(&options),
+            None,
+            "the 2 is a value, not a kind"
+        );
+
+        // And a real MSS after a no-op is found.
+        let with_mss = [1_u8, super::OPTION_MSS, 4, 0x05, 0xB4];
+        assert_eq!(super::mss_option(&with_mss), Some(1460));
+    }
     /// A segment written for IPv6 verifies over IPv6's pseudo-header, and a
     /// segment written for IPv4 does not: the two sums cover forty bytes and
     /// twelve.
@@ -2261,7 +2688,11 @@ mod tests {
     fn the_two_pseudo_headers_are_not_interchangeable() {
         let source4 = [10, 0, 2, 15];
         let destination4 = [10, 0, 2, 2];
-        let mut v4 = [0_u8; super::HEADER_LEN];
+        // A SYN carries the MSS option, so its header is four bytes longer
+        // than a bare one: a buffer the size of `HEADER_LEN` is a buffer the
+        // writer overruns, which is what this test found when the option
+        // arrived.
+        let mut v4 = [0_u8; super::SYN_HEADER_LEN];
         super::write_segment(
             &mut v4,
             source4,
@@ -2278,7 +2709,7 @@ mod tests {
 
         let source6 = crate::ipv6::link_local_from_mac([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
         let destination6 = crate::ipv6::link_local_from_mac([0x52, 0x55, 0, 0x12, 0x34, 0x57]);
-        let mut v6 = [0_u8; super::HEADER_LEN];
+        let mut v6 = [0_u8; super::SYN_HEADER_LEN];
         super::write_segment6(
             &mut v6,
             source6,
@@ -2299,7 +2730,7 @@ mod tests {
             super::parse(&v4, [0; 4], [0; 4]).is_none(),
             "an IPv4 segment does not verify against other addresses"
         );
-        let mut v4_as_v6 = [0_u8; super::HEADER_LEN];
+        let mut v4_as_v6 = [0_u8; super::SYN_HEADER_LEN];
         v4_as_v6.copy_from_slice(&v4);
         assert!(
             super::parse6(&v4_as_v6, source6, destination6).is_none(),
@@ -2422,6 +2853,67 @@ mod tests {
         assert_eq!(client.segment_limit(), super::MIN_MSS);
     }
 
+    /// Nagle's rule holds a small write while anything is in flight.
+    ///
+    /// The rule is [RFC 1122] section 4.2.3.4's: a small segment is sent only
+    /// when there is nothing unacknowledged, so a program writing a byte at a
+    /// time costs one segment per round trip rather than one per byte.  The
+    /// test is the **second** write: the first goes out because the stream is
+    /// idle, and a stack without the rule would send the second as well.
+    ///
+    /// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+    #[test]
+    fn a_small_write_is_held_while_anything_is_in_flight() {
+        let (mut client, _server) = established_on_the_loopback();
+        assert!(!client.options().no_delay(), "the rule is on by default");
+
+        let (first, _) = client.send_data(b"a");
+        assert_eq!(first, 1, "the stream was idle, so the first byte goes");
+        assert_eq!(client.unacknowledged(), 1, "and is now in flight");
+
+        let (second, outgoing) = client.send_data(b"b");
+        assert_eq!(second, 0, "the second is held");
+        assert!(outgoing.is_empty(), "and nothing was built");
+        assert_eq!(client.unacknowledged(), 1, "the queue did not grow");
+    }
+
+    /// `TCP_NODELAY` makes the same write go.
+    ///
+    /// The pair of assertions is what makes this a test of the **option** and
+    /// not of the rule: the same two writes, the same stream state, and the
+    /// only difference is the flag.
+    #[test]
+    fn tcp_nodelay_makes_a_small_write_go() {
+        let (mut client, _server) = established_on_the_loopback();
+        client
+            .set_option(abi::network::IPPROTO_TCP, abi::network::TCP_NODELAY, &[1])
+            .expect("no delay is an option this stack serves");
+        assert!(client.options().no_delay());
+
+        assert_eq!(client.send_data(b"a").0, 1);
+        assert_eq!(client.unacknowledged(), 1);
+        let (second, outgoing) = client.send_data(b"b");
+        assert_eq!(second, 1, "the option is what let it through");
+        assert_eq!(outgoing.len(), 1);
+    }
+
+    /// A write at least a segment long is not held, whatever the rule says.
+    ///
+    /// Nagle's rule is about small writes: a full segment is data the path is
+    /// waiting for, and holding it would make every large transfer wait for an
+    /// acknowledgement it does not need.  The test writes exactly one segment
+    /// with one already in flight.
+    #[test]
+    fn a_full_segment_is_not_held() {
+        let (mut client, _server) = established_on_the_loopback();
+        assert_eq!(client.send_data(b"a").0, 1, "something in flight");
+
+        let full = alloc::vec![0x5A_u8; client.segment_limit()];
+        let (carried, outgoing) = client.send_data(&full);
+        assert_eq!(carried, full.len(), "a whole segment goes");
+        assert_eq!(outgoing.len(), 1);
+    }
+
     /// A write past what may be in flight is partly carried, and the count
     /// says how much.
     ///
@@ -2477,15 +2969,15 @@ mod tests {
         let (mut client, _server) = established_on_the_loopback();
         // A peer that states a window one byte past two segments.
         let narrow = 2 * super::MSS_DEFAULT + 1;
-        let ack = super::Segment {
-            source_port: THEIR_PORT,
-            destination_port: OUR_PORT,
-            sequence: client.expected_position(),
-            acknowledgement: client.send_position(),
-            flags: FLAG_ACK,
-            window: narrow as u16,
-            payload_len: 0,
-        };
+        let ack = super::Segment::new(
+            THEIR_PORT,
+            OUR_PORT,
+            client.expected_position(),
+            client.send_position(),
+            FLAG_ACK,
+            narrow as u16,
+            0,
+        );
         let (_, replies) = client.receive(&ack, b"");
         assert!(replies.is_empty(), "a bare acknowledgement answers nothing");
         assert_eq!(client.peer_window(), narrow);
@@ -2525,15 +3017,15 @@ mod tests {
     #[test]
     fn a_zero_peer_window_stops_the_sender() {
         let (mut client, _server) = established_on_the_loopback();
-        let ack = super::Segment {
-            source_port: THEIR_PORT,
-            destination_port: OUR_PORT,
-            sequence: client.expected_position(),
-            acknowledgement: client.send_position(),
-            flags: FLAG_ACK,
-            window: 0,
-            payload_len: 0,
-        };
+        let ack = super::Segment::new(
+            THEIR_PORT,
+            OUR_PORT,
+            client.expected_position(),
+            client.send_position(),
+            FLAG_ACK,
+            0,
+            0,
+        );
         let _ = client.receive(&ack, b"");
         assert_eq!(client.peer_window(), 0, "the peer said its buffer is full");
         assert!(
@@ -2546,15 +3038,15 @@ mod tests {
         assert!(outgoing.is_empty());
 
         // The peer reopens, and the same write now goes.
-        let reopen = super::Segment {
-            source_port: THEIR_PORT,
-            destination_port: OUR_PORT,
-            sequence: client.expected_position(),
-            acknowledgement: client.send_position(),
-            flags: FLAG_ACK,
-            window: super::WINDOW,
-            payload_len: 0,
-        };
+        let reopen = super::Segment::new(
+            THEIR_PORT,
+            OUR_PORT,
+            client.expected_position(),
+            client.send_position(),
+            FLAG_ACK,
+            super::WINDOW,
+            0,
+        );
         let _ = client.receive(&reopen, b"");
         let (carried, outgoing) = client.send_data(b"blocked");
         assert_eq!(carried, 7, "the reopen is what let it through");
@@ -2598,30 +3090,30 @@ mod tests {
         // more does not.  The second segment starts past the gap the first
         // filled, so it is refused by the window and not by the sequence.
         let base = client.expected_position();
-        let filling = super::Segment {
-            source_port: THEIR_PORT,
-            destination_port: OUR_PORT,
-            sequence: base,
-            acknowledgement: client.send_position(),
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: narrowed,
-        };
+        let filling = super::Segment::new(
+            THEIR_PORT,
+            OUR_PORT,
+            base,
+            client.send_position(),
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            narrowed,
+        );
         let (_, replies) = client.receive(&filling, &alloc::vec![0x41_u8; narrowed]);
         assert!(!replies.is_empty(), "the segment is acknowledged");
         assert_eq!(client.held(), narrowed, "all of it is held");
         assert_eq!(client.advertised_window(), 0, "and the window is closed");
 
         // A byte past the window, at the position the peer would send it.
-        let extra = super::Segment {
-            source_port: THEIR_PORT,
-            destination_port: OUR_PORT,
-            sequence: base + narrowed as u32,
-            acknowledgement: client.send_position(),
-            flags: FLAG_ACK | FLAG_PSH,
-            window: super::WINDOW,
-            payload_len: 1,
-        };
+        let extra = super::Segment::new(
+            THEIR_PORT,
+            OUR_PORT,
+            base + narrowed as u32,
+            client.send_position(),
+            FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
+            1,
+        );
         let _ = client.receive(&extra, b"x");
         assert_eq!(
             client.held(),
@@ -2799,15 +3291,15 @@ mod tests {
         // The peer's position, which is what a duplicate acknowledgement
         // repeats: it has the first segment missing and the rest held.
         let position = client.expected_position();
-        let duplicate = Segment {
-            source_port: THEIR_PORT,
-            destination_port: OUR_PORT,
-            sequence: position,
-            acknowledgement: first.sequence,
-            flags: FLAG_ACK,
-            window: super::WINDOW,
-            payload_len: 0,
-        };
+        let duplicate = Segment::new(
+            THEIR_PORT,
+            OUR_PORT,
+            position,
+            first.sequence,
+            FLAG_ACK,
+            super::WINDOW,
+            0,
+        );
 
         // The first two say nothing new.
         for expected in 1..super::DUPLICATE_ACKS {
@@ -2843,15 +3335,15 @@ mod tests {
         let first = outgoing[0].clone();
         let window_before = client.congestion_window();
 
-        let duplicate = Segment {
-            source_port: THEIR_PORT,
-            destination_port: OUR_PORT,
-            sequence: client.expected_position(),
-            acknowledgement: first.sequence,
-            flags: FLAG_ACK,
-            window: super::WINDOW,
-            payload_len: 0,
-        };
+        let duplicate = Segment::new(
+            THEIR_PORT,
+            OUR_PORT,
+            client.expected_position(),
+            first.sequence,
+            FLAG_ACK,
+            super::WINDOW,
+            0,
+        );
         for _ in 0..2 {
             let (_event, replies) = client.receive(&duplicate, &[]);
             assert!(replies.is_empty());
@@ -2990,10 +3482,20 @@ mod tests {
     }
 
     /// A full unacknowledged queue refuses a write rather than growing.
+    ///
+    /// `TCP_NODELAY` is turned **on** for the fill: the writes are one byte
+    /// each, and Nagle's rule holds a small write while anything is in flight,
+    /// so without the option the first byte would go and the second would be
+    /// held and the test would be measuring the rule rather than the queue's
+    /// bound.  Which of the two is holding a byte is exactly what the option
+    /// decides, and this test is about the other one.
     #[test]
     fn a_full_unacknowledged_queue_refuses_a_write() {
         let (mut client, _server) = established_on_the_loopback();
         client.advance(0);
+        client
+            .set_option(abi::network::IPPROTO_TCP, abi::network::TCP_NODELAY, &[1])
+            .expect("no delay is an option this stack serves");
         for length in 0..super::MAX_UNACKNOWLEDGED {
             let (sent, _) = client.send_data(b"x");
             assert_eq!(sent, 1, "write {length} fit");
@@ -3010,15 +3512,15 @@ mod tests {
         // The peer's acknowledgement frees room, and the same write succeeds.
         let acknowledgement = client.sequence;
         let (_event, _replies) = client.receive(
-            &super::Segment {
-                source_port: THEIR_PORT,
-                destination_port: OUR_PORT,
-                sequence: client.acknowledgement,
+            &super::Segment::new(
+                THEIR_PORT,
+                OUR_PORT,
+                client.acknowledgement,
                 acknowledgement,
-                flags: FLAG_ACK,
-                window: super::WINDOW,
-                payload_len: 0,
-            },
+                FLAG_ACK,
+                super::WINDOW,
+                0,
+            ),
             &[],
         );
         assert_eq!(client.unacknowledged(), 0, "one acknowledgement freed it");
@@ -3100,15 +3602,15 @@ mod tests {
         // One byte past the last one this side sent: refused.
         let past = outgoing[0].sequence + outgoing[0].payload.len() as u32 + 1;
         let (_event, _replies) = client.receive(
-            &super::Segment {
-                source_port: THEIR_PORT,
-                destination_port: OUR_PORT,
-                sequence: client.acknowledgement,
-                acknowledgement: past,
-                flags: FLAG_ACK,
-                window: super::WINDOW,
-                payload_len: 0,
-            },
+            &super::Segment::new(
+                THEIR_PORT,
+                OUR_PORT,
+                client.acknowledgement,
+                past,
+                FLAG_ACK,
+                super::WINDOW,
+                0,
+            ),
             &[],
         );
         assert_eq!(
@@ -3119,15 +3621,15 @@ mod tests {
 
         // Below the oldest unacknowledged byte: also refused.
         let (_event, _replies) = client.receive(
-            &super::Segment {
-                source_port: THEIR_PORT,
-                destination_port: OUR_PORT,
-                sequence: client.acknowledgement,
-                acknowledgement: outgoing[0].sequence - 1,
-                flags: FLAG_ACK,
-                window: super::WINDOW,
-                payload_len: 0,
-            },
+            &super::Segment::new(
+                THEIR_PORT,
+                OUR_PORT,
+                client.acknowledgement,
+                outgoing[0].sequence - 1,
+                FLAG_ACK,
+                super::WINDOW,
+                0,
+            ),
             &[],
         );
         assert_eq!(
@@ -3140,15 +3642,15 @@ mod tests {
         // shows the two refusals above were the range and not a queue that
         // never retires anything.
         let (_event, _replies) = client.receive(
-            &super::Segment {
-                source_port: THEIR_PORT,
-                destination_port: OUR_PORT,
-                sequence: client.acknowledgement,
-                acknowledgement: past - 1,
-                flags: FLAG_ACK,
-                window: super::WINDOW,
-                payload_len: 0,
-            },
+            &super::Segment::new(
+                THEIR_PORT,
+                OUR_PORT,
+                client.acknowledgement,
+                past - 1,
+                FLAG_ACK,
+                super::WINDOW,
+                0,
+            ),
             &[],
         );
         assert_eq!(client.unacknowledged(), 0, "the last byte retires it");

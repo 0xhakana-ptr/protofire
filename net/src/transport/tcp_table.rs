@@ -416,15 +416,15 @@ mod tests {
 
     /// A segment with the fields a test cares about, and nothing else.
     fn segment(flags: u8, sequence: u32, source_port: u16, destination_port: u16) -> Segment {
-        Segment {
+        Segment::new(
             source_port,
             destination_port,
             sequence,
-            acknowledgement: 0,
+            0,
             flags,
-            window: crate::tcp::WINDOW,
-            payload_len: 0,
-        }
+            crate::tcp::WINDOW,
+            0,
+        )
     }
 
     /// A table with a listener on `port` and a client connected to it, which
@@ -557,15 +557,15 @@ mod tests {
         let Some(own_port) = table.local_port_of(from) else {
             return;
         };
-        let segment = Segment {
-            source_port: own_port,
-            destination_port: peer_port,
-            sequence: outgoing.sequence,
-            acknowledgement: outgoing.acknowledgement,
-            flags: outgoing.flags,
-            window: crate::tcp::WINDOW,
-            payload_len: outgoing.payload.len(),
-        };
+        let segment = Segment::new(
+            own_port,
+            peer_port,
+            outgoing.sequence,
+            outgoing.acknowledgement,
+            outgoing.flags,
+            crate::tcp::WINDOW,
+            outgoing.payload.len(),
+        );
         // The peer is the end whose own port is the segment's destination
         // and whose remote is this end: this machine is `LOCAL`, so the
         // segment's source address is, and the source port is this end's.

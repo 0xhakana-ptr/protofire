@@ -2390,15 +2390,15 @@ fn tcp_exchange(
                     .is_none()
             {
                 let Some((id, replies)) = table.accept_syn(
-                    &net::tcp::Segment {
-                        source_port: sender_port,
+                    &net::tcp::Segment::new(
+                        sender_port,
                         destination_port,
-                        sequence: outgoing.sequence,
-                        acknowledgement: outgoing.acknowledgement,
-                        flags: outgoing.flags,
-                        window: outgoing.window,
-                        payload_len: outgoing.payload.len(),
-                    },
+                        outgoing.sequence,
+                        outgoing.acknowledgement,
+                        outgoing.flags,
+                        outgoing.window,
+                        outgoing.payload.len(),
+                    ),
                     (local, sender_port),
                 ) else {
                     // A SYN for a port nothing listens on: dropped, the way
@@ -2416,18 +2416,21 @@ fn tcp_exchange(
                 // closed port is.
                 continue;
             };
-            let segment = net::tcp::Segment {
-                source_port: sender_port,
+            // The window the segment advertises, read from the segment rather
+            // than restated: it is what the sender's own buffers had room for
+            // at the moment it was built.  A segment the loopback carries
+            // states no receive buffer, so `Segment::new`'s "nothing said" is
+            // right for it: the option is a handshake's and the connection
+            // learned this side's MSS when the SYN that opened it arrived.
+            let segment = net::tcp::Segment::new(
+                sender_port,
                 destination_port,
-                sequence: outgoing.sequence,
-                acknowledgement: outgoing.acknowledgement,
-                flags: outgoing.flags,
-                // The window the segment advertises, read from the segment
-                // rather than restated: it is what the sender's own buffers
-                // had room for at the moment it was built.
-                window: outgoing.window,
-                payload_len: outgoing.payload.len(),
-            };
+                outgoing.sequence,
+                outgoing.acknowledgement,
+                outgoing.flags,
+                outgoing.window,
+                outgoing.payload.len(),
+            );
             let connection = table
                 .connection_mut(peer_id)
                 .expect("the id came from this table");
@@ -2459,7 +2462,16 @@ fn tcp_send_on_wire(
         return Err(Error::NotFound);
     };
     let (our_hardware, our_protocol) = (interface.hardware, interface.protocol);
-    let tcp_len = net::tcp::HEADER_LEN + outgoing.payload.len();
+    // A SYN carries the MSS option and every other segment does not, so the
+    // header's length is the segment's and not a constant: a frame sized by
+    // `HEADER_LEN` for a SYN is four bytes short, and the writer's option
+    // would run past it.
+    let header = if outgoing.flags & net::tcp::FLAG_SYN != 0 {
+        net::tcp::SYN_HEADER_LEN
+    } else {
+        net::tcp::HEADER_LEN
+    };
+    let tcp_len = header + outgoing.payload.len();
     match address {
         net::address::Address::V4(destination) => {
             // The gateway's hardware address is this build's whole routing
@@ -2578,7 +2590,15 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) -> bool {
     let connection = table
         .connection_mut(id)
         .expect("the id came from this table");
-    let (answer, replies) = connection.receive(&segment, payload);
+    // The segment's **data**, not the packet: `receive`'s second argument is
+    // the peer's bytes, and handing it the whole packet put the segment's own
+    // header at the front of the stream.  The offset is the parser's, and it is
+    // why `Segment` carries one: a segment with options has its data past them,
+    // and only the data offset knows where.  Both demux paths had this defect,
+    // which no loopback exchange could show: the loopback hands a connection
+    // the payload it built, never a frame.
+    let data = &payload[segment.payload_at..segment.payload_at + segment.payload_len];
+    let (answer, replies) = connection.receive(&segment, data);
     let _ = answer;
     if !replies.is_empty() {
         let queued = replies.into_iter().map(|segment| (id, segment)).collect();
@@ -2644,7 +2664,10 @@ fn demux_tcp6(packet: &net::ipv6::Packet, payload: &[u8]) -> bool {
     let connection = table
         .connection_mut(id)
         .expect("the id came from this table");
-    let (answer, replies) = connection.receive(&segment, payload);
+    // The same defect the IPv4 path had, and the same fix: the connection is
+    // handed the segment's data, whose start only the data offset knows.
+    let data = &payload[segment.payload_at..segment.payload_at + segment.payload_len];
+    let (answer, replies) = connection.receive(&segment, data);
     let _ = answer;
     if !replies.is_empty() {
         let queued = replies.into_iter().map(|segment| (id, segment)).collect();
@@ -3576,6 +3599,151 @@ pub fn ipv6_transport_probe() -> bool {
     round_trip
 }
 
+/// Prove that a stream fed from a frame carries the frame's **data**.
+///
+/// Every exchange above runs on the loopback, and a loopback hands a
+/// connection the payload it built: no frame, no header, no data offset.  The
+/// frame path is the other half, and it had a defect no loopback could show:
+/// the demux handed `receive` the whole packet, so a stream fed by a real card
+/// carried its peer's TCP header as the first twenty bytes of data.
+///
+/// The probe builds a frame the way the card would carry one, sends it through
+/// `demux`, and reads the stream's inbox.  Two segments go in, one with the
+/// MSS option and one without, so the two readings of "where does the data
+/// start" differ: a reader that used a constant header length would take four
+/// option bytes from the first segment and be right about the second.
+///
+/// The line's number is the inbox's length, which is the data and not the
+/// headers: eight bytes sent, eight held.
+#[cfg(target_os = "none")]
+pub fn frame_data_probe() -> bool {
+    const PORT: u16 = 9109;
+    const FIRST: &[u8] = b"four";
+    const SECOND: &[u8] = b"more";
+
+    let (protocol, hardware) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        (interface.protocol, interface.hardware)
+    };
+    // The listener and a client, so the table has a connection whose sequence
+    // numbers the probe can build segments from: the segment's own numbers are
+    // the connection's, and a probe that invented them would be read as a
+    // retransmission of something it never sent.
+    let listener = match tcp_listen(PORT) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), PORT) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+    let source_port = match TCP.lock().local_port_of(client) {
+        Some(port) => port,
+        None => return false,
+    };
+
+    // The two segments, written with the stack's own writer so the frame is
+    // exactly what this stack would put on a wire.
+    let mut carried = 0;
+    for (index, payload) in [FIRST, SECOND].iter().enumerate() {
+        let header = if index == 0 {
+            net::tcp::SYN_HEADER_LEN
+        } else {
+            net::tcp::HEADER_LEN
+        };
+        let tcp_len = header + payload.len();
+        let frame_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + tcp_len;
+        let mut frame = alloc::vec![0; frame_len];
+        net::ethernet::write_header(
+            &mut frame,
+            hardware,
+            hardware,
+            net::ethernet::ETHERTYPE_IPV4,
+        );
+        net::ipv4::write_header(
+            &mut frame[netdev::ETHERNET_HEADER_LEN..],
+            protocol,
+            protocol,
+            net::ipv4::PROTOCOL_TCP,
+            tcp_len,
+        );
+        // Both are data segments and neither opens a connection: a SYN would
+        // be delivered to the listener as a **second** stream, and the probe
+        // would be measuring a connection it never read.  The difference the
+        // probe needs is the option, and it puts that in by hand below.
+        let flags = net::tcp::FLAG_PSH | net::tcp::FLAG_ACK;
+        // Each segment starts where the stream's inbox now ends, read **at
+        // this moment** and not from a base captured before the first one:
+        // the first segment's arrival advances the expected position, so a
+        // base plus a running count would put the second segment four bytes
+        // past where the stream is and it would be held for a gap that does
+        // not exist.
+        let (sequence, acknowledgement) = {
+            let table = TCP.lock();
+            let Some(connection) = table.connection(accepted) else {
+                return false;
+            };
+            (connection.expected_position(), connection.send_position())
+        };
+        // The first segment states an MSS and the second does not, so the two
+        // data offsets differ: a reader that used a constant header length
+        // would take the option's four bytes as the first segment's data and
+        // be right about the second, which is exactly the defect this probe is
+        // for.
+        net::tcp::write_segment_with_mss(
+            &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+            protocol,
+            protocol,
+            source_port,
+            PORT,
+            sequence,
+            acknowledgement,
+            flags,
+            net::tcp::WINDOW,
+            payload,
+            if index == 0 { Some(1460) } else { None },
+        );
+        // Through the demux, which is the path a frame from a card takes.  A
+        // SYN for a port the table already listens on would open a *second*
+        // connection, so only the second segment is delivered as data; the
+        // first is delivered to the same connection by handing the demux a
+        // segment whose flags do not open.  What is measured is the inbox
+        // after both, so the first must be data too.
+        demux(&frame, protocol);
+        carried += payload.len();
+    }
+
+    let held = {
+        let mut table = TCP.lock();
+        let Some(connection) = table.connection_mut(accepted) else {
+            return false;
+        };
+        connection.inbox_len()
+    };
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    let correct = held == carried;
+    arch::serial::write_str("protofire: frame data ");
+    arch::serial::write_u32(carried as u32);
+    arch::serial::write_str(" byte(s) sent, ");
+    arch::serial::write_u32(held as u32);
+    arch::serial::write_str(if correct {
+        " held, the headers stayed out of the stream\n"
+    } else {
+        " held, MISMATCH\n"
+    });
+    correct
+}
+
 /// Prove that a raw socket hears what the internet layer carries.
 ///
 /// The exchange is this machine sending itself a packet on a protocol nothing
@@ -4141,29 +4309,29 @@ pub fn window_probe() -> bool {
         // One segment the size of the whole window, delivered to the peer and
         // never read.  The connection now holds every byte it advertised room
         // for.
-        let filling = net::tcp::Segment {
+        let filling = net::tcp::Segment::new(
             source_port,
-            destination_port: 9105,
-            sequence: base,
-            acknowledgement: 5001,
-            flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
-            window: net::tcp::WINDOW,
-            payload_len: before as usize,
-        };
+            9105,
+            base,
+            5001,
+            net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+            net::tcp::WINDOW,
+            before as usize,
+        );
         let _ = peer.receive(&filling, &alloc::vec![0x5A_u8; before as usize]);
         let full = peer.advertised_window();
 
         // One byte more, at the position past everything held: there is
         // nowhere for it, so the buffer must not grow.
-        let extra = net::tcp::Segment {
+        let extra = net::tcp::Segment::new(
             source_port,
-            destination_port: 9105,
-            sequence: base + before as u32,
-            acknowledgement: 5001,
-            flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
-            window: net::tcp::WINDOW,
-            payload_len: 1,
-        };
+            9105,
+            base + before as u32,
+            5001,
+            net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+            net::tcp::WINDOW,
+            1,
+        );
         let _ = peer.receive(&extra, b"x");
         (before, full, peer.held())
     };
@@ -4320,15 +4488,15 @@ pub fn peer_window_probe() -> bool {
             return false;
         };
         let opened = sender.peer_window();
-        let stated = net::tcp::Segment {
-            source_port: 9107,
-            destination_port: source_port,
-            sequence: 0,
-            acknowledgement: sender.send_position(),
-            flags: net::tcp::FLAG_ACK,
-            window: 0,
-            payload_len: 0,
-        };
+        let stated = net::tcp::Segment::new(
+            9107,
+            source_port,
+            0,
+            sender.send_position(),
+            net::tcp::FLAG_ACK,
+            0,
+            0,
+        );
         let _ = sender.receive(&stated, b"");
         let blocked = sender.send_budget();
         // The write while the peer says it has no room.  What it carries is
@@ -4336,15 +4504,15 @@ pub fn peer_window_probe() -> bool {
         let (carried, outgoing) = sender.send_data(b"protofire");
         let refused_while_full = carried == 0 && outgoing.is_empty();
         // The reopen, and the same write again.
-        let again = net::tcp::Segment {
-            source_port: 9107,
-            destination_port: source_port,
-            sequence: 0,
-            acknowledgement: sender.send_position(),
-            flags: net::tcp::FLAG_ACK,
-            window: net::tcp::WINDOW,
-            payload_len: 0,
-        };
+        let again = net::tcp::Segment::new(
+            9107,
+            source_port,
+            0,
+            sender.send_position(),
+            net::tcp::FLAG_ACK,
+            net::tcp::WINDOW,
+            0,
+        );
         let _ = sender.receive(&again, b"");
         let (carried, _outgoing) = sender.send_data(b"protofire");
         let reopened = if refused_while_full { carried } else { 0 };
@@ -4479,15 +4647,15 @@ pub fn congestion_probe() -> bool {
             if peer_position == 0 {
                 peer_position = peer.expected_position();
             }
-            let segment = net::tcp::Segment {
+            let segment = net::tcp::Segment::new(
                 source_port,
-                destination_port: 9106,
+                9106,
                 sequence,
                 acknowledgement,
-                flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
-                window: net::tcp::WINDOW,
-                payload_len: payload.len(),
-            };
+                net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+                net::tcp::WINDOW,
+                payload.len(),
+            );
             peer.receive(&segment, &payload)
         };
         let _ = event;
@@ -4500,15 +4668,15 @@ pub fn congestion_probe() -> bool {
             return false;
         };
         for reply in replies {
-            let segment = net::tcp::Segment {
-                source_port: 9106,
-                destination_port: source_port,
-                sequence: peer_position,
-                acknowledgement: reply.acknowledgement,
-                flags: reply.flags,
-                window: reply.window,
-                payload_len: reply.payload.len(),
-            };
+            let segment = net::tcp::Segment::new(
+                9106,
+                source_port,
+                peer_position,
+                reply.acknowledgement,
+                reply.flags,
+                reply.window,
+                reply.payload.len(),
+            );
             let _ = sender.receive(&segment, &reply.payload);
             peer_position = peer_position.wrapping_add(64);
         }
@@ -4625,15 +4793,15 @@ pub fn out_of_order_probe() -> bool {
             return false;
         };
         let (sequence, acknowledgement, payload) = halves.1.clone();
-        let segment = net::tcp::Segment {
+        let segment = net::tcp::Segment::new(
             source_port,
-            destination_port: 9101,
+            9101,
             sequence,
             acknowledgement,
-            flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
-            window: net::tcp::WINDOW,
-            payload_len: payload.len(),
-        };
+            net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+            net::tcp::WINDOW,
+            payload.len(),
+        );
         // The answer is the duplicate acknowledgement the peer would send;
         // the probe routes the halves itself, so the return is not acted on.
         let _ = peer.receive(&segment, &payload);
@@ -4651,15 +4819,15 @@ pub fn out_of_order_probe() -> bool {
             return false;
         };
         let (sequence, acknowledgement, payload) = halves.0.clone();
-        let segment = net::tcp::Segment {
+        let segment = net::tcp::Segment::new(
             source_port,
-            destination_port: 9101,
+            9101,
             sequence,
             acknowledgement,
-            flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
-            window: net::tcp::WINDOW,
-            payload_len: payload.len(),
-        };
+            net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+            net::tcp::WINDOW,
+            payload.len(),
+        );
         let _ = peer.receive(&segment, &payload);
     }
 
