@@ -1,7 +1,24 @@
 //! kernel/src/net.rs
 //!
 //! The kernel's network half: the interface the boot brought up, the answers
-//! the network calls give, and the datagram sockets a program holds.
+//! the network calls give, and the sockets a program holds.
+//!
+//! ## Where `net` ends and this file begins
+//!
+//! The `net` crate computes what a frame means and has no state: it parses a
+//! header, builds a request, checks a sum, and every one of its functions is a
+//! pure call over a byte slice.  It holds no address, no cache and no lock,
+//! which is what lets all of it be tested on a host.
+//!
+//! This file holds everything `net` deliberately does not: **which** address
+//! this machine answers for, **which** neighbours the wire has answered about,
+//! **which** ports a program has bound, and **when** a waiting task wakes.
+//! Those are facts about a boot rather than about a protocol, and each one is
+//! a `static` behind a `Mutex` for that reason.
+//!
+//! The line is what makes a second card a second `Interface` rather than a
+//! second stack: `net` never learns which card carried a frame, and this file
+//! never reads a field of one.
 //!
 //! ## Why this is a module and not a field of the boot
 //!

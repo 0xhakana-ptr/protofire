@@ -276,12 +276,14 @@
 6 sound
 7 virt
 
-# `net` is an empty crate.  Its rank is the one its contents will need — it
-# will name `abi`, and probably `sync` — and it is low on purpose so that
-# filling it is a change to the manifest and this file together rather than a
-# crate that quietly arrived at a layer nothing chose.  `fs` was in the same
-# state and has since been filled: PyroFS, tmpfs and ISO 9660 live there, and
-# its row describes the dependencies it actually names.
+# `net` is the protocol stack above the frame: Ethernet, ARP, IPv4, ICMP,
+# IPv6, ICMPv6, neighbour discovery, UDP and TCP.  It names `abi` for the error
+# type and `netdev` for the frame's two format constants — the header length
+# and the ethertype reader — which are the only things both crates need.  It
+# names no driver and no `sync`: a parser has no lock and no state, and the
+# address a machine answers for is the kernel's to hold.  Its rank is `fs`'s
+# for `fs`'s reason: a protocol above a device sits above the framework that
+# abstracts the device.
 7 fs
 7 net
 

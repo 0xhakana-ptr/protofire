@@ -21,19 +21,23 @@
 //! | [`boot_pages`] | the page table, as the boot installs and reports it |
 //! | [`address_space`] | paging itself: the identity map, a program's space, the permission rules |
 //! | [`cpus`] | the machine's other CPUs, started and counted |
+//! | [`per_cpu`] | which CPUs exist, which one is running, and what each has seen |
 //! | [`heap`] | the heap, brought up and located |
 //! | [`volume`] | the storage, the namespace, and the read that proves them |
 //! | [`policy`] | the MAC policy, asked both ways through the real handler |
-//! | [`per_cpu`] | which CPUs exist, which one is running, and what each has seen |
 //! | [`tick`] | the timer's line, its slice and its count |
+//! | [`time`] | the clock, as a program's call reads it |
+//! | [`random`] | the generator, and what seeds it |
+//! | [`loader`] | the ELF64 reader: bytes in, a page layout out, no page table |
 //! | [`programs`] | the programs the boot builds, maps and enters |
 //! | [`interrupts`] | what an interrupt frame means to the kernel |
-
 //! | [`scheduler`] | the tasks, their states, and the switch |
 //! | [`shootdown`] | making a translation change visible to the other CPUs |
 //! | [`process`] | what a program's supervisor call does |
 //! | [`pipe`] | the pipe's endpoints and the table that holds them |
 //! | [`syscall`] | the registry and the handlers a boot serves |
+//! | [`net`] | the interface a boot brought up, and the sockets a descriptor holds |
+//! | [`service`] | the table from a name to a service, frozen before anything asks |
 //! | [`devices`] | finding a device on the bus |
 //! | [`iso_disc`] | the disc image the boot builds |
 //!

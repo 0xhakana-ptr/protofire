@@ -42,11 +42,13 @@ says so and says what it would take.
   rights, sync, unicode.  Each is a crate rather than a module under `kernel`
   or `memory` as it once was, because a crate is what can be tested on a host
   without the kernel it belongs to.
-- **`net`** — nothing, and no manifest dependency either.  The crate exists so
-  the layer and the boundary are declared before there is code to put behind
-  them; it is `net`, the name the workspace member uses, and not `network`.
-  `virtio_net` is the driver and does not name it: a packet's format is the
-  stack's business and the card's is the ring.
+- **`net`** — the protocol stack above the frame: Ethernet, ARP, IPv4, ICMP,
+  IPv6, ICMPv6, neighbour discovery, UDP and TCP.  It is a pure reader and
+  writer — no lock, no `static`, no device, and no address of its own — and the
+  state a machine needs (which address, which neighbours, which sockets) is
+  `kernel/src/net.rs`'s.  It is `net`, the name the workspace member uses, and
+  not `network`.  `virtio_net` is the driver and does not name it: a packet's
+  format is the stack's business and the card's is the ring.
 - **`apps`** — `init`, `shell` and `service_manager`.  `init` is a working
   program rather than a shape: the kernel execs it from its own filesystem, and
   it is where every level so far is exercised — it reads the greeting through

@@ -6,13 +6,13 @@
 //! | File | What it holds |
 //! |---|---|
 //! | [`table`] | the table, its descriptors, the installed registry, and the limits |
-//! | [`handlers`] | `open`, `read`, `write`, `close`, and the three MAC calls |
+//! | [`handlers`] | the calls that answer at once: the filesystem's, memory's, time's, the MAC policy's, and the datagram and stream setups |
 //! | this file | the re-exports a caller spells, and the tests |
 //!
 //! ## Why the table is here and not in the `syscall` crate
 //!
 //! Every slot names a subsystem, the filesystem, the network, the scheduler,
-//! //! and the `syscall` crate must not know that any of them exist.  A table
+//! and the `syscall` crate must not know that any of them exist.  A table
 //! there would have to import them, which is the edge
 //! `scripts/check-layering.sh` refuses.  The crate keeps the numbering, the
 //! context and the validators; where the handlers live is the kernel's
@@ -20,13 +20,11 @@
 //!
 //! ## What is served today
 //!
-//! Four handlers, `open`, `read`, `write` and `close`, backed by the one
-//! mounted volume.  That is the smallest set that makes the registry real: a
-//! program cannot read without opening, opening without closing leaks the
-//! slot, and the four together exercise every part of the interface, a number,
-//! an argument vector, the validators, a dispatch value, and an error that
-//! comes back as a status word.  `write` closes the loop the read opened: the
-//! bytes a program puts in a file are the bytes a later open reads back.
+//! Thirty-one numbers, and the split between this table and `process.rs` is
+//! the one that matters: a call that answers inside its own frame is a handler
+//! here, and a call that must **park** — a pipe read, a datagram receive, an
+//! accept, a sleep — is a branch in `process.rs`, because parking needs the
+//! scheduler and a handler taking `&mut SyscallTable` cannot hold a trap frame.
 //!
 //! Every other number answers `Error::NotImplemented` rather than being
 //! absent.  An absent slot would have to be a panic or a silent zero, and both

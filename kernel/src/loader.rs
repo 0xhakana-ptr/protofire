@@ -3,6 +3,26 @@
 //! The ELF64 reader: what a program file must say before the kernel will map
 //! it into an address space.
 //!
+//! ## Where this file ends and `programs` begins
+//!
+//! This module **reads** an image and says what it is: the entry point, the
+//! segments, and the page plan for each.  It takes bytes and answers a value.
+//! It never allocates a frame, never touches a page table, and never asks the
+//! filesystem for anything — which is why every test here runs on a host
+//! against ELF bytes built one field at a time.
+//!
+//! [`crate::programs`] is the other half and the opposite kind of code: it is
+//! what the **boot** does with a program — pick a space, copy machine code in,
+//! hand a pipe end through the stack, and enter it.  The exec path inside the
+//! scheduler is the third caller: it builds a space from a file for a `fork`
+//! or an `ExecProcess`.  Both of them call [`load`] and then map what it
+//! answered; neither one parses a byte of ELF itself.
+//!
+//! So the test of the split is what a caller needs: to know whether a file is
+//! a program this kernel can run, ask this module; to actually run one, the
+//! caller must own the address space and the scheduler, and this module owns
+//! neither.
+//!
 //! The parser is pure — bytes in, a layout out — and names no machine and no
 //! page table, which is why its tests run on a host against ELF files built
 //! one field at a time.  The *machine* answers one question only, which

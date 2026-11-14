@@ -16,20 +16,31 @@
 //!
 //! ## What is here, today
 //!
-//! The Ethernet frame, ARP, IPv4, ICMP, UDP and TCP: the layout of each, a
-//! request this crate builds and a reply it reads.  ARP is the smallest
-//! exchange that proves a card in both directions, IPv4 is the packet the
-//! rest of the stack rides in with the one checksum three protocols share,
-//! ICMP is the round trip that proves a packet built by another machine
-//! parses, UDP is the datagram whose refusal a peer answers with the
-//! datagram's own header, and TCP is the stream a handshake opens and an
-//! orderly close shuts.
+//! Both address families, and one module per thing the wire carries: the
+//! Ethernet frame, ARP and its cache, IPv4, ICMP, UDP and TCP on the one side;
+//! IPv6, its extension-header chain, ICMPv6, neighbour discovery and the
+//! solicitation and advertisement a router answers on the other.  Each is a
+//! pure reader and writer — bytes in, a value out, no allocation in the
+//! parsers and no lock anywhere — which is what lets every one of them be a
+//! host test without a card.
+//!
+//! The transports are the same code for both families: [`udp::write_datagram6`]
+//! and [`tcp::write_segment6`] differ from their IPv4 twins only in the
+//! pseudo-header, which is the one place the two versions of a checksum
+//! disagree.
+//!
+//! ## What this crate does not decide
+//!
+//! Which address a machine has, which neighbours it can reach, which sockets
+//! exist, and when a task waiting on one wakes.  Those are choices about a
+//! boot's state, and they live in `kernel/src/net.rs`: this crate computes
+//! what a frame means, the kernel keeps what the machine knows.
 //!
 //! ## What is not here yet
 //!
-//! Nothing of the stack `docs/roadmap.md` Level 5 promised: the eight steps
-//! are the eight layers above the frame, and what each is proved by is the
-//! roadmap's own table.
+//! Fragmentation and reassembly, path-MTU discovery, and the ICMP error
+//! messages a stack **sends** rather than parses.  Each is a documented
+//! refusal in the module it belongs to, with the reason beside it.
 
 #![no_std]
 

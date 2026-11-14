@@ -2,11 +2,25 @@
 //!
 //! The boot's programs: build them, map them, and let the scheduler run them.
 //!
-//! `process` is what the kernel does with a program's *call*, the handler a
-//! trap reaches.  This module is what the *boot* does with a program: pick an
-//! address space, copy the machine code in, hand a pipe end through the stack,
-//! and enter the first one.  A reader asking "how does a call get served" reads
-//! `process`; one asking "what does this boot start" reads this file.
+//! ## The three modules a reader can confuse
+//!
+//! [`crate::loader`] **reads** an image: bytes in, an entry point and a page
+//! plan out.  This file **places** one: it picks a virtual base, copies the
+//! bytes into frames, maps them, builds a stack, and enters the result.  And
+//! [`crate::process`] is what the kernel does with a program's *call*, the
+//! handler a trap reaches.
+//!
+//! So a reader asking "is this file a program this kernel can run" reads
+//! `loader`; one asking "what does this boot start, and where does it put it"
+//! reads this file; one asking "how does a call get served" reads `process`.
+//! This file is the only one of the three that knows all of them, which is
+//! what makes it the boot's and not a library's.
+//!
+//! It differs from the exec path in one way worth stating: this file builds
+//! the boot's own programs from bytes `arch` supplies, and the scheduler's
+//! `build_image_space` builds a program from a **file** the filesystem holds.
+//! The first needs no filesystem and proves the entry path; the second needs
+//! the registry and proves a program that arrived after the boot.
 
 #[cfg(target_os = "none")]
 use crate::scheduler::Scheduler;

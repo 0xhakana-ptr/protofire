@@ -2,6 +2,25 @@
 //!
 //! The machine's other CPUs: starting them, and counting them.
 //!
+//! ## Where this file ends and `per_cpu` begins
+//!
+//! The two are not two views of one thing; they answer different questions and
+//! only one of them holds state.
+//!
+//! [`crate::per_cpu`] is the **record**: which slots exist, which CPU is
+//! running now, and what each one has counted — ticks, interrupts, whether it
+//! is parked.  Its values are atomics, and it is the one part of the kernel
+//! safe to touch from any CPU without a lock.
+//!
+//! This file is the **sequence**: the boot-time act of starting the others and
+//! proving each one came up, the IPI that makes that observable, and the line
+//! that reports what happened.  It owns no state of its own — every fact it
+//! reports it read out of `per_cpu` — and it runs once, from the boot CPU,
+//! which is why everything here is `#[cfg(target_os = "none")]`.
+//!
+//! The test of the split: `per_cpu` compiles and is tested on a host, this
+//! file cannot be.  A second CPU's arrival is not something a host has.
+//!
 //! A machine that starts a CPU and does not wait for it is a boot that cannot
 //! tell "the CPU came up" from "the firmware accepted the request and nothing
 //! ran".  The wait is bounded, a CPU that never comes up is a line on the
