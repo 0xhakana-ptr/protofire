@@ -725,6 +725,55 @@ because releasing one while the other CPU was still installed on its root
 faulted 186 times in six boots of eight.  `docs/migration.md` has the per-step
 cost of more CPUs.
 
+## The IPv6 side of the network
+
+IPv6 landed as a second address family on the same card, and the boot proves
+three things about it.  All three lines are quoted from one boot of the x86_64
+image; the aarch64 and riscv64 machines print them too, each with its own MAC
+in the EUI-64.
+
+```
+protofire: ipv6 neighbour answered for fe80:0000:0000:0000:5054:00ff:fe12:3456, peer fe80:0000:0000:0000:5055:0aff:fe00:0202 is 52:55:0a:00:02:02
+protofire: ipv6 echo reply to fe80:0000:0000:0000:5055:0aff:fe00:0202, identifier 7, sequence 1, 8 byte(s)
+protofire: process 1 asked the ipv6 side, 56 byte(s)
+```
+
+**What each line is evidence of.**  The first is a neighbour solicitation this
+stack built, parsed by the same `demux_ipv6` a frame off the wire takes, whose
+target was an address the interface holds and whose source link-layer option
+carried the peer's MAC into the cache — the read-back names the peer and the
+MAC, so the answer is the exchange's and not a constant.  The second is an echo
+request that reached `answer_echo_request` through the same demux, with the
+identifier and sequence the request carried.  The third is a ring-3 program
+reading the `Ipv6Status` record and checking the link-local address against the
+MAC it already knew: `fe80::` plus the modified EUI-64, which is a fact a
+program can verify without the wire.
+
+**Why these are loopbacks and not a QEMU exchange.**  `ipv6=on` was tried and
+measured: with it on, slirp stops answering IPv4 ARP, and the boot's ARP
+exchange, ping and datagram all went silent while the boot still exited zero.
+That is a card option that costs four working exchanges to reach a neighbour
+slirp does not answer NDP for either, so it is off and the reason is recorded
+in `tools/xtask/src/machine.rs` beside it.
+
+**The invariant one of the tests pins.**  Swapping a datagram's source and
+destination does **not** break its IPv6 checksum: a sum of sixteen-bit words is
+commutative, so the checksum proves the pair of addresses and not the direction
+the datagram travelled.  What says a datagram was addressed to this machine is
+the IPv6 header's destination field.  The test asserts the non-obvious half and
+says why, so a later change that "fixes" the pseudo-header's order fails a test
+that explains the invariant instead of silently changing the wire.
+
+**What is not proven here.**  A router advertisement configuring a global
+address: the code path is in `net/src/ndp.rs` and the interface holds the
+field, but nothing this tree boots on sends one, so the record's `has_global`
+is read and not asserted.  Reassembly of a fragmented packet: `walk` reports a
+fragment and the demux drops it, because a stack that read the first piece as
+the whole packet would answer with a truncated segment that looks complete.
+And UDP or TCP over IPv6 through the syscall interface: the socket calls are
+frozen with IPv4 addresses in their records, so that needs a family-tagged
+address form and its own number.
+
 ## The filesystems
 
 Ten filesystems are in `fs/src/` and none of them is mounted by a boot: the

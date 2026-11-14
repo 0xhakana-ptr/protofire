@@ -55,7 +55,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **138,766 lines of Rust across 40 crates**, which is
+The tree is **142,245 lines of Rust across 40 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -279,10 +279,11 @@ carries the trace and the 30-of-30 measurement.
 
 ### Level 5 — the network
 
-A stack, not a driver: IPv4, then UDP, then TCP.  `virtio_net` moves frames and
-stops there on purpose.  This is the largest single level and the one with the
-least existing code to build on — **43 numbers** and not one line of protocol
-above the frame.
+A stack, not a driver: IPv4, then UDP, then TCP — and then IPv6, which started
+as "the other address family" and turned out to bring its own discovery
+protocol with it.  `virtio_net` moves frames and stops there on purpose.  This
+is the largest single level and the one with the least existing code to build
+on — **43 numbers** and not one line of protocol above the frame.
 
 What those 43 are, because the shape decides the order: 20 of them are the
 socket and address calls a program makes (`NetworkStatus`, `ConnectTcp`,
@@ -350,10 +351,73 @@ lands before anything in the kernel depends on it.
   receive is the first caller that could exercise it, and it may still not on
   this machine.
 
+#### IPv6, which is a second family and not a longer address
+
+The level landed IPv4 first and stopped there, and that is where the stack was
+when this was written down.  IPv6 is not "IPv4 with sixteen-byte addresses": it
+moves the checksum into a pseudo-header, deletes the header sum that IPv4
+recomputes at every hop, and — the part that decides whether the thing works at
+all — **deletes ARP**.  A MAC address comes from Neighbor Discovery, which is
+ICMPv6, so a stack with ICMPv6 echo and no NDP can answer a ping from nowhere
+and send to nowhere.
+
+What landed, in the order a packet needs it:
+
+| layer | where | what it does |
+|---|---|---|
+| the packet | `net/src/ipv6.rs` | the fixed header, the extension-header chain walked to the first consumer, the fragment header reported rather than reassembled, and the forty-byte pseudo-header sum |
+| the messages | `net/src/icmpv6.rs` | echo, the error types a sender reacts to, and the four NDP messages — neighbour and router, solicitation and advertisement — with the option walk |
+| what is remembered | `net/src/ndp.rs` | a neighbour cache with three states, the duplicate-address check, and the two addresses a host computes rather than asks for |
+| the transports | `net/src/udp.rs`, `net/src/tcp.rs` | an IPv6 writer and reader each, a **second function** rather than the IPv4 one with a flag |
+| the interface | `kernel/src/net.rs` | a link-local address derived at install, the groups joined, the cache, and a demux branch that walks the chain before it reads a transport |
+| the program's view | `AbiInfo`-shaped record in `abi/src/network.rs` | `Ipv6Status` (197), a new number above the frozen boundary, because `NetworkStatus`'s fourteen address bytes are IPv4's |
+
+**Three things this level had to decide, and did:**
+
+- **The IPv6 addresses do not fit `NetworkStatus`, so they get their own
+  call.**  Numbers at or below 120 are frozen and their record layouts with
+  them; a sixteen-byte address in a record whose address field is four bytes is
+  a change to a contract programs were built against.  `Ipv6Status` is 197 —
+  above the boundary, additive by construction, and `NetworkStatus` is
+  untouched for the programs that already call it.
+- **A zero UDP checksum is refused over IPv6.**  IPv4's zero means "not
+  computed"; IPv6 has no such value, so a datagram that arrives with one is a
+  datagram to drop rather than sum.
+- **The pseudo-header sum is commutative, so it proves the pair and not the
+  direction.**  Swapping the source and the destination does not break a
+  checksum — the test says so and says why, so a later change that "fixes"
+  the pseudo-header's order fails a test that explains the invariant.
+
+**What the boot proves, and what it does not.**  Two exchanges, both through
+`demux_ipv6` — the path a frame off the wire takes — and both loopbacks:
+
+```
+protofire: ipv6 neighbour answered for fe80:0000:0000:0000:5054:00ff:fe12:3456, peer fe80:0000:0000:0000:5055:0aff:fe00:0202 is 52:55:0a:00:02:02
+protofire: ipv6 echo reply to fe80:0000:0000:0000:5055:0aff:fe00:0202, identifier 7, sequence 1, 8 byte(s)
+protofire: process 1 asked the ipv6 side, 56 byte(s)
+```
+
+The third line is ring 3 reading the record and checking the link-local address
+against the MAC it was told about — `fe80::` plus the modified EUI-64, which is
+the one fact a program can verify without the wire.
+
+QEMU's user-mode network was **measured and refused** for this: `ipv6=on` makes
+slirp stop answering IPv4 ARP, so enabling it costs the boot's four IPv4
+exchanges to reach a neighbour that does not answer NDP either.  The
+measurement is in `tools/xtask/src/machine.rs` beside the option that is
+deliberately absent, so the next reader does not make it again.
+
+What is **not** here, and is its own step: a router advertisement actually
+configuring a global address on this boot (the code path is in
+`net/src/ndp.rs` and the interface holds the field, but no machine this tree
+boots on sends one); reassembly of a fragmented packet; and UDP or TCP over
+IPv6 **through the syscall interface**, which would need addresses to cross the
+boundary in a family-tagged form the frozen socket calls do not have.
+
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-138,766 across 40 crates.  The difference is not lost work — it is work the new
+142,245 across 40 crates.  The difference is not lost work — it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 
