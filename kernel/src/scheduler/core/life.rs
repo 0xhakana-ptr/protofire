@@ -53,7 +53,7 @@ impl Scheduler {
         // would be a fork of nothing.
         // Borrowed, not copied: a space owns a growable frame list, and the
         // fork reads it to decide what to share.  A copy would be a second
-        // ownership of the same frames — which the pool's co-owner count would
+        // ownership of the same frames, which the pool's co-owner count would
         // then believe was two spaces when there was one.
         let parent_space = self.tasks.get(parent)?.space.as_ref()?;
         // SAFETY: the parent's space is live and this boot is the only writer.
@@ -76,7 +76,7 @@ impl Scheduler {
 
         // **The child starts with its parent's descriptors**, copied and owned
         // by the child.  A `fork` that handed the child nothing would make
-        // every inherited descriptor a number the child could not use — and
+        // every inherited descriptor a number the child could not use, and
         // because the table refuses another process's slot, the child's first
         // read of a pipe its parent opened would answer `InvalidArgument`
         // rather than data.  The copy raises each pipe end's count, so
@@ -104,7 +104,7 @@ impl Scheduler {
     ///
     /// This is `exec`: the same task, the same pid, the same parent, running a
     /// different program from that program's first instruction.  What carries
-    /// over is the **identity** and nothing else — a fresh root, the file's
+    /// over is the **identity** and nothing else, a fresh root, the file's
     /// segments mapped at the addresses the loader accepted, a stack of the
     /// kernel's own choosing above the image, and a context built from
     /// scratch, because a program that asked to become another does not resume
@@ -116,8 +116,8 @@ impl Scheduler {
     /// The old root is installed on the CPU serving the call when this runs,
     /// and freeing a root the machine is translating through is a fault on the
     /// next instruction.  So the new space is built first, the task is swapped
-    /// onto it, and `switch_address_space` installs the new root — which on
-    /// every machine is a whole-TLB flush — **before** the old space is
+    /// onto it, and `switch_address_space` installs the new root, which on
+    /// every machine is a whole-TLB flush, **before** the old space is
     /// released.  At the moment of the release no CPU translates through the
     /// old root: this one just switched away, the machine's switches all flush,
     /// and the task is marked running here and nowhere else, so no other CPU
@@ -134,7 +134,7 @@ impl Scheduler {
     /// and the caller answers an error rather than a pid.
     /// Read a program file and build the address space it runs in.
     ///
-    /// This is the whole of what an image needs — the file read whole from
+    /// This is the whole of what an image needs, the file read whole from
     /// the registry's filesystem, parsed into segments, mapped page by page
     /// at the addresses the loader accepted, a stack of the kernel's own
     /// choosing above the image, the window and break recorded, and the exec
@@ -146,7 +146,7 @@ impl Scheduler {
     ///
     /// Answers the space, the entry, and the stack pointer the program
     /// starts at.  Every failure inside releases the space it built, so a
-    /// refused image costs the pool nothing — which is also why the parse
+    /// refused image costs the pool nothing, which is also why the parse
     /// runs before `AddressSpace::new` allocates the root: a caller that
     /// parsed afterwards and answered `None` on a malformed file left a
     /// frame behind for every attempt, and any ring-3 program can attempt
@@ -154,7 +154,7 @@ impl Scheduler {
     #[cfg(target_os = "none")]
     fn build_image_space(path: &str) -> Option<(crate::address_space::AddressSpace, usize, usize)> {
         // The file, whole, from the filesystem the registry serves.  The read
-        // is bounded by the loader's own ceiling — a program bigger than this
+        // is bounded by the loader's own ceiling, a program bigger than this
         // is one the caller refuses before it maps.
         let bytes = crate::syscall::read_file(
             path,
@@ -166,7 +166,7 @@ impl Scheduler {
         // The image, parsed **before** any frame is taken.  The order is the
         // leak: `AddressSpace::new` allocates the root table, so a caller that
         // parsed afterwards and answered `None` on a malformed file left a
-        // frame behind for every attempt — and any ring-3 program can attempt
+        // frame behind for every attempt, and any ring-3 program can attempt
         // it as often as it likes, which makes a local mistake into a way to
         // exhaust the pool.  `load` takes nothing but the bytes, so it goes
         // first and a refused image costs nothing.
@@ -176,7 +176,7 @@ impl Scheduler {
         };
         let mut space = unsafe { crate::address_space::AddressSpace::new() }?;
         // The loader's own line: the file was read and parsed into segments,
-        // which is the one fact the exec'd and opened lines cannot carry —
+        // which is the one fact the exec'd and opened lines cannot carry
         // they say a program ran, this one says the *loader* ran.
         arch::serial::write_str("protofire: loaded ");
         arch::serial::write_str(path);
@@ -187,8 +187,8 @@ impl Scheduler {
         arch::serial::write_str("\n");
         // One slot per page the image can have, not per segment: the list
         // merges segments that share a page, so its size is the page count of
-        // the largest image the loader admits.  It was `MAX_SEGMENTS * 2` —
-        // sixteen — which is a bound on segments and was doing double duty as
+        // the largest image the loader admits.  It was `MAX_SEGMENTS * 2`
+        // sixteen, which is a bound on segments and was doing double duty as
         // a bound on pages, and the two are not the same number.
         // `MAX_IMAGE_FRAMES`, not the space's ownership bound: this array is
         // one slot per page an **image** can have, and the ownership bound now
@@ -218,7 +218,7 @@ impl Scheduler {
                     perms.writable |= permissions.writable;
                     perms.executable |= permissions.executable;
                     if plan.copy_len > 0 {
-                        // SAFETY: both ranges are in bounds — the loader
+                        // SAFETY: both ranges are in bounds, the loader
                         // checked the file range, and the frame is a whole
                         // page whose offset the plan names.
                         unsafe {
@@ -249,7 +249,7 @@ impl Scheduler {
                     return None;
                 }
                 if plan.copy_len > 0 {
-                    // SAFETY: both ranges are in bounds — the loader checked
+                    // SAFETY: both ranges are in bounds, the loader checked
                     // the file range, and the frame is a whole page whose
                     // offset the plan names.
                     unsafe {
@@ -318,7 +318,7 @@ impl Scheduler {
 
         // Where this program may grow: its window, and the break it grows
         // from.  Recorded here because this is the only place that knows both
-        // — the window is what `program_base` names, and the image's end is
+        //, the window is what `program_base` names, and the image's end is
         // what the loader computed a few lines up and was, until now, dropped.
         //
         // The break starts **one page past the stack**, so a program's `Brk`
@@ -333,7 +333,7 @@ impl Scheduler {
 
         // The exec block: the one inheritance an `exec` carries.  The words go
         // below the stack top, the pointer starts at them, and the path's
-        // bytes sit where [`crate::process::EXEC_PATH_OFFSET`] says — written
+        // bytes sit where [`crate::process::EXEC_PATH_OFFSET`] says, written
         // through the frame's physical address, the same place the boot writes
         // a pipe end into a stack it has not started yet.  The path is the one
         // this exec was called with, which is what a program that wants to
@@ -365,11 +365,11 @@ impl Scheduler {
     ///
     /// This is `spawn`: a **new** task, a **new** pid, the caller as its
     /// parent, running a program the caller named.  The image is the shared
-    /// [`Self::build_image_space`] construction — the same read, the same
-    /// loader, the same stack and exec block an `exec` builds — and what
+    /// [`Self::build_image_space`] construction, the same read, the same
+    /// loader, the same stack and exec block an `exec` builds, and what
     /// differs is where it lands: not the calling task's own image, but a
     /// task that did not exist before this call.  The child inherits
-    /// nothing: no descriptors, no address space, no position — a fresh
+    /// nothing: no descriptors, no address space, no position, a fresh
     /// process opens its own files, which is the reading least privilege
     /// needs of a program the caller chose but did not vouch for byte for
     /// byte.
@@ -395,7 +395,7 @@ impl Scheduler {
 
         // The image, built: read, parsed, mapped, stacked, and carrying the
         // exec block.  The construction is [`Self::build_image_space`]'s,
-        // which is what a spawned task shares — the one thing an exec and a
+        // which is what a spawned task shares, the one thing an exec and a
         // spawn both need is the whole of this, and neither half of it is
         // exec's alone.
         let (space, entry, block_top) = Self::build_image_space(path)?;
@@ -403,7 +403,7 @@ impl Scheduler {
         let new_root = space.root();
         // Every exit from here releases the space it built.  The task index
         // came from `running[cpu]` and the space was built around it, so the
-        // lookups cannot fail today — but "cannot fail" and "leaks a whole
+        // lookups cannot fail today, but "cannot fail" and "leaks a whole
         // address space if it does" are not a pair worth keeping, and the
         // checked form costs one branch on a path that already parsed a file.
         let Some(pid) = self.tasks.get(task_index).map(|task| task.pid()) else {
@@ -438,9 +438,9 @@ impl Scheduler {
         // a task is not pinned, and the boot's own log shows migrations, so a
         // CPU that ran this task a moment ago may still have the old root
         // installed and be inside its trap path.  Freeing here handed live
-        // frames back to the pool — a data abort inside the heap allocator and
+        // frames back to the pool, a data abort inside the heap allocator and
         // an instruction abort at 0x0, six boots in ten on the machine whose
-        // second CPU migrates most — and the fix is the deferral every finished
+        // second CPU migrates most, and the fix is the deferral every finished
         // task already takes: hold the space until
         // [`reap_finished`](Self::reap_finished), where every task has finished
         // and every other CPU has been told to stop.
@@ -466,7 +466,7 @@ impl Scheduler {
     /// the CPU that leaves a task keeps the task's root installed while it
     /// waits for work, and it can be inside its trap path with no lock held.
     /// Releasing at each exit produced 186 page faults at `0x8080000030`,
-    /// program 2's stack, in six boots of eight — a frame the kernel still
+    /// program 2's stack, in six boots of eight, a frame the kernel still
     /// walked, handed by the pool to someone else.
     ///
     /// So this is called once, after every task has finished and every other
@@ -504,7 +504,7 @@ impl Scheduler {
         // ended" must not see them added.
         for slot in &mut self.retired {
             if let Some(space) = slot.take() {
-                // SAFETY: as above — the machine is finished.
+                // SAFETY: as above, the machine is finished.
                 unsafe { space.release() };
             }
         }

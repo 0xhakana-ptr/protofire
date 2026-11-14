@@ -171,7 +171,7 @@ pub unsafe extern "C" fn aarch64_exception_dispatch(frame: *mut ExceptionFrame) 
     if !handled {
         // An exception from EL0 that the kernel did not answer kills the
         // **program**, not the machine: the diagnostic is already on the
-        // console, and the death is the scheduler's — the task goes
+        // console, and the death is the scheduler's, the task goes
         // `Finished` with the kernel's fault status and the frame this tail
         // leaves behind is whatever runs next.  `SPSR_EL1` is what says the
         // fault was the program's and not the kernel's; a kernel that cannot

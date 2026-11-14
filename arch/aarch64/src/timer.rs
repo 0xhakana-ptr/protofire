@@ -31,8 +31,8 @@
 //! ## Why a started core's timer could stop arriving
 //!
 //! Everything above assumes the private timer interrupt arrives.  It sometimes
-//! stopped on a started core, and this module's first explanation — "the
-//! private line is not reliable" — was **wrong**.  The timer was never the
+//! stopped on a started core, and this module's first explanation, "the
+//! private line is not reliable", was **wrong**.  The timer was never the
 //! broken thing.  It was being starved by a higher-priority interrupt that
 //! never finished.
 //!
@@ -47,8 +47,8 @@
 //!   cpu priority mask 255 cpu running priority 0`: the distributor had the
 //!   timer pending and could not hand it over.  A running priority of 0 blocks
 //!   every line at or below it, and the timer's priority is 128.
-//! - The exception log then recorded **no exception at all** on that core — not
-//!   a tick, not a wake, nothing — while its program kept executing in ring 3
+//! - The exception log then recorded **no exception at all** on that core, not
+//!   a tick, not a wake, nothing, while its program kept executing in ring 3
 //!   with `IRQs` unmasked.  Its `per_cpu` record froze at 500 ticks and 6 IPIs
 //!   while the boot core's passed 220,000.
 //!
@@ -243,7 +243,7 @@ pub const fn ticks_per_millisecond(frequency: u64) -> u64 {
 /// division discards: at 62.5 MHz a microsecond is 62.5 ticks, the quotient
 /// said 62, and the error is 0.8% on every slice.  Worse, any frequency below
 /// one megahertz divided to **zero**, so every slice became one tick whatever
-/// the caller asked for — a timer firing at the counter's own rate.
+/// the caller asked for, a timer firing at the counter's own rate.
 ///
 /// The product is taken in `u128` because it is `frequency * microseconds` and
 /// both are large: a gigahertz counter asked for a second is 10^15, which fits
@@ -332,7 +332,7 @@ mod tests {
     /// conversion called it zero.
     ///
     /// `frequency / 1_000_000` is 62 at that rate, so a 100 µs slice came out
-    /// 6200 ticks instead of 6250 — and at any frequency below 1 MHz the
+    /// 6200 ticks instead of 6250, and at any frequency below 1 MHz the
     /// quotient was zero and the slice became one tick.  The multiply-first
     /// form keeps the fraction.
     #[test]

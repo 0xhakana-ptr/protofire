@@ -136,7 +136,7 @@ pub fn kernel_main() -> ! {
     // that answered the same eight bytes twice is one whose counter never
     // advanced, and the line would say so rather than needing a reader to
     // eyeball two hex numbers.  The readings themselves are printed because
-    // they are **output** — public by definition — and a line that named only
+    // they are **output**, public by definition, and a line that named only
     // "seeded" would be a claim rather than a measurement.
     #[cfg(target_os = "none")]
     match unsafe { crate::random::seed() } {
@@ -293,7 +293,7 @@ fn install_registry(namespace: fs::MountTable) {
     table.register(::syscall::SyscallNumber::AbiInfo, crate::syscall::abi_info);
     // The network's first call, and the smallest: what the boot's exercise
     // installed is what a program asks about here.  The datagram calls
-    // beside it are the two that answer at once — the receive parks, and a
+    // beside it are the two that answer at once, the receive parks, and a
     // handler that cannot park does not hold its number; its branch is in
     // the trap path, where the scheduler's parking machinery is.
     table.register(
@@ -313,8 +313,8 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::SendToUdp,
         crate::syscall::send_to_udp,
     );
-    // The stream calls that answer at once.  The accept parks — a handler
-    // that cannot park does not hold it — and its branch is in the trap
+    // The stream calls that answer at once.  The accept parks, a handler
+    // that cannot park does not hold it, and its branch is in the trap
     // path, where the scheduler's parking machinery is.
     table.register(
         ::syscall::SyscallNumber::ConnectTcp,

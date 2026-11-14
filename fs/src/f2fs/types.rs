@@ -1,7 +1,7 @@
 //! fs/src/f2fs/types.rs
 //!
 //! f2fs's on-disk structures, the in-memory forms this driver reads them
-//! into, and the serialisation between the two — superblock, NAT and SIT
+//! into, and the serialisation between the two, superblock, NAT and SIT
 //! entries, the checkpoint with its inline NAT journal, the inode, and the
 //! directory entries.
 //!
@@ -18,7 +18,7 @@ use crate::types::NodeKind;
 
 use super::constants::*;
 
-// ── the superblock ───────────────────────────────────────────────────────
+// the superblock
 
 /// A parsed f2fs superblock, from block zero.
 #[derive(Debug, Clone)]
@@ -171,7 +171,7 @@ pub(super) fn write_f2fs_superblock(sb: &F2fsSuperblock, raw: &mut [u8]) {
     write_word(raw, F2FS_SB_NODE_COUNT_OFF, sb.node_count);
 }
 
-// ── NAT entries ──────────────────────────────────────────────────────────
+// NAT entries
 
 /// A NAT (Node Address Table) entry: which block a node id lives in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,7 +196,7 @@ pub(super) fn write_nat_entry(entry: &F2fsNatEntry, raw: &mut [u8]) {
     raw[4..8].copy_from_slice(&entry.ino.to_le_bytes());
 }
 
-// ── SIT entries ──────────────────────────────────────────────────────────
+// SIT entries
 
 /// A SIT (Segment Information Table) entry: which blocks in one segment
 /// hold valid data.
@@ -250,13 +250,13 @@ pub(super) fn write_sit_entry(entry: &F2fsSitEntry, raw: &mut [u8]) {
     raw[2..66].copy_from_slice(&entry.valid_map);
 }
 
-// ── the checkpoint ───────────────────────────────────────────────────────
+// the checkpoint
 
 /// A parsed checkpoint: the versions, the allocator hints, the valid
 /// counts, and the inline NAT journal.
 #[derive(Debug, Clone)]
 pub(super) struct F2fsCheckpoint {
-    /// The checkpoint's version, monotonic — larger is newer.
+    /// The checkpoint's version, monotonic, larger is newer.
     pub(super) check_ver: u64,
     pub(super) nat_ver: u64,
     pub(super) sit_ver: u64,
@@ -340,7 +340,7 @@ pub(super) fn write_f2fs_checkpoint(cp: &F2fsCheckpoint, raw: &mut [u8]) {
     write_word(raw, F2FS_CP_SIT_JOURNAL_COUNT_OFF, cp.sit_journal_entries);
 }
 
-// ── the inode ────────────────────────────────────────────────────────────
+// the inode
 
 /// A parsed inode.  The direct block addresses are the whole of the
 /// mapping this driver reads: zero is a hole, all-ones is a fresh
@@ -451,7 +451,7 @@ pub(super) fn write_f2fs_inode(inode: &F2fsInode, raw: &mut [u8]) {
     }
 }
 
-// ── directory entries ────────────────────────────────────────────────────
+// directory entries
 
 /// A parsed directory entry.
 pub(super) struct F2fsDirEntry {
@@ -538,7 +538,7 @@ pub(super) fn write_f2fs_dir_entry(
     rec_len
 }
 
-// ── the memory caches ────────────────────────────────────────────────────
+// the memory caches
 
 /// The NAT cache: entries indexed by NID, whose zero block address is what
 /// "free" reads as.

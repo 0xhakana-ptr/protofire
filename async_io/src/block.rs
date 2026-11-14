@@ -181,7 +181,7 @@ impl Service for MemoryBlockService {
         // claimed.  When that request finishes its completion has nowhere to
         // go: the transfer was performed, the device did the work, and the
         // caller is never told.  Measured by submitting, polling, submitting
-        // again and draining —
+        // again and draining
         // `an_interleaved_submit_does_not_lose_a_completion`.
         let claimed = self.completions.len() + self.pending.len();
         if claimed >= self.completions.capacity() {
@@ -242,8 +242,8 @@ impl Service for MemoryBlockService {
         // This push cannot be refused, and the code says so rather than
         // discarding the answer: `submit` reserved a slot for every request it
         // accepted, so the queue has room by construction.  A `let _ =` here
-        // would hide the case where that reservation was wrong — which is
-        // exactly how the dropped-completion defect went unnoticed — so a
+        // would hide the case where that reservation was wrong, which is
+        // exactly how the dropped-completion defect went unnoticed, so a
         // refusal is reported as the bug it would be.
         let pushed = self
             .completions
@@ -579,7 +579,7 @@ mod tests {
     /// completion had not been produced yet counted as room. Submitting again
     /// after a poll therefore accepted work whose completion had nowhere to
     /// go, and `poll` dropped that completion on the floor with `let _ =`. The
-    /// accepted request then finished — the device did the work — and the
+    /// accepted request then finished, the device did the work, and the
     /// caller never heard about it, which breaks the trait's one obligation.
     ///
     /// Capacity two, so the sequence is short:
@@ -637,8 +637,8 @@ mod tests {
         assert!(service.poll());
         assert_eq!(service.pending(), 1);
 
-        // The third submission has no room for its completion — the pending
-        // request owns the other slot — so it is refused **in the call**.
+        // The third submission has no room for its completion, the pending
+        // request owns the other slot, so it is refused **in the call**.
         let third = BlockOp::Read {
             sector: 2,
             count: 1,

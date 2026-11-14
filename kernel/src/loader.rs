@@ -8,11 +8,11 @@
 //! This module **reads** an image and says what it is: the entry point, the
 //! segments, and the page plan for each.  It takes bytes and answers a value.
 //! It never allocates a frame, never touches a page table, and never asks the
-//! filesystem for anything — which is why every test here runs on a host
+//! filesystem for anything, which is why every test here runs on a host
 //! against ELF bytes built one field at a time.
 //!
 //! [`crate::programs`] is the other half and the opposite kind of code: it is
-//! what the **boot** does with a program — pick a space, copy machine code in,
+//! what the **boot** does with a program, pick a space, copy machine code in,
 //! hand a pipe end through the stack, and enter it.  The exec path inside the
 //! scheduler is the third caller: it builds a space from a file for a `fork`
 //! or an `ExecProcess`.  Both of them call [`load`] and then map what it
@@ -23,7 +23,7 @@
 //! caller must own the address space and the scheduler, and this module owns
 //! neither.
 //!
-//! The parser is pure — bytes in, a layout out — and names no machine and no
+//! The parser is pure, bytes in, a layout out, and names no machine and no
 //! page table, which is why its tests run on a host against ELF files built
 //! one field at a time.  The *machine* answers one question only, which
 //! program images are for: the expected `e_machine`, handed in by the caller
@@ -43,8 +43,8 @@ use paging::PAGE_SIZE;
 ///
 /// The exec path reads a file **whole** before it maps any of it, and the
 /// bound is what makes that honest: a file this size is one the caller
-/// refuses before it allocates.  A quarter of the boot disk — the delivery
-/// channel — is the honest ceiling, because a program bigger than the disk
+/// refuses before it allocates.  A quarter of the boot disk, the delivery
+/// channel, is the honest ceiling, because a program bigger than the disk
 /// that carries it cannot be delivered at all.
 pub const MAX_IMAGE_BYTES: usize = 256 * 1024;
 
@@ -66,7 +66,7 @@ pub struct Segment {
     pub file_offset: usize,
     /// How many bytes the file carries for this segment.
     pub file_size: usize,
-    /// How much memory the segment occupies — `file_size` plus the zero-fill
+    /// How much memory the segment occupies, `file_size` plus the zero-fill
     /// a `memsz > filesz` segment asks for, which is what a BSS is.
     pub memory_size: usize,
     /// Whether the segment may be written.
@@ -221,7 +221,7 @@ fn checked(segment: Segment, flags: u32, bytes: &[u8]) -> Result<Segment, LoadEr
     // and the virtual address must agree *within* a page or the file's bytes
     // would land on the wrong one.  Real linkers emit offsets congruent to
     // the addresses (padding the file as little as possible), not individually
-    // aligned — requiring alignment would refuse every real image.
+    // aligned, requiring alignment would refuse every real image.
     if segment.file_offset % PAGE_SIZE != segment.virtual_address % PAGE_SIZE
         || segment.memory_size < segment.file_size
         || segment.file_offset + segment.file_size > bytes.len()
@@ -234,7 +234,7 @@ fn checked(segment: Segment, flags: u32, bytes: &[u8]) -> Result<Segment, LoadEr
     if !is_user_range(segment.virtual_address, segment.memory_size) {
         return Err(LoadError::BadSegment);
     }
-    // Readable is the floor — the flag bit, not an inference: a segment the
+    // Readable is the floor, the flag bit, not an inference: a segment the
     // program cannot read is not a segment this toolchain produces, and
     // mapping one would be interpreting a flag combination the loader has no
     // story for.
@@ -262,7 +262,7 @@ fn overlaps(a: &Segment, b: &Segment) -> bool {
 ///
 /// The loader's segments are *ranges*, and the mapping walks pages: which
 /// page, which file bytes to copy into the frame (none for a page the file
-/// does not reach — BSS), and how many.
+/// does not reach, BSS), and how many.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PagePlan {
     /// The page-aligned virtual address the frame maps at.
@@ -296,7 +296,7 @@ pub struct SegmentPages {
     end: usize,
     /// The file offset that corresponds to `vaddr`.
     file_offset: usize,
-    /// The file offset where the segment's file bytes end — past this, the
+    /// The file offset where the segment's file bytes end, past this, the
     /// memory is the zero-fill.
     file_end: usize,
 }
@@ -315,7 +315,7 @@ impl Iterator for SegmentPages {
         let memory_lo = self.vaddr.max(page_start);
         let memory_hi = self.end.min(page_end);
         // The file position that corresponds to `memory_lo`, and the copy's
-        // length clipped at the file's end — everything past it is the
+        // length clipped at the file's end, everything past it is the
         // zero-fill.
         let file_at = self.file_offset + (memory_lo - self.vaddr);
         let copy_len = memory_hi - memory_lo;
@@ -332,10 +332,10 @@ impl Iterator for SegmentPages {
 
 /// The pages one accepted segment maps, lowest first.
 ///
-/// The first page typically carries the segment's own start inside it — a
+/// The first page typically carries the segment's own start inside it, a
 /// segment whose `vaddr` is `...078` maps its first frame at `...000`, with
 /// the file's bytes beginning `0x78` bytes into the frame and nothing before
-/// them — and the last page is BSS whenever `memsz` outruns `filesz`.
+/// them, and the last page is BSS whenever `memsz` outruns `filesz`.
 pub fn pages(segment: &Segment) -> SegmentPages {
     SegmentPages {
         vaddr: segment.virtual_address,
@@ -348,7 +348,7 @@ pub fn pages(segment: &Segment) -> SegmentPages {
 
 /// Parse `bytes` as an ELF64 program image for `expected_machine`.
 ///
-/// Pure: no allocation, no machine, no page table — the answer is a layout
+/// Pure: no allocation, no machine, no page table, the answer is a layout
 /// the caller maps.  Every refusal is a named [`LoadError`], and every
 /// accepted segment has been checked against the file it came from and the
 /// window it will be mapped into, so the caller's mapping loop can be as
@@ -370,8 +370,8 @@ pub fn load(bytes: &[u8], expected_machine: u16) -> Result<Image, LoadError> {
     let e_machine = u16_at(bytes, 18).ok_or(LoadError::TooShort)?;
     // ET_EXEC is the fixed-base shape.  ET_DYN is accepted **conditionally**:
     // a position-independent *file* whose bytes are linked at a fixed base
-    // and carry no dynamic section is the same thing at load time — the bytes
-    // are the whole truth, no relocation processing will happen — and
+    // and carry no dynamic section is the same thing at load time, the bytes
+    // are the whole truth, no relocation processing will happen, and
     // rust-lld emits exactly that for a ring-3 program.  A DYN image with a
     // dynamic segment or an interpreter is a file the loader would have to
     // fix up, and no fixup exists here.
@@ -444,8 +444,8 @@ pub fn load(bytes: &[u8], expected_machine: u16) -> Result<Image, LoadError> {
     // segment whose bytes a mapped segment **carries** is dead data: nothing
     // reads it, no relocation is processed, and the loader maps it the way it
     // maps any other byte.  A dynamic segment (or an interpreter) *outside*
-    // every mapped segment names machinery this loader does not have —
-    // relocation processing, another program to load the file — and that is a
+    // every mapped segment names machinery this loader does not have
+    // relocation processing, another program to load the file, and that is a
     // refusal, by name.
     for header in 0..e_phnum {
         let at = e_phoff + header * PROGRAM_HEADER_SIZE;
@@ -488,7 +488,7 @@ mod tests {
     //! The loader's tests: ELF files built one field at a time, so a test that
     //! asserts a refusal can point at the field that earns it.
     //!
-    //! A real toolchain's output is the wrong fixture here — it would be right
+    //! A real toolchain's output is the wrong fixture here, it would be right
     //! in ways nobody wrote down, and a parser that passed on it might still
     //! refuse the image the linker emits after one flag changes.  Every image
     //! below is assembled by [`elf`], whose arguments are the fields the loader
@@ -658,7 +658,7 @@ mod tests {
 
         // ET_DYN with a dynamic segment *outside* every mapped segment: the
         // file expects relocation processing, which no loader here performs.
-        // (A dynamic segment a LOAD carries is dead data, and loads — the real
+        // (A dynamic segment a LOAD carries is dead data, and loads, the real
         // linker's own shape.)
         let mut dynamic = elf(
             MACHINE,
@@ -886,7 +886,7 @@ mod tests {
         assert_eq!(image.segments()[0].virtual_address, 0x8040000078);
 
         // The same shape broken: the offset moved by one page *and one byte*,
-        // so the two no longer agree within the page — the file's bytes would
+        // so the two no longer agree within the page, the file's bytes would
         // land one byte off.
         assert_eq!(
             load(
@@ -1043,7 +1043,7 @@ mod tests {
     #[test]
     fn an_image_at_the_byte_bound_yields_a_page_for_every_frame_the_space_can_hold() {
         // The regression this pins: the loader's byte bound and the space's
-        // frame-record bound described the same set of pages and disagreed —
+        // frame-record bound described the same set of pages and disagreed
         // 256 KiB admits 64 pages, and the record array held 16, so a legal
         // image was refused by a bound whose own documentation described a
         // smaller thing.  No boot had a program large enough to notice.

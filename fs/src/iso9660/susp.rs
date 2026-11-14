@@ -249,10 +249,10 @@ pub fn render_link(components: &[LinkComponent]) -> String {
     path
 }
 
-// ── the builders ─────────────────────────────────────────────────────────
+// the builders
 //
 // The write half.  A parse turns an area's bytes into fields; a build turns
-// fields back into the bytes a record carries, and both have to agree —
+// fields back into the bytes a record carries, and both have to agree
 // which is why the builders below are proven by the round trip the volume's
 // write tests make, a record written and then parsed again.
 
@@ -275,7 +275,7 @@ fn build_entry(signature: &[u8; 2], body: &[u8]) -> Vec<u8> {
 /// The `NM` entry: the name a Rock Ridge reader uses instead of the identifier.
 ///
 /// One entry holds 250 bytes of name, and a longer name continues in the next
-/// entry with the CONTINUE flag set — the flag is what tells a reader to join
+/// entry with the CONTINUE flag set, the flag is what tells a reader to join
 /// them rather than to replace what it has.
 pub fn name_entry(name: &[u8]) -> Vec<u8> {
     const PER_ENTRY: usize = 250;
@@ -317,7 +317,7 @@ pub fn terminator_entry() -> Vec<u8> {
 ///
 /// SUSP puts it first, and only in the root directory's own "." record.  The
 /// two magic bytes are the standard's, and the last field is how far into the
-/// area a reader should start — zero, because the entries here begin where
+/// area a reader should start, zero, because the entries here begin where
 /// the record says they do.
 pub fn sharing_protocol_entry() -> Vec<u8> {
     build_entry(b"SP", &[0xBE, 0xEF, 0x00])
@@ -327,7 +327,7 @@ pub fn sharing_protocol_entry() -> Vec<u8> {
 ///
 /// A directory record's length is a single byte, so an area with more in it
 /// than that continues in a block of its own, named here by logical block,
-/// byte offset and length — each stored twice, the way the format stores every
+/// byte offset and length, each stored twice, the way the format stores every
 /// number a reader might check.
 pub fn continuation_entry(block: u32, offset: u32, size: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(24);
@@ -365,7 +365,7 @@ pub fn extensions_reference_entry() -> Vec<u8> {
 /// The same System Use area with the name entries replaced.
 ///
 /// Every other entry is copied **verbatim**, because a record can carry
-/// entries this driver does not parse — a symlink's target, a timestamp — and
+/// entries this driver does not parse, a symlink's target, a timestamp, and
 /// re-serialising them from parsed fields would store what the parse could
 /// hold and lose the rest.  The `NM` entries are the ones a rename changes,
 /// and the terminator goes last, as SUSP requires.

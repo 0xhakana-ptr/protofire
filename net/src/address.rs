@@ -7,7 +7,7 @@
 //! A transport and a socket table hold an address they did not build: the
 //! peer of a stream, the sender of a datagram.  Before this module those were
 //! `[u8; 4]` everywhere, which meant the tables could only ever describe an
-//! IPv4 machine — the one place the stack was not dual-stack was its state,
+//! IPv4 machine, the one place the stack was not dual-stack was its state,
 //! not its parsers.
 //!
 //! [`Address`] is that state's type.  It carries the family with the bytes, so
@@ -19,7 +19,7 @@
 //!
 //! An address is not a scope, a prefix or a route.  Which address is this
 //! machine's, and whether one is reachable from another, are questions about a
-//! boot's interface — the kernel's.  This is the bytes and the length, which
+//! boot's interface, the kernel's.  This is the bytes and the length, which
 //! is all a state machine and a socket key need.
 
 use crate::ipv6;

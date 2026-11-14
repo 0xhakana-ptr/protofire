@@ -1,6 +1,6 @@
 //! fs/src/xfs/types.rs
 //!
-//! XFS's on-disk structures, big-endian on the disk — the opposite endianness
+//! XFS's on-disk structures, big-endian on the disk, the opposite endianness
 //! from every other format this crate reads, which is why the byte-order
 //! helpers live here and the parsers never spell `from_be_bytes` twice.
 //!
@@ -40,7 +40,7 @@ pub(super) const XFS_DA_NODE_MAGIC: u16 = 0xfebe;
 /// Attribute leaf block magic (v4).
 pub(super) const XFS_ATTR_LEAF_MAGIC: u16 = 0xfbee;
 
-// ── the superblock ───────────────────────────────────────────────────────
+// the superblock
 
 /// A parsed superblock: the geometry the whole driver's addressing is
 /// built from.
@@ -148,7 +148,7 @@ impl Superblock {
     }
 }
 
-// ── the journal's own facts ──────────────────────────────────────────────
+// the journal's own facts
 
 /// The journal's metadata, as the superblock describes it: whether the
 /// volume has one, and whether an unclean unmount left it needing replay.
@@ -165,7 +165,7 @@ pub(super) struct JournalInfo {
     pub(super) log_version: u8,
 }
 
-// ── the inode ────────────────────────────────────────────────────────────
+// the inode
 
 /// The inode's magic: "IN".
 pub(super) const XFS_INODE_MAGIC: u16 = 0x494E;
@@ -256,7 +256,7 @@ impl InodeCore {
     }
 }
 
-// ── extents ──────────────────────────────────────────────────────────────
+// extents
 
 /// One extent: where a file's contiguous run sits, and which file offsets
 /// it covers.
@@ -267,7 +267,7 @@ pub(super) struct Extent {
     pub(super) start_offset: u64,
 }
 
-/// Parse an extent list from an inode's fork — sixteen-byte records.
+/// Parse an extent list from an inode's fork, sixteen-byte records.
 ///
 /// The physical block number is 34 bits wide, split across the flag byte's
 /// upper two bits and the record's low word: a packing the tests pin so a
@@ -298,7 +298,7 @@ pub(super) fn parse_extents(buf: &[u8], fork_offset: usize, num_extents: u32) ->
     extents
 }
 
-// ── directory entries ────────────────────────────────────────────────────
+// directory entries
 
 /// A parsed directory entry.
 #[derive(Debug, Clone)]
@@ -379,7 +379,7 @@ pub(super) fn parse_block_dir(data: &[u8]) -> Vec<DirEntry> {
     entries
 }
 
-// ── byte-order helpers ───────────────────────────────────────────────────
+// byte-order helpers
 
 fn read_be16(buf: &[u8], off: usize) -> u16 {
     u16::from_be_bytes([buf[off], buf[off + 1]])

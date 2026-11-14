@@ -10,24 +10,24 @@
 //! *which* of the streams a machine holds a segment belongs to, because that
 //! is a question about a table rather than about a connection.
 //!
-//! That table is still protocol state — the four fields a segment is keyed on,
+//! That table is still protocol state, the four fields a segment is keyed on,
 //! the port a listener reserves, the queue a completed handshake waits in, and
-//! the two counters that hand out ids and initial sequence numbers — and none
+//! the two counters that hand out ids and initial sequence numbers, and none
 //! of it needs a card, a scheduler or a lock.  So it lives beside the state
 //! machine, and the kernel keeps the half that does: whether an address is
 //! this machine, which hardware address a frame goes to, and when a parked
 //! task wakes.
 //!
 //! The split is what makes this table testable on a host.  The exchange that
-//! runs it — deliver this segment to the peer's own state machine, take what
-//! it answers, repeat — is the kernel's, because the peer may be a machine
+//! runs it, deliver this segment to the peer's own state machine, take what
+//! it answers, repeat, is the kernel's, because the peer may be a machine
 //! across a wire rather than the same one; but every lookup, every id and
 //! every move of the counters is here.
 //!
 //! ## No lock, and why
 //!
 //! Nothing here takes one.  A `Table` is a value a caller owns, and how it is
-//! shared — one lock, one per CPU, one per connection — is the caller's
+//! shared, one lock, one per CPU, one per connection, is the caller's
 //! decision about its own concurrency.  The kernel holds it behind a single
 //! `Mutex` for the reason its own header gives: a loopback exchange is
 //! re-entrant and a per-connection lock would deadlock on the first
@@ -158,7 +158,7 @@ impl Table {
     /// Take the connection a listener has been holding, answering its id.
     ///
     /// [`Error::NotFound`] for an id that names no listener, and `Ok(None)`
-    /// when the listener holds nothing — which is the caller's signal to
+    /// when the listener holds nothing, which is the caller's signal to
     /// park, the same shape a datagram receive is.
     pub fn accept(&mut self, listener: usize) -> Result<Option<usize>> {
         let Some(entry) = self.listeners.iter_mut().find(|entry| entry.id == listener) else {

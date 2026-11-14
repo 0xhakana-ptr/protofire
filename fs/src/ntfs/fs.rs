@@ -44,7 +44,7 @@ pub struct NtfsInfo {
     /// The MFT's own data runs, once something has asked for a record.
     ///
     /// The MFT is a file like any other: its `$DATA` says where its records
-    /// are, and record 0 is the one whose address the boot sector names — so
+    /// are, and record 0 is the one whose address the boot sector names, so
     /// reading record 0 is what answers where the rest of them are.  A stride
     /// from the first cluster is right only for a volume whose MFT never grew.
     pub mft_runs: Option<Vec<DataRun>>,
@@ -190,7 +190,7 @@ pub fn read_from_runs(
 ///
 /// The map is the run list and the two lengths the attribute declares: a run
 /// that names a cluster is data, a **sparse** run is a hole, and the bytes past
-/// `initialized_size` are a hole too — they were never written, and the format
+/// `initialized_size` are a hole too, they were never written, and the format
 /// says they read as zeros ([RFC 0017](../../../docs/rfcs/
 /// 0017-ask-a-file-where-its-holes-are.md)).  Bytes the runs do not reach
 /// inside a length that claims them are a hole for the same reason: there is
@@ -223,7 +223,7 @@ pub fn next_extent_in_runs(
         if offset < hi {
             let lo = at.max(offset);
             // Data ends where the run ends, where the initialized bytes do, or
-            // where the file does — whichever comes first.
+            // where the file does, whichever comes first.
             let data_end = if holds_data { hi.min(valid) } else { lo };
             let answer = match kind {
                 ExtentKind::Data if lo < data_end => Some(lo),
@@ -251,7 +251,7 @@ pub fn next_extent_in_runs(
 
 // MFT record reading
 
-/// Write a byte range by following data runs — the mirror of
+/// Write a byte range by following data runs, the mirror of
 /// [`read_from_runs`].
 ///
 /// A sparse run names no cluster, so a write that would land in one has
@@ -430,7 +430,7 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
         };
 
         // A resident attribute's value begins where its own header says it
-        // does, at `value_offset` from the attribute's start — which is 24 for
+        // does, at `value_offset` from the attribute's start, which is 24 for
         // an unnamed one and further along when the attribute carries a name
         // (`$INDEX_ROOT` is named "$I30", so its value starts at 32).
         let mut content = Vec::new();
@@ -503,7 +503,7 @@ pub fn parse_attributes(buf: &[u8]) -> Vec<ParsedAttr> {
 /// Encode data runs, the way [`parse_data_runs`] reads them.
 ///
 /// A run's header byte says how many bytes its length and its *delta* take,
-/// and the delta is signed and always measured from the run before it — so a
+/// and the delta is signed and always measured from the run before it, so a
 /// list of runs has one spelling and a reader accumulates the same addresses
 /// back.  A zero header ends the list.
 pub fn encode_runs(runs: &[DataRun]) -> Vec<u8> {
@@ -531,7 +531,7 @@ pub fn encode_runs(runs: &[DataRun]) -> Vec<u8> {
             // bytes carry, not the value being zero.  A positive delta whose
             // last byte has its top bit set needs one more byte with it clear,
             // or a reader that sign-extends reads the same bytes as a negative
-            // number — which is not a wrong file, it is a different one.
+            // number, which is not a wrong file, it is a different one.
             let mut value = delta;
             loop {
                 let byte = (value & 0xff) as u8;
@@ -561,7 +561,7 @@ pub fn encode_runs(runs: &[DataRun]) -> Vec<u8> {
 ///
 /// [`apply_usa_fixup`] is the other direction.  The two are not the same task:
 /// a reader unpacks the record it read, and a writer that rewrites the
-/// record's bytes — a relocation inside it — has to pack them again, with the
+/// record's bytes, a relocation inside it, has to pack them again, with the
 /// sequence at every sector's end and the bytes it replaced in the array.
 pub fn pack_usa(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size: usize) {
     if sector_size == 0 || usa_count == 0 || usa_offset + usa_count * 2 > buf.len() {
@@ -588,7 +588,7 @@ pub fn pack_usa(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size
 }
 
 /// Undo an update sequence array, so the bytes a record's sectors end with are
-/// the ones they held before the write that put the sequence number there —
+/// the ones they held before the write that put the sequence number there
 /// and **check that the write reached every sector** while doing it.
 ///
 /// Each sector ends with a copy of the number the array names, which is how a
@@ -596,7 +596,7 @@ pub fn pack_usa(buf: &mut [u8], usa_offset: usize, usa_count: usize, sector_size
 /// a sector that still carries the number *before* it is a sector the write did
 /// not reach, and a record or block like that is refused (`InvalidArgument`)
 /// rather than read as half new and half old.  A reader that patched the array
-/// back without looking — which this one did — turns a torn write into bytes
+/// back without looking, which this one did, turns a torn write into bytes
 /// that are not the file's, and a caller cannot tell.
 ///
 /// The sector size is the *volume's*, from the boot sector, not the device's:
@@ -676,8 +676,8 @@ pub fn parse_data_runs(buf: &[u8]) -> Vec<DataRun> {
 
         if cluster_count > 0 {
             // A run with **no offset at all** is the sparse one: it names no
-            // cluster, and — this is the part that is easy to get wrong and
-            // was — it does not move the place the next run's delta is measured
+            // cluster, and, this is the part that is easy to get wrong and
+            // was, it does not move the place the next run's delta is measured
             // from.  The run list's base is the last *named* cluster, so a
             // reader that took the hole for a cluster puts every run after it
             // at the wrong place; the format's own wording is that an
@@ -756,10 +756,10 @@ pub fn get_standard_info(attrs: &[ParsedAttr]) -> Option<StandardInfoAttr> {
 /// One entry of an `$ATTRIBUTE_LIST`: an attribute, and the record that holds
 /// it.
 ///
-/// The entry's header is 26 bytes — a type, the entry's own length, the name's
+/// The entry's header is 26 bytes, a type, the entry's own length, the name's
 /// length and where in the entry it begins, the lowest virtual cluster number
 /// this part of the attribute covers, the record that holds the part, and the
-/// attribute's instance number — and the name follows it.  An entry is padded
+/// attribute's instance number, and the name follows it.  An entry is padded
 /// to eight bytes, and the length is what says so; the list is a run of them
 /// with no count in front.
 pub struct AttributeListEntry {
@@ -778,10 +778,10 @@ pub struct AttributeListEntry {
 /// Write one `$ATTRIBUTE_LIST` entry: an attribute, and the record that holds
 /// it.
 ///
-/// The entry is 26 bytes and padded to eight — the type, the entry's own
+/// The entry is 26 bytes and padded to eight, the type, the entry's own
 /// length, the name's length and where it begins, the lowest virtual cluster
 /// number this part of the attribute covers, the record that holds it and the
-/// attribute's instance number — and the name follows the header.
+/// attribute's instance number, and the name follows the header.
 pub fn list_entry(
     attr_type: u32,
     name: &str,
@@ -895,7 +895,7 @@ pub struct IndexNode {
 /// carries it after the root header (the indexed attribute's type, the
 /// collation rule and the buffer size, 16 bytes), and an allocation block
 /// carries it after `INDX`, the block's update sequence array and its virtual
-/// cluster number — 24 bytes.
+/// cluster number, 24 bytes.
 ///
 /// Each entry is a 16-byte header and the `$FILE_NAME` it is keyed by.  The
 /// value beside the entry's length is the *length* of that name and not an
@@ -911,8 +911,8 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
             has_children,
         };
     }
-    // The node header's fields are 32 bits wide — an entry offset, the length
-    // the entries use, the length the node *has*, and the flags — and reading
+    // The node header's fields are 32 bits wide, an entry offset, the length
+    // the entries use, the length the node *has*, and the flags, and reading
     // them as 16 worked only while every value fit in one.
     let entries_offset =
         u32::from_le_bytes([buf[node], buf[node + 1], buf[node + 2], buf[node + 3]]) as usize;
@@ -982,7 +982,7 @@ pub fn parse_index_node(buf: &[u8], node: usize) -> IndexNode {
 /// Rewrite an index node's entries in the buffer the node lives in.
 ///
 /// `entries` are the entries as bytes, in the order they are to lie, with the
-/// node's own terminator last — a node is a run of entries whose last one
+/// node's own terminator last, a node is a run of entries whose last one
 /// says so, and an entry that is not there cannot be patched, so the whole
 /// run is written.  `room` is how much of the buffer the node may use: an
 /// index *root*'s node has the resident value's room, and a block's has
@@ -1033,8 +1033,8 @@ pub fn write_index_entries(
 ///
 /// The value is what a name is stored as wherever it is stored: a record's
 /// own name and an index entry's key are the same structure, so the two are
-/// built here once.  A new file's timestamps are zero — the volume has no
-/// clock to ask — and its size is whatever the caller says.
+/// built here once.  A new file's timestamps are zero, the volume has no
+/// clock to ask, and its size is whatever the caller says.
 pub fn file_name_value(parent: u64, name: &str, directory: bool, size: u64) -> Vec<u8> {
     let name_bytes: Vec<u8> = name.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut value = vec![0u8; 66];
@@ -1052,8 +1052,8 @@ pub fn file_name_value(parent: u64, name: &str, directory: bool, size: u64) -> V
 
 /// The value a directory's `$INDEX_ROOT` holds while it has no children.
 ///
-/// It is the `$FILE_NAME` index's own header — the attribute it indexes, the
-/// collation rule, the size of a block — and then a node with nothing but its
+/// It is the `$FILE_NAME` index's own header, the attribute it indexes, the
+/// collation rule, the size of a block, and then a node with nothing but its
 /// terminator.  A directory's entries are its *children*: the "." and ".." a
 /// listing shows are the reader's own, and a volume may carry a "." of its own
 /// (the one `mkntfs` makes does), which is why a reader skips one rather than
@@ -1108,9 +1108,9 @@ pub fn index_entry(name: &str, reference: u64, parent: u64, directory: bool, siz
 /// The entry a split promotes: a name entry's key and record, and the child
 /// whose keys are *less* than that key.
 ///
-/// An internal node's entry carries both — the key in the entry's own bytes,
+/// An internal node's entry carries both, the key in the entry's own bytes,
 /// the child's virtual cluster number right-aligned at its end, which is where
-/// a reader looks for it — so the name a split takes out of a block becomes the
+/// a reader looks for it, so the name a split takes out of a block becomes the
 /// node above's entry with the block it left as the child below it.
 pub fn index_separator(entry: &[u8], child: u64) -> Result<Vec<u8>, Error> {
     if entry.len() < 24 {
@@ -1153,7 +1153,7 @@ pub fn index_leaf_entry(entry: &[u8]) -> Result<Vec<u8>, Error> {
 }
 
 /// The entry a node ends with when it has a child: no name, the last-entry
-/// flag, and the child block's virtual cluster number — which is the entry's
+/// flag, and the child block's virtual cluster number, which is the entry's
 /// *last* eight bytes, where the format puts it, and not the reference field
 /// a name entry keeps its record in: a real volume's pointer entries leave
 /// that zero.
@@ -1168,7 +1168,7 @@ pub fn index_child_pointer(vcn: u64) -> Vec<u8> {
 /// The child an index entry points at, when it points at one.
 ///
 /// The flag at the entry's own offset says whether there is a child, and the
-/// child's virtual cluster number is the entry's *last* eight bytes — the
+/// child's virtual cluster number is the entry's *last* eight bytes, the
 /// padding a key of any length leaves sits between the key and it.  This is
 /// [`index_child_pointer`]'s other direction, for a caller that has the entry's
 /// bytes and nothing parsed.
@@ -1199,7 +1199,7 @@ pub fn index_entry_child(entry: &[u8]) -> Option<u64> {
 /// is a file of its own is: a sixty-four-byte header, the name between it and
 /// the mapping pairs, and the three sizes that say how much of the value is
 /// spoken for.  The last virtual cluster number is what the runs add up to,
-/// less one — the number of the last cluster the attribute covers.
+/// less one, the number of the last cluster the attribute covers.
 pub fn non_resident_attribute(
     attr_type: u32,
     name: &str,
@@ -1240,7 +1240,7 @@ pub fn non_resident_attribute(
 /// holds.
 ///
 /// The node begins twenty-four bytes in, and its entries begin forty bytes
-/// into *the node* — the room the block's update sequence array takes, which
+/// into *the node*, the room the block's update sequence array takes, which
 /// an entries offset of sixteen would write the entries into.  The node's
 /// allocated size is what the block has past its own header, which is what
 /// [`write_index_entries`] fills and what a real volume's blocks declare.
@@ -1299,7 +1299,7 @@ pub fn resident_attribute(attr_type: u32, name: &str, instance: u16, value: &[u8
 /// its update sequence array packed.
 ///
 /// This is what a *new* record is: the bytes a volume holds for one, with the
-/// sizes the record's own content gives — which is the same shape the reader
+/// sizes the record's own content gives, which is the same shape the reader
 /// takes apart, and the reason a record is written whole rather than field by
 /// field.
 pub fn build_record(

@@ -16,8 +16,8 @@ assembly, pointer-level context-switch mechanics, and the boundary where the
 kernel reads or writes memory a user program owns. Every one of those sites
 carries an argument, `clippy::undocumented_unsafe_blocks` reports zero in
 every configuration the tree builds for, and the manifests deny it, so
-`cargo clippy --workspace --all-targets -- -D warnings` — the host half of
-the gate, with the per-target halves beside it in `scripts/verify.sh p3` —
+`cargo clippy --workspace --all-targets -- -D warnings`, the host half of
+the gate, with the per-target halves beside it in `scripts/verify.sh p3`
 refuses a new one that has none.  There are no fuzz targets in this tree, so
 there is no fuzz configuration to refuse anything.
 The tree reached that state by writing the argument for each block rather than
@@ -35,13 +35,13 @@ convention.
 cannot express at all. In this codebase that means four categories, and very
 little else.
 
-- **MMIO and port I/O** — `read_volatile` / `write_volatile` on a device BAR,
+- **MMIO and port I/O**, `read_volatile` / `write_volatile` on a device BAR,
   `in`/`out` instructions.  Found in `drivers/` and `arch/*/`.
-- **Inline assembly** — context switch, trap entry/exit, `stac`/`clac`, cache
+- **Inline assembly**, context switch, trap entry/exit, `stac`/`clac`, cache
   and TLB maintenance.  Found in `arch/*/` and `abi/src/`.
-- **Raw pointer structures** — page-table walks, the frame bitmap, linked free
+- **Raw pointer structures**, page-table walks, the frame bitmap, linked free
   lists, per-CPU areas.  Found in `memory/src/` and `kernel/src/devices.rs`.
-- **Global singleton slots** — the `install_global_unchecked` pattern (see
+- **Global singleton slots**, the `install_global_unchecked` pattern (see
   [code-style.md §8](code-style.md#8-globals-the-install-pattern)).  Found
   throughout.
 

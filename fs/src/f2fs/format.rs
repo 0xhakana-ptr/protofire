@@ -51,7 +51,7 @@ pub(super) fn format(cache: &BlockCache) -> Result<()> {
         Ok(())
     };
 
-    // ── the superblock ───────────────────────────────────────────────────
+    // the superblock
 
     let sb = F2fsSuperblock {
         magic: F2FS_MAGIC,
@@ -87,7 +87,7 @@ pub(super) fn format(cache: &BlockCache) -> Result<()> {
     write_f2fs_superblock(&sb, &mut block);
     put_block(cache, 0, &block)?;
 
-    // ── the checkpoints ──────────────────────────────────────────────────
+    // the checkpoints
 
     let cp_winner = F2fsCheckpoint {
         check_ver: 1,
@@ -114,7 +114,7 @@ pub(super) fn format(cache: &BlockCache) -> Result<()> {
         put_block(cache, cp1_blkaddr, &block)?;
     }
 
-    // ── the SIT: segment zero holds the root's two blocks ────────────────
+    // the SIT: segment zero holds the root's two blocks
 
     {
         let mut block = vec![0u8; block_size];
@@ -132,7 +132,7 @@ pub(super) fn format(cache: &BlockCache) -> Result<()> {
         put_block(cache, sit_blkaddr, &block)?;
     }
 
-    // ── the NAT: the root's NID names its block ──────────────────────────
+    // the NAT: the root's NID names its block
 
     {
         let mut block = vec![0u8; block_size];
@@ -155,14 +155,14 @@ pub(super) fn format(cache: &BlockCache) -> Result<()> {
         put_block(cache, nat_blkaddr, &block)?;
     }
 
-    // ── the SSA: written zeroed, and never read by this driver ───────────
+    // the SSA: written zeroed, and never read by this driver
 
     {
         let block = vec![0u8; block_size];
         put_block(cache, ssa_blkaddr, &block)?;
     }
 
-    // ── the root inode, and its data block with the dot entries ──────────
+    // the root inode, and its data block with the dot entries
 
     let mut root_inode = empty_root_inode();
     root_inode.i_addr[0] = root_data_block;

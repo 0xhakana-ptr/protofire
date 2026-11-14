@@ -114,7 +114,7 @@ impl VfsFileSystem for EroFsVolume {
         ))
     }
 
-    // Mutating operations — all return PermissionDenied
+    // Mutating operations, all return PermissionDenied
 
     fn rename(&self, _old_path: &str, _new_path: &str) -> Result<()> {
         Err(Error::PermissionDenied)
@@ -205,7 +205,7 @@ impl VNode for EroVNode {
     }
 
     fn sync(&self) -> Result<()> {
-        // Read-only volume — nothing to sync.
+        // Read-only volume, nothing to sync.
         Ok(())
     }
 
@@ -224,7 +224,7 @@ fn metadata_from_inode(inode: &ErofsInodeCompact) -> Metadata {
     let kind = erofs_mode_to_kind(inode.mode());
     let size = inode.i_size as usize;
     let perm = inode.perm();
-    // EROFS compact inodes don't store UID/GID directly — default to
+    // EROFS compact inodes don't store UID/GID directly, default to
     // root:root with the mode from i_format.
     Metadata::new(kind, size).with_security(SecurityDescriptor::new(
         ROOT_OWNER_ID,

@@ -2,9 +2,9 @@
 
 Two licences cover this tree, and which one applies depends on what the file is.
 
-- **Source code** — every `.rs`, `.S`, `.ld`, `Cargo.toml`, `justfile` and
-  script — is [Apache-2.0](Apache-2.0.txt).
-- **Prose** — every `.md`, this file included — is [CC BY 4.0](CC-BY-4.0.txt).
+- **Source code**, every `.rs`, `.S`, `.ld`, `Cargo.toml`, `justfile` and
+  script, is [Apache-2.0](Apache-2.0.txt).
+- **Prose**, every `.md`, this file included, is [CC BY 4.0](CC-BY-4.0.txt).
 - **The certificate fixtures under `certs/`** are under whatever their own
   files state.
 
@@ -28,15 +28,15 @@ documents or *builds* the kernel, which is what the Apache-2.0 half covers.
 This tree's prose used to be CC BY-SA 4.0, and the argument for it was that
 documentation should stay documentation anyone can improve.  The argument does
 not hold for what this prose actually is.  A corpus with share-alike is a
-commons — an encyclopedia, a manual several projects write together — where the
+commons, an encyclopedia, a manual several projects write together, where the
 point is that no one can take the work closed.  This tree's prose is one
 project's own record: why a subsystem is shaped the way it is, and what has and
 has not been built.  Nobody forks it into a competing body of knowledge, and a
 reader who quotes a paragraph in a bug report is not a threat to it.
 
 What share-alike cost was real.  Its boundary with Apache-2.0 is not obvious
-to a reader — "is this paragraph inside a source file part of the code or the
-prose?" has no answer — and the clause itself is untested in the one place
+to a reader, "is this paragraph inside a source file part of the code or the
+prose?" has no answer, and the clause itself is untested in the one place
 people now copy text from, which is a language model's context.  Attribution
 is understood by every reader and asked for by every licence, and it is the
 one thing this tree actually wants from a quoter.

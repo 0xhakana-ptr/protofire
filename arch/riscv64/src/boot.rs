@@ -305,7 +305,7 @@ pub fn plic_sources() -> Option<usize> {
 /// targets are per source, and its claim is in a per-hart delivery block.  A
 /// machine built with `-machine virt,aia=aplic` or `aia=aplic-imsic` names it
 /// instead of a PLIC, and a boot that asked only for `riscv,plic0` found no
-/// controller at all — `no external interrupt controller`, which is the gap
+/// controller at all, `no external interrupt controller`, which is the gap
 /// this reader closes.
 ///
 /// ## Which APLIC
@@ -392,14 +392,14 @@ fn hart_index() -> usize {
 /// ## The stride, from the tree's own geometry
 ///
 /// The node's `reg` is the **group's** window, and the number of files in it is
-/// the number of `interrupts-extended` pairs — one per hart.  So the stride is
+/// the number of `interrupts-extended` pairs, one per hart.  So the stride is
 /// the window divided by the files, and on this machine that is one 4 KiB page:
 /// the tree says `reg = 0x28000000..0x28002000` for two harts, so hart 1's file
 /// is at `0x28001000`.
 ///
 /// The first version read the stride as the `reg` size, which is the window and
-/// not the step, and a boot whose firmware cold-booted **hart 1** — QEMU
-/// alternates — wrote its self-test message to `0x28002000`, one page past the
+/// not the step, and a boot whose firmware cold-booted **hart 1**, QEMU
+/// alternates, wrote its self-test message to `0x28002000`, one page past the
 /// group: a store access fault at an address no device answers.  Measured.  The
 /// division is also why a wrong answer cannot hide: a stride of the window's
 /// own size puts hart 1 past the group, and the fault names the address.
@@ -442,7 +442,7 @@ fn imsic_file_pairs(node: fdt::Node<'_>) -> Option<usize> {
 /// is: by matching the phandle, not by assuming the list is sorted.
 ///
 /// `None` when the tree names no supervisor IMSIC, or when `hart` is not one of
-/// its files — a hart with no file cannot receive a message, and a caller that
+/// its files, a hart with no file cannot receive a message, and a caller that
 /// guessed an index would write into some other hart's file.
 pub fn imsic_file_index_for_hart(hart: usize) -> Option<usize> {
     let tree = device_tree()?;

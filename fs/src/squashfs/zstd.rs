@@ -75,7 +75,7 @@ pub fn zstd_decompress(src: &[u8], dst: &mut [u8]) -> Result<usize, Error> {
     // Dictionary ID.
     pos += did_flag as usize;
 
-    // Content checksum is the last 4 bytes — strip if present.
+    // Content checksum is the last 4 bytes, strip if present.
     let effective = if content_checksum && src.len() >= pos + 4 {
         src.len() - 4
     } else {

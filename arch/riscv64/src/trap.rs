@@ -31,7 +31,7 @@
 //! A trap has no context to hand a function, which is the same reason the
 //! other two machines read their sinks from statics.  The kernel installs them
 //! with `set_interrupt_dispatch` and `set_call_sink`; until then every trap is
-//! unhandled, and an unhandled one is reported — an external interrupt
+//! unhandled, and an unhandled one is reported, an external interrupt
 //! continues, because a device with no driver must not stop a boot, and an
 //! exception stops, because the instruction that raised it will raise it
 //! again.
@@ -249,7 +249,7 @@ static PREEMPT_SINK: cell::SyncUnsafeCell<Option<PreemptSink>> = cell::SyncUnsaf
 
 /// The sink for a fault in a program the kernel did not answer: the frame,
 /// the cause, and the address the fault named.  Injected like the call and
-/// preempt sinks — the machine knows where a fault happened, and only the
+/// preempt sinks, the machine knows where a fault happened, and only the
 /// kernel knows what a process is.
 #[cfg(target_os = "none")]
 pub type FaultSink = fn(&mut ExceptionFrame, usize, usize);
@@ -491,7 +491,7 @@ fn finish_external(frame: &mut ExceptionFrame) {
     // whose read says "not mine", every time, six boots each.  Handing the
     // second to the sink counted it as a console interrupt, so
     // `console interrupt(s) taken` read 2 for a boot that took one real
-    // interrupt — a number describing deliveries rather than interrupts.
+    // interrupt, a number describing deliveries rather than interrupts.
     //
     // So the spurious one is claimed and completed here, and the sink never
     // sees it.  It is not an error: the controller did its job with the state
@@ -690,7 +690,7 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     // This machine says the direction in the cause itself rather than in a bit
     // of one: a store page fault and a load page fault are two numbers.  An
     // instruction fetch gets the third value and is neither a read nor a
-    // write, so it is reported as a read — the page must be executable, and a
+    // write, so it is reported as a read, the page must be executable, and a
     // copy-on-write handler that treated a fetch as a write would copy a page
     // for a program that was only trying to execute it.
     let shared = irq::Frame::fault(
@@ -706,7 +706,7 @@ pub unsafe extern "C" fn riscv64_trap_dispatch(frame: *mut ExceptionFrame) {
     if !handled {
         // An exception from U-mode that the kernel did not answer kills the
         // **program**, not the machine: the diagnostic is already on the
-        // console, and the death is the scheduler's — the task goes
+        // console, and the death is the scheduler's, the task goes
         // `Finished` with the kernel's fault status and the frame this tail
         // leaves behind is whatever runs next.  `sstatus.SPP` is what says
         // the fault was the program's and not the kernel's; a kernel that
@@ -821,7 +821,7 @@ pub fn set_argument(context: &mut Context, index: usize, value: usize) {
 /// The value in the register argument `index` travels in.
 ///
 /// The read side of [`set_argument`], for a kernel that must **keep** what a
-/// redirection displaces — a signal delivery takes the argument registers
+/// redirection displaces, a signal delivery takes the argument registers
 /// for its record and puts the program's own back on the way out.
 ///
 /// # Panics

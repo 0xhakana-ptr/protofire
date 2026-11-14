@@ -7,7 +7,7 @@
 //!
 //! They travel in argument slots.  A program compiled against a different
 //! number asks for a protection it did not get, and the kernel would have no
-//! way to tell — so the numbers are the ABI's and a test pins them.
+//! way to tell, so the numbers are the ABI's and a test pins them.
 //!
 //! Their values are the ones this tree's older ABI already gave them, which is
 //! what makes a program written against either one mean the same thing.
@@ -18,7 +18,7 @@
 // writable passes `PROT_READ | PROT_WRITE`.
 
 /// The page may be read.  Every mapping this kernel makes is readable, so this
-/// bit is accepted and recorded rather than required — a `Mmap` asking for
+/// bit is accepted and recorded rather than required, a `Mmap` asking for
 /// `PROT_WRITE` alone still gets a page it can read, because this kernel has no
 /// way to make a page unreadable.
 pub const PROT_READ: usize = 1 << 0;
@@ -47,7 +47,7 @@ pub const MAP_ANONYMOUS: usize = 0x20;
 /// Changes are private to the calling process.
 ///
 /// Required alongside [`MAP_ANONYMOUS`] because anonymous memory has no other
-/// sensible reading — there is no other process to share it with until this
+/// sensible reading, there is no other process to share it with until this
 /// kernel has shared memory, which it does not.
 pub const MAP_PRIVATE: usize = 0x02;
 

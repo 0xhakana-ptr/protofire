@@ -214,7 +214,7 @@ pub(super) struct Ext4DirEntry {
 
 // Parsing and serialisation
 
-/// Parse a raw inode — 128 or 256 bytes — into an [`Ext4Inode`].
+/// Parse a raw inode, 128 or 256 bytes, into an [`Ext4Inode`].
 pub(super) fn read_ext4_inode(raw: &[u8], inode_size: u16) -> Ext4Inode {
     let mode = u16::from_le_bytes([raw[0], raw[1]]);
     let uid = u16::from_le_bytes([raw[2], raw[3]]);

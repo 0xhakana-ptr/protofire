@@ -17,8 +17,8 @@
 //!
 //! ## The checksum is the pseudo-header's
 //!
-//! ICMPv6's checksum covers the IPv6 pseudo-header — the source and
-//! destination addresses, the length and the next-header value 58 — and then
+//! ICMPv6's checksum covers the IPv6 pseudo-header, the source and
+//! destination addresses, the length and the next-header value 58, and then
 //! the message.  It is **mandatory**: unlike UDP over IPv4 there is no zero
 //! that means "not computed", so a receiver verifies every message.  That
 //! makes the addresses part of the checksum's input, which is why
@@ -41,7 +41,7 @@
 //! An NDP message carries options after its fixed part, each a type byte, a
 //! length **in eight-octet units** (which includes the type and length
 //! bytes), and its value.  Two matter to a host: the source link-layer
-//! address an advertisement carries — the MAC the asker wanted — and the
+//! address an advertisement carries, the MAC the asker wanted, and the
 //! prefix information a router advertisement carries, which is what makes an
 //! address auto-configurable.
 
@@ -138,8 +138,8 @@ pub fn verify(bytes: &[u8], source: Addr, destination: Addr) -> bool {
 /// Write an ICMPv6 message with `body` after its four fixed bytes, and
 /// compute the checksum the pseudo-header needs.
 ///
-/// The addresses are the message's own — the source and destination the IPv6
-/// header will carry — because they are the checksum's input.
+/// The addresses are the message's own, the source and destination the IPv6
+/// header will carry, because they are the checksum's input.
 pub fn write_message(
     message: &mut [u8],
     source: Addr,
@@ -159,7 +159,7 @@ pub fn write_message(
     put_u16(message, 2, checksum);
 }
 
-// ── echo ─────────────────────────────────────────────────────────────────
+// echo
 
 /// The fixed part of an echo message: identifier and sequence.
 pub const ECHO_LEN: usize = 4;
@@ -185,7 +185,7 @@ pub const fn echo_len(data_len: usize) -> usize {
 /// sequence.
 ///
 /// `kind` is [`ECHO_REQUEST`] or [`ECHO_REPLY`]; the two differ in that byte
-/// and nothing else, which is why one writer makes both — a reply this stack
+/// and nothing else, which is why one writer makes both, a reply this stack
 /// builds is its request with the type changed and the checksum recomputed.
 pub fn write_echo(
     message: &mut [u8],
@@ -229,7 +229,7 @@ pub fn parse_echo(message: &Message, bytes: &[u8]) -> Option<Echo> {
     })
 }
 
-// ── neighbour discovery ──────────────────────────────────────────────────
+// neighbour discovery
 
 /// The flags a neighbour advertisement carries, in its first four bytes.
 pub const NEIGHBOR_FLAG_ROUTER: u32 = 0x8000_0000;
@@ -294,7 +294,7 @@ pub struct NeighborAdvertisement {
 
 /// Write a neighbour advertisement answering for `target`.
 ///
-/// `destination` is the asker's address — the solicitation's source — and not
+/// `destination` is the asker's address, the solicitation's source, and not
 /// a multicast group: an advertisement that answers a solicitation goes to
 /// the one node that asked, which is what the solicited flag promises.  The
 /// target link-layer address option is mandatory in an advertisement, because
@@ -370,13 +370,13 @@ pub fn parse_neighbor_advertisement(
     })
 }
 
-// ── router discovery ─────────────────────────────────────────────────────
+// router discovery
 
 /// Write a router solicitation, which asks the link's routers to answer with
 /// an advertisement.
 ///
 /// The destination is the all-routers group, because the asker does not know
-/// any router's address — that is the question.
+/// any router's address, that is the question.
 pub fn write_router_solicitation(message: &mut [u8], source: Addr, source_link_layer: [u8; 6]) {
     let mut body = [0_u8; 4 + 8];
     body[4] = OPTION_SOURCE_LINK_LAYER;
@@ -437,7 +437,7 @@ pub fn parse_router_advertisement(message: &Message, bytes: &[u8]) -> Option<Rou
     })
 }
 
-// ── options ──────────────────────────────────────────────────────────────
+// options
 
 /// One NDP option: its type, and where its value begins and how long it is.
 ///
@@ -455,8 +455,8 @@ pub struct NdpOption {
 
 /// The options an NDP message carries, as an iterator-shaped walk.
 ///
-/// A malformed option — one whose length byte is zero, or one that runs past
-/// the message — ends the walk rather than being skipped: stepping by a
+/// A malformed option, one whose length byte is zero, or one that runs past
+/// the message, ends the walk rather than being skipped: stepping by a
 /// length that is zero is a loop that never ends, and stepping past the end
 /// is a read of bytes that belong to something else.
 pub fn option_at(bytes: &[u8], at: usize, end: usize) -> Option<(NdpOption, usize)> {
@@ -514,8 +514,8 @@ pub struct PrefixInformation {
 /// The prefix information a router advertisement carries, if it carries one.
 ///
 /// `autonomous` is the flag that says the prefix may be used for stateless
-/// address configuration — the router saying "append an interface identifier
-/// to this and you have an address" — and it is the one this stack needs.
+/// address configuration, the router saying "append an interface identifier
+/// to this and you have an address", and it is the one this stack needs.
 pub fn prefix_information(bytes: &[u8], at: usize, end: usize) -> Option<PrefixInformation> {
     let mut cursor = at;
     while let Some((option, next)) = option_at(bytes, cursor, end) {
@@ -550,7 +550,7 @@ mod tests {
     //! The tests for this module.
     //!
     //! ICMPv6's checksum over the pseudo-header, the echo exchange, and the
-    //! NDP messages — because IPv6 has no ARP, and a stack that could not
+    //! NDP messages, because IPv6 has no ARP, and a stack that could not
     //! write a neighbour solicitation could not send to a neighbour at all.
     //!
     //! The NDP tests pin the layout byte for byte: a solicitation whose
@@ -691,8 +691,8 @@ mod tests {
         );
     }
 
-    /// A neighbour advertisement answers with the target's MAC — the whole
-    /// answer — and its flags say whether a router sent it and whether it
+    /// A neighbour advertisement answers with the target's MAC, the whole
+    /// answer, and its flags say whether a router sent it and whether it
     /// answers a solicitation.
     #[test]
     fn a_neighbor_advertisement_carries_the_target_mac() {

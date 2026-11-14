@@ -358,7 +358,7 @@ impl VirtioBlock {
         // interrupting for until the counter wraps.  Measured when a
         // completion vector was wired to an IMSIC with this write missing: the
         // boot's own probe took no interrupt at all, and the mount that
-        // followed took one per completion — the device's suppression was
+        // followed took one per completion, the device's suppression was
         // reading a slot the driver had never allocated.  The slot's
         // allocation is the queue's fix; this is the driver's half.
         //

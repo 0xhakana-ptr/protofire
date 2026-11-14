@@ -8,8 +8,8 @@
 //!
 //! A filesystem backend in the [`crate::filesystem::FileSystem`] shape:
 //! [`ExfatVolume::open`] mounts a volume a device holds, and everything
-//! between — lookup, listing, creation, rename, removal, reading, writing,
-//! truncation — is the format's own arithmetic through the block cache.
+//! between, lookup, listing, creation, rename, removal, reading, writing,
+//! truncation, is the format's own arithmetic through the block cache.
 //! The allocation is the bitmap's, not the FAT's: a cluster is free when
 //! its bit says so, and the chain links follow.
 //!

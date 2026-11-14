@@ -11,7 +11,7 @@
 //! inode's `i_block` area, or the classic direct-and-indirect pointer array
 //! an ext2 volume uses.  A volume whose superblock carries the extents
 //! feature gives regular files the tree, but a tree whose leaf fills falls
-//! back to the pointer array rather than growing a second tree level — the
+//! back to the pointer array rather than growing a second tree level, the
 //! fallback is the format's own arithmetic, and both models have to read
 //! every volume either way.
 
@@ -86,7 +86,7 @@ impl Ext4Fs {
                 Ok(replayed) => journal_replayed = replayed,
                 Err(_) => {
                     // Replay failed; the volume mounts with the journal
-                    // ignored rather than refused — a volume a broken
+                    // ignored rather than refused, a volume a broken
                     // journal leaves is still a volume, and refusing it
                     // would leave the machine with no disk at all.
                 }
@@ -154,7 +154,7 @@ impl Ext4Fs {
     /// written to its final place, which is what makes a crash leave the
     /// volume with the transaction's older self rather than a half-written
     /// newer one.  Data blocks pass through here too, and journalling them
-    /// is harmless — only metadata matters for crash consistency, and the
+    /// is harmless, only metadata matters for crash consistency, and the
     /// journal treats every block uniformly.
     pub(super) fn write_block(&self, ext4_block: u64, data: &[u8]) -> Result<()> {
         self.check_writable()?;
@@ -193,7 +193,7 @@ impl Ext4Fs {
         Ok(())
     }
 
-    // ── the superblock and the group descriptors ─────────────────────────
+    // the superblock and the group descriptors
 
     /// Read and validate the superblock.
     ///
@@ -306,7 +306,7 @@ impl Ext4Fs {
         Ok(entries)
     }
 
-    // ── inodes ───────────────────────────────────────────────────────────
+    // inodes
 
     pub(super) fn read_inode(&self, ino: u32) -> Result<Ext4Inode> {
         if ino == 0 || ino > self.sb.inodes_count {
@@ -390,7 +390,7 @@ impl Ext4Fs {
     }
 
     /// Write a newly-allocated inode: all zeroes but the mode, the link
-    /// count, and — for a regular file on an extents volume — an empty
+    /// count, and, for a regular file on an extents volume, an empty
     /// extent-tree header.  Directories never use extents on this driver;
     /// their blocks go through the pointer array.
     fn write_fresh_inode(&self, ino: u32, mode: u16, uid: u32, gid: u32) -> Result<()> {
@@ -440,7 +440,7 @@ impl Ext4Fs {
         )
     }
 
-    // ── the block-mapping models ─────────────────────────────────────────
+    // the block-mapping models
 
     /// Read a file's bytes at an offset, mapping each logical block through
     /// the inode's own model.
@@ -526,7 +526,7 @@ impl Ext4Fs {
             }
 
             // An internal node: the child whose range covers this block is
-            // the last index whose `ei_block` is at or below it — the
+            // the last index whose `ei_block` is at or below it, the
             // indices are sorted ascending, and the first one above ends the
             // search.
             let block_u32 = block_idx as u32;
@@ -640,7 +640,7 @@ impl Ext4Fs {
         ])))
     }
 
-    /// Read every pointer an indirect block holds, in order — one cached
+    /// Read every pointer an indirect block holds, in order, one cached
     /// read where a caller would otherwise have made one per pointer.
     fn read_block_ptrs(&self, blk: u64) -> Result<Vec<u64>> {
         let block_size = self.block_size();
@@ -677,7 +677,7 @@ impl Ext4Fs {
         self.write_block(blk, &buf)
     }
 
-    // ── the allocator ────────────────────────────────────────────────────
+    // the allocator
 
     /// Allocate one block, by scanning the group bitmaps in order.
     pub(super) fn allocate_block(&self) -> Result<u64> {
@@ -887,7 +887,7 @@ impl Ext4Fs {
         Ok(())
     }
 
-    // ── the extent tree's write helpers ──────────────────────────────────
+    // the extent tree's write helpers
 
     /// The `i_block` contents of a fresh extent inode: an empty depth-zero
     /// tree header.
@@ -912,7 +912,7 @@ impl Ext4Fs {
         (block, block_high, EXT4_EXTENTS_FL)
     }
 
-    /// The extent tree's rightmost leaf, read back raw — the one an append
+    /// The extent tree's rightmost leaf, read back raw, the one an append
     /// grows.  `None` when the tree is empty.
     fn read_extent_leaf_node(
         &self,
@@ -960,7 +960,7 @@ impl Ext4Fs {
     fn allocate_extent_block(&self, inode: &mut Ext4Inode, logical_block: usize) -> Result<u64> {
         // An already-mapped block is returned as it stands: a rewrite takes
         // the block the file already has, and allocating a second one would
-        // leave the tree with two extents naming the same bytes — the read
+        // leave the tree with two extents naming the same bytes, the read
         // takes the first, the write took the second, and the file's own
         // bytes would disagree with themselves.
         if let Some(existing) = self.map_inode_block_extents(inode, logical_block)? {
@@ -968,7 +968,7 @@ impl Ext4Fs {
         }
         let Some((leaf_hdr, leaf_bytes)) = self.read_extent_leaf_node(inode)? else {
             // An empty tree: allocate the data block, and the depth-zero
-            // leaf that names it lives in the inode itself — a header and
+            // leaf that names it lives in the inode itself, a header and
             // four entries are exactly the sixty bytes `i_block` holds, so
             // no leaf block of its own is needed until the tree grows past
             // them, which is the leaf-full fallback below.
@@ -1050,7 +1050,7 @@ impl Ext4Fs {
         self.allocate_inode_block_indirect(inode, logical_block)
     }
 
-    /// Free every block an extent-based inode owns — data and metadata
+    /// Free every block an extent-based inode owns, data and metadata
     /// alike, with the internal nodes collected from the walk.
     fn free_extent_blocks(&self, inode: &Ext4Inode) -> Result<()> {
         let block_size = self.block_size();
@@ -1106,7 +1106,7 @@ impl Ext4Fs {
         Ok(())
     }
 
-    // ── the indirect model's allocation ──────────────────────────────────
+    // the indirect model's allocation
 
     /// Ensure `logical_block` is mapped, allocating what the chain needs.
     pub(super) fn allocate_inode_block(
@@ -1346,7 +1346,7 @@ impl Ext4Fs {
         Ok(())
     }
 
-    // ── file data ────────────────────────────────────────────────────────
+    // file data
 
     /// Write bytes to a file's inode, allocating what the chain needs, and
     /// move the size when the write runs past the end.
@@ -1401,7 +1401,7 @@ impl Ext4Fs {
         Ok(bytes_written)
     }
 
-    // ── directories ──────────────────────────────────────────────────────
+    // directories
 
     /// Read every entry a directory holds.  Names that are not UTF-8 come
     /// through with replacement characters rather than being dropped: a
@@ -1465,7 +1465,7 @@ impl Ext4Fs {
     }
 
     /// Remove one entry from a directory, by merging its space into the
-    /// entry before it — or, when it is the block's first, by zeroing its
+    /// entry before it, or, when it is the block's first, by zeroing its
     /// inode number, which is what an unused first slot reads as.
     pub(super) fn remove_dir_entry(&self, dir_ino: u32, name: &str) -> Result<()> {
         let dir_inode = self.read_inode(dir_ino)?;
@@ -1636,9 +1636,9 @@ impl Ext4Fs {
         Ok(())
     }
 
-    // ── path resolution ──────────────────────────────────────────────────
+    // path resolution
 
-    /// Resolve a path to its inode, following symlinks up to eight levels —
+    /// Resolve a path to its inode, following symlinks up to eight levels
     /// past which the walk is a loop, and a loop answered is a hang.
     pub(super) fn walk_path(&self, path: &str) -> Result<(u32, Ext4Inode)> {
         self.walk_path_limited(path, 0)
@@ -1736,7 +1736,7 @@ impl Ext4Fs {
         Ok((major, minor))
     }
 
-    // ── the flush's metadata writers ─────────────────────────────────────
+    // the flush's metadata writers
 
     /// Write the superblock's free counts back, preserving every field this
     /// driver does not own.

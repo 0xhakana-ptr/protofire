@@ -13,7 +13,7 @@ impl F2fsFs {
     /// Allocate the next block of the active segment and write `data` to it.
     ///
     /// A full segment hands the writer the next free one.  The address the
-    /// call answers is where the data now lives — the caller's pointer moves
+    /// call answers is where the data now lives, the caller's pointer moves
     /// there, because nothing is overwritten.
     pub(super) fn segment_alloc_block(&self, data: &[u8]) -> Result<u32> {
         self.check_writable()?;
@@ -76,7 +76,7 @@ impl F2fsFs {
         }
     }
 
-    /// Invalidate every data block an inode still maps — the SIT's bits go
+    /// Invalidate every data block an inode still maps, the SIT's bits go
     /// to zero, the segment joins the free list when its last valid block
     /// goes.  Nothing is erased: reclamation is the garbage collector's
     /// work, and this build has none.

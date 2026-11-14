@@ -7,7 +7,7 @@
 //!
 //! Socket records, port sets, the address families a fuller stack would
 //! name.  They arrive with the calls they answer, in the changes that serve
-//! those calls — a record the kernel does not fill is a promise about a
+//! those calls, a record the kernel does not fill is a promise about a
 //! machine state nothing observes, and this crate does not make those.
 
 use core::mem::offset_of;
@@ -18,7 +18,7 @@ use core::mem::size_of;
 pub const NETWORK_STATUS_UP: usize = 1;
 
 /// How many bytes of addresses the record carries: the card's hardware
-/// address in six, its protocol address in four, and the gateway's in four —
+/// address in six, its protocol address in four, and the gateway's in four
 /// packed in that order, as the wire carries them.
 pub const NETWORK_ADDRESSES_BYTES: usize = 14;
 
@@ -26,7 +26,7 @@ pub const NETWORK_ADDRESSES_BYTES: usize = 14;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// What the network answers, as `NetworkStatus` fills it.
 ///
-/// One interface, one address, one gateway — which is this build's whole
+/// One interface, one address, one gateway, which is this build's whole
 /// routing table, and the record says so rather than pretending a program
 /// asked about a network.  The state word exists because "is a card up" is
 /// the question this call exists for; a machine with no card answers the
@@ -78,8 +78,8 @@ pub struct UdpSenderRecord {
 pub struct Ipv6StatusRecord {
     /// Whether the interface has an IPv6 side at all: 1 when it does.
     ///
-    /// A card the kernel drives always does — the link-local address is the
-    /// MAC's by EUI-64 and needs nothing from the wire — but the field is
+    /// A card the kernel drives always does, the link-local address is the
+    /// MAC's by EUI-64 and needs nothing from the wire, but the field is
     /// here so a program can tell "no card" from "a card with no address",
     /// which are different answers.
     pub state: usize,
@@ -123,8 +123,8 @@ pub const UDP_SENDER_PORT_OFFSET: usize = offset_of!(UdpSenderRecord, port);
 /// the low word: `10.0.2.2` is `0x0A000202`.
 ///
 /// Both directions live here because the address crosses the boundary as a
-/// word — `SendToUdp` carries its destination in one, `RecvFromUdp` answers
-/// its sender with one — and a caller that packed it in the host's order
+/// word, `SendToUdp` carries its destination in one, `RecvFromUdp` answers
+/// its sender with one, and a caller that packed it in the host's order
 /// would send to `0x0202000A` and call the silence the wire's.
 pub const fn pack_address(address: [u8; 4]) -> usize {
     ((address[0] as usize) << 24)
@@ -150,18 +150,18 @@ pub const fn unpack_address(word: usize) -> [u8; 4] {
 /// `SendToUdp` and `RecvFromUdp` are below 120, so their semantics and their
 /// layout are frozen.  A flag is what the frozen rule permits: a caller that
 /// passes zero behaves exactly as it did before this constant existed, and a
-/// caller that passes the bit opts into the wider shape.  The alternative — a
-/// `SendToUdp6` beside each call — would have spent numbers from the
+/// caller that passes the bit opts into the wider shape.  The alternative, a
+/// `SendToUdp6` beside each call, would have spent numbers from the
 /// experimental range to say something the flags word already had room for,
 /// and left two spellings of one operation to keep in step.
 ///
 /// ## What each call means when the bit is set
 ///
-/// - **`SendToUdp`** — `a1` is a **pointer** to sixteen bytes of IPv6 address
-///   in the caller's memory, not a packed IPv4 word.  When it is a pointer the
+/// - **`SendToUdp`**, `a1` is a **pointer** to sixteen bytes of IPv6 address in
+///   the caller's memory, not a packed IPv4 word.  When it is a pointer the
 ///   call reads the address before it builds anything, so a refused address is
 ///   refused before a frame exists.
-/// - **`RecvFromUdp`** — the sender record is [`UDP_SENDER6_RECORD_SIZE`] bytes
+/// - **`RecvFromUdp`**, the sender record is [`UDP_SENDER6_RECORD_SIZE`] bytes
 ///   and its address field is a pointer-free sixteen bytes at
 ///   [`UDP_SENDER6_ADDRESS_OFFSET`].  `a4` must be at least that size, which
 ///   the call checks: a caller that set the bit and passed a two-word record
@@ -170,7 +170,7 @@ pub const fn unpack_address(word: usize) -> [u8; 4] {
 /// Both bits are the same bit, named twice because the two calls are two calls:
 /// a program that sets it on one and not the other is a program whose sends and
 /// receives disagree about their family, and the kernel refuses nothing for
-/// that — a socket can carry both, and which one a datagram is comes from the
+/// that, a socket can carry both, and which one a datagram is comes from the
 /// address it names.
 pub const NETWORK_FLAG_IPV6: usize = 1 << 0;
 
@@ -183,7 +183,7 @@ pub const RECV_FROM_UDP_KNOWN_FLAGS: usize = NETWORK_FLAG_IPV6;
 /// The flags `ConnectTcp` knows.
 ///
 /// `ConnectTcp`'s address is `a0`, and with this bit set it is a **pointer** to
-/// sixteen bytes rather than a packed word — the same reading `SendToUdp`
+/// sixteen bytes rather than a packed word, the same reading `SendToUdp`
 /// gives its `a1`.  `AcceptTcp` needs no flag: an accepted stream's family is
 /// the client's, which the connection already knows.
 pub const CONNECT_TCP_KNOWN_FLAGS: usize = NETWORK_FLAG_IPV6;
@@ -283,7 +283,7 @@ mod tests {
 
     /// The IPv6 flag is one bit, the two sender records differ by a word, and
     /// the wider record's address is sixteen bytes at the offset this crate
-    /// names — the shape a caller with the flag set passes.
+    /// names, the shape a caller with the flag set passes.
     #[test]
     fn the_ipv6_flag_and_the_wider_sender_record() {
         assert_eq!(super::NETWORK_FLAG_IPV6, 1);

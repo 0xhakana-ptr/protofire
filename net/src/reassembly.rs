@@ -8,7 +8,7 @@
 //! A path can shrink below the sender's packet size, and the sender's answer
 //! is to split a packet into pieces an 8-byte-aligned offset can address.  A
 //! stack that reads a piece as a whole answers with a truncated segment that
-//! looks complete — which is the wrong answer this crate's parsers already
+//! looks complete, which is the wrong answer this crate's parsers already
 //! refuse one layer down.  Refusing is honest and it is not usable: a peer's
 //! first large datagram would be undelivered forever.
 //!
@@ -32,7 +32,7 @@
 //!
 //! A cache is a value a caller owns.  Which clock it expires against, how it
 //! is shared, and whether it is rebuilt every boot are the caller's decisions
-//! — and a host test can hold one without any of them.
+//!, and a host test can hold one without any of them.
 //!
 //! ## The clock is the caller's
 //!
@@ -63,7 +63,7 @@ pub const MAX_ENTRIES: usize = 16;
 
 /// How long an entry may wait for its last piece, in the caller's units.
 ///
-/// The value is the RFC's own floor for IPv4 reassembly — a minute is too long
+/// The value is the RFC's own floor for IPv4 reassembly, a minute is too long
 /// for a stack that boots in seconds, so this is [RFC 1122]'s "at least
 /// thirty seconds" against a hundred-hertz clock: three thousand ticks.
 ///
@@ -345,7 +345,7 @@ impl Cache {
 
         // A piece whose bytes are already held *and agree* is a
         // retransmission, which changes nothing.  A piece that covers some
-        // covered bytes and disagrees — or that runs into them at all — is
+        // covered bytes and disagrees, or that runs into them at all, is
         // the overlap [RFC 5722] refuses: a retransmitted fragment is legal,
         // a redrawn one is the attack.
         //
@@ -426,7 +426,7 @@ mod tests {
 
     /// Pieces in any order reassemble into the payload the sender split.  The
     /// piece that says "no more" fixes the total, and the entry completes the
-    /// moment every byte before that total is covered — which for the last
+    /// moment every byte before that total is covered, which for the last
     /// piece first means the moment the first piece joins it.
     #[test]
     fn pieces_in_any_order_reassemble() {
@@ -469,7 +469,7 @@ mod tests {
     }
 
     /// A piece whose bytes are already held *exactly* is a retransmission and
-    /// changes nothing — including when it is the piece that completes the
+    /// changes nothing, including when it is the piece that completes the
     /// datagram.
     #[test]
     fn an_exact_duplicate_is_a_retransmission() {
@@ -602,7 +602,7 @@ mod tests {
         assert!(cache.is_empty());
 
         // The late piece opens a new entry, and the datagram it belonged to
-        // is gone — which is the RFC's "silently discarded".
+        // is gone, which is the RFC's "silently discarded".
         assert_eq!(
             cache.accept(key, piece(b"ijkl", 8, false), TIMEOUT_TICKS),
             Outcome::Collected

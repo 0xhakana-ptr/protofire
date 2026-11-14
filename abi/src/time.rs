@@ -7,7 +7,7 @@
 //! A counter reading is a word, and a program cannot use it: the rate it counts
 //! at is the machine's, and two machines convert a reading to seconds with two
 //! different divisors.  So the kernel does the division and the answer is a
-//! pair — whole seconds since the machine started counting, and the nanoseconds
+//! pair, whole seconds since the machine started counting, and the nanoseconds
 //! inside the second.  Two words, sixteen bytes, and no unit left for a caller
 //! to guess.
 //!
@@ -18,7 +18,7 @@
 //! [`CLOCK_MONOTONIC`] is the machine's own counter: it starts somewhere the
 //! kernel remembers and never goes backwards.  [`CLOCK_REALTIME`] is wall-clock
 //! time, which needs a real-time clock device, and this kernel has no driver
-//! for one — the number is defined so a caller gets
+//! for one, the number is defined so a caller gets
 //! [`crate::Error::Unsupported`] instead of a timestamp that looks real and is
 //! not.
 

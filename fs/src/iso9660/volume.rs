@@ -1,18 +1,18 @@
 //! fs/src/iso9660/volume.rs
 //!
 //! A mounted ISO 9660 volume: the descriptor set, the tree it describes, the
-//! entries the tree holds, and — on a writable device — the places the format
+//! entries the tree holds, and, on a writable device, the places the format
 //! and the volume allow a write.
 //!
 //! ## What mounting does
 //!
 //! Reads the descriptor set from sector 16, picks the tree a reader should see
-//! — Joliet's when there is one, because its names are the author's — and
+//!, Joliet's when there is one, because its names are the author's, and
 //! keeps where that tree's descriptor sits.  Nothing else is read: a
 //! directory's extent is read when someone asks what is in it, and a file's
 //! extent when someone reads it.  Even the root's own record is read from its
 //! descriptor every time rather than kept, because a writable volume's root
-//! can *move* — the extension reference rebuilds it — and a copy taken at
+//! can *move*, the extension reference rebuilds it, and a copy taken at
 //! open would name the extent it left.
 //!
 //! That laziness is not an optimisation.  A disc can hold a hundred thousand
@@ -26,7 +26,7 @@
 //!
 //! - **An extended attribute record.**  A record may name blocks in front of
 //!   its data, which this driver does not skip, so a file with one would be
-//!   read from the wrong place — and, for the write path, its blocks are ones
+//!   read from the wrong place, and, for the write path, its blocks are ones
 //!   the map cannot name.
 //! - **A multi-extent file.**  One file in several pieces; reading the first
 //!   piece as the whole file returns a truncated file that looks complete.
@@ -39,11 +39,11 @@
 //! to or taken out of a directory; a rename; and the path tables rebuilt from
 //! the tree rather than edited in place.  The order each mutation writes its
 //! fields in is chosen so a crash leaves either the old state or the new one,
-//! whole — a file that grows by moving copies its data before its record is
+//! whole, a file that grows by moving copies its data before its record is
 //! repointed, and a directory's tables are rebuilt last, because they are
 //! derived from the tree.
 //!
-//! A volume with **two trees** — a Joliet one beside the primary — is written
+//! A volume with **two trees**, a Joliet one beside the primary, is written
 //! only where the two agree, which is the file's data: an overwrite inside its
 //! length is the same bytes under both records.  A length change and
 //! everything structural is refused, because each would have to appear in
@@ -102,7 +102,7 @@ struct Tree {
     /// The sector the tree's descriptor sits in.
     ///
     /// The root's record is a field of that descriptor, and a root that grows
-    /// or moves rewrites it there — so this, not the root's extent, is what
+    /// or moves rewrites it there, so this, not the root's extent, is what
     /// the tree keeps.
     descriptor_sector: u64,
     /// Whether names in this tree are UCS-2 big-endian.
@@ -114,7 +114,7 @@ pub struct Iso9660Volume {
     device: Arc<dyn BlockDevice>,
     label: String,
     block_size: u16,
-    /// The tree a reader answers from — the last usable one the set held,
+    /// The tree a reader answers from, the last usable one the set held,
     /// Joliet's when there is one.
     tree: Tree,
     /// Every tree descriptor the set held, in the order the set does.
@@ -238,7 +238,7 @@ impl Iso9660Volume {
     /// The root directory's record, from its descriptor.
     ///
     /// Read from the tree rather than kept: a writable volume's root can
-    /// *move* — the extension reference rebuilds it — and a copy taken at open
+    /// *move*, the extension reference rebuilds it, and a copy taken at open
     /// would name the extent it left.  This driver has no state that could go
     /// stale.
     fn root_record(&self) -> Result<Record> {
@@ -334,7 +334,7 @@ impl Iso9660Volume {
     /// Where a directory's own ".." record sits on the volume.
     ///
     /// It is the second record in the directory's extent, and the parser finds
-    /// it by its identifier — one byte, `0x01` — so this does not have to
+    /// it by its identifier, one byte, `0x01`, so this does not have to
     /// assume how long the first record is.
     fn parent_record_of(&self, extent_location: u32, extent_size: u32) -> Result<u64> {
         let mut data = vec![0u8; extent_size as usize];
@@ -361,7 +361,7 @@ impl Iso9660Volume {
     ///
     /// A directory that has to grow can **move**: an extent is one contiguous
     /// run, and the blocks after it may be taken.  When it does, its children's
-    /// own ".." records — which name it by where it was — are stale, so they
+    /// own ".." records, which name it by where it was, are stale, so they
     /// are rewritten here, at the one place a directory grows.
     ///
     /// The children are read out of the extent the directory *left*, which the
@@ -414,8 +414,8 @@ impl Iso9660Volume {
     /// Every directory the volume has, in the order a path table keeps them.
     ///
     /// The standard's order is by hierarchy level, then by the parent's number,
-    /// then by identifier.  A level-order walk gives the first two for free —
-    /// a parent is always numbered before its children — so this walks the
+    /// then by identifier.  A level-order walk gives the first two for free
+    /// a parent is always numbered before its children, so this walks the
     /// levels in turn and sorts each directory's children by identifier.
     fn path_table_entries(&self, tree: &Tree) -> Result<Vec<PathTableEntry>> {
         let root = self.tree_root(tree)?;
@@ -456,7 +456,7 @@ impl Iso9660Volume {
     /// The tables are *derived* rather than edited: a directory's number is its
     /// position, so inserting one renumbers everything after it, and rebuilding
     /// the list is the same work with fewer ways to be wrong.  Two are
-    /// required — one per byte order — and a volume may also carry optional
+    /// required, one per byte order, and a volume may also carry optional
     /// copies, which are rewritten to the same content because a reader is
     /// allowed to follow them.  Every one of them goes in the descriptor that
     /// names the tree.
@@ -488,7 +488,7 @@ impl Iso9660Volume {
         let mut m_location = descriptor.m_path_table_loc;
         if blocks(size) > blocks(old_size) {
             // A path table is one contiguous extent like any other, so more
-            // room than it has means moving it to free blocks — one allocator
+            // room than it has means moving it to free blocks, one allocator
             // for both, so the second table cannot be handed the first's.
             let mut allocate = Allocator::of(&self.device, self.block_size);
             l_location = allocate.take(blocks(size))?;
@@ -532,7 +532,7 @@ impl Iso9660Volume {
     ///
     /// A volume whose System Use areas carry Rock Ridge entries is required to
     /// name the extension in an `ER` entry, or a reader is entitled to ignore
-    /// every one of them — and this driver has been *writing* such entries
+    /// every one of them, and this driver has been *writing* such entries
     /// since names stopped having to be ISO 9660 identifiers.  The entry's own
     /// mandated text makes it 237 bytes, and a directory record's length is one
     /// byte, so the root's own "." record carries an `SP` marker and a `CE`
@@ -544,8 +544,8 @@ impl Iso9660Volume {
     /// record offset would then point at the wrong bytes, and at open no node
     /// exists yet.
     ///
-    /// The root is built **elsewhere** and the volume repointed at it — the
-    /// descriptor first, then the path tables, which name it too — so a crash
+    /// The root is built **elsewhere** and the volume repointed at it, the
+    /// descriptor first, then the path tables, which name it too, so a crash
     /// leaves either the old root or the new one, whole.  That is the shape a
     /// file takes when it grows by moving, and it costs the same thing: the
     /// blocks the old root held are not reclaimed, because the allocator
@@ -653,7 +653,7 @@ impl Iso9660Volume {
         )?;
 
         // Every directory the root holds names it in its own ".." record too,
-        // and those records are in *other* extents — the copy above did not
+        // and those records are in *other* extents, the copy above did not
         // touch them.  This is the same work [`Self::append_to_directory`]
         // does when a directory grows into a move, and for the same reason.
         for child in subdirectories(&extent, first_len) {
@@ -718,7 +718,7 @@ fn read_descriptor(device: &dyn BlockDevice, sector: u64) -> Result<Option<Volum
     Ok(VolumeDescriptor::parse(sector, &bytes))
 }
 
-// ── the mutations ────────────────────────────────────────────────────────
+// the mutations
 
 /// The bytes an empty directory's extent holds: its own two records, which
 /// have one-byte identifiers and so are 34 bytes each.
@@ -729,7 +729,7 @@ const EMPTY_DIRECTORY_BYTES: u32 = 2 * (33 + 1);
 /// A record's own length is a single byte, so its identifier, its padding and
 /// its System Use area together have to fit in 255 of them.  The name a caller
 /// chose is in that area and is the part they control, so a name too long to
-/// fit is refused — rather than written in part, which a reader would read
+/// fit is refused, rather than written in part, which a reader would read
 /// back as a different name.
 fn build_record(
     identifier: &[u8],
@@ -758,7 +758,7 @@ fn default_posix(directory: bool) -> (u32, u32, u32, u32) {
 /// The System Use area a created entry carries.
 ///
 /// `PX` gives it the attributes a POSIX reader reports, `NM` the name its
-/// caller used, and `ST` ends the area — which is what says the entries are
+/// caller used, and `ST` ends the area, which is what says the entries are
 /// complete rather than truncated by the record that holds them.
 fn rock_ridge_area(name: &str, posix: (u32, u32, u32, u32)) -> Vec<u8> {
     let (mode, links, uid, gid) = posix;
@@ -772,7 +772,7 @@ fn rock_ridge_area(name: &str, posix: (u32, u32, u32, u32)) -> Vec<u8> {
 ///
 /// It is the one record that declares what the volume's areas are: `SP` says
 /// they are SUSP's at all, `PX` gives the root its attributes, and `CE` names
-/// the block the extension reference continues in — because that entry does
+/// the block the extension reference continues in, because that entry does
 /// not fit in a record, whose own length is one byte.
 fn root_extension_area(continuation: u32, reference_size: u32) -> Vec<u8> {
     let (mode, links, uid, gid) = default_posix(true);
@@ -809,7 +809,7 @@ fn subdirectories(extent: &[u8], from: usize) -> Vec<Record> {
 /// that ignores Rock Ridge falls back to: a name with none of those characters
 /// in it is *mangled* to the nearest identifier rather than refused.
 ///
-/// Mangling is many-to-one — `a b` and `a_b` both want `A_B` — and two records
+/// Mangling is many-to-one, `a b` and `a_b` both want `A_B`, and two records
 /// with one identifier are two entries only one of which a lookup can reach,
 /// so the identifiers the directory already holds decide a numbered suffix.
 fn identifier_for(name: &str, directory: bool, taken: &[Vec<u8>]) -> Result<Vec<u8>> {
@@ -961,8 +961,8 @@ impl FileSystem for Iso9660Volume {
     /// Move or rename an entry.
     ///
     /// This is a removal and a create the caller sees as one: the record leaves
-    /// its directory, and an identical one — the same extent and the same
-    /// length — joins the destination's under the new name.  A directory also
+    /// its directory, and an identical one, the same extent and the same
+    /// length, joins the destination's under the new name.  A directory also
     /// carries ".." pointing at its parent, so a move rewrites that, and both
     /// path tables are rebuilt because a directory's level and number are
     /// properties of where it sits.
@@ -1009,9 +1009,9 @@ impl FileSystem for Iso9660Volume {
         let entries = self.read_directory(&new_parent)?;
         let identifier =
             identifier_for(&new_name, record.is_directory(), &identifiers_in(&entries))?;
-        // The entry keeps everything its record said about it — its POSIX
+        // The entry keeps everything its record said about it, its POSIX
         // attributes, a symlink's target, whatever else its System Use area
-        // holds — except the name entries, which are the one thing a rename
+        // holds, except the name entries, which are the one thing a rename
         // changes.
         let bytes = build_record(
             &identifier,
@@ -1047,7 +1047,7 @@ impl FileSystem for Iso9660Volume {
     /// nothing else, and the first write is what gives it blocks.
     ///
     /// The name the caller used is what its record's `NM` entry holds, so a
-    /// name the identifier cannot spell — lower case, spaces, anything — is
+    /// name the identifier cannot spell, lower case, spaces, anything, is
     /// stored as itself and read back as itself, while the identifier is the
     /// mangled form a reader without Rock Ridge sees.
     fn create_file(&self, path: &str) -> Result<Arc<dyn VNode>> {
@@ -1180,7 +1180,7 @@ impl FileSystem for Iso9660Volume {
             record.record_len,
         )?;
 
-        // The record is gone, so whatever the entry held is free — and if it
+        // The record is gone, so whatever the entry held is free, and if it
         // was the last thing the volume held, its blocks are the volume's last
         // and it takes them back.  A removal in the middle gives nothing back,
         // because what is free there is not something this driver can see
@@ -1262,7 +1262,7 @@ struct Iso9660VNode {
     ///
     /// One means the record above is the only copy of the file's length.  More
     /// than one means every tree has a copy, and the trees do not spell the
-    /// file's name the same way — so which record in the other tree is *this*
+    /// file's name the same way, so which record in the other tree is *this*
     /// file's is not a question the volume answers, and a length is not
     /// something to write into a guess.
     trees: u8,
@@ -1312,8 +1312,8 @@ impl VNode for Iso9660VNode {
     /// Overwrite bytes the file already has.
     ///
     /// A write inside the file's length changes no metadata at all.  One that
-    /// runs past the end grows the file first — the same `set_len` a caller
-    /// could ask for — so a caller can create a file and write it the way it
+    /// runs past the end grows the file first, the same `set_len` a caller
+    /// could ask for, so a caller can create a file and write it the way it
     /// writes any other.  When the file cannot grow, the write is **short**
     /// rather than failing, which is the answer this call has always given for
     /// a byte it could not take.
@@ -1342,8 +1342,8 @@ impl VNode for Iso9660VNode {
 
     /// Change the length the file's directory record carries.
     ///
-    /// The record is the file's only metadata — its extent start and its
-    /// length, both fields of the record — so a resize in place is one 16-byte
+    /// The record is the file's only metadata, its extent start and its
+    /// length, both fields of the record, so a resize in place is one 16-byte
     /// write that covers both.
     ///
     /// A file's extent starts on a logical block boundary and its blocks are
@@ -1352,7 +1352,7 @@ impl VNode for Iso9660VNode {
     /// shrinking is free.  Past that block the file needs more blocks, and a
     /// file's extent is **one contiguous run**, so there are two ways to get
     /// them: take the blocks that follow, when the file is the last thing the
-    /// volume holds, or move the file — into the free space the allocator
+    /// volume holds, or move the file, into the free space the allocator
     /// finds, which is where a hole a removal left is handed out again.
     fn set_len(&self, length: u64) -> Result<()> {
         if self.kind != NodeKind::File {
@@ -1370,7 +1370,7 @@ impl VNode for Iso9660VNode {
         // volume's trees do not spell the file's name the same way: which
         // record in the other tree is this file's is not something the volume
         // says.  What a change to the length would leave behind is one tree
-        // that has it and one that does not, so it is refused — and an
+        // that has it and one that does not, so it is refused, and an
         // overwrite *inside* the length is not, because the data both trees
         // point at is the same data.
         if self.trees > 1 {
@@ -1379,7 +1379,7 @@ impl VNode for Iso9660VNode {
 
         // Past the block the file has, the extent needs blocks; `place_extent`
         // grows it where the volume ends and moves it to free blocks where it
-        // cannot — which is what puts a moved file into a hole a removal left.
+        // cannot, which is what puts a moved file into a hole a removal left.
         let extent_location = self.extent.load(Ordering::Relaxed);
         let mut allocate = Allocator::of(&self.device, self.block_size);
         let extent = allocate::place_extent(

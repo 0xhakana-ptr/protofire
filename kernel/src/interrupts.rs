@@ -9,7 +9,7 @@
 //! what, and who asked to be told.
 //!
 //! A vector is delivered to whoever registered for its number: the timer's,
-//! the wake between CPUs, the console's line, and — for a fault — one
+//! the wake between CPUs, the console's line, and, for a fault, one
 //! recoverable shape, the write a copy-on-write fork demoted.  A vector no
 //! one claims is reported rather than acted on, an unclaimed *interrupt*
 //! continuing and an unresolved *fault* stopping the machine, which is the
@@ -202,7 +202,7 @@ pub fn handle(frame: irq::Frame) -> bool {
     // A fault.  One shape of it is recoverable, and it is tried first: a write
     // to a page a fork demoted is the copy-on-write event, and resolving it
     // resumes the very instruction that faulted, so the program never knows.
-    // Everything else stops the machine — but it stops it with the three facts
+    // Everything else stops the machine, but it stops it with the three facts
     // that make the stop diagnosable, and only after asking the page table
     // whether the address was mapped at all.
     //
@@ -223,7 +223,7 @@ pub fn handle(frame: irq::Frame) -> bool {
 /// The write fault's one recoverable shape, tried before the machine stops.
 ///
 /// The fault arrived with no task named, and the task it belongs to is the one
-/// this CPU marked as running — which is the same condition a host and the
+/// this CPU marked as running, which is the same condition a host and the
 /// boot's own code fail, and both are answered `false`, straight to the
 /// diagnostic.  The lock order is the scheduler's and then the pool's, taken
 /// inside [`crate::scheduler::with_current_space`], the only order this kernel
@@ -243,7 +243,7 @@ fn resolve_write_fault(fault_address: usize) -> bool {
 ///
 /// 1. the address the access named;
 /// 2. whether the access was a read or a write;
-/// 3. what the page table says about that address — **not mapped**, mapped with
+/// 3. what the page table says about that address, **not mapped**, mapped with
 ///    the permissions it has, or mapped as a block this kernel's walk does not
 ///    describe at 4 KiB.
 ///

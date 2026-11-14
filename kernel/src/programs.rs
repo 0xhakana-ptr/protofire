@@ -40,7 +40,7 @@ pub const BOOT_PROCESS: u32 = 0;
 /// switch needs something to switch to.  Three programs that each print their
 /// number exercise a second and third address space, two contexts saved and
 /// restored, a sleep that parks a task and a read that parks a task on a pipe,
-/// and the exits reaped — the boot's three, plus the fourth process its fork
+/// and the exits reaped, the boot's three, plus the fourth process its fork
 /// creates, whose space is reaped beside theirs.
 ///
 /// A log that shows the numbers interleaved is the evidence; one program twice
@@ -149,7 +149,7 @@ fn make_pipe() -> Option<(usize, usize)> {
     // made the pipe: the boot makes it and hands it to a program through the
     // program's stack, and from then on the program's exit is what must close
     // it.  Registering both ends as the boot's own would leave them open for
-    // ever — the boot outlives every program — and a reader waiting on a
+    // ever, the boot outlives every program, and a reader waiting on a
     // writer that had exited would never see end-of-file.  Measured: with the
     // boot as owner, the writer's exit released nothing and the boot hung.
     let reader = match crate::pipe::attach(
@@ -202,11 +202,11 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
 
     // The exec-path block, for **every** program: the boot's choice of
     // executable, where a program that execs reads it.  The pipe hand-over is
-    // the pipe programs' alone, but the exec path is every program's — the
+    // the pipe programs' alone, but the exec path is every program's, the
     // boot does not know which one will want to become another.
     // The exec-path block, for **every** program: the boot's choice of
     // executable, where a program that execs reads it.  The pipe hand-over is
-    // the pipe programs' alone, but the exec path is every program's — the
+    // the pipe programs' alone, but the exec path is every program's, the
     // boot does not know which one will want to become another.
     // The virtual stack page, which is what the exec-path pointer must
     // name: the bytes are written through the frame's identity mapping, but
@@ -235,7 +235,7 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
     // The stack pointer every program starts at: 32 bytes below the page's
     // top, which is where the hand-over block sits.  A pipe program's
     // descriptor is at `[rsp]`; the exec path is at `[rsp-32]` for **every**
-    // program — one shape, not one per hand-over combination.
+    // program, one shape, not one per hand-over combination.
     let stack_top = process::program_stack_top(number) - 32;
     let _ = handed_stack_top;
     let mut task = Task::new(
@@ -300,8 +300,8 @@ fn hand_over_pipe(
 /// The path the boot hands each program as its own choice of executable,
 /// NUL-terminated.
 ///
-/// A program that execs reads the pointer at `[rsp-32]` — written beside the
-/// pipe descriptor by [`hand_over_pipe`] — and passes it to `ExecProcess`
+/// A program that execs reads the pointer at `[rsp-32]`, written beside the
+/// pipe descriptor by [`hand_over_pipe`], and passes it to `ExecProcess`
 /// unchanged.  The boot names the program the tree builds rather than a
 /// constant the caller guesses at, which is what makes "the boot execs its
 /// own init" a fact about the boot and not an agreement between two arrays.
@@ -311,8 +311,8 @@ const EXEC_PATH_FROM_BOOT: &str = "/bin/init";
 /// Write the boot's choice of executable into a program's stack: a pointer at
 /// `PAGE - 64` to the NUL-terminated path at `PAGE - 56`.
 ///
-/// The same shape the kernel's exec block leaves for a program it starts — a
-/// program reads `[rsp-32]` and passes it straight to `ExecProcess` — because
+/// The same shape the kernel's exec block leaves for a program it starts, a
+/// program reads `[rsp-32]` and passes it straight to `ExecProcess`, because
 /// the two are one convention: what the boot leaves at start, what `exec`
 /// leaves after becoming.  Every program gets it, not just the ones that
 /// currently exec: which program wants to become another is the program's
@@ -321,7 +321,7 @@ const EXEC_PATH_FROM_BOOT: &str = "/bin/init";
 fn write_exec_path(stack: usize, virtual_page: usize) {
     // The value is the **virtual** address, `virtual_page + PAGE_SIZE - 88`:
     // the program reads the pointer through its own mapping, and a physical
-    // address there would be a number outside the user window — the one
+    // address there would be a number outside the user window, the one
     // thing every path check exists to refuse.  The first version wrote the
     // frame's identity-mapped address, and the program execed a pointer the
     // path check refused, spinning silently at its end.
@@ -412,7 +412,7 @@ pub fn boot_has_ended() -> bool {
 /// A CPU that asks this and hears "yes" is a CPU about to stop, and the answer
 /// is where it records that.  It is the one place every started CPU passes
 /// through on its way out and no CPU passes on its way in, which is what makes
-/// it the right place to say "I will not touch a user space again" — the
+/// it the right place to say "I will not touch a user space again", the
 /// statement the reaping side waits for.  Recording it any later would be a
 /// claim made after the CPU had stopped, which nothing could wait on.
 ///
@@ -473,14 +473,14 @@ pub fn mark_finished() {
 /// How many times the reaping side asks before it stops waiting for the others.
 ///
 /// Counted in turns of its own loop, not in seconds, because the clock is the
-/// thing that cannot be trusted here — a slice computed from a claimed rate
+/// thing that cannot be trusted here, a slice computed from a claimed rate
 /// that the counter does not keep is what made the wait run long in the first
 /// place.  A turn sends nothing and reads one atomic, so the number is cheap.
 ///
 /// The value has to clear the ordinary case with a wide margin: a CPU that is
 /// merely slow to notice `FINISHED` parks within a handful of its own idle
 /// turns.  A hundred million turns is far beyond that and is still a fraction
-/// of a second on any machine this tree runs on, which is the bound's job —
+/// of a second on any machine this tree runs on, which is the bound's job
 /// finite, not exact.
 #[cfg(target_os = "none")]
 const PARK_WAIT_TURNS: u32 = 100_000_000;
@@ -534,7 +534,7 @@ pub fn report_and_finish() -> ! {
     // when its own idle loop asks whether the boot is over, and that is the
     // last moment it can still name one of these tables.  Releasing before
     // that produced a data abort inside the heap allocator's free-list walk and
-    // an instruction abort at 0x0 — a table the boot CPU had already handed to
+    // an instruction abort at 0x0, a table the boot CPU had already handed to
     // the pool, read by the CPU that was still using it.  It reproduced on six
     // boots in ten with two CPUs and never with one, which is exactly the shape
     // of a claim about "the other CPU" that was never checked.
@@ -547,7 +547,7 @@ pub fn report_and_finish() -> ! {
     // The wait used to be a spin with no end, on the argument that the others
     // would park as soon as they saw `FINISHED`.  What a debugger found was a
     // CPU that never saw it: asleep in `wfi`, its counter frozen, its timer
-    // never firing — because this machine's `CNTFRQ_EL0` claims 1 GHz while the
+    // never firing, because this machine's `CNTFRQ_EL0` claims 1 GHz while the
     // counter moves at a fraction of that, so a slice computed from the claimed
     // rate is a wait far longer than the boot.  The other CPU was not refusing
     // to park; it had no interrupt to wake it with.
@@ -558,7 +558,7 @@ pub fn report_and_finish() -> ! {
     // never confirmed.  That is safe for the reason the deferral exists: at
     // this point every task is `Finished`, so no CPU will *enter* a program
     // again, and the only reach left into those tables is one that was already
-    // inside a trap path — which is what the confirmation was for.  A boot that
+    // inside a trap path, which is what the confirmation was for.  A boot that
     // says so is honest about it; a boot that hangs says nothing.
     //
     // SAFETY: the boot's own IPI path, installed before any program ran.
@@ -589,7 +589,7 @@ pub fn report_and_finish() -> ! {
     //
     // Because the first version did exactly that and it was wrong.  A task's
     // slot is cleared by the switch that leaves it, so "no CPU holds this task"
-    // is true the instant it exits — and it is not the condition that matters.
+    // is true the instant it exits, and it is not the condition that matters.
     // The other CPU may still be installed on that task's root: it can be in
     // its own trap path, returning through a frame that belongs to the program,
     // with the scheduler's lock not held.  Freeing then produced 186 page
@@ -702,7 +702,7 @@ pub fn report_and_finish() -> ! {
     // every register and still take nothing, which is exactly the state that
     // hid this mechanism for a session.  An IMSIC file holds one pending bit
     // per identity, so the number is how many times the **trap** ran, not how
-    // many completions the device finished — several completions that arrive
+    // many completions the device finished, several completions that arrive
     // before the first is claimed share a bit, which is why the count is small
     // and its own place on the report is what makes it readable.
     arch::serial::write_str("protofire: block completion message(s) taken = ");
@@ -726,7 +726,7 @@ pub fn report_and_finish() -> ! {
     // the line that turns "the machine ended" from an assumption into a fact
     // with a number: zero is a boot where every CPU confirmed, and a count is a
     // boot where one of them did not answer and the reaping went ahead anyway.
-    // Without it the bound above would be a silent widening of a rule — the
+    // Without it the bound above would be a silent widening of a rule, the
     // thing this tree's gates exist to refuse.
     let unconfirmed = unconfirmed_cpus();
     if unconfirmed > 0 {

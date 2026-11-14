@@ -16,8 +16,8 @@
 //!
 //! ## Why the checksum is here and not beside each protocol
 //!
-//! It is one algorithm — sum the sixteen-bit words, fold the carries, take the
-//! one's complement — and three protocols use it: this header over itself, and
+//! It is one algorithm, sum the sixteen-bit words, fold the carries, take the
+//! one's complement, and three protocols use it: this header over itself, and
 //! UDP's and TCP's over a pseudo-header plus their own bytes.  One function in
 //! one file is what keeps three protocols from carrying three copies that
 //! drift, and a test vector here is a test vector for all of them.
@@ -28,13 +28,13 @@
 //! are usually the sender's padding and never its payload.  A parser that sized
 //! the payload from the frame would hand a protocol bytes that mean nothing,
 //! and a parser that sized it from `total_length` hands it exactly what was
-//! sent — which is why [`parse`] answers a payload length and leaves the
+//! sent, which is why [`parse`] answers a payload length and leaves the
 //! reading to the protocol that knows what its own bytes mean.
 //!
 //! ## What is deliberately not here
 //!
 //! Fragmentation.  Every packet this stack sends fits one frame, and a packet
-//! that arrives in pieces is one this stack drops rather than reassembles —
+//! that arrives in pieces is one this stack drops rather than reassembles
 //! a fragmented packet asks for a reassembly buffer keyed on a sender's
 //! identification field, and nothing above this layer has asked yet.  The
 //! flags word is written with the don't-fragment bit set so a sender downstream
@@ -70,7 +70,7 @@ pub const FLAGS_MORE_FRAGMENTS: u16 = 0x2000;
 /// The time-to-live this stack sends with.
 ///
 /// Sixty-four hops is the convention every general-purpose stack shares; a
-/// packet this stack sends crosses at most one — the gateway — so any value
+/// packet this stack sends crosses at most one, the gateway, so any value
 /// above one would do, and the conventional one is the one a peer's log reads
 /// without surprise.
 const TIME_TO_LIVE: u8 = 64;
@@ -89,7 +89,7 @@ pub fn checksum(bytes: &[u8]) -> u16 {
 /// The Internet checksum over pieces summed as one message.
 ///
 /// UDP's checksum runs over a pseudo-header and the datagram after it, which
-/// live in different buffers — and summing them separately is not the same as
+/// live in different buffers, and summing them separately is not the same as
 /// summing their concatenation when a piece's length is odd, because the
 /// lone byte at a boundary is the high half of a word that spans the two.
 /// So the words run across the pieces here, in order, with one padding rule
@@ -144,8 +144,8 @@ pub struct Packet {
     /// Where the payload begins: past the header, including its options when
     /// the sender wrote any.
     pub payload_at: usize,
-    /// How many payload bytes the sender claimed.  The frame may hold more —
-    /// Ethernet's padding — and the claim is the one to trust.
+    /// How many payload bytes the sender claimed.  The frame may hold more
+    /// Ethernet's padding, and the claim is the one to trust.
     pub payload_len: usize,
     /// The number the sender chose to tell this packet's pieces apart, which
     /// only an unfragmented packet and a fragment's first piece agree on.
@@ -163,7 +163,7 @@ impl Packet {
     ///
     /// The two fields that decide it are the fragment header's: a packet with
     /// more pieces following, or with a piece that does not start at zero, is
-    /// a piece.  A packet with neither is the whole of what it claims — the
+    /// a piece.  A packet with neither is the whole of what it claims, the
     /// common case, and the one every unfragmented sender produces.
     pub fn is_fragment(&self) -> bool {
         self.more_fragments || self.fragment_offset != 0
@@ -176,8 +176,8 @@ impl Packet {
 /// The payload is not written: a caller that already has its bytes wants the
 /// header in front of what it is about to write, the same arrangement the
 /// Ethernet header's writer makes.  The checksum is computed here, over the
-/// header this call just wrote, because the two facts it depends on — the
-/// total length and a zeroed checksum field — are both settled by the time
+/// header this call just wrote, because the two facts it depends on, the
+/// total length and a zeroed checksum field, are both settled by the time
 /// the last field lands.
 pub fn write_header(
     packet: &mut [u8],
@@ -211,7 +211,7 @@ pub fn write_header(
 /// Four things are refused, each because reading past it would be reading
 /// bytes that mean something else: a frame shorter than a header, a version
 /// that is not 4, a header shorter than five words, and a checksum that does
-/// not verify.  The length fields are cross-checked against the frame — a
+/// not verify.  The length fields are cross-checked against the frame, a
 /// `total_length` larger than the frame names bytes the sender never put on
 /// the wire, and one smaller than the header names a packet that overlaps
 /// itself.
@@ -292,7 +292,7 @@ mod tests {
     /// Both checksums were computed by hand and are compared whole: a writer
     /// that summed in the host's order produces a frame whose checksum
     /// verifies against itself and still says nothing to a peer.  The payload
-    /// is nine bytes — an odd length — so the vector also pins the padding
+    /// is nine bytes, an odd length, so the vector also pins the padding
     /// rule the checksum's last lone byte follows.
     const ECHO_REQUEST: [u8; 37] = [
         0x45, 0x00, 0x00, 0x25, // version|ihl, tos, total length = 37
@@ -300,7 +300,7 @@ mod tests {
         0x40, 0x01, 0x22, 0xc8, // ttl 64, protocol ICMP, checksum
         0x0a, 0x00, 0x02, 0x0f, // source 10.0.2.15
         0x0a, 0x00, 0x02, 0x02, // destination 10.0.2.2
-        // The payload: an ICMP echo request, "protofire" — seventeen bytes.
+        // The payload: an ICMP echo request, "protofire", seventeen bytes.
         0x08, 0x00, 0xda, 0x3d, 0x00, 0x01, 0x00, 0x01, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x66, 0x69,
         0x72, 0x65,
     ];
@@ -336,8 +336,8 @@ mod tests {
     ///
     /// A sum that ignored a field would agree with the corrupt frame, and the
     /// field it ignored would be a field the wire could flip unseen.  The one
-    /// exception the algorithm allows — corrupting two bytes so their errors
-    /// cancel — is not reachable by changing one byte.
+    /// exception the algorithm allows, corrupting two bytes so their errors
+    /// cancel, is not reachable by changing one byte.
     #[test]
     fn any_single_corrupted_byte_changes_the_checksum() {
         for index in 0..HEADER_LEN {
@@ -374,7 +374,7 @@ mod tests {
     /// The odd split is the one that matters: a lone byte at the boundary is
     /// the high half of a word that spans the two pieces, and a caller that
     /// summed them separately would lose that word's pairing.  UDP's
-    /// checksum is the caller — its pseudo-header and its datagram are
+    /// checksum is the caller, its pseudo-header and its datagram are
     /// summed across exactly this kind of boundary.
     #[test]
     fn pieces_sum_as_one_message_at_every_split() {

@@ -106,7 +106,7 @@ impl Entry {
 /// A value with methods, and the module's global is one instance of it.  That
 /// shape is not decoration: a table that can only exist as one global cannot be
 /// tested without tests sharing it, and the first version of this file had
-/// exactly that defect — one test filled the table and the rest failed on
+/// exactly that defect, one test filled the table and the rest failed on
 /// `TableFull` in whatever order the harness chose.  A boot wants one table; a
 /// test wants as many as it has cases.
 pub struct Table {

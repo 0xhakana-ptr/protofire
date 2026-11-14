@@ -1,6 +1,6 @@
 //! kernel/src/scheduler/mod.rs
 //!
-//! A boot's programs, taking turns — and the fork and exec that change what a
+//! A boot's programs, taking turns, and the fork and exec that change what a
 //! task is.
 //!
 //! A task here is a saved `Context`, the whole trap frame, and the address
@@ -37,8 +37,8 @@
 //!
 //! So every entry below takes one lock.  It is a **global** lock and not one
 //! queue per CPU, and the choice is deliberate.  A task is already free to be
-//! placed anywhere — nothing pins it, the `running` array is the only binding,
-//! and leaving it is what every switch does — so what a sharded scheduler adds
+//! placed anywhere, nothing pins it, the `running` array is the only binding,
+//! and leaving it is what every switch does, so what a sharded scheduler adds
 //! is a *decision* about contention, and this kernel has no load to produce the
 //! cost the lock is paying.
 //!
@@ -111,7 +111,7 @@ pub unsafe fn install(scheduler: Scheduler) {
 /// A program's own `Exit` carries the status the program chose; a death by
 /// fault carries one the kernel chose, and the two must never be mistakable.
 /// 139 is the shape the wider world gives a process killed by its own bad
-/// memory access — 128 plus the signal number — and this kernel's meaning is
+/// memory access, 128 plus the signal number, and this kernel's meaning is
 /// written here rather than borrowed from there: the program died of a fault,
 /// not of an exit, and the boot line that reports the death names the fault
 /// beside it.
@@ -121,7 +121,7 @@ pub const FAULT_STATUS: usize = 139;
 /// [`FAULT_STATUS`], and whatever runs next is installed into the frame.
 ///
 /// Called from the machines' fault tails, with the fault's vector and the
-/// address it named, after the diagnostic has printed — the line above the
+/// address it named, after the diagnostic has printed, the line above the
 /// death says what the access was; this line says who paid for it.  A fault
 /// in **kernel** code never reaches here: the machines' tails ask
 /// `is_user_context` first, and a fault the kernel takes is still the machine
@@ -129,8 +129,8 @@ pub const FAULT_STATUS: usize = 139;
 /// nothing left to schedule for.
 ///
 /// The task's space is **not** released here.  The CPU taking the fault has
-/// the task's root installed, and the exclusion the exits rely on — every
-/// task finished, every other CPU told — does not hold; the space goes back
+/// the task's root installed, and the exclusion the exits rely on, every
+/// task finished, every other CPU told, does not hold; the space goes back
 /// with the rest at the machine's end, the same deferral an exit takes.
 pub fn die_from_fault(frame: &mut arch::Context, vector: usize, address: usize) {
     // A program that installed a handler takes the fault itself: the handler
@@ -164,7 +164,7 @@ pub fn die_from_fault(frame: &mut arch::Context, vector: usize, address: usize) 
 /// own space; `0` withdraws a handler.  The address is not validated against
 /// the program's mappings here: it is the program's own pointer, and an
 /// unmapped one faults when the handler is entered, which is the program's
-/// mistake and reaches the same fault path it came from — with the handler
+/// mistake and reaches the same fault path it came from, with the handler
 /// withdrawn, so the second fault kills it instead of looping.
 ///
 /// Answers whether a running task was found, which a call from ring 3 always
@@ -190,7 +190,7 @@ pub fn install_exception_handler(address: usize) -> bool {
 ///
 /// `ReturnFromException`'s carrier.  The fault's frame was replaced when the
 /// handler was entered, so the position the program faulted at is no longer in
-/// the context the scheduler holds — it was overwritten by the handler's own
+/// the context the scheduler holds, it was overwritten by the handler's own
 /// call.  What this restores is therefore not the faulting instruction but the
 /// handler's caller: the handler returns to the instruction **after** its own
 /// `svc`, with the value the program gives as the call's answer.
@@ -218,7 +218,7 @@ pub fn return_from_exception(resume: usize, answer: usize, frame: &mut arch::Con
 /// the ABI's argument registers hold.  What survives is everything the handler
 /// itself touches, which is the contract `ReturnFromException` completes.
 ///
-/// The handler runs on the program's own stack — `sp` is untouched — so a
+/// The handler runs on the program's own stack, `sp` is untouched, so a
 /// guard page's fault reaches it with the stack exactly as the program left it,
 /// and a handler that recurses into its own fault runs out of stack the way
 /// any runaway does.
@@ -290,18 +290,18 @@ fn hand_the_fault_to_the_program(
 ///
 /// ## Why the wait is here and not in the caller
 ///
-/// A caller reaches this having just seen "something is selectable" — the end
-/// of an idle wait, a write that woke a reader — and that check and this
+/// A caller reaches this having just seen "something is selectable", the end
+/// of an idle wait, a write that woke a reader, and that check and this
 /// switch are **two lock acquisitions, not one**.  In the window between them
 /// another CPU can take the very task the check saw, and the switch then
 /// finds nothing: the slot is cleared and `Exit` comes back meaning "the
 /// frame was not replaced".  A caller that resumed its frame on that answer
 /// would run a program whose task another CPU holds or whose state is still
-/// asleep — a process with no entry in the `running` array, which is the one
+/// asleep, a process with no entry in the `running` array, which is the one
 /// invariant the exclusion set is.  The boot showed the shape: an announce
 /// printed by a process the scheduler had no record of, twice from one resume
 /// address.  So the loser of the race waits here, for the wake that names
-/// work, and retries — the frame is installed exactly once, and only while
+/// work, and retries, the frame is installed exactly once, and only while
 /// this CPU owns it.
 ///
 /// Answers what `advance` answers: `Return` once a task's context is in the
@@ -314,7 +314,7 @@ pub fn switch_without_saving(frame: &mut arch::Context) -> arch::CallOutcome {
             None => arch::CallOutcome::Exit,
         });
         match outcome {
-            // Work exists somewhere — a task sleeping, blocked, or runnable —
+            // Work exists somewhere, a task sleeping, blocked, or runnable
             // so the emptiness was the race, and the wake that ends it is the
             // timer's line or another CPU's IPI.
             //
@@ -378,7 +378,7 @@ pub fn advance_with_status(
     // to `wfi` for the interrupt that would announce it: the one that would
     // have woken them is the one they each expected, and neither sends it.  The
     // machine then has every task finished, `has_runnable` false, and no CPU
-    // running — a deadlock that looks exactly like a slow boot, and that
+    // running, a deadlock that looks exactly like a slow boot, and that
     // reproduced on two boots in thirty with the report waiting on a CPU asleep
     // in `wfi`.
     //
@@ -396,8 +396,8 @@ pub fn advance_with_status(
         // **And the boot may have been declared over by another CPU.**
         //
         // This is the branch whose absence kept a started core from ever
-        // recording that it had stopped.  `boot_is_finished` — the one place a
-        // CPU says "I will not touch a user space again" — is called only from
+        // recording that it had stopped.  `boot_is_finished`, the one place a
+        // CPU says "I will not touch a user space again", is called only from
         // the started core's `wait_for_work`, and a core that has entered a
         // program never returns there.  So a core waiting *here* had no
         // instruction that could satisfy the reaping side, and the boot ended
@@ -406,14 +406,14 @@ pub fn advance_with_status(
         //
         // The check could not simply be added earlier: the wait between the two
         // turns was a `wfi`, and on this machine a started core's second `wfi`
-        // never returned — its timer was expired and its line enabled and the
+        // never returned, its timer was expired and its line enabled and the
         // distributor never had the interrupt pending.  `wait_for_a_wakeup`
         // waits on the **event** now, which the inter-CPU wake sets with a
         // `sev` beside its SGI, so the park ends on a call this kernel makes
         // rather than on an interrupt the controller may not deliver.  Measured
         // on that change: 22 unconfirmed boots in 40 with the interrupt wait,
         // none in 100 with the event wait, and none in 40 more with the bounded
-        // spin behind it removed — the event is what ends it.
+        // spin behind it removed, the event is what ends it.
         //
         // `boot_has_ended` and not `boot_is_finished`: this CPU is still here,
         // deciding.  The record is made in `report_and_finish`, where the
@@ -434,7 +434,7 @@ pub fn advance_with_status(
 
 /// How many idle turns a CPU takes before it wakes the others itself.
 ///
-/// Large enough that an ordinary wait — a sleep's deadline, a pipe's write —
+/// Large enough that an ordinary wait, a sleep's deadline, a pipe's write
 /// never reaches it: those are woken by a timer that is running anyway, and a
 /// ping on every turn would turn an idle machine into a broadcast storm.  Small
 /// enough that the two-CPU deadlock above is broken within a boot's patience.
@@ -604,9 +604,9 @@ pub fn preempt(frame: &mut arch::Context) {
         // No switch is not no work: a signal the running program armed for
         // is one it does not read on a wait, and the tick that finds no one
         // to switch to is still the one moment the running task's frame can
-        // be redirected — it is saved, owned by this CPU, and about to be
+        // be redirected, it is saved, owned by this CPU, and about to be
         // resumed.  A timer in a system with one runnable task stays a
-        // timer — the switch count does not move — and the delivery moves,
+        // timer, the switch count does not move, and the delivery moves,
         // because it is the signal's arrival, not a scheduling decision.
         if !scheduler.has_other_runnable(cpu) {
             if let Some(index) = scheduler.running.get(cpu).copied().flatten() {
@@ -730,8 +730,8 @@ pub fn block(frame: &arch::Context) -> bool {
 
 /// Park the running task unless `recheck` answers its wait's question now.
 ///
-/// `recheck` asks the waiting caller's own question again — `try_read` for a
-/// pipe's reader — **under the same lock** [`wake_blocked`] takes, which is
+/// `recheck` asks the waiting caller's own question again, `try_read` for a
+/// pipe's reader, **under the same lock** [`wake_blocked`] takes, which is
 /// what makes the park and the wake a two-order story instead of a race: the
 /// fact arrived before the re-check and the answer comes back for the caller
 /// to hand the program, or the task is parked before the wake looks and the
@@ -758,7 +758,7 @@ pub fn block_unless<T>(frame: &arch::Context, recheck: impl FnOnce() -> Option<T
 
 /// Park the running task until the process `pid` exits, unless it has.
 ///
-/// `None` when no scheduler is installed — the state before the boot installs
+/// `None` when no scheduler is installed, the state before the boot installs
 /// one and the state a host test that never installs one is in.  Otherwise the
 /// answer is the scheduler's [`PidWait`], which names all three outcomes so a
 /// caller cannot fold "no such process" into "not yet".
@@ -800,7 +800,7 @@ pub fn placings_home() -> (usize, Option<(u32, usize)>) {
 /// Park the running task until a process exits, unless one already has.
 ///
 /// `WaitProcess`'s own park.  The exit statuses are read **under the same
-/// lock** the exit's wake takes — the discipline [`block_unless`] argues —
+/// lock** the exit's wake takes, the discipline [`block_unless`] argues
 /// so the exit and the park have exactly two orders: the process died first
 /// and its status comes back for the caller, or the task is parked before
 /// the exit's wake looks and the wake ends it.
@@ -879,14 +879,14 @@ pub fn pid_of(task: usize) -> Option<u32> {
 /// Run `f` with the address space of the task `cpu` is running.
 ///
 /// The write-fault resolver's way in: a fault arrives with no task named, and
-/// the task it belongs to is the one this CPU marked as running — a program
+/// the task it belongs to is the one this CPU marked as running, a program
 /// faults while it runs, and the kernel's own code that touches a program's
 /// pages does so while serving that program's call.  `None` when no scheduler
 /// is installed or the CPU holds no task, which is the host's permanent state
 /// and the boot's before it enters ring 3.
 ///
 /// The closure runs under the scheduler's lock, and the resolver takes the
-/// pool's inside it — the same order a fork holds the two, which is the only
+/// pool's inside it, the same order a fork holds the two, which is the only
 /// order any code here takes them, and therefore the only order that cannot
 /// deadlock against the rest.
 #[cfg(target_os = "none")]
@@ -910,7 +910,7 @@ pub(crate) fn with_current_space<R>(
 /// one place that knows which space "the caller's" means.
 ///
 /// Answers `None` when there is no running task with a space, or when the
-/// window has no room, or when the frames ran out — three different refusals
+/// window has no room, or when the frames ran out, three different refusals
 /// the handler cannot tell apart, and does not need to: all three are
 /// `InvalidArgument` or `OutOfMemory`, and the program learns only that the
 /// mapping did not happen.
@@ -927,7 +927,7 @@ pub(crate) fn map_current(
         let task = scheduler.running.get(cpu).copied().flatten()?;
         let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
         let base = space.reserve(hint, length)?;
-        // SAFETY: the space is the running task's, so it is the installed one —
+        // SAFETY: the space is the running task's, so it is the installed one
         // and `map_anonymous` requires the opposite.  That is why this cannot
         // be called from a trap that is already translating through it.
         //
@@ -969,7 +969,7 @@ pub(crate) fn brk_current(cpu: usize, requested: usize) -> Option<usize> {
         let scheduler = scheduler.as_mut()?;
         let task = scheduler.running.get(cpu).copied().flatten()?;
         let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
-        // SAFETY: as `map_current` — the space is the running task's and the
+        // SAFETY: as `map_current`, the space is the running task's and the
         // pages a break adds are above every address it is using.
         unsafe { space.set_break(requested) }
     })
@@ -979,8 +979,8 @@ pub(crate) fn brk_current(cpu: usize, requested: usize) -> Option<usize> {
 ///
 /// `ReclaimPages`'s work, and the only set this kernel can identify without
 /// scanning every program's tables: a frame the space still records but whose
-/// entry was cleared — by a `Munmap` that failed partway, or by a mapping the
-/// space undid — is a frame nothing can reach and the space still owns.
+/// entry was cleared, by a `Munmap` that failed partway, or by a mapping the
+/// space undid, is a frame nothing can reach and the space still owns.
 ///
 /// `target` bounds the walk, zero meaning "all of them".  Answers how many
 /// frames went back to the pool.
@@ -990,7 +990,7 @@ pub(crate) fn reclaim_current(cpu: usize, target: usize) -> Option<usize> {
         let scheduler = scheduler.as_mut()?;
         let task = scheduler.running.get(cpu).copied().flatten()?;
         let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
-        // SAFETY: as `map_current` — the space belongs to the running task.
+        // SAFETY: as `map_current`, the space belongs to the running task.
         Some(unsafe { space.reclaim_unmapped(target) })
     })
 }
@@ -998,9 +998,9 @@ pub(crate) fn reclaim_current(cpu: usize, target: usize) -> Option<usize> {
 /// Fork the running process: share its pages with a new task and hand the
 /// context down.
 ///
-/// The child inherits its parent's pages — the same frames, writable ones
+/// The child inherits its parent's pages, the same frames, writable ones
 /// demoted read-only for the copy-on-write fault that copies them if either
-/// side writes — its parent's context (so it resumes at the instruction after
+/// side writes, its parent's context (so it resumes at the instruction after
 /// the `fork`), and a pid of its own.  What it does **not** inherit is the
 /// parent's return value: the fork returns the child's pid to the parent and
 /// zero to the child, which is the one difference the two processes running
@@ -1187,7 +1187,7 @@ pub fn signal_return(frame: &mut arch::Context, resume: usize) -> bool {
         else {
             return false;
         };
-        // The whole context comes home — the registers, and the resume the
+        // The whole context comes home, the registers, and the resume the
         // delivery stashed with them, which is the interrupted instruction
         // itself.  The handler's `resume` argument is the same address and
         // is not needed: the context is the truth the kernel kept.
@@ -1214,7 +1214,7 @@ pub fn current_pid() -> Option<u32> {
 /// in parallel.  The CPU it exits on is not that question: a task taken back by
 /// the boot CPU before its last instruction is still a task that ran beside it,
 /// and a report built from the exit's own CPU called those boots "0 non-boot
-/// CPUs" — four in fifteen, on a boot whose own `task migrations` line named
+/// CPUs", four in fifteen, on a boot whose own `task migrations` line named
 /// the move.
 pub fn current_ran_off_boot_cpu() -> usize {
     let cpu = this_cpu();
@@ -1304,7 +1304,7 @@ pub fn is_exit(call: &CallFrame) -> bool {
 ///
 /// On aarch64 that "something" is an **event**, not an interrupt: the timer's
 /// PPI was measured not to reach a started core's idle, so a wait on an
-/// interrupt there parks a core for ever — 22 boots of 40 ended without
+/// interrupt there parks a core for ever, 22 boots of 40 ended without
 /// confirmation.  [`arch::wait_for_a_wakeup`] waits on `wfe` and the kernel's
 /// inter-CPU wake issues a `sev` beside its SGI, which measured 0 of 100.
 ///
@@ -1572,8 +1572,8 @@ mod tests {
     /// on two stacks at once.
     #[test]
     fn a_claim_does_not_hand_the_same_task_to_two_cpus() {
-        // The host builds with one CPU slot, so the decisive block below — an
-        // idle CPU refused a task another holds — is exercised here only as far
+        // The host builds with one CPU slot, so the decisive block below, an
+        // idle CPU refused a task another holds, is exercised here only as far
         // as this host's `MAX_CPUS` reaches; the two-CPU shape itself is the
         // machines' boot gate, which runs the same scheduler on a second CPU
         // and requires `program ended on cpu 1` for it.
@@ -1760,7 +1760,7 @@ mod tests {
     /// "the task is in the blocked set": a wake that fires inside that gap
     /// wakes nothing, and the task parks after the fact it was waiting for has
     /// already happened.  The interleaving itself is a machine's; what a host
-    /// pins is the decision — an answer comes back and the task stays runnable,
+    /// pins is the decision, an answer comes back and the task stays runnable,
     /// `None` parks.
     #[test]
     fn a_park_whose_question_answered_itself_does_not_park() {
@@ -1783,7 +1783,7 @@ mod tests {
     /// call whose handler never answered, and the program would read whatever
     /// its answer register held from the call before.  The rewind is part of
     /// what parking means, and it has to happen **after** the frame is copied
-    /// into the task — the first attempt rewound the caller's own copy and left
+    /// into the task, the first attempt rewound the caller's own copy and left
     /// the saved one pointing past the call, which is why the wait parked and
     /// never came back.
     #[test]
@@ -1874,14 +1874,14 @@ mod tests {
     /// A sleeping task counts as a reason to wait; a finished one does not.
     ///
     /// This is the difference between the two questions.  `has_other_runnable`
-    /// answers "would a switch be a switch", and a sleeping child answers no —
+    /// answers "would a switch be a switch", and a sleeping child answers no
     /// so a wait that asked it answered `NotFound` to a parent whose child had
     /// only gone to sleep, turning a wait into an error.  The wait's question
     /// is "could another task still finish", and a sleeper could.
     #[test]
     fn a_sleeping_task_is_a_reason_to_wait() {
         // The shape a wait actually has: this CPU runs the parent, and the only
-        // other task — a child — is asleep.  Both predicates look at that
+        // other task, a child, is asleep.  Both predicates look at that
         // child, and they must disagree about it.
         let mut scheduler = Scheduler::new();
         scheduler.add(Task::without_space("parent"));
@@ -1936,7 +1936,7 @@ mod tests {
     }
 
     /// A signal to a pid no task carries is `NotFound`, and a full ring is
-    /// `Busy` — the two refusals a sender can act on.
+    /// `Busy`, the two refusals a sender can act on.
     #[test]
     fn a_signal_to_no_one_is_not_found_and_a_full_ring_is_busy() {
         let mut scheduler = Scheduler::new();
@@ -1971,7 +1971,7 @@ mod tests {
     /// A masked signal stays queued, and the wait skips it: the refusal is
     /// "not yet", not "no".
     ///
-    /// The property is what makes a mask usable — a caller that blocks a
+    /// The property is what makes a mask usable, a caller that blocks a
     /// signal must be able to hold the bit without losing what arrives
     /// under it, and the day the bit clears the ring answers.  The queue
     /// filling while blocked is the sender's `Busy`, which the ring test
@@ -2002,7 +2002,7 @@ mod tests {
     }
 
     /// A suspend answers an unblocked signal and puts the caller's own mask
-    /// back — the mask the suspend found, not the one it was told to run
+    /// back, the mask the suspend found, not the one it was told to run
     /// under.
     ///
     /// The restore is the call's whole point: a caller that ends a suspend
@@ -2019,7 +2019,7 @@ mod tests {
         scheduler.send_signal_to(7, 1, 10, 0x42).expect("send");
 
         // Everything unblocked: the masked signal answers, and the mask the
-        // caller had — bit 10 — goes back.
+        // caller had, bit 10, goes back.
         let answer = scheduler.sigsuspend_current(0, &starting_context(0, 0), 0);
         assert_eq!(answer, Some((10, 7, 0x42)));
         assert_eq!(
@@ -2048,8 +2048,8 @@ mod tests {
 
         scheduler.send_signal_to(9, 2, 15, 0x77).expect("send");
 
-        // The first task's wait — the cpu slot that is not running anything
-        // in this test — takes nothing: the ring belongs to pid 2.
+        // The first task's wait, the cpu slot that is not running anything
+        // in this test, takes nothing: the ring belongs to pid 2.
         let mut answer = None;
         if let Some(task) = scheduler.tasks.get_mut(0) {
             answer = task.take_signal();
@@ -2065,7 +2065,7 @@ mod tests {
     ///
     /// The other half: once the only other task is `Finished`, no exit can
     /// arrive, and a wait that parked would be a hang.  The waiter itself is
-    /// excluded — it is unfinished by definition and cannot answer its own
+    /// excluded, it is unfinished by definition and cannot answer its own
     /// wait.
     #[test]
     fn a_finished_task_is_not_a_reason_to_wait() {
@@ -2094,7 +2094,7 @@ mod tests {
     /// process finished first.  Two children are marked finished with different
     /// statuses here, and the wait names one of them, so a lookup keyed on "the
     /// first exit" would answer the other's number.  The statuses are written
-    /// directly because a host has one CPU slot — it cannot run two tasks to
+    /// directly because a host has one CPU slot, it cannot run two tasks to
     /// their exits in turn, and the property under test is the lookup.
     #[test]
     fn a_pid_keyed_wait_answers_about_the_process_it_names() {
@@ -2177,7 +2177,7 @@ mod tests {
     /// The wake in the exit's own recording is what makes the wait endable: a
     /// waiter parked before the child's exit would otherwise stay parked beside
     /// the very fact it was waiting for.  A host can hold one running task, so
-    /// the parked waiter here is not the cpu's current one — the state is the
+    /// the parked waiter here is not the cpu's current one, the state is the
     /// field the park itself writes, reached directly, and the exit is the only
     /// writer that undoes it.
     #[test]
@@ -2191,7 +2191,7 @@ mod tests {
         // A preemption puts b on the cpu and leaves a runnable beside it.
         scheduler.schedule(0, &mut frame, false);
 
-        // The waiter parks — on a machine this is `block_unless_exit` parking
+        // The waiter parks, on a machine this is `block_unless_exit` parking
         // the task that called the wait, on the cpu that serves it; a host with
         // one cpu slot reaches the same state through the field.
         scheduler.tasks[0].state = super::task::State::Blocked;

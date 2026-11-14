@@ -47,7 +47,7 @@ pub struct Frame {
     ///
     /// `Option` and not a `bool` because a device's interrupt has no
     /// direction.  A `false` there would read as "the access was a read",
-    /// which is a statement about an access that never happened — the same
+    /// which is a statement about an access that never happened, the same
     /// reason [`fault_address`](Self::fault_address) is zero rather than
     /// meaningful for a device's frame.
     ///

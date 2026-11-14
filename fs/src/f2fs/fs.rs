@@ -10,7 +10,7 @@
 //! appends a fresh one to the active segment and moves the pointer.  The
 //! NAT says where each node's newest block is; the SIT says which blocks in
 //! each segment are still valid; the checkpoint commits both.  Old blocks
-//! are invalidated, never erased — reclamation is the garbage collector's
+//! are invalidated, never erased, reclamation is the garbage collector's
 //! work, and this build has none, which is why freeing is a SIT mark and
 //! the volume's writes are append-only.
 
@@ -111,7 +111,7 @@ impl F2fsFs {
         Ok(sb)
     }
 
-    // ── geometry ─────────────────────────────────────────────────────────
+    // geometry
 
     pub(super) fn block_size(&self) -> usize {
         self.sb.block_size()
@@ -125,7 +125,7 @@ impl F2fsFs {
         blkaddr as u64 * self.sectors_per_block()
     }
 
-    // ── block I/O ────────────────────────────────────────────────────────
+    // block I/O
 
     /// Read one f2fs block whole.
     pub(super) fn read_fs_block(&self, blkaddr: u32, buffer: &mut [u8]) -> Result<()> {
@@ -149,7 +149,7 @@ impl F2fsFs {
         Ok(())
     }
 
-    // ── inode I/O ────────────────────────────────────────────────────────
+    // inode I/O
 
     /// Read the inode a NID names, through the NAT.
     pub(super) fn read_inode(&self, nid: u32) -> Result<F2fsInode> {
@@ -168,7 +168,7 @@ impl F2fsFs {
     }
 
     /// Write an inode: append a fresh block to the active segment and move
-    /// the NAT entry — the log-structured way an inode is updated.
+    /// the NAT entry, the log-structured way an inode is updated.
     pub(super) fn write_inode(&self, nid: u32, inode: &F2fsInode) -> Result<()> {
         let block_size = self.block_size();
         let mut buf = vec![0u8; block_size];
@@ -187,7 +187,7 @@ impl F2fsFs {
         )
     }
 
-    // ── directories ──────────────────────────────────────────────────────
+    // directories
 
     /// Read every entry a directory holds, one data block at a time.
     pub(super) fn read_dir_entries(&self, dir_inode: &F2fsInode) -> Result<Vec<F2fsDirEntry>> {
@@ -285,8 +285,8 @@ impl F2fsFs {
         Ok(())
     }
 
-    /// Remove one entry by name, by zeroing its `ino` — the deletion a
-    /// parse skips — and appending the rewritten block.
+    /// Remove one entry by name, by zeroing its `ino`, the deletion a
+    /// parse skips, and appending the rewritten block.
     pub(super) fn remove_dir_entry(&self, dir_nid: u32, name: &str) -> Result<()> {
         let block_size = self.block_size();
         let dir_inode = self.read_inode(dir_nid)?;
@@ -363,7 +363,7 @@ impl F2fsFs {
         offset
     }
 
-    // ── path resolution ──────────────────────────────────────────────────
+    // path resolution
 
     /// Resolve a path to its node, following symlinks up to eight levels.
     pub(super) fn walk_path(&self, path: &str) -> Result<(u32, F2fsInode)> {
@@ -438,7 +438,7 @@ impl F2fsFs {
         Ok((current_nid, inode))
     }
 
-    // ── file data ────────────────────────────────────────────────────────
+    // file data
 
     /// Read a file's bytes at an offset, holes reading as zeros.
     pub(super) fn read_file_data(
@@ -513,7 +513,7 @@ impl F2fsFs {
         let addr_bytes = len.min(F2FS_ADDRS_PER_INODE * 4);
         let mut target = Vec::with_capacity(addr_bytes);
 
-        // SAFETY: `i_addr` is a `[u32; N]` — no padding, and the byte length
+        // SAFETY: `i_addr` is a `[u32; N]`, no padding, and the byte length
         // is exactly the number of elements the array holds.
         let raw_addr: &[u8] = unsafe {
             core::slice::from_raw_parts(
@@ -526,7 +526,7 @@ impl F2fsFs {
         Ok(target)
     }
 
-    // ── the write guard and the flush ────────────────────────────────────
+    // the write guard and the flush
 
     pub(super) fn check_writable(&self) -> Result<()> {
         if self.read_only {

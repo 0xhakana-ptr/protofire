@@ -238,7 +238,7 @@ pub fn set_return_value(context: &mut Context, value: usize) {
 /// Put `value` in the register argument `index` travels in.
 ///
 /// The System V call convention this machine's programs are built against puts
-/// the arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` — **not** the
+/// the arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`, **not** the
 /// `rax`..`rsi` run a machine-independent guess might pick, which is why the
 /// table is here and not derived from the register indices.
 ///
@@ -255,7 +255,7 @@ pub fn set_argument(context: &mut Context, index: usize, value: usize) {
 /// The value in the register argument `index` travels in.
 ///
 /// The read side of [`set_argument`], for a kernel that must **keep** what a
-/// redirection displaces — a signal delivery takes the argument registers
+/// redirection displaces, a signal delivery takes the argument registers
 /// for its record and puts the program's own back on the way out.
 pub fn argument(context: &Context, index: usize) -> usize {
     const ARGUMENTS: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
@@ -355,7 +355,7 @@ pub unsafe fn enter_user_with(context: &Context) -> ! {
             "push {cs}",
             "push {rip}",
             // The five words are on the stack, so the registers that carried
-            // them are free — and they are exactly the registers the program
+            // them are free, and they are exactly the registers the program
             // must not start with, because `iretq` changes rings and touches
             // no general register: whatever this kernel left in one would be
             // the program's first value in it.  Measured before this zeroing:
@@ -644,8 +644,8 @@ pub const PIPE_WRITER: u16 = 2;
 /// The `Close` is the boot's own proof of end-of-file: the reader's second
 /// read can only return because the write end went away, and a close that
 /// did not move the pipe's count would leave the reader parked and the boot
-/// unfinished.  The end is still in `edi` — the pipe write answers in `eax`
-/// and touches nothing else — so the close needs its number and nothing
+/// unfinished.  The end is still in `edi`, the pipe write answers in `eax`
+/// and touches nothing else, so the close needs its number and nothing
 /// more.
 ///
 /// `[rsp]` holds the write end's descriptor and `[rsp + 16]` is the four bytes
@@ -744,7 +744,7 @@ const PIPE_READER_PROGRAM: [u8; 148] = [
     // `call +0; pop rdi` makes the image learn a position it does not know at
     // assembly time: the `call` pushes the address of the next byte and `pop`
     // takes it.  That address is where `READER_FAULT_HANDLER` begins, because
-    // `program_bytes` splices the handler at exactly this array's end — so the
+    // `program_bytes` splices the handler at exactly this array's end, so the
     // displacement is zero and cannot drift.  A hand-computed `lea rip+disp32`
     // puts the entry one byte off the moment any instruction above it changes
     // length, which on this machine is any edit at all.
@@ -755,8 +755,8 @@ const PIPE_READER_PROGRAM: [u8; 148] = [
     0xB8, 0x16, 0x00, 0x00, 0x00, // mov eax, 22         (InstallExceptionHandler)
     0xCD, 0x80, // int 0x80
     // The fault: a write to this program's own read-execute code page.  Its
-    // address is the handler's, with the low twelve bits cleared — `and rax,
-    // ~0xFFF` — so the program never has to know where the boot mapped it.
+    // address is the handler's, with the low twelve bits cleared, `and rax,
+    // ~0xFFF`, so the program never has to know where the boot mapped it.
     0x48, 0x89, 0xF8, // mov rax, rdi        (the handler address)
     0x48, 0x25, 0x00, 0xF0, 0xFF, 0xFF, // and rax, ~0xFFF (this code page)
     0xC7, 0x00, 0x00, 0x00, 0x00, 0x00, // mov dword [rax], 0 (the fault)
@@ -765,7 +765,7 @@ const PIPE_READER_PROGRAM: [u8; 148] = [
     0xCD, 0x80, // int 0x80
     // The answer comes back in `eax` and `Exit` reads its status from `edi` on
     // this machine, so the value has to be moved: this is the one place the
-    // two registers differ, and leaving it moves the *pid* into the status —
+    // two registers differ, and leaving it moves the *pid* into the status
     // measured as `3 -> 2` before this line existed.
     0x89, 0xC7, // mov edi, eax        (the status is the wait's answer)
     0xB8, 0x03, 0x00, 0x00, 0x00, // mov eax, 3          (Exit)
@@ -778,14 +778,14 @@ const PIPE_READER_PROGRAM: [u8; 148] = [
 /// This is where the `pop rdi` in the program points: the install sequence
 /// ends with the `int 0x80` that installs it, and the handler follows the
 /// last byte of the program array.  The four arguments are `rdi`..`r9`, so
-/// `rcx` holds the faulting instruction — and this machine's instructions are
+/// `rcx` holds the faulting instruction, and this machine's instructions are
 /// not a fixed width, which is why the address to continue at is the
 /// handler's to supply.
 const READER_FAULT_HANDLER: [u8; 33] = [
     0xBE, 0x40, 0x00, 0x00, 0x00, // mov esi, 64        (the line)
     0xB8, 0x06, 0x00, 0x00, 0x00, // mov eax, 6         (Write)
     0xCD, 0x80, // int 0x80
-    // The store that faulted is `C7 00 00 00 00 00` — six bytes: the opcode,
+    // The store that faulted is `C7 00 00 00 00 00`, six bytes: the opcode,
     // the ModRM and a disp32.  Three would land in the middle of it, which is
     // what a handler that assumed a two-byte ModRM wrote, and the machine then
     // faulted at `0x1`.  The length is this handler's own fact about its own
@@ -841,29 +841,29 @@ const PROGRAM_BASE: [u8; 117] = [
     0xCD, 0x80, // int 0x80
     // The two processes part ways here, and the fork's answer is the only
     // thing that tells them apart: the parent holds its child's pid, the
-    // child holds zero.  Each then writes the stack page it inherited — a
+    // child holds zero.  Each then writes the stack page it inherited, a
     // `push`, because the word goes below the pointer and stays inside the
-    // page — which is the write the copy-on-write fork exists for: the page
+    // page, which is the write the copy-on-write fork exists for: the page
     // is shared and read-only now, so the write faults, and the kernel's
     // answer to that fault is the whole of what this image exercises.
     0x45, 0x85, 0xC0, // test r8d, r8d
     0x74, 0x10, // jz +16 (the child takes the second path)
     // The parent: write, then become the image `exec` names.  The task
     // survives the change with its pid, and its exit status comes from the
-    // image it became — which asks the kernel who it is and exits with the
+    // image it became, which asks the kernel who it is and exits with the
     // answer, so the boot's report of `1 -> 1` is the evidence that identity
     // carried over.
     // The pointer comes before the push: `rsp` here is the hand-over top,
     // and `[rsp-32]` is exactly where the boot left the exec path.  `rdi`
-    // survives the copy-on-write fault below — the resolver restores every
-    // register — so the exec that follows reads what this loaded.
+    // survives the copy-on-write fault below, the resolver restores every
+    // register, so the exec that follows reads what this loaded.
     0x48, 0x8B, 0x7C, 0x24, 0xC0, // mov rdi, [rsp-64] (the boot's exec path)
     0x6A, 0x2A, // push 42 (the copy-on-write fault)
     0xB8, 0x1A, 0x00, 0x00, 0x00, // mov eax, 26 (ExecProcess)
     0xCD, 0x80, // int 0x80
     0xEB, 0xFE, // jmp $ (never reached: exec replaced the program)
     // The child: the same write, on its own copy of the page, and then the
-    // deliberate one — a store into its own **code** page, read-only and not
+    // deliberate one, a store into its own **code** page, read-only and not
     // copy-on-write, which no resolver answers.  The kernel kills the process
     // for it and the machine goes on; the boot's report reads
     // `process 4 died from a fault`, and the child's status is the kernel's,
@@ -963,7 +963,7 @@ mod program_tests {
 
     /// Every syscall number the program uses is the ABI's own.
     ///
-    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess` — and no
+    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and no
     /// `Exit` at all: the parent's path ends in the exec, and the child's ends
     /// in the fault the kernel kills it for, so neither path exits itself.  A
     /// program compiled against a number this build does not serve would print
@@ -1071,7 +1071,7 @@ mod program_tests {
         );
 
         // The `pop rdi` after `call +0` takes the address of the byte after the
-        // `call`, and that has to be the handler's first byte — the handler is
+        // `call`, and that has to be the handler's first byte, the handler is
         // spliced at the program array's end.  A displacement that drifted is
         // a handler entry in the middle of an instruction, which the machine
         // reports as a trap at an address nobody wrote.

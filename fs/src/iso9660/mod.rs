@@ -9,7 +9,7 @@
 //!   than by casting a sector to a packed struct.
 //! - `record`, one directory record, and the three things this driver refuses
 //!   (an extended attribute record, a multi-extent file, an interleaved one).
-//! - `susp`, Rock Ridge: the POSIX name, the attributes, a symlink's target —
+//! - `susp`, Rock Ridge: the POSIX name, the attributes, a symlink's target
 //!   parsed and built, because a record this driver creates or renames carries
 //!   the entries it writes.
 //! - `volume`, mounting, path resolution, a file's bytes, and the mutations a
@@ -23,18 +23,18 @@
 //!
 //! ## The write path, and where its lines are
 //!
-//! An ISO 9660 file is one raw contiguous extent whose two fields — where it
-//! starts and how long it is — are in its directory record.  So a write
+//! An ISO 9660 file is one raw contiguous extent whose two fields, where it
+//! starts and how long it is, are in its directory record.  So a write
 //! inside the length changes no metadata at all; a length change rewrites one
 //! record in place; growing past the block the file has takes blocks from the
 //! volume's free space, which is what its structures do not name: a block map
 //! is built by walking the whole volume, and a volume with anything this
-//! driver cannot account for — a descriptor it does not know, an extended
-//! attribute record, no terminator on the descriptor set — is one it appends
+//! driver cannot account for, a descriptor it does not know, an extended
+//! attribute record, no terminator on the descriptor set, is one it appends
 //! to instead, because handing a block out is not a thing to guess at.  A file
 //! with something after it *moves* into that free space rather than growing
 //! where it is, because an extent is one contiguous run.  A regular file can
-//! be created — empty, in the directory it names — and removed, which is a
+//! be created, empty, in the directory it names, and removed, which is a
 //! record appended to that directory or shifted out of it; a **directory** can
 //! be created and removed too, and that is what moves the path tables, which
 //! are rebuilt from the tree rather than edited in place.  A directory that
@@ -42,15 +42,15 @@
 //! its record leaves one directory and joins another, a directory's ".."
 //! follows it, and the tables are rebuilt.
 //!
-//! The stages those come in — a file's data, then its length, then space from
-//! the allocator, then its record, then directories, then rename — are the
+//! The stages those come in, a file's data, then its length, then space from
+//! the allocator, then its record, then directories, then rename, are the
 //! order the old tree's RFC 0011 took, and the tests keep it.
 //!
 //! ## A disc with two trees
 //!
 //! A Joliet disc names every file twice, and the trees share the files' *data*
-//! but not their directories.  This driver reads through one tree — the
-//! supplementary one when there is one, because its names are the author's —
+//! but not their directories.  This driver reads through one tree, the
+//! supplementary one when there is one, because its names are the author's
 //! and writes only where the two agree, which is the file's data: an
 //! overwrite inside its length is the same bytes under both records.  A
 //! length change and everything structural is refused, because each would
@@ -65,7 +65,7 @@
 //! entries since names stopped having to be ISO 9660 identifiers.  The entry
 //! cannot fit in a record (its mandated text makes it 237 bytes and a
 //! record's length is one byte), so the root's own "." record carries an `SP`
-//! marker and a `CE` naming a continuation area, where the reference goes —
+//! marker and a `CE` naming a continuation area, where the reference goes
 //! and the root, rebuilt elsewhere, is what the descriptor is repointed at.
 //! It happens at open because the root's "." record grows by the area and
 //! every record after it moves, and at open no node holds a record offset
@@ -79,7 +79,7 @@
 //!   Record is one whose blocks the block map refuses to hand out of.
 //! - Sector size is always assumed to be 2048 bytes.
 //! - A disc has no journal and no data checksum, so a write that stops half way
-//!   leaves what it touched half new — exactly what a raw write means on any
+//!   leaves what it touched half new, exactly what a raw write means on any
 //!   filesystem without one, and nothing here claims atomicity it does not
 //!   have.
 

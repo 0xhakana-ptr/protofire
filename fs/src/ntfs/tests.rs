@@ -5,7 +5,7 @@
 //! and index-entry parsing.
 //!
 //! (The former end-to-end suite exercised the pre-refactor `NtfsVolume`
-//! public API — `list_xattrs` etc. — which the current `NtfsFs`/`NtfsVnode`
+//! public API, `list_xattrs` etc., which the current `NtfsFs`/`NtfsVnode`
 //! driver does not expose; those tests were dropped with that API.)
 
 use alloc::string::String;
@@ -122,7 +122,7 @@ fn a_mft_in_two_runs_is_followed() {
     assert_eq!(own as u64, RECORDS - 1);
 
     // Where a stride from the first cluster would have looked instead: it
-    // lands *on* a record — the magic is still `FILE` — and on a different
+    // lands *on* a record, the magic is still `FILE`, and on a different
     // record than the one asked for, which is why nothing complained.
     let stride = fixture.mft_runs[0].0 * fixture.cluster_size()
         + (RECORDS - 1) * fixture.shape.record_size() as u64;
@@ -139,7 +139,7 @@ fn a_mft_in_two_runs_is_followed() {
 
 #[test]
 fn a_residents_value_is_where_its_header_says() {
-    // `$INDEX_ROOT` is a *named* attribute — "$I30" — and a named attribute's
+    // `$INDEX_ROOT` is a *named* attribute, "$I30", and a named attribute's
     // value begins after its name, where its own header says.  Reading it from
     // a fixed offset lands inside the name.
     let fixture = build_volume(FRACTIONAL);
@@ -206,7 +206,7 @@ fn the_fixture_keeps_its_own_invariants() {
         assert_eq!(set, *used != 0, "cluster {cluster}'s bit");
     }
 
-    // And the MFT's own bitmap names the records in use — the volume's list of
+    // And the MFT's own bitmap names the records in use, the volume's list of
     // what has been handed out, which a claim has to keep true.  It is a file
     // of its own, with runs, and the bits are where its runs say.
     let mft = fixture.record(0);
@@ -287,7 +287,7 @@ fn a_directory_lists_what_its_index_holds() {
     let fs_handle = open(&fixture);
 
     // The root's entries live in an index *allocation*, and the index root is
-    // a node that points at it — the shape a directory with children has.
+    // a node that points at it, the shape a directory with children has.
     let mut names = Vec::new();
     for index in 0.. {
         match fs_handle.read_dir("/", index) {
@@ -496,7 +496,7 @@ fn a_file_can_be_as_long_as_the_runs_it_has() {
 #[test]
 fn a_growth_zeroes_only_the_clusters_it_claimed() {
     // A growth writes zeros where it claimed clusters, because those have never
-    // held the file's bytes — and **only** there.  The bytes below the
+    // held the file's bytes, and **only** there.  The bytes below the
     // allocation the file had are its own: a shrink leaves them in place, and a
     // growth that measured its zeros back from the file's *length* rather than
     // forward from the allocation's end would overwrite them.
@@ -682,8 +682,8 @@ fn a_punch_that_cannot_be_held_refuses_and_frees_nothing() {
     assert_eq!(after, before, "and the refusal frees nothing");
 }
 
-/// A punch inside one cluster makes no hole at all — there is nothing to give
-/// back — and the bytes it covers are zeros.
+/// A punch inside one cluster makes no hole at all, there is nothing to give
+/// back, and the bytes it covers are zeros.
 #[test]
 fn a_punch_inside_one_cluster_writes_zeros_and_frees_nothing() {
     let fixture = build_volume(FRACTIONAL);
@@ -816,7 +816,7 @@ fn the_hole_question_follows_the_run_list() {
 }
 
 /// What the hole question refuses: a directory and a stream this driver has no
-/// bytes of — and it does *not* refuse a file that simply has no holes, whose
+/// bytes of, and it does *not* refuse a file that simply has no holes, whose
 /// answer is the trait's own default rather than a refusal.
 #[test]
 fn the_hole_question_refuses_what_it_cannot_answer() {
@@ -906,8 +906,8 @@ fn a_compressed_index_is_refused_rather_than_read() {
     let fixture = build_volume(FRACTIONAL);
     let fs_handle = open(&fixture);
 
-    // The directory is a name like any other — its parent's index is not the
-    // compressed one — and reading *into* it is what refuses.
+    // The directory is a name like any other, its parent's index is not the
+    // compressed one, and reading *into* it is what refuses.
     let listed = the_listing(&fs_handle, "/sub");
     assert!(
         listed.contains(&String::from("cindex")),
@@ -925,7 +925,7 @@ fn a_compressed_index_is_refused_rather_than_read() {
 
 /// A run whose distance from the last one has its top bit set: the field is
 /// signed, so it takes a byte after that one, or a reader that sign-extends
-/// reads a positive distance as a negative one — which is not a wrong file but
+/// reads a positive distance as a negative one, which is not a wrong file but
 /// a *different* one: a run that names no cluster at all.
 #[test]
 fn a_positive_delta_that_looks_negative_round_trips() {
@@ -975,7 +975,7 @@ fn a_hole_reads_as_zeros_and_a_write_into_it_allocates() {
     );
 
     // A write inside the hole, in its first cluster: the cluster the bytes
-    // *touch* is claimed, and what the write does not cover stays zeros —
+    // *touch* is claimed, and what the write does not cover stays zeros
     // which is what the hole read as anyway.
     let written = vec![0x7e; 100];
     assert_eq!(
@@ -1091,7 +1091,7 @@ fn a_growth_claims_clusters_and_says_so_in_the_bitmap() {
     assert_eq!(node.size(), 4 * cluster as usize);
 
     // A cluster the file just took has never held its bytes, so it reads as
-    // zeros — and writing it makes them the file's.
+    // zeros, and writing it makes them the file's.
     let mut buf = vec![0u8; 4 * cluster as usize];
     assert_eq!(node.read(0, &mut buf).expect("read"), buf.len());
     assert!(buf[3 * cluster as usize..].iter().all(|b| *b == 0));
@@ -1129,7 +1129,7 @@ fn a_growth_the_volume_has_no_room_for_is_refused() {
     assert_eq!(node.set_len(8 * cluster), Err(Error::NoSpace));
     assert_eq!(node.size(), 5 * cluster as usize, "and nothing moved");
 
-    // A write that would need the refused clusters is a short write — and one
+    // A write that would need the refused clusters is a short write, and one
     // that starts past the end of a file that cannot grow takes nothing at
     // all, which is the same answer with nothing left of it.
     let written = node
@@ -1169,8 +1169,8 @@ fn the_volume_is_dirty_until_it_is_synced() {
 /// record"), while this tree's own reader accepted any order until a gate on a
 /// volume it had written caught the difference.
 fn assert_attributes_ascend(raw: &[u8], who: &str) {
-    // The callers hold **unpacked** records — the ones `read_mft_record` and
-    // the tests' own fixup leave behind — so the attribute chain is what is
+    // The callers hold **unpacked** records, the ones `read_mft_record` and
+    // the tests' own fixup leave behind, so the attribute chain is what is
     // parsed, not the volume's packed bytes.
     let header = super::types::MftRecordHeader::parse(raw).expect("a record header");
     let attributes = super::fs::parse_attributes(&raw[header.size() as usize..]);
@@ -1212,8 +1212,8 @@ fn mirror_bytes(image: &[u8], fixture: &Fixture) -> Vec<u8> {
 }
 
 /// Settling the volume is what brings the **`$MFTMirr`** back in step: a mount
-/// that moves one of the MFT's first four records — here record 0, whose run
-/// list grows with the MFT — leaves the volume's copy stale until `sync`, and
+/// that moves one of the MFT's first four records, here record 0, whose run
+/// list grows with the MFT, leaves the volume's copy stale until `sync`, and
 /// `sync` is the moment a checker is allowed to look.
 #[test]
 fn settling_the_volume_brings_the_mirror_in_step() {
@@ -1222,7 +1222,7 @@ fn settling_the_volume_brings_the_mirror_in_step() {
     let fixture = build_volume_with(FRACTIONAL, true);
     let (device, fs_handle) = writable(&fixture);
 
-    // A volume last settled by anything starts in step — the fixture seeds it
+    // A volume last settled by anything starts in step, the fixture seeds it
     // the way a real volume leaves it.
     assert_eq!(
         mirror_bytes(&device_image(&device), &fixture),
@@ -1257,7 +1257,7 @@ fn settling_the_volume_brings_the_mirror_in_step() {
     );
 }
 
-/// A volume whose `$MFTMirr` record has no non-resident `$DATA` to write — a
+/// A volume whose `$MFTMirr` record has no non-resident `$DATA` to write, a
 /// shape this driver does not meet on the volumes it builds, and one it must
 /// leave **alone** rather than half-write: the dirty flag still comes down,
 /// and the bytes where a mirror would be are untouched.
@@ -1339,7 +1339,7 @@ fn a_field_write_leaves_the_sequence_array_where_it_was() {
 fn an_attribute_that_outgrows_its_room_moves_and_takes_its_neighbours_with_it() {
     // The fixture's tight file has a two-run `$DATA` with no room to spare and
     // a `$EA_INFORMATION` after it: one more run cannot fit where the run list
-    // is, so the attribute moves — and so does everything after it.
+    // is, so the attribute moves, and so does everything after it.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
     let cluster = fixture.cluster_size();
@@ -1415,8 +1415,8 @@ fn an_attribute_that_outgrows_its_room_moves_and_takes_its_neighbours_with_it() 
 fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
     // A record that has no room left at all is not short of *records*: it is
     // full, and the mechanism the format has for that is the attribute list.
-    // The attribute that has to grow moves out first — which is what the
-    // measured volume did with a directory's index root — and the largest
+    // The attribute that has to grow moves out first, which is what the
+    // measured volume did with a directory's index root, and the largest
     // others go with it when its own bytes are not enough to hold the list.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -1439,7 +1439,7 @@ fn a_record_with_no_room_puts_an_attribute_in_an_extension_record() {
     assert!(buf[2 * cluster as usize..].iter().all(|byte| *byte == 0));
 
     // The record it left carries a list, and both the `$DATA` that had to grow
-    // and the filler that made room for the list are in a record of its own —
+    // and the filler that made room for the list are in a record of its own
     // one the volume has spoken for, and which no directory names.
     let record = again.read_mft_record(FULL_FILE).expect("the record");
     let header = super::types::MftRecordHeader::parse(&record).expect("a header");
@@ -1647,7 +1647,7 @@ fn a_name_added_to_a_directory_grows_its_index_root() {
     // A small directory keeps its children in its index *root*, and a record
     // gives that value as much room as it has: a new name makes the value
     // longer, everything after the attribute shifts up, and the record goes
-    // back whole — which is what a real volume does, and not an allocation
+    // back whole, which is what a real volume does, and not an allocation
     // block.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -1693,7 +1693,7 @@ fn a_name_added_to_a_directory_grows_its_index_root() {
 #[test]
 fn a_name_a_full_record_has_no_room_for_makes_its_own_room() {
     // A directory whose record *is* full: the value the name goes into cannot
-    // grow there, and the room is made the way a file's is — an attribute moves
+    // grow there, and the room is made the way a file's is, an attribute moves
     // into a record of its own, and an `$ATTRIBUTE_LIST` says where.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -1719,8 +1719,8 @@ fn a_name_a_full_record_has_no_room_for_makes_its_own_room() {
     }
     assert!(names.iter().any(|name| name == "another.txt"), "{names:?}");
 
-    // The record carried a list *before* the name arrived — an attribute had
-    // moved out of it once already — so this was the list being *extended*: the
+    // The record carried a list *before* the name arrived, an attribute had
+    // moved out of it once already, so this was the list being *extended*: the
     // index root is what needed the room, it is what moved, and its entry now
     // names the record it went to.
     let record = again.read_mft_record(FULL_DIRECTORY).expect("the record");
@@ -1777,8 +1777,8 @@ fn the_listing(fs_handle: &super::NtfsFs, path: &str) -> Vec<String> {
     names
 }
 
-/// A record's bytes as the volume holds them — packed, the update sequence
-/// still at every sector's end — which is what a crash leaves and what a test
+/// A record's bytes as the volume holds them, packed, the update sequence
+/// still at every sector's end, which is what a crash leaves and what a test
 /// that recreates one writes back.
 fn record_as_the_volume_holds_it(
     fs_handle: &super::NtfsFs,
@@ -1803,7 +1803,7 @@ fn record_as_the_volume_holds_it(
 #[test]
 fn entries_that_filled_two_records_leave_for_a_block() {
     // A directory whose record is full moves its index root into a record of
-    // its own — the way a file's attribute moves — and when *that* record
+    // its own, the way a file's attribute moves, and when *that* record
     // fills with entries too, the format's answer is the allocation block:
     // every entry leaves for a block of their own, and the root's node keeps
     // only the pointer to it.
@@ -1906,8 +1906,8 @@ fn entries_that_filled_two_records_leave_for_a_block() {
     }
 
     // The crash a listing survives: the two records as they were before the
-    // flip are the state between the flip's writes — the record and the block
-    // down, the list not yet naming them, the root's node not yet pointing —
+    // flip are the state between the flip's writes, the record and the block
+    // down, the list not yet naming them, the root's node not yet pointing
     // and a mount lists the names the root's value still holds.  The records
     // the names had claimed stay claimed, which is the leak the order was
     // chosen for.
@@ -1946,8 +1946,8 @@ fn entries_that_filled_two_records_leave_for_a_block() {
 #[test]
 fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
     // The subdirectory's entries begin in its index root, and a name at a
-    // time grows that value until its record is full — the root moves into a
-    // record of its own, which is the way a file's attribute moves — and the
+    // time grows that value until its record is full, the root moves into a
+    // record of its own, which is the way a file's attribute moves, and the
     // record fills with entries in its turn.  What a volume does then is keep
     // the entries in an allocation block, and so does this one.
     let fixture = build_volume(FRACTIONAL);
@@ -1977,8 +1977,8 @@ fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
     }
     assert!(flipped, "the entries left for a block within forty names");
 
-    // A second mount finds every name — the last few through the root's
-    // pointer into the block — and the shape the volume now keeps: the base
+    // A second mount finds every name, the last few through the root's
+    // pointer into the block, and the shape the volume now keeps: the base
     // record holds the list and nothing of the index but that, and the root
     // and the two attributes that describe the allocation are in records of
     // their own.
@@ -2019,8 +2019,8 @@ fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
     );
 
     // And the block fills in its turn.  This is the split's own case with the
-    // node above the blocks living in a record of its own — a different record
-    // from the directory's — so the key the split promotes is written there and
+    // node above the blocks living in a record of its own, a different record
+    // from the directory's, so the key the split promotes is written there and
     // the block it makes is a block of the allocation.
     let before = index_blocks_in_use(&fs_handle, SUBDIRECTORY);
     let pad = "p".repeat(60);
@@ -2053,7 +2053,7 @@ fn a_small_directory_that_fills_a_moved_root_fills_a_block_next() {
     );
 
     // A name comes back out with the node above in that record too: the same
-    // walk — the entry's own block, or the key the split promoted — with the
+    // walk, the entry's own block, or the key the split promoted, with the
     // node above where the list put it.
     let gone = names.pop().expect("the name the split made last");
     fs_handle
@@ -2167,7 +2167,7 @@ fn a_name_in_a_tree_moves_with_its_record() {
     // A rename is the two index changes and the record's own `$FILE_NAME`, and
     // a directory whose index is a tree is no different: the new name is routed
     // to the block its key belongs in, and the old one comes out of whichever
-    // node holds it — a promoted key included, which is the entry a split put
+    // node holds it, a promoted key included, which is the entry a split put
     // in the node above.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -2224,8 +2224,8 @@ fn the_name_the_record_carries(fs_handle: &super::NtfsFs, record: u64) -> String
 fn a_rename_writes_a_name_that_an_attribute_list_moved() {
     // A record's own `$FILE_NAME` is not always in the record: one that filled
     // up moves the name into an extension record, and an `$ATTRIBUTE_LIST`
-    // says where it went.  A rename writes the name **there** — the record the
-    // list names, not the one the file is — and the index entry with it, so a
+    // says where it went.  A rename writes the name **there**, the record the
+    // list names, not the one the file is, and the index entry with it, so a
     // second mount finds the new name by its path and reads the new name out
     // of the extension record.
     let fixture = build_volume(FRACTIONAL);
@@ -2299,7 +2299,7 @@ fn a_name_that_is_taken_is_not_renamed_onto() {
 #[test]
 fn a_change_of_spelling_is_a_change_of_name() {
     // Two names that fold together are one key in the index, so the old
-    // spelling has to leave before the new one arrives — and the record's own
+    // spelling has to leave before the new one arrives, and the record's own
     // name carries the spelling the caller asked for.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -2481,7 +2481,7 @@ fn index_blocks_in_use(fs_handle: &super::NtfsFs, record: u64) -> u32 {
 /// and answer the names it made.
 ///
 /// The names are long on purpose.  An index entry is mostly its name, so long
-/// ones fill a block after a handful of creations — and a handful the fixture's
+/// ones fill a block after a handful of creations, and a handful the fixture's
 /// own MFT has free records for.  Short names would need some thirty-five
 /// creations, and this volume runs out of records before the block runs out of
 /// room, so the split would never be reached.
@@ -2575,7 +2575,7 @@ fn a_tree_deeper_than_a_level_of_blocks_is_changed_where_the_names_are() {
 #[test]
 fn a_block_that_frees_the_allocation_tail_gives_its_clusters_back() {
     // The deep tree keeps its three blocks in one run, and the merge of the
-    // two leaves gives the **last** one back — which is the shape a shrink is
+    // two leaves gives the **last** one back, which is the shape a shrink is
     // for.  A block that goes back in the middle keeps its clusters (they stay
     // part of the allocation, a free block inside it), so this is the case
     // where the allocation's own size has to move.
@@ -2694,7 +2694,7 @@ fn a_full_block_above_a_leaf_splits_in_its_turn() {
     // block whose keys are long enough that six of them all but fill it, and
     // seven leaves under it that hold nothing yet.  A name that fills one of
     // those leaves splits it, the key between the halves has no room in the
-    // block above, and that block is halved in its turn — its own key going
+    // block above, and that block is halved in its turn, its own key going
     // into the record's index root, which is the node above *it*.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -2757,9 +2757,9 @@ fn a_full_block_above_a_leaf_splits_in_its_turn() {
         "and the allocation grew by the two blocks"
     );
 
-    // A second mount walks the deeper tree: every name the directory holds —
+    // A second mount walks the deeper tree: every name the directory holds
     // the fixture's own keys, wherever the split put them, and every name the
-    // creations made — is listed once and resolves to a record.
+    // creations made, is listed once and resolves to a record.
     let again = remount(&device);
     let mut expected: Vec<String> = (0..FULL_DEEP_KEYS.len()).map(key_name).collect();
     expected.extend(created);
@@ -2779,7 +2779,7 @@ fn a_full_block_above_a_leaf_splits_in_its_turn() {
 #[test]
 fn a_directory_whose_index_is_a_tree_lists_in_tree_order() {
     // A directory whose index is a **tree**: two blocks with the key that
-    // separates them in the root's node — the shape a directory of many names
+    // separates them in the root's node, the shape a directory of many names
     // has, measured on a volume `mkntfs` makes.  The key's own record lives in
     // the root and in no block, because a split promotes it, so a walk has to
     // take the children *and* the keys, in the order they sort in.
@@ -2795,7 +2795,7 @@ fn a_directory_whose_index_is_a_tree_lists_in_tree_order() {
         "the tree's names, in the order the tree keeps them"
     );
 
-    // Every name is found, whichever node holds it — and the promoted key is a
+    // Every name is found, whichever node holds it, and the promoted key is a
     // name like any other, with its own record.
     for (name, record) in [
         ("alpha.txt", TREE_ALPHA),
@@ -2830,8 +2830,8 @@ fn a_tree_directory_takes_a_name_where_it_belongs() {
         .remove_path("/tree/omega.txt")
         .expect("a leaf's name comes out");
 
-    // A second mount lists them in the tree's order — the promoted key still in
-    // the middle of it — and finds each name by its path.
+    // A second mount lists them in the tree's order, the promoted key still in
+    // the middle of it, and finds each name by its path.
     let again = remount(&device);
     assert_eq!(
         the_listing(&again, "/tree"),
@@ -2874,8 +2874,8 @@ fn an_index_bitmap_that_is_a_file_holds_the_directory_s_blocks() {
         "and the block the root points at is the one read"
     );
 
-    // Filling it splits it: the split looks for a free block in the bitmap —
-    // the file's bit 0 is set, so there is none to take — appends the block
+    // Filling it splits it: the split looks for a free block in the bitmap
+    // the file's bit 0 is set, so there is none to take, appends the block
     // after the allocation's own, and sets that block's bit where the runs say.
     let created = fill_the_running_index(&fs_handle);
     assert_eq!(
@@ -2896,7 +2896,7 @@ fn an_index_bitmap_that_is_a_file_holds_the_directory_s_blocks() {
 
     // And a bit past the value it has: the bitmap is one byte, the block
     // numbered eight needs the second, and the growth goes through the runs
-    // that hold it — one cluster's worth of room, which is what a file's
+    // that hold it, one cluster's worth of room, which is what a file's
     // clusters are for.
     let blocks = index_allocation_size(&fs_handle, RUNNING_INDEX_DIRECTORY);
     fs_handle
@@ -2936,8 +2936,8 @@ fn a_full_block_splits_and_promotes_its_middle_key() {
     assert_eq!(bitmap.len(), 2, "the byte the new block's bit needs");
     assert_eq!(bitmap[1] & 0b1, 0b1, "and its bit");
 
-    // A second mount lists every name in the tree's order — the key the split
-    // promoted among them — and finds each of them by its path.
+    // A second mount lists every name in the tree's order, the key the split
+    // promoted among them, and finds each of them by its path.
     let again = remount(&device);
     let listed = the_listing(&again, "/tree");
     let mut every = names.clone();
@@ -2962,7 +2962,7 @@ fn a_block_a_deletion_gave_back_is_taken_again() {
     // A block that a merge gave back is not left to waste.  The next split
     // takes it rather than growing the allocation, because a block that is
     // already the allocation's is one the volume's clusters are already claimed
-    // for — and a directory whose index only ever grew would keep claiming
+    // for, and a directory whose index only ever grew would keep claiming
     // clusters for blocks nothing is stored in.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -3021,7 +3021,7 @@ fn a_promoted_key_comes_out_and_its_block_gives_way() {
     // it out is a key coming out of a node that has children.  Its entry
     // carries the child whose keys are less than it, so the entry cannot simply
     // go: what takes its place is that child's **last** name, the key's
-    // predecessor, which is then taken out of the block — and the block it
+    // predecessor, which is then taken out of the block, and the block it
     // leaves may be one the tree no longer has to keep.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -3090,7 +3090,7 @@ fn a_block_that_empties_moves_its_key_down_and_gives_its_bit_back() {
 fn a_pair_that_still_needs_two_blocks_is_not_merged() {
     // A block is merged back with its neighbour only when what the two hold
     // fits one block: after a split the two halves are nearly full, and taking
-    // one name out of them is not enough for that — so the tree keeps its shape
+    // one name out of them is not enough for that, so the tree keeps its shape
     // and neither block's bit is given back.
     let fixture = build_volume(FRACTIONAL);
     let (device, fs_handle) = writable(&fixture);
@@ -3108,7 +3108,7 @@ fn a_pair_that_still_needs_two_blocks_is_not_merged() {
 
     // A name that sorts below every one the split made goes into the block the
     // promoted key points at, and taking it out again leaves that block and its
-    // neighbour as full as they were — too full for the two to be one.
+    // neighbour as full as they were, too full for the two to be one.
     fs_handle
         .create_file("/tree/aardvark.txt")
         .expect("a name below the split's");
@@ -3133,8 +3133,8 @@ fn a_pair_that_still_needs_two_blocks_is_not_merged() {
 /// A file that shrinks back into its record gives the clusters it held back.
 #[test]
 fn a_file_that_shrinks_into_its_record_gives_its_clusters_back() {
-    // The conversion a growth makes — a value that outgrows its record takes
-    // runs — runs the other way when the value gets small enough again: the
+    // The conversion a growth makes, a value that outgrows its record takes
+    // runs, runs the other way when the value gets small enough again: the
     // bytes come back into the record, the run list it no longer needs is room
     // the value takes, and the clusters go back to the volume.  It is what
     // keeps a file that was written long and cut short from holding space
@@ -3175,7 +3175,7 @@ fn a_file_that_shrinks_into_its_record_gives_its_clusters_back() {
     );
 
     // A second mount reads the bytes it kept, and writing again leaves from the
-    // record — the value can outgrow it once more.
+    // record, the value can outgrow it once more.
     let again = remount(&device);
     let reread = again.lookup("/shrink.bin").expect("relookup");
     assert_eq!(reread.size(), 4);
@@ -3351,7 +3351,7 @@ fn a_removed_file_is_gone_and_its_clusters_come_back() {
 
     // A second mount agrees; the clusters the file held are free again; and
     // the record is formatted but not in use, with a sequence that has moved
-    // on — which is what makes the number it had stop meaning it.
+    // on, which is what makes the number it had stop meaning it.
     let again = remount(&device);
     assert!(matches!(
         again.lookup("/two-runs.bin"),
@@ -3441,7 +3441,7 @@ fn a_file_whose_data_is_split_reads_whole() {
 fn a_file_whose_data_has_moved_reads_whole() {
     // The shape measured on a real volume: a record the attributes did not fit
     // writes an `$ATTRIBUTE_LIST` and puts one attribute in an extension record
-    // *whole* — and the list itself is a file of its own there.
+    // *whole*, and the list itself is a file of its own there.
     let fixture = build_volume(FRACTIONAL);
     let fs_handle = open(&fixture);
     let cluster = fixture.cluster_size() as usize;
@@ -3453,8 +3453,8 @@ fn a_file_whose_data_has_moved_reads_whole() {
     assert!(buf[..cluster].iter().all(|byte| *byte == 0x88));
     assert!(buf[cluster..].iter().all(|byte| *byte == 0x99));
 
-    // The record that holds it is one the volume has spoken for — its bit is
-    // set in the MFT's bitmap — and it has no name of its own for any
+    // The record that holds it is one the volume has spoken for, its bit is
+    // set in the MFT's bitmap, and it has no name of its own for any
     // directory to list.
     let bits = fs_handle
         .mft_bitmap()
@@ -3515,8 +3515,8 @@ fn a_split_file_is_read_but_not_grown() {
     let node = fs_handle.lookup("/split.bin").expect("split.bin");
     assert_eq!(node.set_len(4 * cluster), Err(Error::NotImplemented));
 
-    // An overwrite inside the length does not touch the attribute at all — the
-    // bytes go through the runs — so that still lands, in *both* parts.
+    // An overwrite inside the length does not touch the attribute at all, the
+    // bytes go through the runs, so that still lands, in *both* parts.
     assert_eq!(node.write(0, b"AB").expect("write"), 2);
     assert_eq!(node.write(2 * cluster, b"CD").expect("write"), 2);
 
@@ -3543,7 +3543,7 @@ fn removing_a_listed_file_gives_its_extension_record_back() {
     ));
 
     // The extension record is a record the volume had spoken for, and the
-    // removal is what gives it back — with the clusters of both the data and
+    // removal is what gives it back, with the clusters of both the data and
     // the list.
     let again = remount(&device);
     let bits = again
@@ -3639,7 +3639,7 @@ fn a_creation_grows_the_mft_when_no_record_is_free() {
     let taken: usize = bitmap.iter().map(|byte| byte.count_ones() as usize).sum();
     let was: usize = fixture.used.iter().filter(|used| **used != 0).count();
     // Two clusters, not one: the MFT's growth takes the first, and the name
-    // that growth made room for is one the root's index block had none for —
+    // that growth made room for is one the root's index block had none for
     // this fixture's records are all spoken for because its root lists every
     // one of them, so its block is all but full and the name fills it.
     assert_eq!(
@@ -3772,14 +3772,14 @@ const SUBDIRECTORY_FILE: u64 = 27;
 /// attribute: the shape that makes a growth *move* the attribute.
 const TIGHT_FILE: u64 = 28;
 /// A file whose record is **full**: the shape a run list cannot grow in, and
-/// the one an attribute list — not the MFT — is for.
+/// the one an attribute list, not the MFT, is for.
 const FULL_FILE: u64 = 29;
 /// A directory whose record is **full**: the shape a name has nowhere to go
 /// in, where the format's answer is an allocation block of its own.
 const FULL_DIRECTORY: u64 = 30;
 /// A file whose `$DATA` is **split** by virtual cluster number: the record that
 /// names it holds the first part, and an extension record of its holds the
-/// second — which is the shape a fragmented file's mapping pairs make when
+/// second, which is the shape a fragmented file's mapping pairs make when
 /// they no longer fit one record.
 const LISTED_FILE: u64 = 31;
 const LISTED_FILE_EXT: u64 = 32;
@@ -3789,7 +3789,7 @@ const MOVED_FILE: u64 = 33;
 const MOVED_FILE_EXT: u64 = 34;
 /// A file whose `$FILE_NAME` an `$ATTRIBUTE_LIST` moved into an extension
 /// record: the shape a record that filled up leaves behind, and the one a
-/// rename has to write the name in — there, and not in the base record.
+/// rename has to write the name in, there, and not in the base record.
 const NAMED_FILE: u64 = 39;
 const NAMED_FILE_EXT: u64 = 40;
 /// A directory whose index bitmap is a **file** of its own: the shape a real
@@ -3812,7 +3812,7 @@ const ENCRYPTED_FILE: u64 = 47;
 /// A directory whose index is a tree **three levels deep with its internal
 /// block nearly full**: the root points at a block whose entries hold keys and
 /// point at seven leaf blocks, and the keys are long enough that six of them
-/// almost fill it — so one more has nowhere to go.  It is the shape a leaf's
+/// almost fill it, so one more has nowhere to go.  It is the shape a leaf's
 /// split needs: promoting a key into that block has nowhere to go, so the block
 /// is what has to split in turn.
 const FULL_DEEP_DIRECTORY: u64 = 48;
@@ -3820,7 +3820,7 @@ const FULL_DEEP_DIRECTORY: u64 = 48;
 /// leaf.
 const FULL_DEEP_KEYS: [u64; 6] = [49, 50, 51, 52, 53, 54];
 /// A directory whose index is a **tree**: two blocks, and the root's node
-/// holding the key that separates them — the shape a directory of many names
+/// holding the key that separates them, the shape a directory of many names
 /// has, measured on a volume `mkntfs` makes.  Its children are named in the
 /// tree and in no other directory.
 const TREE_DIRECTORY: u64 = 35;
@@ -3831,7 +3831,7 @@ const TREE_MIDDLE: u64 = 37;
 const TREE_OMEGA: u64 = 38;
 /// A file with a **hole** between two of its runs: two clusters behind it,
 /// two clusters of nothing, and a third cluster of bytes after the hole.  The
-/// bytes a hole covers are zeros, and no cluster holds them — which is what a
+/// bytes a hole covers are zeros, and no cluster holds them, which is what a
 /// run with no LCN says.
 const SPARSE_FILE: u64 = 55;
 /// A directory whose index **allocation** carries the compressed flag: what
@@ -3847,7 +3847,7 @@ const RECORDS: u64 = 58;
 /// How many blocks the tree directory's allocation has room for.
 ///
 /// Its tree holds two of them; the rest are blocks the allocation *has* and
-/// the index bitmap says are free — the shape a directory reaches when
+/// the index bitmap says are free, the shape a directory reaches when
 /// deletions have left blocks behind, and the one that makes a split need a
 /// byte of the bitmap rather than a bit in a byte it already has.
 const TREE_ALLOCATION_BLOCKS: u64 = 8;
@@ -3881,7 +3881,7 @@ const MIRROR_RECORDS: u64 = 4;
 /// Whether a record is one the fixture has in use.
 ///
 /// The records a volume keeps for itself, the folding table, this fixture's
-/// own files — and not the rest, which are formatted but free.  `$MFT`'s own
+/// own files, and not the rest, which are formatted but free.  `$MFT`'s own
 /// bitmap is built from this, so the two say the same thing.
 fn is_named(number: u64, spares_in_use: bool) -> bool {
     (0..=6).contains(&number)
@@ -3919,7 +3919,7 @@ fn is_named(number: u64, spares_in_use: bool) -> bool {
 ///
 /// An extension record holds another record's attributes: the volume has
 /// spoken for it, so its bit is set in `$MFT`'s bitmap, and no directory names
-/// it — a record with a base reference is not a file of its own.
+/// it, a record with a base reference is not a file of its own.
 fn is_in_use(number: u64, spares_in_use: bool) -> bool {
     is_named(number, spares_in_use) || EXTENSION_RECORDS.contains(&number)
 }
@@ -4185,7 +4185,7 @@ fn index_block(shape: &Shape, vcn: u64, node: &[u8]) -> Vec<u8> {
 /// An index node's header and body, as the node holds them.
 ///
 /// The body is the caller's: a leaf ends with the end entry, and a non-leaf
-/// node ends with the entry that points at its child — which is the last
+/// node ends with the entry that points at its child, which is the last
 /// entry there is, so there is nothing to append.
 fn node(body: &[u8], has_children: bool, entries_offset: u16) -> Vec<u8> {
     let mut node = vec![0u8; 16];
@@ -4203,7 +4203,7 @@ fn node(body: &[u8], has_children: bool, entries_offset: u16) -> Vec<u8> {
 }
 
 /// The entry a non-leaf node ends with: no name, the last-entry flag, and the
-/// child block's virtual cluster number — which is the entry's *last* eight
+/// child block's virtual cluster number, which is the entry's *last* eight
 /// bytes, where the format puts it, and not the reference field a name entry
 /// keeps its record in: a real volume's pointer entries leave that zero.
 fn node_pointer(vcn: u64) -> Vec<u8> {
@@ -4306,14 +4306,14 @@ fn a_volume_mkntfs_wrote_is_read_and_written_back() {
 
     // Enough further files that the MFT has to **grow**: `mkntfs` gives a
     // volume this size about sixty-five records, and the growth moves record
-    // 0 — whose run list gains a run — which is one of the four records the
+    // 0, whose run list gains a run, which is one of the four records the
     // `$MFTMirr` copies.  That is the write which leaves the volume's own
     // recovery copy stale until it is settled, and the gate's `ntfsfix -n`
     // compares the two: it is the judge of whether they were brought back in
     // step.
     //
-    // The volume's record budget is finite — `mkntfs` sizes the MFT from the
-    // volume — so the loop runs until a creation is refused rather than to a
+    // The volume's record budget is finite, `mkntfs` sizes the MFT from the
+    // volume, so the loop runs until a creation is refused rather than to a
     // count: what the gate needs is that the MFT *grew* before the volume was
     // settled, and that is asserted below rather than assumed.
     let before = {
@@ -4430,7 +4430,7 @@ fn a_compressed_stream_on_a_real_volume_is_read() {
     // A write into the middle of it: the compression units before the write
     // keep their clusters and their bytes, the units from that one on are
     // decoded, spliced and encoded again, and the answer has to be the file
-    // with the write in it — which is what the check then hands to `ntfscat`.
+    // with the write in it, which is what the check then hands to `ntfscat`.
     let at = 1000usize;
     let pattern = vec![b'Z'; 5000];
     assert_eq!(
@@ -4483,7 +4483,7 @@ fn again_read(fs_handle: &super::NtfsFs, name: &str, buffer: &mut [u8]) -> usize
 /// the driver's control flow is the healthy one and the image is exactly the
 /// one a crash would leave.  The boundaries are the driver's own device writes,
 /// which is the granularity the write orders in `src/fs/ntfs/mod.rs` argue
-/// about — and one device write is one block, so a 4096-byte index block really
+/// about, and one device write is one block, so a 4096-byte index block really
 /// does go down in eight of them.
 struct PowerCut {
     inner: alloc::sync::Arc<block::MemoryBlockDevice>,
@@ -4563,8 +4563,8 @@ fn run_with_a_cut(
 /// there, no name twice, and every name it lists resolves to a readable record.
 ///
 /// A window where a directory **cannot** be read is an answer rather than a
-/// failure — a write cut between two sectors is exactly what the update
-/// sequence is for — but a window that answers with names that are not the
+/// failure, a write cut between two sectors is exactly what the update
+/// sequence is for, but a window that answers with names that are not the
 /// file's is the failure this harness exists for.  The run that wrote
 /// *everything* is checked too, so a harness that refused every window could
 /// not pass by saying nothing.
@@ -4654,7 +4654,7 @@ fn every_window_of_a_block_that_fills_leaves_a_volume_a_mount_can_read() {
     // A creation in a directory whose index is a tree fills a block, and the
     // fill splits it: the allocation grows, the bitmap gains a bit, the new
     // block is written, the node above is rewritten, and the old block is
-    // rewritten last.  Each of those is a window a machine can stop in — and
+    // rewritten last.  Each of those is a window a machine can stop in, and
     // the block itself goes down a sector at a time, so a window can fall
     // inside one, which is what the update sequence is for.
     let fixture = build_volume(FRACTIONAL);
@@ -4727,7 +4727,7 @@ struct Fixture {
     full_runs: [(u64, u64); 2],
     /// Where the `$UpCase` table is.
     upcase_runs: [(u64, u64); 1],
-    /// Where `$MFT`'s own bitmap is — a file of its own, the way a real
+    /// Where `$MFT`'s own bitmap is, a file of its own, the way a real
     /// volume's is.
     mft_bitmap_runs: [(u64, u64); 1],
     /// The two parts of the file whose `$DATA` is split by virtual cluster
@@ -4741,7 +4741,7 @@ struct Fixture {
     /// Where the tree directory's two index blocks are, one after the other.
     tree_blocks: u64,
     /// The block a directory's entries are in when its index bitmap is a file,
-    /// and the runs of that bitmap — a cluster of its own, which is what makes
+    /// and the runs of that bitmap, a cluster of its own, which is what makes
     /// it a file rather than a value in the record.
     running_block: u64,
     running_bitmap: (u64, u64),
@@ -4795,8 +4795,8 @@ impl Fixture {
 /// Build the fixture volume.
 ///
 /// It holds the records a real volume's first records are, a `$Bitmap` whose
-/// bits are set from the layout as it is made, two files — one resident and
-/// one in two runs with a gap between them — a subdirectory whose entries are
+/// bits are set from the layout as it is made, two files, one resident and
+/// one in two runs with a gap between them, a subdirectory whose entries are
 /// in its index root, and a root whose entries are in an index *allocation*,
 /// which is the shape a directory with children really has.
 fn build_volume(shape: Shape) -> Fixture {
@@ -4845,7 +4845,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     let list_at = take(1);
     let tree_blocks = take(TREE_ALLOCATION_BLOCKS * index_block_clusters);
     // A directory whose index bitmap is a file of its own: one cluster holds
-    // its block, and one holds the bitmap — which is what makes it a file.
+    // its block, and one holds the bitmap, which is what makes it a file.
     let running_block = take(2 * index_block_clusters);
     let running_bitmap = (take(1), 1);
     let deep_blocks = take(3 * index_block_clusters);
@@ -4853,7 +4853,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     take(1); // a gap, so the encrypted file's run is one cluster of its own
     let full_deep_blocks = take(8 * index_block_clusters);
     // Free clusters, each alone: a growth claims a run it fits in, and a claim
-    // of several clusters has none — which is what the refusal tests rely on.
+    // of several clusters has none, which is what the refusal tests rely on.
     let mut spare_used = Vec::new();
     for _ in 0..16 {
         take(1); // free, and alone
@@ -5004,7 +5004,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     }
     let mut attributes = Vec::new();
     // The lists the two listed files carry: every attribute of the file and the
-    // record that holds it — the file's own record, or an extension record of
+    // record that holds it, the file's own record, or an extension record of
     // its.  The list does not name *itself*, which is what the volume this was
     // measured against does too.
     let split_list: Vec<u8> = [
@@ -5022,7 +5022,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     .concat();
     // A list that names the *name* where it went: the base record holds no
     // `$FILE_NAME` at all, and the extension record holds the name and one
-    // more attribute — so the name grows out of a record that is already
+    // more attribute, so the name grows out of a record that is already
     // full, which is the shape a rename has to make room in.
     let named_list: Vec<u8> = [
         list_entry(0x10, "", 1, NAMED_FILE, 0),
@@ -5166,7 +5166,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
             match number {
                 0 => {
                     // The MFT's own data: two runs, which is what a reader has
-                    // to follow to find any record after the first — and room
+                    // to follow to find any record after the first, and room
                     // for one more run, which is where a growth appends the
                     // clusters it takes.
                     let mut data = attribute(
@@ -5182,7 +5182,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     attributes.extend(data);
                     // And the MFT's own bitmap: one bit per record, set for the
                     // records the volume has in use.  It is what a real volume
-                    // allocates from, so a created file has to turn one on —
+                    // allocates from, so a created file has to turn one on
                     // and it is a *file* of its own, with runs, the way a real
                     // volume's is.
                     let mut bitmap = attribute(
@@ -5199,8 +5199,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     // The `$MFTMirr`'s `$DATA`: a **non-resident** run, the way
                     // a real volume's is, whose length is the four records the
                     // format says the mirror copies.  A driver that moves one
-                    // of the MFT's first records — record 0 when the MFT grows,
-                    // record 3 when the flags change — has a copy to bring back
+                    // of the MFT's first records, record 0 when the MFT grows,
+                    // record 3 when the flags change, has a copy to bring back
                     // in step, which is what `sync` does.
                     attributes.extend(attribute(
                         0x80,
@@ -5311,8 +5311,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 }
                 FULL_LONG_FILE => {
                     // One run of three clusters, and a record with no room at
-                    // all: a punch of the middle cluster — a hole with a real
-                    // cluster on either side of it — is a list two runs longer
+                    // all: a punch of the middle cluster, a hole with a real
+                    // cluster on either side of it, is a list two runs longer
                     // than the one the record holds.
                     attributes.extend(attribute(
                         0x80,
@@ -5340,8 +5340,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 }
                 FULL_DIRECTORY => {
                     // An index *root* with nothing in it, a **list** that
-                    // already names everything the record holds — an attribute
-                    // moved out of it once before — and then an attribute sized
+                    // already names everything the record holds, an attribute
+                    // moved out of it once before, and then an attribute sized
                     // to fill the record: a name whose entry needs the root's
                     // value longer has to *extend* that list.
                     attributes.extend(attribute(
@@ -5431,7 +5431,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     // And an attribute sized to fill the record: the name it
                     // holds has nowhere to grow in *this* record, which is the
                     // shape a rename that writes a longer name has to make room
-                    // in — inside an extension record, where the file's own
+                    // in, inside an extension record, where the file's own
                     // record is not.
                     let room = shape.record_size() as usize - 8 - 56 - attributes.len() - 24;
                     attributes.extend(attribute(0xe0, "", &alloc::vec![0u8; room], None, 0));
@@ -5474,7 +5474,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     // A tree of two levels: the root's node points at one
                     // **internal** block, whose own node holds the key between
                     // two blocks of names.  That key is a name like any other
-                    // and lives in a block — which is what a split of a leaf
+                    // and lives in a block, which is what a split of a leaf
                     // block promotes, one level down from the root.
                     attributes.extend(attribute(
                         0x90,
@@ -5544,7 +5544,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     // A tree three levels deep whose internal block is **nearly
                     // full**: seven keys, each long enough that seven of them
                     // fill it, and eight leaf blocks that hold nothing yet.  It
-                    // is what a leaf's split needs — promoting a key into that
+                    // is what a leaf's split needs, promoting a key into that
                     // block has nowhere to go, so the block is what has to be
                     // split in turn.
                     attributes.extend(attribute(
@@ -5602,7 +5602,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                 TREE_DIRECTORY => {
                     // A directory whose index is a *tree*: two blocks with a
                     // separator key between them, which is the shape a
-                    // directory of many names has — and the key's own record
+                    // directory of many names has, and the key's own record
                     // lives in the root's node and in no block, because a
                     // split promotes it.
                     let at = fixture.tree_blocks as usize * cluster_size as usize;
@@ -5653,7 +5653,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                     // at two of them.  The other six are the shape this
                     // driver's own split leaves between its two writes: the
                     // blocks are the allocation's and the bitmap says they hold
-                    // a node, but the node above has not been written yet — so
+                    // a node, but the node above has not been written yet, so
                     // the tree does not grow past them, and it does not take
                     // them back either.
                     let mut bits = vec![0u8; 1];
@@ -5706,7 +5706,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                         ];
                         if spares_in_use {
                             // Every record in use is a record some directory
-                            // names — but an extension record is not a name of
+                            // names, but an extension record is not a name of
                             // its own.
                             for record in 0..RECORDS {
                                 if !listed.contains(&record)
@@ -5724,8 +5724,8 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
                             }
                         }
                         // A volume keeps a directory's names in the order its
-                        // index does — folded through `$UpCase`, code unit by
-                        // code unit — and the driver leans on that: a block
+                        // index does, folded through `$UpCase`, code unit by
+                        // code unit, and the driver leans on that: a block
                         // that fills is split in half, and the key it promotes
                         // separates the halves only while the names are sorted.
                         let mut named: Vec<(String, Vec<u8>)> = Vec::new();
@@ -5941,7 +5941,7 @@ fn build_volume_with(shape: Shape, spares_in_use: bool) -> Fixture {
     fixture.image[at] = 0b1;
 
     // The `$UpCase` table: every code unit folded the way a real volume folds
-    // it — the Latin letters up, everything else as it is — so the fixture's
+    // it, the Latin letters up, everything else as it is, so the fixture's
     // index order is the format's and not the driver's.
     let mut table = alloc::vec![0u8; UPCASE_BYTES as usize];
     for code in 0u32..0x1_0000 {
@@ -6228,7 +6228,7 @@ fn a_child_pointer_is_read_from_the_end_of_its_entry() {
     // A pointer entry has no key, and the reference field a name entry keeps
     // its record in is left zero: the child block's virtual cluster number is
     // the entry's *last* eight bytes.  A reader that took the child's address
-    // from the reference field found zero there — which is the right block
+    // from the reference field found zero there, which is the right block
     // only while the child is the volume's first.  A pointer *with* a key is
     // the same entry with the key filled in: an internal node's entry carries
     // both, which is what makes a tree walk possible.
@@ -6298,7 +6298,7 @@ fn a_record_or_block_whose_sectors_disagree_is_refused() {
     // A write that stops between two sectors leaves the ones it reached
     // carrying the number the array names and the rest carrying the one
     // before: that is what the update sequence is for, and a reader that
-    // patched those bytes back without looking — which this one did — would
+    // patched those bytes back without looking, which this one did, would
     // answer with a record that is half new and half old.  Both shapes are
     // checked here: a record, and an index block.
     let fixture = build_volume(FRACTIONAL);
@@ -6345,8 +6345,8 @@ fn an_encrypted_stream_is_refused_and_a_plain_one_beside_it_is_not() {
     // No tool here can make an EFS file, so the fixture carries a `$DATA` whose
     // flags say it is encrypted: what its runs hold is ciphertext, and a reader
     // that ignored the flag would answer with bytes that are not the file's.
-    // The name is still a name — a volume is a tree of names, and a stream is
-    // bytes someone asks for — and the plain file beside it still reads, which
+    // The name is still a name, a volume is a tree of names, and a stream is
+    // bytes someone asks for, and the plain file beside it still reads, which
     // is what keeps the refusal from being a blanket one.
     let fixture = build_volume(FRACTIONAL);
     let (_device, fs_handle) = writable(&fixture);

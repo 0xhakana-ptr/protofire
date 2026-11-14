@@ -1,7 +1,7 @@
 //! net/src/icmp.rs
 //!
 //! ICMP: the control messages the wire sends about itself, as far as this
-//! stack needs them — an echo request out, an echo reply back.
+//! stack needs them, an echo request out, an echo reply back.
 //!
 //! ## The layout
 //!
@@ -16,7 +16,7 @@
 //! An echo exchange is the smallest round trip IPv4 can carry: the reply that
 //! comes back names the identifier and sequence the request sent and holds the
 //! bytes it carried, so a boot that matches all three has parsed a packet
-//! another machine built — not its own output read back through its own
+//! another machine built, not its own output read back through its own
 //! parser.  QEMU's user-mode network answers a ping for its gateway without
 //! being asked to, which is what makes the exchange a real one on every
 //! machine this tree boots.
@@ -30,9 +30,9 @@
 //! and the first eight bytes of its payload, quoted back, which is what lets
 //! the sender match the report to the datagram it sent.
 //!
-//! [RFC 1812] is the rule for how much to quote — as much of the original
+//! [RFC 1812] is the rule for how much to quote, as much of the original
 //! packet as fits without making the message larger than the smallest MTU a
-//! path may have — and it is here rather than at the caller because the
+//! path may have, and it is here rather than at the caller because the
 //! arithmetic is the message's own layout.
 //!
 //! [RFC 1812]: https://www.rfc-editor.org/rfc/rfc1812
@@ -51,15 +51,15 @@ pub const ECHO_REQUEST: u8 = 8;
 /// `type` value 0: an echo reply, the answer to one.
 pub const ECHO_REPLY: u8 = 0;
 
-/// `type` value 3: destination unreachable — the datagram did not get where
+/// `type` value 3: destination unreachable, the datagram did not get where
 /// it was going, and the message says why in its code.
 pub const DESTINATION_UNREACHABLE: u8 = 3;
 
 /// `code` value 3 under [`DESTINATION_UNREACHABLE`]: the port nothing owns.
 ///
-/// This is the one error a UDP sender is guaranteed to be able to provoke —
+/// This is the one error a UDP sender is guaranteed to be able to provoke
 /// send a datagram to a port nothing listens on, and the peer answers with
-/// it — which is what makes it the proof a datagram left and a peer parsed
+/// it, which is what makes it the proof a datagram left and a peer parsed
 /// it.
 pub const PORT_UNREACHABLE: u8 = 3;
 
@@ -78,7 +78,7 @@ pub const fn echo_len(data_len: usize) -> usize {
 ///
 /// The caller's buffer is the message's: `HEADER_LEN + data.len()` bytes,
 /// which is what [`echo_len`] answers.  The checksum is computed over the
-/// whole message — type and code included — which is why the field is zeroed
+/// whole message, type and code included, which is why the field is zeroed
 /// before the sum and written after it.
 pub fn write_echo_request(into: &mut [u8], identifier: u16, sequence: u16, data: &[u8]) {
     write_echo(into, ECHO_REQUEST, identifier, sequence, data);
@@ -89,7 +89,7 @@ pub fn write_echo_request(into: &mut [u8], identifier: u16, sequence: u16, data:
 /// [RFC 792] requires the internet header plus the first sixty-four bits of
 /// the original datagram's payload, which is what lets the sender match the
 /// report to a socket.  Eight is also all a UDP or TCP header's first fields
-/// need — the ports — which is the part a caller acts on.
+/// need, the ports, which is the part a caller acts on.
 ///
 /// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
 pub const QUOTED_PAYLOAD: usize = 8;
@@ -105,7 +105,7 @@ pub const fn error_len(header_quoted: usize, payload_quoted: usize) -> usize {
 ///
 /// `into` is the message's bytes and must be at least
 /// `error_len(header_quoted, payload_quoted)`.  The writer fills the eight
-/// fixed bytes, then the quoted header, then the quoted payload — which is
+/// fixed bytes, then the quoted header, then the quoted payload, which is
 /// [RFC 792]'s layout, and the order a sender's own header has to come back
 /// in for it to recognise its datagram.
 ///
@@ -206,7 +206,7 @@ pub struct Echo {
 /// Read the ICMP message at the start of an IPv4 packet's payload, or `None`
 /// when it is not one this stack can interpret.
 ///
-/// The checksum is verified over the whole message, data included — the one
+/// The checksum is verified over the whole message, data included, the one
 /// check that makes the bytes a packet claims to be the bytes they are.  The
 /// data after the header is the caller's to compare: this function cannot
 /// know what the sender was asked to echo, and a comparison against the
@@ -242,7 +242,7 @@ mod tests {
     /// same seventeen bytes the IPv4 layer's vector ends with, so the two
     /// layers agree on what one packet holds.
     ///
-    /// The checksum is `0xda3d` by hand — the words `0x0800 + 0x0001 + …`
+    /// The checksum is `0xda3d` by hand, the words `0x0800 + 0x0001 + …`
     /// sum to `0x25c2`, and the complement is the field the vector carries.
     const REQUEST: [u8; 17] = [
         0x08, 0x00, 0xda, 0x3d, // type 8, code 0, checksum
@@ -301,18 +301,18 @@ mod tests {
 
     /// A destination-unreachable message about the datagram `udp.rs`'s
     /// vector holds, exactly as a peer writes it: type 3, code 3, four
-    /// unused bytes, and the original datagram — its IPv4 header and its
-    /// UDP header — after them.
+    /// unused bytes, and the original datagram, its IPv4 header and its
+    /// UDP header, after them.
     ///
     /// The checksum is `0x32f0` by hand over the message and its embedded
     /// original together; the embedded header carries its own checksum,
-    /// which this layer does not verify — the error's message is what is
+    /// which this layer does not verify, the error's message is what is
     /// read here, and the embedded bytes are what the caller slices.
     const UNREACHABLE: [u8; 36] = [
         0x03, 0x03, 0x32, 0xf0, // type 3, code 3, checksum
         0x00, 0x00, 0x00, 0x00, // unused
         // The original datagram: an IPv4 header to this stack, then the
-        // refused datagram's own header — source port 40000.
+        // refused datagram's own header, source port 40000.
         0x45, 0x00, 0x00, 0x25, 0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x62, 0xb8, 0x0a, 0x00, 0x02,
         0x02, 0x0a, 0x00, 0x02, 0x0f, 0x9c, 0x40, 0x21, 0xa4, 0x00, 0x11, 0x0c, 0x17,
     ];
@@ -354,7 +354,7 @@ mod tests {
 
     /// An error message quotes the original's header and the first eight
     /// bytes of its payload, and a sender can read its own ports back out of
-    /// the quote — which is the whole reason the RFC requires it.
+    /// the quote, which is the whole reason the RFC requires it.
     #[test]
     fn an_error_quotes_the_datagram_it_is_about() {
         // A minimal original: a twenty-byte IPv4 header and a UDP header.

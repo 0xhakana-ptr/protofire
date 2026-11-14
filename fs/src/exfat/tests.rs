@@ -1,9 +1,9 @@
 //! fs/src/exfat/tests.rs
 //!
 //! The exFAT tests, on a host: a writable volume the test's own builder
-//! makes — boot region with its checksum, FAT, allocation bitmap, up-case
+//! makes, boot region with its checksum, FAT, allocation bitmap, up-case
 //! table, and a root directory whose entry sets name the bitmap and the
-//! table — and the read and write paths exercised against it.
+//! table, and the read and write paths exercised against it.
 
 use alloc::sync::Arc;
 use alloc::vec;
@@ -127,7 +127,7 @@ fn mounted() -> Arc<ExfatVolume> {
     ExfatVolume::open(device).expect("open exFAT volume")
 }
 
-/// A file created, written, and read back — the write path's own proof
+/// A file created, written, and read back, the write path's own proof
 /// through the NoFatChain contiguous stream every new file takes.
 #[test]
 fn a_written_file_reads_back_its_bytes() {
@@ -196,7 +196,7 @@ fn a_removal_takes_the_file() {
 }
 
 /// The volume's mutations beyond the write path answer the read-only
-/// refusals their absence deserves — the check's own sanity pass.
+/// refusals their absence deserves, the check's own sanity pass.
 #[test]
 fn the_check_reports_a_fresh_volume_clean() {
     let volume = mounted();

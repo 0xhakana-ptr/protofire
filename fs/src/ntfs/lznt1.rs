@@ -12,7 +12,7 @@
 //! length *less one*, bit 15 says whether the payload was squeezed, and the
 //! rest is the format's own shape.
 //!
-//! A squeezed payload is a byte of eight **flags** — bit 0 first — each of
+//! A squeezed payload is a byte of eight **flags**, bit 0 first, each of
 //! which says whether the item it introduces is a literal byte or a **pair**:
 //! sixteen bits, little-endian, whose high half is a distance less one and
 //! whose low half is a length less three, with the split between them moving as
@@ -23,8 +23,8 @@
 //! The format is Microsoft's [MS-XCA] specification's LZNT1 variant, and every
 //! constant below is a field the format defines: the unit header's twelve-bit
 //! length and its compression bit, the eight flag bits of a squeezed payload,
-//! and the distance/length split table.  What the specification does not say —
-//! and what this file states for itself — is that a pair may not reach before
+//! and the distance/length split table.  What the specification does not say
+//! and what this file states for itself, is that a pair may not reach before
 //! its unit's start, which is the check [`decompress_unit`] makes.
 //!
 //! [MS-XCA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-xca/
@@ -71,7 +71,7 @@ pub fn is_padding(header: [u8; 2]) -> bool {
 /// unit it held.
 ///
 /// `out` is the unit's room: at most [`UNIT_SIZE`] bytes, and it is where a
-/// pair whose length would run past the unit is cut — the reference truncates
+/// pair whose length would run past the unit is cut, the reference truncates
 /// there too, because a stream's last unit is only as long as the file is.
 pub fn expand(unit: &Unit, payload: &[u8], out: &mut [u8]) -> Result<usize, Error> {
     let room = out.len().min(UNIT_SIZE);
@@ -151,7 +151,7 @@ const HASH: usize = 4096;
 /// how much work one chunk's encoding may cost.
 const CHAIN: usize = 32;
 
-/// Encode one **chunk** of a stream — at most [`UNIT_SIZE`] bytes — and append
+/// Encode one **chunk** of a stream, at most [`UNIT_SIZE`] bytes, and append
 /// it to `sink` as the stream holds it.
 ///
 /// The format has two shapes and this picks between them by what pays: a
@@ -164,7 +164,7 @@ const CHAIN: usize = 32;
 /// The matcher is greedy: at each position the longest match inside the
 /// distance the current output can address, and a literal when there is none
 /// worth having.  A match that is missed writes a bigger chunk, never a wrong
-/// one — the failure direction an encoder wants.
+/// one, the failure direction an encoder wants.
 pub fn compress_unit(input: &[u8], sink: &mut Vec<u8>) -> Result<(), Error> {
     if input.is_empty() || input.len() > UNIT_SIZE {
         return Err(Error::InvalidArgument);
@@ -216,7 +216,7 @@ pub fn compress_unit(input: &[u8], sink: &mut Vec<u8>) -> Result<(), Error> {
         sink.extend_from_slice(&header.to_le_bytes());
         sink.extend_from_slice(&payload);
     } else {
-        // The literal shape: a whole chunk's bytes, whatever the chunk was —
+        // The literal shape: a whole chunk's bytes, whatever the chunk was
         // the format writes them as a chunk's worth.
         sink.extend_from_slice(&0x3FFFu16.to_le_bytes());
         sink.extend_from_slice(input);

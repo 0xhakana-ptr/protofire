@@ -248,8 +248,8 @@ impl PciTransport {
         //
         // So `length` is the region's size, exactly as it is for the other two
         // capabilities, and the multiplier is the dword **after** the
-        // structure.  Reading the multiplier out of `length` — which this
-        // transport did — makes a doorbell land at `off * length`, and with
+        // structure.  Reading the multiplier out of `length`, which this
+        // transport did, makes a doorbell land at `off * length`, and with
         // QEMU's 0x1000-byte notify region that is an address past the mapped
         // BAR: the boot died with `write past the mapped BAR` on the first
         // transmit, after every register had read back what it was written.

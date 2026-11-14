@@ -7,7 +7,7 @@
 //! ## The one reader, three trees
 //!
 //! XFS's long-format B+tree blocks share one header shape whatever they
-//! carry, so one reader — [`BtreeReader64`], over 64-bit keys — collects
+//! carry, so one reader, [`BtreeReader64`], over 64-bit keys, collects
 //! extent records from a BMAP tree, and the directory and attribute trees
 //! walk through the same helpers' node arithmetic.  The short formats
 //! (shortform dirs, shortform attrs) never touch a block and are parsed in
@@ -36,7 +36,7 @@ use super::types::read_be64;
 /// How deep a B+tree walk goes before declaring the metadata cyclic.
 const XFS_BTREE_MAX_DEPTH: usize = 32;
 
-/// Parse BMAP leaf records — twenty-four bytes each — into extents.
+/// Parse BMAP leaf records, twenty-four bytes each, into extents.
 pub(super) fn parse_bmap_leaf(data: &[u8], num_recs: usize) -> Vec<Extent> {
     let mut extents = Vec::with_capacity(num_recs);
     for i in 0..num_recs {
@@ -56,7 +56,7 @@ pub(super) fn parse_bmap_leaf(data: &[u8], num_recs: usize) -> Vec<Extent> {
     extents
 }
 
-/// Parse BMAP internal-node records — sixteen bytes each — into
+/// Parse BMAP internal-node records, sixteen bytes each, into
 /// `(key, child block)` pairs.
 pub(super) fn parse_bmap_internal(data: &[u8], num_recs: usize) -> Vec<(u64, u64)> {
     let mut recs = Vec::with_capacity(num_recs);
@@ -72,12 +72,12 @@ pub(super) fn parse_bmap_internal(data: &[u8], num_recs: usize) -> Vec<(u64, u64
     recs
 }
 
-// ── the directory hash ───────────────────────────────────────────────────
+// the directory hash
 
 /// XFS's directory name hash, the lookup key in the leaf and node formats.
 ///
 /// The arithmetic is the format's own fold: four bits of shift per byte,
-/// with the high nibble folded back in when it overflows — the same
+/// with the high nibble folded back in when it overflows, the same
 /// computation a peer's `mkfs` tool ran when it wrote the leaf entries,
 /// which is why a hash this side computes must match the hash on the wire.
 pub(super) fn xfs_dir_hash(name: &[u8]) -> u32 {
@@ -93,7 +93,7 @@ pub(super) fn xfs_dir_hash(name: &[u8]) -> u32 {
     hash
 }
 
-// ── the 64-bit-key B+tree reader ─────────────────────────────────────────
+// the 64-bit-key B+tree reader
 
 /// A reader for XFS's long-format B+tree blocks, parameterised by the
 /// generation's record offset and magic.
@@ -166,7 +166,7 @@ impl BtreeReader64 {
             let magic = read_be32(&node_buf, 0);
             if magic != self.bmap_magic {
                 // Not a BMAP block of this generation: corruption or another
-                // tree — skipped rather than parsed at the wrong offsets.
+                // tree, skipped rather than parsed at the wrong offsets.
                 continue;
             }
             let level = u16::from_be_bytes([node_buf[4], node_buf[5]]);
@@ -202,9 +202,9 @@ pub(super) fn read_extent_btree(
     reader.collect_extents(buf, fork_off)
 }
 
-// ── directory leaf blocks ────────────────────────────────────────────────
+// directory leaf blocks
 
-/// Parse a leaf block's directory hash entries — eight bytes each:
+/// Parse a leaf block's directory hash entries, eight bytes each:
 /// `(hash, address)`.
 pub(super) fn parse_dir_leaf_entries(data: &[u8], num_entries: usize) -> Vec<(u32, u32)> {
     let mut entries = Vec::with_capacity(num_entries);
@@ -260,7 +260,7 @@ pub(super) fn parse_leaf_dir(data: &[u8]) -> Vec<DirEntry> {
     entries
 }
 
-// ── node-format directories ──────────────────────────────────────────────
+// node-format directories
 
 /// Map a directory logical block number to its physical byte offset,
 /// through the extent list.
@@ -374,7 +374,7 @@ pub(super) fn read_node_dir_entries(
     Ok(entries)
 }
 
-// ── hash-indexed lookup ──────────────────────────────────────────────────
+// hash-indexed lookup
 
 /// Map a directory byte offset to its physical byte offset, through the
 /// extent list.
@@ -396,7 +396,7 @@ fn dir_byte_to_phys(byte_off: u64, extents: &[Extent], bs: u64) -> Option<(u64, 
 /// Look up a name in a leaf-format directory, by hash.
 ///
 /// The leaf entries are sorted by hash, so the binary search lands on the
-/// hash's run and the name comparison walks it — the collision guard: a
+/// hash's run and the name comparison walks it, the collision guard: a
 /// hash match alone would answer the wrong file.
 pub(super) fn lookup_leaf_dir_by_hash(
     device: &Arc<dyn BlockDevice>,
@@ -449,7 +449,7 @@ pub(super) fn lookup_leaf_dir_by_hash(
                     pos += 1;
                 }
             }
-            // The LEAF1 block was found and searched — done either way.
+            // The LEAF1 block was found and searched, done either way.
             return Ok(None);
         }
     }
@@ -539,7 +539,7 @@ pub(super) fn lookup_node_dir_by_hash(
     }
 }
 
-// ── extended attributes ──────────────────────────────────────────────────
+// extended attributes
 
 /// Parse shortform (inline) attribute entries from the attribute fork.
 pub(super) fn parse_attr_sf_entries(
@@ -666,7 +666,7 @@ pub(super) fn walk_attr_tree(
     Ok(result)
 }
 
-// ── raw byte I/O ─────────────────────────────────────────────────────────
+// raw byte I/O
 
 /// Read `buf.len()` bytes at a byte offset, through whatever device sectors
 /// the offset spans.

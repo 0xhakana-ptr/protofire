@@ -1,8 +1,8 @@
 //! fs/src/xfs/tests.rs
 //!
-//! The XFS tests, on a host: a minimal v4 volume built by hand — the same
+//! The XFS tests, on a host: a minimal v4 volume built by hand, the same
 //! on-disk serialisation the format's own `mkfs` writes, laid out so every
-//! field the driver reads is real — and the read paths exercised against
+//! field the driver reads is real, and the read paths exercised against
 //! it: lookup, listing, extent-file reads, inline reads, symlinks, and the
 //! name-hash lookup the leaf format answers by.
 //!
@@ -93,7 +93,7 @@ fn build_test_image() -> Vec<u8> {
     const TOTAL_BLOCKS: usize = 128;
     let mut img = vec![0_u8; TOTAL_BLOCKS * BLOCK_SIZE];
 
-    // ── the superblock, at byte zero ─────────────────────────────────────
+    // the superblock, at byte zero
     put_be32(&mut img, 0, 0x5846_5342); // magic "XFSB"
     put_be32(&mut img, 4, BLOCK_SIZE as u32);
     put_be64(&mut img, 8, ROOT_INO);
@@ -103,7 +103,7 @@ fn build_test_image() -> Vec<u8> {
     put_be16(&mut img, 102, (BLOCK_SIZE / INODE_SIZE) as u16);
     put_be32(&mut img, 120, 512); // sector size
 
-    // ── the root directory: shortform, naming hello.txt and link ─────────
+    // the root directory: shortform, naming hello.txt and link
     let root_off = inode_byte_offset(ROOT_INO) as usize;
     put_inode_core(&mut img, root_off, 0o040755, 0 /* LOCAL */, 64, 0);
     // The shortform entries, at the data fork: parent ino, count, pad,
@@ -126,7 +126,7 @@ fn build_test_image() -> Vec<u8> {
     pos += 8;
     img[pos..pos + 4].copy_from_slice(b"link");
 
-    // ── the file: extent-mapped, one extent naming the payload block ─────
+    // the file: extent-mapped, one extent naming the payload block
     let file_off = inode_byte_offset(FILE_INO) as usize;
     put_inode_core(
         &mut img,
@@ -144,7 +144,7 @@ fn build_test_image() -> Vec<u8> {
     put_be32(&mut img, fork + 8, DATA_BLOCK); // start block
     put_be32(&mut img, fork + 12, 1); // block count
 
-    // ── the symlink: local format, the target in the data fork ───────────
+    // the symlink: local format, the target in the data fork
     let link_off = inode_byte_offset(LINK_INO) as usize;
     put_inode_core(
         &mut img,
@@ -157,7 +157,7 @@ fn build_test_image() -> Vec<u8> {
     let fork = link_off + 100;
     img[fork..fork + LINK_TARGET.len()].copy_from_slice(LINK_TARGET);
 
-    // ── the payload block ────────────────────────────────────────────────
+    // the payload block
     let data_off = DATA_BLOCK as usize * BLOCK_SIZE;
     img[data_off..data_off + PAYLOAD.len()].copy_from_slice(PAYLOAD);
 
@@ -260,7 +260,7 @@ fn a_missing_name_answers_not_found() {
 }
 
 /// The volume's mutations answer `PermissionDenied` through the blanket
-/// read-only implementation — there is nowhere to forget one.
+/// read-only implementation, there is nowhere to forget one.
 #[test]
 fn the_mutations_are_refused_by_the_read_only_half() {
     let volume = mounted();

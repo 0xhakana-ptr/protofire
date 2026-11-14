@@ -122,8 +122,8 @@ pub fn halt() -> ! {
 /// It was a `wfi`, on the argument that an interrupt is the one thing an idle
 /// core waits for and the timer supplies it.  Measured on a failing boot, that
 /// argument does not hold for a started core.  A core parked in `wfi` with `I`
-/// clear was found by QEMU's monitor with `PSTATE` `0x80002345` — IRQs
-/// unmasked — and it never moved again; the boot ended `ended without
+/// clear was found by QEMU's monitor with `PSTATE` `0x80002345`, IRQs
+/// unmasked, and it never moved again; the boot ended `ended without
 /// confirmation from 1 cpu(s)`.  Re-measured for this change, a started core
 /// with `wfi` in this position was stuck in **22 boots of 40**, and the same
 /// image with a bounded spin in its place ended clean in 40 of 40.
@@ -132,8 +132,8 @@ pub fn halt() -> ! {
 /// timer", and it was read that way for two sessions.  It was a symptom, not a
 /// cause: `GICD_ISPENDR0` showed no bit 30 because the distributor could not
 /// *forward* the line while the core's CPU interface had a higher-priority
-/// interrupt active.  The SGI's priority was never written — `IPRIORITYR`
-/// resets to zero, the highest — so one un-finished software interrupt blocked
+/// interrupt active.  The SGI's priority was never written, `IPRIORITYR`
+/// resets to zero, the highest, so one un-finished software interrupt blocked
 /// the timer.  See `gic.rs`'s [`SOFTWARE_PRIORITY`] for the trace and the
 /// measurement.
 ///
@@ -141,8 +141,8 @@ pub fn halt() -> ! {
 /// event register is set by a `sev` from any core in the system and is
 /// untouched by the interrupt controller, and a core that waits on it returns
 /// the moment another core says the world changed.  This kernel's inter-CPU
-/// wake is exactly that statement — [`send_ipi_to_others`] raises the SGI *and*
-/// issues `sev` — so a park ends on a call this kernel makes rather than on a
+/// wake is exactly that statement, [`send_ipi_to_others`] raises the SGI *and*
+/// issues `sev`, so a park ends on a call this kernel makes rather than on a
 /// line it hopes the controller delivers.  That is the property a park wants
 /// even when every priority is right.
 ///
@@ -255,7 +255,7 @@ pub unsafe fn message_frame() -> Option<gicv2m::Frame> {
 /// `None`, and that is a scoping statement rather than a claim that this
 /// machine cannot receive a message: the GICv2m frame is a window a device's
 /// write reaches, but its SPI range is allocated by the frame's `MSI_TYPER` and
-/// its data word carries the SPI — a different message protocol from the
+/// its data word carries the SPI, a different message protocol from the
 /// IMSIC's bare identity, and one no device in this tree is wired to yet.
 /// Wiring it is its own change, with its own boot evidence.
 ///
@@ -773,13 +773,13 @@ pub unsafe fn send_ipi_to_others() -> bool {
     // The SGI is the interrupt; `sev` is the event.  A core parked in
     // `wait_for_a_wakeup` waits on `wfe`, and measured, a `wfi` in that place
     // left a started core parked in 22 boots of 40 while `wfe` finished 40 of
-    // 40 — a core whose timer had stopped being delivered.  The cause found
+    // 40, a core whose timer had stopped being delivered.  The cause found
     // later is in `gic.rs`: a software interrupt at the reset priority of zero
     // outranked the timer and, once acknowledged without a finish, blocked the
     // core's whole interrupt path.  `wfe` is kept because it does not depend on
     // any interrupt arriving at all, which is the property a park wants.  `wfe`
     // returns for an event rather than for an interrupt, and `sev` is what sets
-    // one on every core in the system — so this call is the *only* thing that
+    // one on every core in the system, so this call is the *only* thing that
     // ends a parked core's wait, and it has to do both halves.
     //
     // SAFETY: the controller was installed before any core started, both

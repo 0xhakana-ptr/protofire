@@ -33,7 +33,7 @@ pub(crate) enum Machine {
     /// what it is: the hardware description is part of what a boot is checked
     /// against, and a gate that could be pointed somewhere else by the
     /// environment is a gate whose evidence depends on the caller.  The image
-    /// is `Riscv64`'s — the kernel learns which controller it has from the
+    /// is `Riscv64`'s, the kernel learns which controller it has from the
     /// device tree, which is the property this machine is here to exercise.
     #[value(name = "riscv64-aia")]
     Riscv64Aia,
@@ -89,8 +89,8 @@ impl Machine {
         vec![
             "-netdev".to_string(),
             // **Not `ipv6=on`.**  Measured: turning it on makes slirp stop
-            // answering IPv4 ARP, and the boot's whole network chain — the
-            // ARP exchange, the ping, the datagram — goes silent while the
+            // answering IPv4 ARP, and the boot's whole network chain, the
+            // ARP exchange, the ping, the datagram, goes silent while the
             // boot still exits zero.  The IPv6 exchange this tree proves is
             // a loopback through the receive path's own demux, which needs
             // nothing from the emulated network; a card option that costs
@@ -190,7 +190,7 @@ impl Machine {
                 // point: the same image, the same firmware, the same disk.  A
                 // tree that names an APLIC and an IMSIC makes this kernel find
                 // and drive them, and a tree that names a PLIC makes it find
-                // that instead — the property under test, and the reason the
+                // that instead, the property under test, and the reason the
                 // variant is a machine rather than a knob the environment sets.
                 let machine = match self {
                     Self::Riscv64Aia => "virt,aia=aplic-imsic",

@@ -10,7 +10,7 @@
 //! offloads and does not ask for `MRG_RXBUF`.
 //!
 //! QEMU's virtio-net uses **twelve regardless**.  Measured: with the ten-byte
-//! header the card sent the guest's frames starting two bytes late — a probe
+//! header the card sent the guest's frames starting two bytes late, a probe
 //! that filled the frame with its own byte indices had the wire carry
 //! `2, 3, 4, …`, so the device had skipped twelve bytes of a buffer whose
 //! header the driver had written as ten.  Two more probes pinned it: a header
@@ -69,7 +69,7 @@ pub static PLAIN: [u8; HEADER_LEN] = [0; HEADER_LEN];
 ///
 /// Checked on every received frame rather than assumed.  A device that set a
 /// flag here applied an offload the driver did not negotiate, and the bytes
-/// after the header are then not the frame they look like — a checksum the
+/// after the header are then not the frame they look like, a checksum the
 /// driver would take as the sender's, a segment boundary that does not exist.
 /// A driver that ignored the field would hand those bytes up as a frame.
 pub fn is_plain(header: &[u8]) -> bool {

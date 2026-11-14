@@ -1,7 +1,7 @@
 //! apps/init/src/main.rs
 //!
 //! `init`: the first program the kernel execs from its own filesystem, in
-//! ring 3 — a **compiled** program, not machine code the boot copies from an
+//! ring 3, a **compiled** program, not machine code the boot copies from an
 //! array.
 //!
 //! ## What it does, and why that
@@ -19,7 +19,7 @@
 //! open and stat *relative to* that directory, list the directory, rename
 //! the file, and remove a file it made for the purpose.  Every one of those
 //! is a call this kernel serves, and the kernel prints its own line beside
-//! each answer — a program here cannot print a value, so the boot log is
+//! each answer, a program here cannot print a value, so the boot log is
 //! where the evidence lives.
 //!
 //! ## Ring 3, and where the wrappers live
@@ -207,7 +207,7 @@ pub extern "C" fn _start() -> ! {
     // The greeting read, and the exit status it decides.
     //
     // The path's address is this image's own `.rodata`, at the address the
-    // linker fixed — the loader maps the segments at their linked addresses,
+    // linker fixed, the loader maps the segments at their linked addresses,
     // which is why the constant is the truth and not a guess.
     let first = read_first_byte(
         insist(sys_open(GREETING_PATH.as_ptr() as usize, OPEN_READ)),
@@ -238,7 +238,7 @@ pub extern "C" fn _start() -> ! {
     // The anchor: an open of `/tmp` itself, held for the whole program.
     //
     // Every name below is relative to it, which is what makes the `*At`
-    // calls' evidence lines name a descriptor — the kernel's proof that the
+    // calls' evidence lines name a descriptor, the kernel's proof that the
     // path was resolved against where the caller was, not against a root
     // the caller happened to share.
     let tmp = insist(sys_open_at(
@@ -284,7 +284,7 @@ pub extern "C" fn _start() -> ! {
     insist(sys_create_dir_at(tmp, NOTES_NAME.as_ptr() as usize));
     let notes = insist(sys_open_at(tmp, NOTES_NAME.as_ptr() as usize, OPEN_READ));
 
-    // A name inside it, relative to *that* descriptor — two anchors deep.
+    // A name inside it, relative to *that* descriptor, two anchors deep.
     let anchored = insist(sys_open_at(
         notes,
         ANCHORED_NAME.as_ptr() as usize,
@@ -305,7 +305,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     // The listing: one entry of the directory, by index, parsed the way the
-    // ABI's record says — four words, then the name where the third word
+    // ABI's record says, four words, then the name where the third word
     // points.
     let mut entry = [0u8; 64];
     let written = insist(sys_read_dir(NOTES_DIR.as_ptr() as usize, 0, &mut entry));
@@ -314,10 +314,10 @@ pub extern "C" fn _start() -> ! {
     }
 
     // The rename, each side anchored at the `/tmp` descriptor: both names
-    // resolve into the same filesystem, which is what a rename requires —
+    // resolve into the same filesystem, which is what a rename requires
     // one that crossed volumes would be a copy and a delete, and this
     // kernel refuses that rather than approximating it.  Then the read back
-    // under the new name — the bytes moved with it.
+    // under the new name, the bytes moved with it.
     insist(sys_rename_at(
         tmp,
         NOTE_NAME.as_ptr() as usize,
@@ -355,15 +355,15 @@ pub extern "C" fn _start() -> ! {
 
     // The spawn, and the wait that supervises it: this process starts the
     // tree's second program, and its own exit waits for the child's.  The
-    // child's status is the greeting's length — a number that is only on
+    // child's status is the greeting's length, a number that is only on
     // the wire because the kernel loaded a second image from the filesystem
     // and ran it, which is the whole of what this pair of calls proves.
     let shell = insist(sys_spawn(SHELL_PATH.as_ptr() as usize));
 
     // The signal: the child arms its own handler, announces itself, and
-    // spins for the delivery.  This process's part is the **send** — the
+    // spins for the delivery.  This process's part is the **send**, the
     // payload names the delivery, "ID", and the child's handler checks it
-    // before counting it — and the wait for the child's exit is the proof
+    // before counting it, and the wait for the child's exit is the proof
     // the delivery landed: a handler that never ran leaves a child that
     // never stops spinning.
     let mut record = [0u8; 24];
@@ -379,7 +379,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     // The mask: the same exchange under a blocked signal.  The child's
-    // announcement queues — this process's wait would skip it — and the
+    // announcement queues, this process's wait would skip it, and the
     // suspend runs the ring with everything unblocked, answers with the
     // queued record, and puts this process's mask back.  The delivery and
     // the exit follow as they did above.
@@ -408,8 +408,8 @@ pub extern "C" fn _start() -> ! {
     //
     // The clock is checked for the two things a monotonic reading must have:
     // it is a number (the call answered), and two readings taken across work
-    // do not go backwards.  The *gap* is not asserted — an emulator can hand
-    // out the same reading twice in a row and that is not a defect — so the
+    // do not go backwards.  The *gap* is not asserted, an emulator can hand
+    // out the same reading twice in a row and that is not a defect, so the
     // claim is the weaker, true one.
     let mut time = [0u8; user_abi::TIME_RECORD_BYTES];
     insist(sys_get_time_of_day(CLOCK_MONOTONIC, &mut time));
@@ -466,7 +466,7 @@ pub extern "C" fn _start() -> ! {
     // The network: what this machine's card is, read from the record the
     // kernel filled.  The checks are the ones a program can make without
     // knowing the wire: a card the kernel drives, and three addresses that
-    // are not the zeros a boot with no card would have left behind — the
+    // are not the zeros a boot with no card would have left behind, the
     // values themselves are the kernel's line to print, because a program
     // here cannot.
     let mut network = [0u8; user_abi::NETWORK_STATUS_BYTES];
@@ -482,7 +482,7 @@ pub extern "C" fn _start() -> ! {
 
     // The IPv6 side, read the same way: the interface must report an address
     // family whose link-local address is `fe80::` plus the MAC's own
-    // modified EUI-64 — the one fact a program can check without the wire,
+    // modified EUI-64, the one fact a program can check without the wire,
     // and the one that says the address was derived from this card rather
     // than copied from somewhere.  A boot whose IPv6 side answered nothing
     // exits here rather than letting the IPv4 lines stand in for it.
@@ -513,14 +513,14 @@ pub extern "C" fn _start() -> ! {
     // parent binds a port and receives; the child binds another, sends one
     // datagram to the parent's port, and exits with the length it sent as
     // its status.  A datagram to this machine's own address is delivered
-    // through the kernel's demux — which is what loopback is — so the
+    // through the kernel's demux, which is what loopback is, so the
     // exchange proves the bind, the send, the receive, and the port the
     // sender record names, all from ring 3.
     let socket = insist(sys_bind_udp(8612));
     let child = insist(sys_fork());
     if child == 0 {
         // The child's side: bind the port the parent's record will name,
-        // send the one datagram, and its status is the length it sent — a
+        // send the one datagram, and its status is the length it sent, a
         // number only a completed send could have answered with.
         let mine = insist(sys_bind_udp(8613));
         let sent = insist(sys_send_to_udp(
@@ -554,7 +554,7 @@ pub extern "C" fn _start() -> ! {
 
     // The stream exchange, the same two processes the datagram exchange
     // used: this process listens on a port and accepts; the fork connects,
-    // writes its nine bytes, and reads the echo back — the child's own read
+    // writes its nine bytes, and reads the echo back, the child's own read
     // parks until this process's echo arrives, which is the wake the
     // stream's write makes.  The child's exit status is the echo's first
     // byte, which only a completed round trip could have carried.

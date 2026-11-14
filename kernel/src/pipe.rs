@@ -43,7 +43,7 @@ use ipc::ByteRing;
 /// taken back by dropping it.  The invariant that holds everywhere is one
 /// count per live handle of that kind, which is what makes the zero real:
 /// zero writers is end-of-file, and a pipe that says one writer has one.
-/// Counting from one at creation instead — the first version — made a second
+/// Counting from one at creation instead, the first version, made a second
 /// `End::writer` a handle the counts never saw, and its drop a close of an
 /// end that was still held.
 pub struct Pipe {
@@ -110,7 +110,7 @@ impl Pipe {
         // CPU is serving the call that made the handle go, so two CPUs can
         // take the last two handles at once, and a load-then-store would lose
         // one of the two decrements and leave a count that names a handle
-        // nothing holds — end-of-file that never arrives, the very bug the
+        // nothing holds, end-of-file that never arrives, the very bug the
         // saturation here exists to refuse.
         //
         // `checked_sub` answering `None` at zero is the saturation: a handle
@@ -153,8 +153,8 @@ impl Pipe {
 /// is on.  A task's descriptor table holds these, and a dropped handle is a
 /// closed end: [`Drop`] takes the pipe's count of live handles of that kind
 /// down by one, and the drop of the last write handle is what makes a reader
-/// see end-of-file.  That is the whole of what a `Close` has to do — the
-/// descriptor's slot goes and the handle inside it drops — and it is why a
+/// see end-of-file.  That is the whole of what a `Close` has to do, the
+/// descriptor's slot goes and the handle inside it drops, and it is why a
 /// temporary clone, which every lookup through the table is, can borrow a
 /// handle for the length of a call without closing anything.
 pub struct End {
@@ -208,7 +208,7 @@ impl Clone for End {
 impl Drop for End {
     /// Dropping a handle is closing it.
     ///
-    /// One increment per handle — the constructors' and the clone's — and one
+    /// One increment per handle, the constructors' and the clone's, and one
     /// decrement here is the whole accounting.  It is what the descriptor
     /// table's `Close` has always promised: the slot goes, the handle inside
     /// it drops, and the drop is what moves the count a reader's end-of-file
@@ -237,7 +237,7 @@ impl End {
     /// One write handle on `pipe`.
     ///
     /// The handle counts itself: the pipe's writer count goes up by one here,
-    /// and back down when this `End` drops — which is the one thing that can
+    /// and back down when this `End` drops, which is the one thing that can
     /// bring a reader's end-of-file about.
     pub fn writer(pipe: Arc<Pipe>) -> End {
         pipe.add_writer();
@@ -305,7 +305,7 @@ impl End {
 // the registry's table, beside the open files, under **one** numbering.  The
 // first version had a table here, indexed from zero exactly as the
 // registry's was, and the two tables answering the same descriptor number
-// with two different things was an ambiguity a caller could not resolve — a
+// with two different things was an ambiguity a caller could not resolve, a
 // `Read` of descriptor 0 was a pipe read if a pipe had been made first and a
 // file read otherwise, which is not a rule, it is an accident of ordering.
 // The table is `syscall`'s now, and this module keeps the pipe half: the
@@ -313,8 +313,8 @@ impl End {
 //
 // The registry's own lock is what makes `attach` and `lookup` one object
 // across CPUs, and it is never held across a blocking operation: a caller
-// that is about to block clones the `End` first — the `Arc` inside is what
-// keeps the pipe alive while the borrow is out — and releases the lock
+// that is about to block clones the `End` first, the `Arc` inside is what
+// keeps the pipe alive while the borrow is out, and releases the lock
 // before it does.
 
 /// Register one end of a pipe and answer its descriptor.
@@ -486,8 +486,8 @@ mod tests {
 
     /// A clone keeps the end open after the original handle is gone.
     ///
-    /// The counts are per handle: a temporary clone — which is what every
-    /// lookup through the descriptor table is — raises the count while it lives
+    /// The counts are per handle: a temporary clone, which is what every
+    /// lookup through the descriptor table is, raises the count while it lives
     /// and lowers it when it drops, and the pipe stays open underneath.  A drop
     /// of one handle closing an end another handle still names would be
     /// end-of-file announced by a borrow going out of scope.

@@ -7,7 +7,7 @@
 //!
 //! `docs/fmts/syscall-abi.md` §8 records the convention and the reason: a
 //! program carries no kernel crate, so without a crate both sides compile
-//! against, every program spells the gate itself — and two programs that each
+//! against, every program spells the gate itself, and two programs that each
 //! spell it are two places for one fact to drift.  This is that crate.
 //!
 //! ## Where the numbering lives
@@ -15,18 +15,18 @@
 //! In `abi`, beside the records and the flags it names with it.  The numbers
 //! are the one thing of this tree both sides of the privilege boundary name,
 //! and this tree's `abi` carries nothing of the kernel that a program would
-//! inherit by naming it — so every constant here is derived from abi's own
+//! inherit by naming it, so every constant here is derived from abi's own
 //! value, and a number that moves in `abi` breaks this crate's build instead
 //! of drifting until a host test notices.  (The literal copy this crate used
-//! to carry, and its justification — "a program compiles against the
-//! numbering, not against the kernel's `abi` crate" — were the previous
+//! to carry, and its justification, "a program compiles against the
+//! numbering, not against the kernel's `abi` crate", were the previous
 //! tree's, where `abi` did carry the kernel.)  The call-site names stay this
 //! crate's: a program writes `SYS_OPEN`, and the enum keeps the wire's own
 //! spelling.
 //!
 //! ## The shape
 //!
-//! One gate per machine — six argument words in, one answer out — plus the
+//! One gate per machine, six argument words in, one answer out, plus the
 //! `exit` that does not return: two pieces of assembly each, and every
 //! operation above them is a machine-independent wrapper that names the
 //! number and packs the slots.  A new architecture teaches this crate two
@@ -138,8 +138,8 @@ pub const SYSTEM_INFO_BYTES: usize = core::mem::size_of::<abi::SystemInfo>();
 pub const TIME_RECORD_BYTES: usize = core::mem::size_of::<abi::time::TimeRecord>();
 
 // The flags and values the wrappers' callers pass, taken from `abi` where abi
-// names them.  `MMAP_BYTES` is the one literal: it is a call-site convenience —
-// one page, the smallest mapping worth asking for — and not a wire value.
+// names them.  `MMAP_BYTES` is the one literal: it is a call-site convenience
+// one page, the smallest mapping worth asking for, and not a wire value.
 
 /// Open for reading only.
 pub const OPEN_READ: usize = abi::fs::OPEN_FLAG_READ;
@@ -157,7 +157,7 @@ pub use abi::fs::AT_FDCWD;
 
 // The gate, one per machine.
 //
-// Six argument words in, one answer out — the whole of the ABI's calling
+// Six argument words in, one answer out, the whole of the ABI's calling
 // convention, which is why there is one of these and not one per operation.
 
 /// The call gate: `int 0x80`, arguments in `rdi`..`r9`, answer in `rax`.
@@ -185,7 +185,7 @@ pub fn syscall6(
             // tree's call gate is the interrupt, and the trap entry reads the
             // six words from `rdi, rsi, rdx, rcx, r8, r9`.  Writing `r10` put
             // the flags where nothing reads them, and every call was refused
-            // as `InvalidArgument` — measured, both calls answered `-1` on
+            // as `InvalidArgument`, measured, both calls answered `-1` on
             // x86_64 while the other two machines were fine.
             in("rcx") a3 as u64,
             in("r8") a4 as u64,
@@ -351,7 +351,7 @@ pub fn sys_close(descriptor: usize) -> usize {
 /// `stat(path, record)`: zero, with the record filled.
 ///
 /// The record is the ABI's `FileStat`: kind in the first word, size in the
-/// second, little-endian — [`stat_words`] is the read-back side of that.
+/// second, little-endian, [`stat_words`] is the read-back side of that.
 #[cfg(target_os = "none")]
 pub fn sys_stat(path: usize, record: &mut [u8; 16]) -> usize {
     syscall6(
@@ -436,7 +436,7 @@ pub fn sys_send_signal(pid: usize, signal: usize, payload: usize) -> usize {
     syscall6(SYS_SEND_SIGNAL, pid, signal, payload, 0, 0, 0)
 }
 
-/// `wait_signal(record)`: zero, with the record filled — the signal, its
+/// `wait_signal(record)`: zero, with the record filled, the signal, its
 /// sender, and the sender's payload.  Blocks until a signal arrives.
 #[cfg(target_os = "none")]
 pub fn sys_wait_signal(record: &mut [u8; 24]) -> usize {
@@ -457,7 +457,7 @@ pub fn sys_set_signal_mask(mask: usize) -> usize {
     syscall6(SYS_SET_SIGNAL_MASK, mask, 0, 0, 0, 0, 0)
 }
 
-/// `sigsuspend(mask, record)`: zero, with the record filled — an unblocked
+/// `sigsuspend(mask, record)`: zero, with the record filled, an unblocked
 /// signal that arrived under the mask, with the previous mask put back.
 #[cfg(target_os = "none")]
 pub fn sys_sigsuspend(mask: usize, record: &mut [u8; 24]) -> usize {
@@ -601,7 +601,7 @@ pub fn sys_abi_info(record: &mut [u8; ABI_INFO_BYTES]) -> usize {
     )
 }
 
-/// `network_status(record)`: zero, with the record filled — whether a card
+/// `network_status(record)`: zero, with the record filled, whether a card
 /// is up, and the addresses it answers for.
 #[cfg(target_os = "none")]
 pub fn sys_network_status(record: &mut [u8; NETWORK_STATUS_BYTES]) -> usize {
@@ -616,7 +616,7 @@ pub fn sys_network_status(record: &mut [u8; NETWORK_STATUS_BYTES]) -> usize {
     )
 }
 
-/// `ipv6_status(record)`: zero, with the record filled — the interface's
+/// `ipv6_status(record)`: zero, with the record filled, the interface's
 /// link-local address, whether a router configured a global one, and how
 /// many neighbours its cache holds.
 #[cfg(target_os = "none")]
@@ -641,8 +641,8 @@ pub fn sys_bind_udp(port: usize) -> usize {
 /// `send_to_udp(descriptor, destination, buffer, port)`: the bytes accepted.
 ///
 /// The destination is four bytes packed into one word by
-/// [`user_abi::pack_address`](abi::network::pack_address) — the wire's own
-/// byte order — because a syscall argument is a word, and an address that
+/// [`user_abi::pack_address`](abi::network::pack_address), the wire's own
+/// byte order, because a syscall argument is a word, and an address that
 /// crossed as a pointer would be an address this program has no reason to
 /// hold.
 #[cfg(target_os = "none")]
@@ -883,7 +883,7 @@ pub fn abi_words(record: &[u8; ABI_INFO_BYTES]) -> (usize, usize, usize) {
 /// Whether a syscall's answer is the ABI's error encoding.
 ///
 /// The ABI encodes an error as a word with its high bit set, which is the one
-/// test a program needs: a successful answer is a small positive number — a
+/// test a program needs: a successful answer is a small positive number, a
 /// descriptor, a count, an address inside the user window.
 #[cfg(target_os = "none")]
 pub const fn is_error(answer: usize) -> bool {
@@ -893,7 +893,7 @@ pub const fn is_error(answer: usize) -> bool {
 /// End the program because a step did not do what it was told.
 ///
 /// Any answer the caller cannot use ends it here, with a status the boot's
-/// exit line shows as not the program's ordinary byte — which is how a
+/// exit line shows as not the program's ordinary byte, which is how a
 /// broken step turns the gate red instead of the program printing something
 /// plausible and carrying on over a hole.  Which step broke is the kernel
 /// log's to say: every call's answer is printed beside the mechanism that
@@ -907,7 +907,7 @@ pub fn insist(answer: usize) -> usize {
 }
 
 /// The three words of a filled `ProcessSignalRecord`: the signal, its
-/// sender, and the sender's payload — the read-back side of what
+/// sender, and the sender's payload, the read-back side of what
 /// `wait_signal` fills.
 #[cfg(target_os = "none")]
 pub fn signal_words(record: &[u8; 24]) -> (usize, usize, usize) {
@@ -943,8 +943,8 @@ mod tests {
     //!
     //! Deriving the constants from `abi` makes a rename there a compile error
     //! here; what a derivation cannot pin is the *value*.  A number a program
-    //! hard-codes is a number these constants have to keep being — the frozen
-    //! range's own rule, `0..=120` (`docs/fmts/syscall-abi.md`) — and these
+    //! hard-codes is a number these constants have to keep being, the frozen
+    //! range's own rule, `0..=120` (`docs/fmts/syscall-abi.md`), and these
     //! literals are the guard.  `cargo test -p user_abi` runs them on a host,
     //! with no kernel involved.
 

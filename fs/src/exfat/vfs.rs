@@ -419,7 +419,7 @@ impl crate::filesystem::FileSystem for ExfatVolume {
             let target_cluster = *chain.get(cluster_off).ok_or(Error::OutOfMemory)?;
             let lba = fs.boot.cluster_to_lba(target_cluster);
 
-            // The file entry loses its in-use bit — the deletion this
+            // The file entry loses its in-use bit, the deletion this
             // format expresses.
             let byte_pos = intra_off;
             let sector = byte_pos / 512;

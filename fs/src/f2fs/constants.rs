@@ -1,7 +1,7 @@
 //! fs/src/f2fs/constants.rs
 //!
 //! f2fs's on-disk constants: the superblock's field offsets, the inode's
-//! contiguous layout, and the structural numbers the format fixes —
+//! contiguous layout, and the structural numbers the format fixes
 //! segment geometry, the NAT's entry size, the root's node id, and the two
 //! sentinel block addresses a hole and a fresh allocation read as.
 

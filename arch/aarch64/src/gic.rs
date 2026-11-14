@@ -83,7 +83,7 @@ pub const DEVICE_PRIORITY: u8 = 0x80;
 /// *highest* priority a GIC has.  Nothing in this tree ever wrote a priority
 /// for an SGI, because `enable_interrupt` refuses one: the low sixteen bits of
 /// `ISENABLER0` are read-only and an SGI is always enabled.  So every
-/// inter-processor interrupt ran at priority zero — above the timer's `0x80` —
+/// inter-processor interrupt ran at priority zero, above the timer's `0x80`
 /// and a GIC keeps a CPU interface's *running* priority at the value of the
 /// interrupt it has acknowledged until that interrupt is finished.
 ///
@@ -94,7 +94,7 @@ pub const DEVICE_PRIORITY: u8 = 0x80;
 /// - the started core's last acknowledge was `irq 0`, and no `EOIR` write for
 ///   it followed, so the SGI stayed **active**;
 /// - every later `gic_update_bestirq` for that core read `irq 30 priority 128
-///   ... running priority 0` — the distributor knew the timer was pending and
+///   ... running priority 0`, the distributor knew the timer was pending and
 ///   could not hand it over, because a priority-128 line cannot preempt a
 ///   running priority of 0;
 /// - the core's exception log recorded **no exception at all** after that
@@ -365,7 +365,7 @@ impl Gic {
     /// [`enable_interrupt`](Self::enable_interrupt) never routes one and its
     /// priority is never written by that path.  The reset value is **zero**,
     /// which is the highest priority a GIC has, and a software interrupt at
-    /// zero outranks the timer's `0x80` — see [`SOFTWARE_PRIORITY`] for the
+    /// zero outranks the timer's `0x80`, see [`SOFTWARE_PRIORITY`] for the
     /// stalled boot that measured what that costs.
     ///
     /// Writing all sixteen rather than the two this kernel raises is
@@ -466,7 +466,7 @@ impl Gic {
             // is wrong for this line: `CNTP_CTL_EL0.ISTATUS` stays set until
             // the timer is reprogrammed, so the line is asserted for as long as
             // the interrupt is outstanding.  An edge-configured PPI drops an
-            // assertion that was already high when it was enabled — which is
+            // assertion that was already high when it was enabled, which is
             // exactly the state a core that arms its timer and then enables the
             // line is in.
             //
@@ -476,8 +476,8 @@ impl Gic {
             // forty.  With level it took 218 to 319 a boot, and every one of
             // the boot's scheduler waits got the clock it was written for.
             //
-            // A software interrupt has no trigger configuration — `ICFGR`'s
-            // bits for 0..15 are read-only — so writing the field for one is
+            // A software interrupt has no trigger configuration, `ICFGR`'s
+            // bits for 0..15 are read-only, so writing the field for one is
             // harmless, and this function's other caller is the self-test's
             // SGI.
             let config = self.distributor.array_address(DIST_ICFGR, number, 16);
@@ -665,8 +665,8 @@ impl Gic {
 /// Bit 0 is `EnableGrp0` and bit 1 is `EnableGrp1`, and they are separate
 /// switches over separate groups of interrupts.  Both are set because this
 /// kernel's lines do not all live in one group: a device's line is group 1, the
-/// non-secure group, and a private line is group 0 — that measurement is at the
-/// group write in this file's private-interrupt enable path — so an interface
+/// non-secure group, and a private line is group 0, that measurement is at the
+/// group write in this file's private-interrupt enable path, so an interface
 /// enabled for one group would deliver half of what is enabled.
 ///
 /// The symptom of getting it wrong is exact and was lived through here:
@@ -674,7 +674,7 @@ impl Gic {
 /// `GICD_ISENABLER0` showed it enabled, and the CPU took no interrupt, because
 /// the one register that gates delivery of that group was off.  That paragraph
 /// said "group 1 only" until the private-interrupt path was measured to be in
-/// group 0; the conclusion — enable both — did not change, but the reason a
+/// group 0; the conclusion, enable both, did not change, but the reason a
 /// reader would carry away did.
 pub const CPU_CTLR_ENABLE: u32 = 0b11;
 
@@ -694,7 +694,7 @@ mod tests {
     /// interrupt it has acknowledged until that interrupt is finished, and it
     /// will not hand over a line of equal or higher priority.  `IPRIORITYR`
     /// resets to **zero**, and zero is the highest priority, so an SGI whose
-    /// priority nobody wrote runs above the timer's `0x80` — which is exactly
+    /// priority nobody wrote runs above the timer's `0x80`, which is exactly
     /// how a started core's clock stopped on QEMU's GICv2: one unwritten SGI
     /// priority, one un-EOI'd acknowledge, and `gic_update_bestirq` then
     /// reporting `irq 30 priority 128 ... running priority 0` for ever.
@@ -705,8 +705,8 @@ mod tests {
     /// The ordering is a **compile-time** relation, not a test's opinion.
     ///
     /// Two constants are known when this crate is compiled, so the check
-    /// belongs in a `const` block: a change that inverted the ordering — the
-    /// wedge this fix closes — would fail the build instead of surviving until
+    /// belongs in a `const` block: a change that inverted the ordering, the
+    /// wedge this fix closes, would fail the build instead of surviving until
     /// someone ran the tests.  The test below only has to exist so the relation
     /// is named somewhere a reader looks.
     const _: () = assert!(
@@ -726,7 +726,7 @@ mod tests {
     /// the constants beside it.  Three properties, and each is a way the fix
     /// could be undone:
     ///
-    /// 1. Every byte of the word is the software priority — a partially filled
+    /// 1. Every byte of the word is the software priority, a partially filled
     ///    word leaves some SGI at the reset value of zero, which is the defect.
     /// 2. The byte is *greater* than the device priority, since a lower number
     ///    is more urgent on this controller.
@@ -751,7 +751,7 @@ mod tests {
     /// The boot writes all of them rather than the one number it raises,
     /// because any SGI can reach any core.  A driver that wrote only
     /// `IPRIORITYR0` would leave interrupts 4..16 at the reset priority of
-    /// zero — the highest — which is the defect this fix exists to close.
+    /// zero, the highest, which is the defect this fix exists to close.
     #[test]
     fn the_software_priority_registers_are_the_first_four() {
         assert_eq!(super::DIST_IPRIORITYR, 0x400);
@@ -910,8 +910,8 @@ mod tests {
     /// timer's PPI needs.
     ///
     /// `ICFGR`'s odd bit of each pair is `1` for edge and `0` for level, so the
-    /// timer's own field — interrupt 30, the second bit of the register's
-    /// fifteenth pair — has to end up clear.  The first version set it, on the
+    /// timer's own field, interrupt 30, the second bit of the register's
+    /// fifteenth pair, has to end up clear.  The first version set it, on the
     /// reading that a timer "asserts for an instant"; `CNTP_CTL_EL0.ISTATUS`
     /// holds until the timer is reprogrammed, so the line is level and an edge
     /// configuration drops the assertion that was already high when the core

@@ -67,7 +67,7 @@ static PREEMPT_SINK: cell::SyncUnsafeCell<Option<PreemptSink>> = cell::SyncUnsaf
 /// Called once, before any line is unmasked.
 /// The sink for a fault in a program the kernel did not answer: the frame,
 /// the vector, and the address the fault named.  Injected like the call and
-/// preempt sinks — the machine knows where a fault happened, and only the
+/// preempt sinks, the machine knows where a fault happened, and only the
 /// kernel knows what a process is.
 #[cfg(target_os = "none")]
 pub type FaultSink = fn(&mut ExceptionFrame, usize, usize);

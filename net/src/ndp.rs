@@ -14,12 +14,12 @@
 //!
 //! ## The states, and what each means to a sender
 //!
-//! - **Incomplete** — a solicitation went out and no advertisement came back. A
+//! - **Incomplete**, a solicitation went out and no advertisement came back. A
 //!   sender asking for this address must wait or drop, never send: the MAC is
 //!   unknown and guessing one is how a packet goes nowhere.
-//! - **Reachable** — the node answered, and the answer is fresh.  A sender may
+//! - **Reachable**, the node answered, and the answer is fresh.  A sender may
 //!   use the MAC.
-//! - **Stale** — the entry is old.  A sender may still use the MAC, and the
+//! - **Stale**, the entry is old.  A sender may still use the MAC, and the
 //!   traffic itself is what refreshes it; a stale entry that answers nothing is
 //!   evicted rather than kept.
 //!
@@ -53,7 +53,7 @@ use crate::ipv6::Addr;
 ///
 /// RFC 4861's default is thirty seconds; a boot's whole life is shorter than
 /// that, so what this number really says is "a reachable entry does not go
-/// stale within one boot" — the states are still implemented because the
+/// stale within one boot", the states are still implemented because the
 /// correctness of handing a sender a MAC depends on them, not on the timer
 /// being reached here.
 pub const REACHABLE_TICKS: u64 = 30_000;
@@ -83,8 +83,8 @@ pub enum State {
     Incomplete,
     /// Answered recently; the address is good.
     Reachable,
-    /// Answered, but the entry has aged.  The address is still good — a
-    /// sender may use it — and traffic is what refreshes it.
+    /// Answered, but the entry has aged.  The address is still good, a
+    /// sender may use it, and traffic is what refreshes it.
     Stale,
 }
 
@@ -103,7 +103,7 @@ pub struct Entry {
 ///
 /// A `Vec` rather than a map: a link this cache serves holds tens of
 /// neighbours, and a linear walk over thirty-two six-byte keys is faster than
-/// hashing one — the same argument the tree's ARP cache makes, and the reason
+/// hashing one, the same argument the tree's ARP cache makes, and the reason
 /// both are bounded.
 #[derive(Debug, Default)]
 pub struct Cache {
@@ -181,7 +181,7 @@ impl Cache {
     /// Record a neighbour advertisement's answer.
     ///
     /// An advertisement is authoritative: it names the MAC, and the entry
-    /// becomes reachable whether or not a solicitation went out — which is
+    /// becomes reachable whether or not a solicitation went out, which is
     /// what makes an unsolicited advertisement (a node that moved) reach the
     /// cache.
     pub fn learn(&mut self, address: Addr, link_layer: [u8; 6], now: u64) {
@@ -302,9 +302,9 @@ impl Candidate {
 
 /// The interface identifier a MAC address makes: the modified EUI-64.
 ///
-/// Exposed because address configuration needs the identifier alone — a
+/// Exposed because address configuration needs the identifier alone, a
 /// link-local address is `fe80::` plus it, and a stateless address is a
-/// router's prefix plus it — and computing it twice is how the two spellings
+/// router's prefix plus it, and computing it twice is how the two spellings
 /// of one interface drift apart.
 pub fn interface_identifier(mac: [u8; 6]) -> [u8; 8] {
     [
@@ -325,7 +325,7 @@ pub fn interface_identifier(mac: [u8; 6]) -> [u8; 8] {
 /// supports the one length a link's addresses are configured with: 64.  A
 /// prefix of another length would need the identifier truncated or shifted,
 /// and a stack that guessed is a stack with an address nobody else computes
-/// the same way — so an unsupported length answers `None` rather than an
+/// the same way, so an unsupported length answers `None` rather than an
 /// address that is almost right.
 pub fn address_from_prefix(prefix: Addr, prefix_len: u8, mac: [u8; 6]) -> Option<Addr> {
     if prefix_len != 64 {
@@ -340,7 +340,7 @@ pub fn address_from_prefix(prefix: Addr, prefix_len: u8, mac: [u8; 6]) -> Option
 /// Whether two addresses are on one link, given a prefix length in bits.
 ///
 /// The comparison is the prefix's, byte by byte and then bit by bit for the
-/// length that is not a whole number of bytes — which is what makes a `/64`
+/// length that is not a whole number of bytes, which is what makes a `/64`
 /// and a `/120` both answer correctly rather than only the lengths that are
 /// multiples of eight.
 pub fn same_prefix(left: Addr, right: Addr, prefix_len: u8) -> bool {
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(cache.lookup(target), Some(mac));
     }
 
-    /// An unsolicited advertisement — a node that moved — reaches the cache
+    /// An unsolicited advertisement, a node that moved, reaches the cache
     /// without a question, which is what makes a link recover from a change.
     #[test]
     fn an_unsolicited_advertisement_is_learned() {
@@ -423,7 +423,7 @@ mod tests {
     }
 
     /// A reachable entry past its timer goes stale, and a stale one is still
-    /// usable — the address is good, the freshness is not.
+    /// usable, the address is good, the freshness is not.
     #[test]
     fn an_aged_entry_goes_stale_and_stays_usable() {
         let mut cache = Cache::new();
@@ -531,7 +531,7 @@ mod tests {
     }
 
     /// A `/64` prefix and this node's identifier make the address SLAAC
-    /// configures — and a prefix length this driver does not support answers
+    /// configures, and a prefix length this driver does not support answers
     /// nothing rather than an address that is almost right.
     #[test]
     fn a_prefix_and_the_identifier_make_an_address() {
@@ -551,7 +551,7 @@ mod tests {
     }
 
     /// Two addresses are on one link when their prefixes agree, byte by byte
-    /// and then bit by bit — so a length that is not a multiple of eight
+    /// and then bit by bit, so a length that is not a multiple of eight
     /// still answers correctly.
     #[test]
     fn the_prefix_comparison_handles_partial_bytes() {
@@ -564,8 +564,8 @@ mod tests {
         right[15] = 1;
         assert!(same_prefix(left, right, 64));
 
-        // Byte 4 is where the partial byte starts.  left's is 0x10 —
-        // 0001_0000 — so its top two bits are 00 and its top bit is 0.
+        // Byte 4 is where the partial byte starts.  left's is 0x10
+        // 0001_0000, so its top two bits are 00 and its top bit is 0.
         left[4] = 0x10;
 
         // A /34 compares two bits of byte 4: 0011_0000 shares them.
@@ -579,7 +579,7 @@ mod tests {
         assert!(!same_prefix(left, differs_second, 34));
 
         // At /33 only the first bit counts, so 0100_0000 is on the same
-        // prefix after all — and 1000_0000 is not.
+        // prefix after all, and 1000_0000 is not.
         assert!(same_prefix(left, differs_second, 33));
         let mut differs_first = left;
         differs_first[4] = 0x80;

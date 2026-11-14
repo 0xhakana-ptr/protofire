@@ -16,8 +16,8 @@
 //!
 //! ## The state machine, and what it does not do
 //!
-//! A connection is the states a stream moves through — [`State`], from a
-//! handshake to an orderly close — and each move is one of this module's
+//! A connection is the states a stream moves through, [`State`], from a
+//! handshake to an orderly close, and each move is one of this module's
 //! methods with one injected `send` callback, which is where the bytes go.
 //! The callback is the module's whole output: the state machine computes the
 //! segment, the caller decides what a segment is for this connection's wire.
@@ -35,8 +35,8 @@
 //!
 //! ## What a segment refuses
 //!
-//! The checksum is mandatory — TCP has no zero field that means "not
-//! summed" — and the sequence is checked against the connection's own
+//! The checksum is mandatory, TCP has no zero field that means "not
+//! summed", and the sequence is checked against the connection's own
 //! acknowledgement: a segment that arrives out of order is dropped rather
 //! than held, because holding one asks for the reassembly buffer and the
 //! timers that retransmission would have brought.
@@ -232,7 +232,7 @@ fn pseudo_header(source: [u8; 4], destination: [u8; 4], length: u16) -> [u8; 12]
 /// Read the segment at the start of an IPv4 packet's payload, or `None`
 /// when it is not one this stack can interpret.
 ///
-/// The checksum is mandatory here — UDP's zero field has no TCP twin — and
+/// The checksum is mandatory here, UDP's zero field has no TCP twin, and
 /// the data offset is checked against the packet's length, because a header
 /// that claimed more words than the packet holds is a segment that ends
 /// before it begins.
@@ -281,8 +281,8 @@ pub enum Event {
 /// One segment the state machine computed, waiting for its wire.
 ///
 /// The state machine's whole output is a list of these: a move returns what
-/// it sent, and the caller — a loopback exchange that delivers to the
-/// peer's own state machine, or a frame through the card — decides where a
+/// it sent, and the caller, a loopback exchange that delivers to the
+/// peer's own state machine, or a frame through the card, decides where a
 /// segment goes.  Returning them rather than sending them from inside is
 /// what keeps the machine pure: no callback, no re-entry into a caller's
 /// own lock, and every byte a connection emitted is a value the caller can
@@ -314,7 +314,7 @@ fn one(
 /// peer has sent that this side has not taken.
 ///
 /// The connection is the state machine and its buffers in one, and every
-/// move takes the `send` callback — which is why nothing here can send a
+/// move takes the `send` callback, which is why nothing here can send a
 /// segment the caller did not see.
 pub struct Connection {
     state: State,
@@ -355,7 +355,7 @@ impl Connection {
     /// and this connection answers it.
     ///
     /// The connection starts in [`State::SynReceived`], and it is the
-    /// listener's to hand out — a caller accepts it as soon as it exists,
+    /// listener's to hand out, a caller accepts it as soon as it exists,
     /// because the handshake finishes on the segments themselves and data
     /// that arrives before the accept queues in this connection's inbox.
     pub fn accept_syn(
@@ -592,7 +592,7 @@ mod tests {
     /// The loopback the tests run on: each side's outgoing segments queue
     /// here, and [`drain`] hands every one to the peer's own state machine
     /// until the wire is quiet.  This is what the kernel's demux does for a
-    /// segment this machine sends to itself — which is why the handshake
+    /// segment this machine sends to itself, which is why the handshake
     /// here finishes in one drain, and why the kernel's own loopback
     /// behaves the same way.
     fn drain(
@@ -743,7 +743,7 @@ mod tests {
 
         // A segment the server is not waiting for: one byte past its
         // position, with data in it.  The server's next position is one past
-        // the client's ISN — the SYN consumed one, and nothing has been sent
+        // the client's ISN, the SYN consumed one, and nothing has been sent
         // since.
         let stray = Segment {
             source_port: OUR_PORT,
@@ -863,7 +863,7 @@ mod tests {
         );
         assert!(super::parse6(&v6, source6, destination6).is_some());
 
-        // The IPv6 segment read as IPv4 — or the other way round — does not
+        // The IPv6 segment read as IPv4, or the other way round, does not
         // verify, which is the whole reason these are two functions.
         assert!(
             super::parse(&v4, [0; 4], [0; 4]).is_none(),

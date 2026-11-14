@@ -9,8 +9,8 @@
 //!
 //! Everything in this module is arithmetic on bytes the specification names:
 //! a field's two halves, a record's length byte, a directory extent's blocks.
-//! What is *not* here is the decision of where new space comes from — that is
-//! the allocator in [`super::allocate`] — or the order a mutation writes its
+//! What is *not* here is the decision of where new space comes from, that is
+//! the allocator in [`super::allocate`], or the order a mutation writes its
 //! fields in, which is the volume's ([`super::volume`]), because that order is
 //! what makes a crash leave a readable volume behind.
 
@@ -40,7 +40,7 @@ use super::volume_descriptor::SECTOR_SIZE;
 /// rather than trusted.
 pub(crate) const MAX_DIRECTORY_BYTES: u64 = 8 * 1024 * 1024;
 
-// ── the device, in bytes ─────────────────────────────────────────────────
+// the device, in bytes
 
 /// Read `buffer.len()` bytes from `offset`, which is a byte offset into the
 /// disc.
@@ -73,7 +73,7 @@ pub(crate) fn read_exact(device: &dyn BlockDevice, offset: u64, buffer: &mut [u8
 ///
 /// A device writes blocks, so each sector the range touches is classified
 /// first: one the range covers in full is written without being read, and one
-/// it only partly covers is read, patched and written back — the bytes the
+/// it only partly covers is read, patched and written back, the bytes the
 /// caller is not replacing have to survive, and on ISO 9660 a file's last
 /// sector is where that matters, since its neighbours there are padding and
 /// whatever the image put after it.
@@ -108,7 +108,7 @@ pub(crate) fn write_exact(device: &dyn BlockDevice, offset: u64, buf: &[u8]) -> 
     Ok(())
 }
 
-// ── extents ──────────────────────────────────────────────────────────────
+// extents
 
 /// Write file data into an extent, and answer how much of `buffer` was taken.
 ///
@@ -144,7 +144,7 @@ pub(crate) fn write_extent(
 ///
 /// A block map needs the two: a record's System Use area can continue into a
 /// block of its own, the entry that says so is in the record, and the root
-/// directory's own "." record is where a volume declares its extension — so a
+/// directory's own "." record is where a volume declares its extension, so a
 /// walk that skipped it would leave that block looking free.
 pub(crate) fn read_all_records(
     device: &dyn BlockDevice,
@@ -215,12 +215,12 @@ pub(crate) fn is_self_or_parent(record: &Record) -> bool {
     record.identifier.len() == 1 && (record.identifier[0] == 0x00 || record.identifier[0] == 0x01)
 }
 
-// ── placement ────────────────────────────────────────────────────────────
+// placement
 
 /// The bytes a record's extent-location and data-length fields hold.
 ///
-/// The two fields are adjacent in the record and each is stored twice —
-/// little-endian then big-endian — so a reader that checks either half sees
+/// The two fields are adjacent in the record and each is stored twice
+/// little-endian then big-endian, so a reader that checks either half sees
 /// the same thing.
 pub(crate) fn placement_field(extent_location: u32, length: u32) -> [u8; 16] {
     let mut field = [0u8; 16];
@@ -253,14 +253,14 @@ pub(crate) fn rewrite_record_placement(
 /// a zero-length byte says the rest of *that block* holds nothing, so a
 /// record appended after such a gap would be one no reader reaches.  This
 /// walks the extent the way the readers do and puts the record where the
-/// walk stops — overwriting padding, never a record.
+/// walk stops, overwriting padding, never a record.
 ///
 /// A record may not straddle a logical block boundary, so one that does not
 /// fit in the block the walk ends in starts the next one; the bytes it skips
 /// are left as they are, which is a gap the reader crosses by the same rule.
 ///
-/// The directory's recorded length grows by the record — the honest answer,
-/// since the length covers the padding the way a written disc's does — and
+/// The directory's recorded length grows by the record, the honest answer,
+/// since the length covers the padding the way a written disc's does, and
 /// is the caller's to rewrite: it says where the extent is and how long it
 /// is, and nothing here touches it.
 pub(crate) fn append_record(
@@ -277,7 +277,7 @@ pub(crate) fn append_record(
 
     // The walk the readers do, without the name decoding: a zero length says
     // the rest of the block holds nothing and the next record is in the next
-    // one — the same rule the readers use to cross the gap, so the record
+    // one, the same rule the readers use to cross the gap, so the record
     // this appends lands where a reader will find it.
     let mut walk = 0usize;
     while walk < data.len() {
@@ -347,7 +347,7 @@ pub(crate) fn remove_child_record(
     rewrite_record_placement(device, dir_record_offset, dir_extent, new_size)
 }
 
-// ── path tables ──────────────────────────────────────────────────────────
+// path tables
 
 /// One directory, as a path table describes it.
 ///
@@ -358,14 +358,14 @@ pub(crate) fn remove_child_record(
 pub(crate) struct PathTableEntry {
     pub identifier: Vec<u8>,
     pub extent_location: u32,
-    /// This directory's number, and its parent's — both 1-based.
+    /// This directory's number, and its parent's, both 1-based.
     pub number: u16,
     pub parent_number: u16,
 }
 
 /// Serialise a path table.
 ///
-/// Two are required — one little-endian and one big-endian — and they are
+/// Two are required, one little-endian and one big-endian, and they are
 /// identical apart from the byte order of the numbers a record carries, which
 /// is why the order is an argument.
 pub(crate) fn build_path_table(entries: &[PathTableEntry], big_endian: bool) -> Vec<u8> {

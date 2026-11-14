@@ -126,7 +126,7 @@ fn write_inodes(img: &mut [u8]) {
         2,
         &[67],
     );
-    // NID 4: symlink — target stored inline in i_u.
+    // NID 4: symlink, target stored inline in i_u.
     write_inode(
         img,
         meta + OFF_LINK,

@@ -504,7 +504,7 @@ pub use arch_x86_64::paging::flush_translation;
 // The root this CPU is translating through.
 //
 // Asked by the fault handler, which has to describe a faulting address in the
-// **space the faulting CPU is running** — a program's, not the kernel's.  The
+// **space the faulting CPU is running**, a program's, not the kernel's.  The
 // register is per-CPU, so the question only has an answer on the machine that
 // took the fault, and a host has no table at all.
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]

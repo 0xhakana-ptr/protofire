@@ -20,7 +20,7 @@
 //!
 //! An interrupt has no context to hand a function, which is the same reason
 //! aarch64's sink is a static.  The kernel installs them; until it does, a
-//! trap is unhandled, and an unhandled one is reported — an interrupt
+//! trap is unhandled, and an unhandled one is reported, an interrupt
 //! continues, because a device with no driver must not stop a boot, and an
 //! exception stops, because the instruction that raised it will raise it
 //! again.
@@ -93,7 +93,7 @@ static PREEMPT_SINK: cell::SyncUnsafeCell<Option<PreemptSink>> = cell::SyncUnsaf
 
 /// The sink for a fault in a program the kernel did not answer: the frame, the
 /// vector, and the address the fault named.  Injected like the other two, for
-/// the same reason — the machine knows where a fault happened, and only the
+/// the same reason, the machine knows where a fault happened, and only the
 /// kernel knows what a process is.
 #[cfg(target_os = "none")]
 pub type FaultSink = fn(&mut Context, usize, usize);
@@ -356,7 +356,7 @@ fn finish_interrupt(frame: &mut Context) {
     if !handled {
         // An exception from ring 3 that the kernel did not answer kills the
         // **program**, not the machine: the diagnostic is already on the
-        // console, and the death is the scheduler's — the task goes
+        // console, and the death is the scheduler's, the task goes
         // `Finished` with the kernel's fault status and the frame this tail
         // leaves behind is whatever runs next.  The `cs` this frame carries
         // is what says the fault was the program's and not the kernel's; a

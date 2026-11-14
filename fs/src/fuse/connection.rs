@@ -49,7 +49,7 @@ impl FuseConnection {
     /// The connection's mutex is held for the entire exchange, serialising
     /// all concurrent callers.
     ///
-    /// The caller must set `request.header.seq` to 0 — this method
+    /// The caller must set `request.header.seq` to 0, this method
     /// assigns the next sequence number automatically.
     ///
     /// Returns the deserialised response on success, or a kernel [`Error`]
@@ -97,7 +97,7 @@ impl FuseConnection {
                 .read(0, &mut header_buf[offset..])
                 .map_err(|_| Error::DeviceError)?;
             if n == 0 {
-                return Err(Error::DeviceError); // EOF — daemon died
+                return Err(Error::DeviceError); // EOF, daemon died
             }
             offset += n;
         }

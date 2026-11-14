@@ -3,9 +3,9 @@
 //! One program, running at EL0, calling back into the kernel.
 //!
 //! What the kernel does with a program's supervisor call: two kinds of
-//! answer.  The calls whose object lives in the scheduler or the pipe —
+//! answer.  The calls whose object lives in the scheduler or the pipe
 //! `Exit`, `Sleep`, a pipe's `Read` and `Write`, `Fork`, `ExecProcess`,
-//! `GetPid`, `GetPpid`, the three waits and `Pipe` — are served here,
+//! `GetPid`, `GetPpid`, the three waits and `Pipe`, are served here,
 //! because their object is.  Everything else is forwarded to the registry's
 //! table, after this file has done the one thing only it can do: turned the
 //! ring-3 words into the borrows the handlers take.  A number with neither
@@ -74,15 +74,15 @@ pub const fn program_stack_page(number: u16) -> usize {
 
 /// How far below the stack top `exec` starts the image it hands over.
 ///
-/// The stack's top is a boundary, not storage — the same rule the boot's
-/// hand-over keeps — so `exec` writes its words below it and starts the image
+/// The stack's top is a boundary, not storage, the same rule the boot's
+/// hand-over keeps, so `exec` writes its words below it and starts the image
 /// with the pointer moved down to them.  The block is the one inheritance an
 /// `exec` has: `[sp]` is a user pointer to a NUL-terminated path the kernel
 /// placed at [`EXEC_PATH_OFFSET`], and an image that wants no path simply
 /// never reads it.
 ///
 /// The 96 is deliberate: a program's own push writes below its hand-over
-/// pointer — 16 bytes down on aarch64 and riscv64, 8 on x86_64 — and the
+/// pointer, 16 bytes down on aarch64 and riscv64, 8 on x86_64, and the
 /// first version's 64-byte block put the path's tail *inside* that push
 /// zone.  The aarch64 parent's push overwrote the path's `t` and NUL with
 /// the pointer's own bytes, the copy read a truncated string, and the exec
@@ -129,8 +129,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         //
         // The question is **where the program has run**, not where it is
         // exiting.  Those differ whenever a task is migrated back to the boot
-        // CPU between its last work and its exit — which this scheduler does,
-        // and `task migrations` reports — and reading the exit's own CPU said
+        // CPU between its last work and its exit, which this scheduler does,
+        // and `task migrations` reports, and reading the exit's own CPU said
         // "no program ran in parallel" about a program whose tick count on the
         // started CPU was in the hundreds.  Four boots in fifteen printed the
         // contradiction.
@@ -140,7 +140,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         }
         // **An exiting process closes what it held.**  A descriptor is not the
         // table's, it is the process's, and a process that ends releases every
-        // slot it owned — the same `Drop` a `Close` runs, which for a pipe end
+        // slot it owned, the same `Drop` a `Close` runs, which for a pipe end
         // is what moves the pipe's count and ends a reader's wait.  Without
         // this an end stays in the table for ever, keeping a reader parked on
         // a writer that no longer exists.
@@ -218,7 +218,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                     // already awake, or had not yet reached its wait, and the
                     // bytes it asked for are in the pipe either way.  Printing
                     // only the non-zero case made the line a function of an
-                    // interleaving, and the gate requires it — 2 of 100 runs
+                    // interleaving, and the gate requires it, 2 of 100 runs
                     // found the reader awake when the write landed and failed
                     // a boot that did everything right.
                     arch::serial::write_str("protofire: a write woke ");
@@ -246,7 +246,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 
     // A write to a stream: the bytes go out as one segment, and the answer
     // is the count.  Reached only when the pipe branch above did not
-    // return, so the descriptor names a stream the table holds — or it
+    // return, so the descriptor names a stream the table holds, or it
     // names nothing, and the branch's own test refuses it before a byte is
     // read.
     if number == SyscallNumber::Write as usize
@@ -287,7 +287,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // Reached only when the pipe branch above did not return, so the
         // descriptor names no pipe of this caller's: it names a file the table
         // holds, or it names nothing, and the registry answers the same
-        // refusal for both — the answer that does not tell a caller which
+        // refusal for both, the answer that does not tell a caller which
         // numbers exist.  The length is what distinguishes a write from the
         // announcement below, the same distinction the pipe branch reads, and
         // the validation is the read's, for the same reason: an address from
@@ -370,22 +370,22 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 // runnable, and `Exit` tells the trap path to resume the frame
                 // it has, a sleeping program.
                 //
-                // So the two cases are not separate after all — the first
+                // So the two cases are not separate after all, the first
                 // version thought they were, and the difference was a ghost.
                 // `advance` can answer `Exit` with tasks still runnable: the
                 // one runnable task can be the one **another CPU is already
                 // running**, excluded by the running array, and an `Exit` here
                 // means the frame was not replaced.  Resuming it ran this
-                // program while its task was still asleep and no CPU held it —
+                // program while its task was still asleep and no CPU held it
                 // a process with no entry in the running array, the one
                 // invariant the exclusion set is.  The boot showed the shape in
-                // full: the ghost announced, forked (refused — no task to fork
+                // full: the ghost announced, forked (refused, no task to fork
                 // from), exec'd (refused the same way), and spun at its end,
                 // while the task that owned it slept on; a tick's preemption
                 // was what happened to reinstall the real context.  So an
                 // `Exit` falls into the same wait the every-task-asleep case
                 // uses, and the wake that ends the sleep is what installs
-                // whatever runs next — through the call that does *not* save,
+                // whatever runs next, through the call that does *not* save,
                 // because the frame arriving here is the boot's kernel frame
                 // and the task it would be saved into is asleep with a program
                 // context that must not be clobbered.
@@ -444,14 +444,14 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return match progress {
             crate::pipe::Progress::Done(count) => CallOutcome::Return(count),
             crate::pipe::Progress::Block => {
-                // Park — but let the park ask the question once more under
+                // Park, but let the park ask the question once more under
                 // the scheduler's own lock.  Between the `Block` above and
                 // the park, a writer on another CPU can put bytes in or
                 // close its write end, and the wake that fact sends can fire
                 // into the gap: a task parked after the wake it was waiting
                 // for is a task parked for ever.  The re-check and the park
                 // are one critical section, so the wake has only two orders
-                // to find — the fact first, and this call answers it here,
+                // to find, the fact first, and this call answers it here,
                 // or the task first, and the wake ends the wait.
                 match crate::scheduler::block_unless(frame, || {
                     match end.try_read(&pipe, destination) {
@@ -515,7 +515,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     //
     // `ExecProcess` replaces the calling task; `SpawnProcess` grows the
     // machine by one task that did not exist, named by the file the caller
-    // picked, and answers the pid — which is the number a supervisor needs,
+    // picked, and answers the pid, which is the number a supervisor needs,
     // because the wait that supervises names a pid.
     if number == SyscallNumber::SpawnProcess as usize {
         let mut path_bytes = [0u8; OPEN_PATH_MAX];
@@ -525,7 +525,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         match crate::scheduler::spawn_process(path) {
             Some(pid) => {
                 // The one line that says the machine grew: the caller, the
-                // file it named, and the pid the kernel answered — the
+                // file it named, and the pid the kernel answered, the
                 // number a later wait carries.
                 arch::serial::write_str("protofire: process ");
                 arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
@@ -547,7 +547,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // Exec: the running process becomes the file it names.
     //
     // The argument is a NUL-terminated path in the caller's memory, copied
-    // with the same bound and the same check the `Open` branch uses — an
+    // with the same bound and the same check the `Open` branch uses, an
     // address from ring 3 is a number until something validates it.  The
     // kernel reads the file through the registry's own namespace, loads it,
     // and maps it; the task keeps its pid and its parent, and everything else
@@ -561,7 +561,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             Some(pid) => {
                 // The one line that says the mechanism ran: the task that
                 // called is the task named, and the file is the one it asked
-                // to become.  A reader can pair this with the exit statuses —
+                // to become.  A reader can pair this with the exit statuses
                 // the exec'd task's status is the first byte of the file it
                 // read, which only a task that ran could report.
                 arch::serial::write_str("protofire: process ");
@@ -630,7 +630,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
             arch::serial::write_str("protofire: a wait has nothing to wait for\n");
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::NotFound));
         }
-        // Park — with the same re-check the pipe's read parks under.  The
+        // Park, with the same re-check the pipe's read parks under.  The
         // wait's question is "has a process finished?", and a child on
         // another CPU can finish between this call's own check and the park;
         // a task parked after the wake it was waiting for is a task parked
@@ -643,7 +643,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 // The re-check under the scheduler's lock found the exit this
                 // call's own look a moment earlier had not: a process finished
                 // in the deciding instant.  Reported for the reason the
-                // immediate answer above is — a wait that answered and a wait
+                // immediate answer above is, a wait that answered and a wait
                 // that never ran print the same status line otherwise.
                 arch::serial::write_str("protofire: a wait answered status ");
                 arch::serial::write_u32(status as u32);
@@ -661,7 +661,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                 // and answering `Exit` leaves the frame describing *this*
                 // task, so the epilogue resumes the waiter at the instruction
                 // after its `svc` with `x0` still holding whatever the call
-                // before left — the wait skipped, and the program exits with
+                // before left, the wait skipped, and the program exits with
                 // a number the wait never answered.  The sleep path answers
                 // the switch this way and has always worked; this branch and
                 // the pipe's read were the two that did not.
@@ -674,7 +674,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     //
     // The other half of the wait pair.  `WaitProcess` answers about whichever
     // process finished first, which is all a boot with one process tree could
-    // say when it was added — and it is the wrong answer for a parent asking
+    // say when it was added, and it is the wrong answer for a parent asking
     // about its own child, because the child's status arrives only if the child
     // happened to be first.  This call names the pid, so what it answers is
     // about the process the caller meant.
@@ -714,7 +714,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // `ReturnFromException(resume, value)`: where the handler wants the
         // program to continue, and the call's answer.  The handler supplies
         // both because the address is a fact about the program's own
-        // instructions — a fixed-width machine could add one size, x86_64
+        // instructions, a fixed-width machine could add one size, x86_64
         // cannot.
         crate::scheduler::return_from_exception(call.arguments[0], call.arguments[1], frame);
         return CallOutcome::Exit;
@@ -756,7 +756,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 
     // Sending a signal: the target's ring takes the record and the wake
     // runs.  The signal's range and the flags are the ABI's, and a process
-    // signalling itself is allowed — the shell does exactly that.
+    // signalling itself is allowed, the shell does exactly that.
     if number == SyscallNumber::SendSignal as usize {
         let pid = call.arguments[0] as u32;
         let signal = call.arguments[1];
@@ -792,7 +792,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 
     if number == SyscallNumber::WaitSignal as usize {
         // Waiting for one: the record is where the kernel writes the ABI's
-        // `ProcessSignalRecord` — signal, sender, payload — and the wait
+        // `ProcessSignalRecord`, signal, sender, payload, and the wait
         // parks on the ring, woken by the send that fills it.  The retry is
         // the WaitProcess shape: the parked call resumes at the call, and
         // the retry asks the ring again.
@@ -909,8 +909,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // The delivered-signal handler's exit, and the half that makes the
         // delivery **transparent**: the delivery displaced the program's
         // argument registers for its record, and only the kernel kept them.
-        // They go back here, and the interrupted flow resumes at `a0` — the
-        // resume the delivery handed the handler — with the registers it
+        // They go back here, and the interrupted flow resumes at `a0`, the
+        // resume the delivery handed the handler, with the registers it
         // would have had had the signal never arrived.
         if !crate::scheduler::signal_return(frame, call.arguments[0]) {
             return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
@@ -966,7 +966,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // The registry's calls, from a program that has no borrow to hand anyone.
     //
     // The registry's handlers take `Arguments`, whose address-shaped fields are
-    // *borrows* — a shape that exists precisely so no handler ever turns a
+    // *borrows*, a shape that exists precisely so no handler ever turns a
     // word into a pointer.  A program cannot hand over a borrow: it hands over
     // words, and this is the one place that turns them back, behind the check
     // that makes the turn sound.  `is_user_range` says the range is one a
@@ -978,8 +978,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // `Open(path, flags)`: the path is a NUL-terminated string in the
         // caller's memory, the flags are the ABI's own open flags, and the two
         // reserved slots stay zero.  A NUL-terminated path needs no length
-        // slot, which is what keeps the kernel-side shape — path as a borrow,
-        // flags in the first argument — and the ring-3 shape one shape.
+        // slot, which is what keeps the kernel-side shape, path as a borrow,
+        // flags in the first argument, and the ring-3 shape one shape.
         let flags = call.arguments[1];
         let mut path_bytes = [0u8; OPEN_PATH_MAX];
         let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
@@ -996,8 +996,8 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let outcome = through_registry(&mut context, Some(path), None, None);
         if let CallOutcome::Return(descriptor) = outcome {
             // **Only a descriptor is an open.**  The registry answers an error
-            // the same way it answers a value — the ABI's error encoding is a
-            // number near `usize::MAX` — so a caller that printed the line
+            // the same way it answers a value, the ABI's error encoding is a
+            // number near `usize::MAX`, so a caller that printed the line
             // without asking printed "opened /greeting.txt" for a path the
             // namespace had refused.  The gate's own evidence then said the
             // mechanism ran when what ran was the refusal, which is the failure
@@ -1020,7 +1020,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     {
         // `Read(descriptor, offset, buffer, length)`: a file descriptor in the
         // registry's table, the buffer a range of the caller's own memory.  A
-        // pipe descriptor never reaches here — the branch above answered it —
+        // pipe descriptor never reaches here, the branch above answered it
         // and a stream descriptor never does either, because its read is the
         // stream's to park on.  The registry answers `InvalidArgument` for
         // both anyway, because their reads are not the file's to serve.
@@ -1054,7 +1054,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // The end is recognised **before** the close: afterwards the descriptor
         // is gone and no answer could tell a pipe's write end from a file's.
         // A write end going away is the fact a blocked reader is parked waiting
-        // to learn — no bytes are ever coming — so the close wakes what a
+        // to learn, no bytes are ever coming, so the close wakes what a
         // write would have woken.  Waking a reader whose pipe still has
         // another write handle is harmless: it retries its read, sees a
         // writer, and parks again.
@@ -1194,7 +1194,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // `ReadDir(path, index, buffer, length)`: one entry of the directory
         // at the path, written into the caller's buffer as the ABI's record
         // with the name packed after it.  The answer is the bytes written,
-        // and the evidence line names the path and the index — the entry's
+        // and the evidence line names the path and the index, the entry's
         // name is in the record the caller now holds.
         let mut path_bytes = [0u8; OPEN_PATH_MAX];
         let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
@@ -1230,7 +1230,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 
     // The `*At` calls: the same five operations their plain twins serve, with
     // the path anchored at a descriptor instead of at the root.  The
-    // descriptor travels in the first argument, the path in the second —
+    // descriptor travels in the first argument, the path in the second
     // including for the rename, whose second name brings its own anchor in
     // the third.
     if number == SyscallNumber::OpenAt as usize
@@ -1358,7 +1358,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         let outcome = through_registry(&mut context, None, None, None);
         // The answer, printed by the kernel because a program has no way to
         // print one: `Write` prints a fixed line, so a value a program obtained
-        // would otherwise reach this log only through its exit status — and an
+        // would otherwise reach this log only through its exit status, and an
         // exit status is one byte.
         //
         // The pair of lines is the evidence that the call went **through the
@@ -1432,7 +1432,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // produced.
         //
         // A refused call prints too.  Without that, a call the handler refused
-        // is indistinguishable in the log from one the program never made —
+        // is indistinguishable in the log from one the program never made
         // which is exactly the ambiguity the first boot of this group had, and
         // it cost a boot to find.
         if let CallOutcome::Return(answer) = outcome {
@@ -1458,7 +1458,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     }
 
     // The datagram calls that answer at once: a bind, and a send.  The
-    // receive is the branch below, because it parks — a handler that cannot
+    // receive is the branch below, because it parks, a handler that cannot
     // park does not hold a number whose caller may have to wait.
     if number == SyscallNumber::BindUdp as usize || number == SyscallNumber::SendToUdp as usize {
         // `SendToUdp` carries a buffer: `a2` the bytes, `a3` their length,
@@ -1518,7 +1518,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // this call's own check and the park, a sender on another CPU can
     // deliver, and the wake that fact sends can fire into the gap.  The
     // re-check and the park are one critical section, so the delivery has
-    // exactly two orders to find — the datagram first, and this call
+    // exactly two orders to find, the datagram first, and this call
     // answers it here, or the task parked first, and the delivery's wake
     // ends the wait.
     //
@@ -1618,7 +1618,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // that answers nothing.
     //
     // End of file is the read that answers zero, and it comes from a stream
-    // whose connection is gone — which an orderly close's last
+    // whose connection is gone, which an orderly close's last
     // acknowledgement leaves behind.  A read that never answered zero would
     // be a reader parked on a writer that said it was done.
     if number == SyscallNumber::Read as usize
@@ -1627,7 +1627,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         // The slots a file read takes, because a stream is a descriptor the
         // same wrapper packs the same way: `a1` the offset, `a2` the buffer,
         // `a3` its length.  A stream has no position to seek, so the offset
-        // slot is refused unless it is the read-from-here sentinel — an
+        // slot is refused unless it is the read-from-here sentinel, an
         // explicit offset on a stream would be a position neither side
         // tracks.
         let descriptor = call.arguments[0];
@@ -1713,7 +1713,7 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // The accept: one stream from a listener's pending list, or a park
     // until a client's SYN opens one.  The re-check under the scheduler's
     // lock is the same one every park here makes, and the SYN that fills
-    // the list is what wakes it — the demux's own wake, which fires when a
+    // the list is what wakes it, the demux's own wake, which fires when a
     // connection opened or bytes arrived.
     if number == SyscallNumber::AcceptTcp as usize {
         let descriptor = call.arguments[0];
@@ -1773,12 +1773,12 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
 const SIGNAL_KNOWN_MASK: usize = 0xFFFF_FFFE;
 
 /// The byte length of the ABI's `ProcessSignalRecord`, the record `WaitSignal`
-/// answers with: three words — signal, sender, payload.
+/// answers with: three words, signal, sender, payload.
 #[cfg(target_os = "none")]
 const SIGNAL_RECORD_BYTES: usize = 24;
 
 /// Write a `ProcessSignalRecord` into the caller's memory, little-endian word
-/// by word — the same layout rule `Stat`'s record keeps.
+/// by word, the same layout rule `Stat`'s record keeps.
 #[cfg(target_os = "none")]
 fn write_signal_record(buffer: &mut [u8], signal: usize, sender_pid: u32, payload: usize) {
     buffer[..8].copy_from_slice(&signal.to_le_bytes());
@@ -1792,7 +1792,7 @@ fn write_signal_record(buffer: &mut [u8], signal: usize, sender_pid: u32, payloa
 /// One shape for both `Open` and `ExecProcess`, which take the same kind of
 /// argument: an address in the caller's memory.  Every byte is checked against
 /// the user window before it is read, the length is bounded, the string must
-/// be UTF-8, and the copy happens once — the caller's bytes are the kernel's
+/// be UTF-8, and the copy happens once, the caller's bytes are the kernel's
 /// for the length of the call, which is what makes the rest of the handler
 /// ordinary kernel code.  The buffer is the caller's: the borrow must not
 /// outlive the stack slot the copied bytes live in.
@@ -1819,7 +1819,7 @@ fn copy_user_path(path_ptr: usize, bytes: &mut [u8; OPEN_PATH_MAX]) -> Result<&s
 /// Take one datagram from a bound socket, answering the call's status word.
 ///
 /// `None` is "nothing arrived", which is the caller's signal to park;
-/// `Some` is the answer — the byte count, or an error encoded the ABI's way.
+/// `Some` is the answer, the byte count, or an error encoded the ABI's way.
 /// The sender record is written here, because the receive that answers and
 /// the re-check under the park's lock must fill the same record the same
 /// way, and one writer is how that stays true.
@@ -1836,7 +1836,7 @@ fn receive_datagram_answer(
             // The record's shape follows the address's family.  A caller that
             // passes the flag gets the sixteen-byte record it asked for; one
             // that passes zero gets the two-word record it always did, and a
-            // datagram from an IPv6 peer has no two-word form — which is why
+            // datagram from an IPv6 peer has no two-word form, which is why
             // this answers `InvalidArgument` rather than truncating an
             // address into a word a program would read as something else.
             match source {

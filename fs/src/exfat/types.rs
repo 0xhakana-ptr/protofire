@@ -5,7 +5,7 @@
 //! made of, and the little-endian helpers the parsers share.
 //!
 //! Every multi-byte field is little-endian, and the boot region's checksum
-//! — the unsigned sum of its first eleven sectors, stored in the twelfth —
+//!, the unsigned sum of its first eleven sectors, stored in the twelfth
 //! is what makes a volume's boot block the volume's own rather than a
 //! payload that happens to parse.
 
@@ -32,13 +32,13 @@ pub(super) const MAX_DIR_ENTRIES: usize = 4096;
 
 // Directory entry type codes.
 
-/// End of directory — no entries beyond this point.
+/// End of directory, no entries beyond this point.
 pub(super) const EXFAT_ENTRY_EOD: u8 = 0x00;
 /// Allocation bitmap entry (primary).
 pub(super) const EXFAT_ENTRY_BITMAP: u8 = 0x81;
 /// Up-case table entry (primary).
 pub(super) const EXFAT_ENTRY_UPCASE: u8 = 0x82;
-/// File entry (primary) — always followed by a stream extension and
+/// File entry (primary), always followed by a stream extension and
 /// filename entries.
 pub(super) const EXFAT_ENTRY_FILE: u8 = 0x85;
 /// Stream extension entry (secondary).
@@ -105,7 +105,7 @@ pub(super) const S_DATA_LEN: usize = 24;
 pub(super) const FN_NAME_START: usize = 2;
 pub(super) const FN_CHARS_PER_ENTRY: usize = 15;
 
-// ── the boot region ──────────────────────────────────────────────────────
+// the boot region
 
 /// A parsed boot region: the geometry the whole driver's addressing is
 /// built from.
@@ -212,7 +212,7 @@ pub(super) fn boot_checksum(data: &[u8; BLOCK_SIZE * BOOT_REGION_SECTORS]) -> u3
     sum
 }
 
-// ── directory entries ────────────────────────────────────────────────────
+// directory entries
 
 /// A parsed directory entry: a file or a directory.
 #[derive(Debug, Clone)]
@@ -225,7 +225,7 @@ pub(super) struct ExfatDirEntry {
     pub(super) valid_data_length: u64,
     /// The bytes allocated to it.
     pub(super) data_length: u64,
-    /// Whether the stream is one contiguous run — no FAT chain.
+    /// Whether the stream is one contiguous run, no FAT chain.
     pub(super) no_fat_chain: bool,
     pub(super) created: u64,
     pub(super) modified: u64,
@@ -243,7 +243,7 @@ pub(super) fn dos_timestamp_to_unix(ts: u32) -> u64 {
     crate::fat32::types::dos_datetime_to_unix(date, time)
 }
 
-// ── little-endian helpers ────────────────────────────────────────────────
+// little-endian helpers
 
 pub(super) fn read_u16_le(data: &[u8], offset: usize) -> u16 {
     if offset + 2 > data.len() {
@@ -288,10 +288,10 @@ pub(super) fn write_u32_le(data: &mut [u8], offset: usize, val: u32) {
     }
 }
 
-// ── entry type classification ────────────────────────────────────────────
+// entry type classification
 
 /// An entry type byte, classified: whether it is a secondary entry, and
-/// its code — the five low bits of the raw byte.
+/// its code, the five low bits of the raw byte.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ExfatEntryType {
     pub(super) _is_secondary: bool,

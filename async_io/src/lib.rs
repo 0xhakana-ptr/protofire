@@ -8,7 +8,7 @@
 //! This crate is the foundation of **everything is a service**: a driver, a
 //! timer, a kernel thread and a user program are all things that accept a
 //! request and complete it later, and one trait describes all of them.  That is
-//! the part worth designing for, and it is why the request is opaque — a
+//! the part worth designing for, and it is why the request is opaque, a
 //! service decides what it accepts, so a new kind of service does not extend a
 //! wire format and does not have to understand operations it does not provide.
 //!

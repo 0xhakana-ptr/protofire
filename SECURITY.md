@@ -56,7 +56,7 @@ Useful in a report:
 
 - the machine (x86_64, aarch64 or riscv64) and how it was booted,
 - the commit, and whether the tree was modified,
-- what the kernel printed, if anything — one boot's serial log is worth more
+- what the kernel printed, if anything, one boot's serial log is worth more
   than a description of it,
 - whether the report is about a **program escaping its window** or about the
   kernel misusing memory, because those are different defects here and the

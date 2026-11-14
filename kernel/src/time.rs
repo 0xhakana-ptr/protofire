@@ -11,7 +11,7 @@
 //! plausible-looking number nobody read.
 //!
 //! The counter's own zero is wherever it was when the boot started, which is
-//! not the same value on two machines and is not zero even on one — a
+//! not the same value on two machines and is not zero even on one, a
 //! timestamp counter has been running since firmware.  So the boot records the
 //! reading it saw, and every answer is measured from there: a program asking
 //! for the time twice gets two readings of the same clock, and the difference
@@ -21,7 +21,7 @@
 //!
 //! A machine answers "what does the counter read" and "how fast does it count".
 //! Turning the pair into seconds and nanoseconds is arithmetic, and arithmetic
-//! is the part a host can test — which is why [`split`] is a pure function and
+//! is the part a host can test, which is why [`split`] is a pure function and
 //! the only thing [`now`] adds to it is the two machine reads.
 //!
 //! ## Not to be confused with `service::clock`
@@ -49,7 +49,7 @@ use core::sync::atomic::Ordering;
 ///
 /// Zero when the clock was never brought up, which [`now`] treats as "this
 /// machine cannot tell the time" rather than as an origin at the counter's
-/// zero — the two are only the same on a counter that started at zero.
+/// zero, the two are only the same on a counter that started at zero.
 #[cfg(target_os = "none")]
 static ORIGIN: AtomicU64 = AtomicU64::new(0);
 
@@ -101,7 +101,7 @@ pub unsafe fn bring_up() -> Option<(u64, u64)> {
 ///
 /// The multiplication is in `u128` on purpose.  The remainder is below the
 /// rate, so `remainder * 1_000_000_000` at a 3 GHz rate is 3e18, which fits a
-/// `u64` — but only just, and a machine with a 20 GHz counter would overflow it
+/// `u64`, but only just, and a machine with a 20 GHz counter would overflow it
 /// silently.  The wider type costs one multiply on a path a program calls by
 /// hand and cannot be wrong.
 pub fn split(ticks: u64, rate: u64) -> Option<(u64, u64)> {

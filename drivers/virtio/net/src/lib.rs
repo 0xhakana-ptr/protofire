@@ -1,6 +1,6 @@
 //! drivers/virtio/net/src/lib.rs
 //!
-//! The virtio network card: two queues — receive and transmit — the ten-byte
+//! The virtio network card: two queues, receive and transmit, the ten-byte
 //! header in front of every frame, and the address the device publishes.
 //!
 //! ## Why this crate is separate from `virtio_core`
@@ -30,7 +30,7 @@
 //! and ARP layouts beside them, which made this a driver that knew what an ARP
 //! is: a second network card would have had to copy the protocol to compile,
 //! and the protocol would then exist twice.  It lives in `net` now, above the
-//! [`netdev::LinkDevice`] trait this crate implements — the same division
+//! [`netdev::LinkDevice`] trait this crate implements, the same division
 //! `block` makes for disks, where `virtio_block` implements `QueuedBlockDevice`
 //! and `fs` reads through it.
 //!

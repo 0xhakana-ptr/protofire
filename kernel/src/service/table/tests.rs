@@ -9,7 +9,7 @@
 //! instance of it, so a test makes the table it needs and the tests cannot see
 //! each other.  The first version of this file had the table reachable only as
 //! the global, and one test filling it made six others fail on `TableFull` in
-//! whatever order the harness chose — a test suite that was really one test
+//! whatever order the harness chose, a test suite that was really one test
 //! written six times.
 //!
 //! Exactly one test touches the global, because the global is what a boot uses
@@ -203,7 +203,7 @@ fn a_handle_from_the_table_answers_its_callers() {
 }
 
 /// The end-to-end helper submits, polls a service that waits, and takes the
-/// completion — through the global, which is what a boot uses.
+/// completion, through the global, which is what a boot uses.
 ///
 /// The only test that touches [`super::SERVICES`], and it installs before any
 /// freeze: the freeze itself is tested on a value, so the global is never left

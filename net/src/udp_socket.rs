@@ -8,19 +8,19 @@
 //! A socket's queue is three rules and a buffer.  The rules are the wire's:
 //! datagrams keep the order they arrived in, a full queue refuses the next
 //! one with `Busy` rather than dropping the oldest, and a receive whose buffer
-//! is too small is refused with the datagram **kept** — a caller learns its
+//! is too small is refused with the datagram **kept**, a caller learns its
 //! buffer is wrong and asks again, and a take that discarded the bytes would
 //! make that loss permanent and silent.
 //!
 //! None of that needs a scheduler, a card or a lock.  So it is a value here,
-//! and the kernel holds one behind a `Mutex` because two callers reach it —
-//! the demux that delivers and the task that receives — which is the kernel's
+//! and the kernel holds one behind a `Mutex` because two callers reach it
+//! the demux that delivers and the task that receives, which is the kernel's
 //! decision about its own concurrency and not this module's.
 //!
 //! What stays in the kernel: the `Arc` that is the socket's life, the `Weak`
 //! in the port table that makes a closed socket's port free again, and the
 //! scheduler wake a delivery makes.  A queue cannot own any of those, because
-//! a queue is not a socket — it is what a socket holds.
+//! a queue is not a socket, it is what a socket holds.
 
 use alloc::vec::Vec;
 
@@ -104,7 +104,7 @@ impl Queue {
     /// Take the oldest datagram, answering where it came from and how much of
     /// it fit.
     ///
-    /// `Ok(None)` is "nothing arrived, ask again" — the answer a caller parks
+    /// `Ok(None)` is "nothing arrived, ask again", the answer a caller parks
     /// on, and not an error.  A datagram longer than `into` is refused with
     /// [`Error::InvalidArgument`] and **kept**: a caller whose buffer is small
     /// learns that from the error and asks again with a larger one, and a take

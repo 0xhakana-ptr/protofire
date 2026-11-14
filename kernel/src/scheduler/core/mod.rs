@@ -14,8 +14,8 @@
 //! The split follows the verb.  `switch` moves a CPU between tasks, `wait`
 //! moves a task between states, and `life` covers the three events a task has
 //! that are neither.  What is left here is the type all three name, plus the
-//! read-only questions a trap asks — "who is this CPU running", "is anything
-//! runnable" — which have no state to change and belong with the state they
+//! read-only questions a trap asks, "who is this CPU running", "is anything
+//! runnable", which have no state to change and belong with the state they
 //! read.
 //!
 //! ## One lock, one queue
@@ -73,7 +73,7 @@ pub struct Scheduler {
     ///
     /// The placement rule **avoids** this: a task this CPU has run is offered
     /// back to this CPU first, and a task no CPU has run comes next, so a
-    /// migration is the rule's last resort — a CPU with nothing warm to take
+    /// migration is the rule's last resort, a CPU with nothing warm to take
     /// and work that belongs to another CPU.  This counts the times that
     /// happened, and a boot compares it with
     /// [`homed`](Self::homed): the two partition the placements.
@@ -92,7 +92,7 @@ pub struct Scheduler {
     /// choice is real: a pass with no preference takes the first runnable task
     /// in the rotation, which is as likely to be one another CPU ran as the one
     /// this CPU ran.  Taking the task back is what keeps it out of
-    /// [`migrations`](Self::migrations), and this is how often that happened —
+    /// [`migrations`](Self::migrations), and this is how often that happened
     /// zero is a boot whose every switch moved work, which is the defect this
     /// rule was written for.
     pub(crate) homed: usize,
@@ -103,14 +103,14 @@ pub struct Scheduler {
     /// freed.
     ///
     /// An `exec` swaps a task's space for a new one and the old space is
-    /// garbage at that instant — but **only from this CPU's point of view**.
+    /// garbage at that instant, but **only from this CPU's point of view**.
     /// The claim the release used to make, that no other CPU ever held this
     /// task, is false on any boot where a task migrates, and the boot's own log
     /// says tasks do (`task migrations 4, last process 2 from cpu 0 to cpu 1`).
     /// A CPU that ran the task a moment ago can still be inside its trap path
     /// with that root installed, or hold a translation through it; freeing the
     /// root and its user frames there handed live memory back to the pool, and
-    /// the boot showed the result — a data abort inside the heap allocator
+    /// the boot showed the result, a data abort inside the heap allocator
     /// reading a free-list node that was no longer a list, and an instruction
     /// abort at 0x0, both on the machine whose second CPU migrates most.
     ///
@@ -296,8 +296,8 @@ impl Scheduler {
     /// `usize::MAX` if it has never left the boot CPU.
     ///
     /// The answer a boot's evidence line needs at the moment a program exits.
-    /// The CPU it is exiting on is the wrong question there — a task can be
-    /// taken back by the boot CPU between its last work and its exit — and this
+    /// The CPU it is exiting on is the wrong question there, a task can be
+    /// taken back by the boot CPU between its last work and its exit, and this
     /// is the one that survives a migration.
     pub fn current_ran_off_boot_cpu(&self, cpu: usize) -> usize {
         self.running
@@ -355,8 +355,8 @@ impl Scheduler {
     /// The question a `WaitProcess` asks before parking itself, and
     /// deliberately **not** [`Self::has_other_runnable`]: that one asks whether
     /// a switch would be a switch, and a sleeping task answers no to it.  A
-    /// sleeping task is exactly what a wait is waiting for — it will wake and
-    /// exit — so a wait that used the runnable question would answer
+    /// sleeping task is exactly what a wait is waiting for, it will wake and
+    /// exit, so a wait that used the runnable question would answer
     /// `NotFound` to a parent whose child was asleep, which is a hang reported
     /// as an error.
     ///

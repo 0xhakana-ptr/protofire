@@ -4,8 +4,8 @@
 //!
 //! `entry.S`'s `exception_entry` builds [`ExceptionFrame`] on the kernel stack
 //! before calling the dispatch, and the two files agree on every offset because
-//! the offsets are written down in both.  That is a fact no compiler checks — a
-//! `repr(C)` struct and a run of `stp`s are two descriptions of one layout — so
+//! the offsets are written down in both.  That is a fact no compiler checks, a
+//! `repr(C)` struct and a run of `stp`s are two descriptions of one layout, so
 //! the offsets are asserted here against `offset_of!` instead of being trusted.
 //!
 //! The SIMD half is not caution.  `CPACR_EL1.FPEN` is open, so the compiler

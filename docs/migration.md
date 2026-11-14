@@ -8,7 +8,7 @@ that stops being true is deleted with the code it argued for, in the same
 commit.
 
 It is deliberately not a changelog.  Every defect a subsystem cost on its way
-in is in the commit that fixed it — the message says what broke, what the wrong
+in is in the commit that fixed it, the message says what broke, what the wrong
 version did, and what the measurement was.  It is also not an inventory of the
 tree it replaced: what that tree had and this one does not is a list that goes
 stale the moment it is written, and it answers a question no reader of this
@@ -17,16 +17,16 @@ says so and says what it would take.
 
 ## The crates
 
-- **`abi`** — the whole wire format, and the syscall numbering.
-- **`arch`** — boot, interrupts, serial, port I/O, page tables, the exception
+- **`abi`**, the whole wire format, and the syscall numbering.
+- **`arch`**, boot, interrupts, serial, port I/O, page tables, the exception
   path, the IDT, the GDT and TSS, the local APIC and its timer, the 8259, the
   PL011, the NS16550A, the device-tree handshake, the GIC, the OpenSBI handoff,
   and ring 3 on all three bootable machines.
-- **`fs`** — PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract.
-- **`kernel`** — the boot sequence, the syscall registry and the handlers behind
+- **`fs`**, PyroFS, tmpfs, ISO 9660, the mount table and the VFS contract.
+- **`kernel`**, the boot sequence, the syscall registry and the handlers behind
   it, the scheduler and the process model, the address space, device discovery.
-- **`memory`** — the frame pool and the region pools.
-- **`drivers`** — five crates rather than one directory under one name:
+- **`memory`**, the frame pool and the region pools.
+- **`drivers`**, five crates rather than one directory under one name:
   `drivers/bus/pci` (ports, ECAM, capability walks, BAR enumeration, MSI-X),
   `drivers/virtio/core` (the split virtqueue, feature negotiation, the status
   sequence, the PCI modern transport), `drivers/virtio/block` (the request
@@ -34,29 +34,29 @@ says so and says what it would take.
   receive and transmit queues, and the address the device publishes), and
   `drivers/net/e1000` (a placeholder for a device this tree does not boot
   with).
-- **`syscall`** — the context and the validators, and the numbering's re-export.
+- **`syscall`**, the context and the validators, and the numbering's re-export.
   The handlers are not here: they name the filesystem, the scheduler and the
   address space, and this crate may name none of them.  `kernel/src/syscall/`
   holds them and `boot.rs` installs them.
-- **`libs`** — allocator, audit, cell, crypto, fdt, irq, paging, profiler,
+- **`libs`**, allocator, audit, cell, crypto, fdt, irq, paging, profiler,
   rights, sync, unicode.  Each is a crate rather than a module under `kernel`
   or `memory` as it once was, because a crate is what can be tested on a host
   without the kernel it belongs to.
-- **`net`** — the protocol stack above the frame: Ethernet, ARP, IPv4, ICMP,
+- **`net`**, the protocol stack above the frame: Ethernet, ARP, IPv4, ICMP,
   IPv6, ICMPv6, neighbour discovery, UDP and TCP.  It is a pure reader and
-  writer — no lock, no `static`, no device, and no address of its own — and the
+  writer, no lock, no `static`, no device, and no address of its own, and the
   state a machine needs (which address, which neighbours, which sockets) is
   `kernel/src/net.rs`'s.  It is `net`, the name the workspace member uses, and
   not `network`.  `virtio_net` is the driver and does not name it: a packet's
   format is the stack's business and the card's is the ring.
-- **`apps`** — `init`, `shell` and `service_manager`.  `init` is a working
+- **`apps`**, `init`, `shell` and `service_manager`.  `init` is a working
   program rather than a shape: the kernel execs it from its own filesystem, and
-  it is where every level so far is exercised — it reads the greeting through
+  it is where every level so far is exercised, it reads the greeting through
   `open`/`read`/`close`, maps a page and reads its break, writes a file and
   reads it back, stats, creates, lists, renames and removes, starts `/bin/shell`
   twice and exchanges signals with each, and reads the clock, the generator and
-  both information records.  Its exit status is the greeting's first byte — the
-  boot's `exit statuses 1 -> 116` — which is a value no call it makes earlier
+  both information records.  Its exit status is the greeting's first byte, the
+  boot's `exit statuses 1 -> 116`, which is a value no call it makes earlier
   can produce.  `shell` is the second program: it reads the greeting, arms a
   handler for `SIGUSR1`, announces itself to its parent and exits with the
   file's length.  `service_manager` is a shape with a body still to be built
@@ -65,14 +65,14 @@ says so and says what it would take.
 ## Filesystems
 
 Three are mounted on a boot: PyroFS at `/`, tmpfs at `/tmp`, and an ISO 9660
-disc at `/cdrom`.  The second is what proved the namespace — a table with one
-entry has never resolved anything — and the third is what proved it goes both
+disc at `/cdrom`.  The second is what proved the namespace, a table with one
+entry has never resolved anything, and the third is what proved it goes both
 ways, because a disc cannot be written and so what comes out of it came from
 the image.
 
 `fs/src/vnode.rs` and `fs/src/filesystem.rs` carry the *contract*: what a node
 is and what a filesystem answers.  The namespace is `fs/src/mount.rs` and
-`fs/src/path.rs` — a mount table, longest-prefix resolution, path
+`fs/src/path.rs`, a mount table, longest-prefix resolution, path
 normalization.  What is not here is the *handle table*, which belongs to the
 process layer because a handle belongs to a process.
 
@@ -202,7 +202,7 @@ after a mount has been verified on a machine.
 `MAX_CPUS` in `kernel/src/per_cpu.rs` is what the per-CPU arrays are sized
 from; it derives from the machine's own `MAX_SECONDARY_HARTS` rather than being
 written a second time.  Raising it is a constant and a boot that starts more
-cores — and, on aarch64, one slice of kernel stack per core, which
+cores, and, on aarch64, one slice of kernel stack per core, which
 `kernel_stack_reservation` computes from the same cap.
 
 ### Past eight: the hart list, and the interrupt mask
@@ -216,7 +216,7 @@ than the list.
 
 Every entry takes one global lock.  A task is not pinned to a CPU: nothing says
 where it may run, so the lock is what keeps two CPUs from being handed one
-task, and placement is `next_runnable`'s rule — a task the asking CPU last ran,
+task, and placement is `next_runnable`'s rule, a task the asking CPU last ran,
 then a task no CPU has run, then a steal from another CPU.
 
 A per-CPU queue is the shape that would shard that contention, and the cost it

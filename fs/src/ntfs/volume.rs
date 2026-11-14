@@ -2,7 +2,7 @@
 //!
 //! The NTFS volume: mounting, path resolution, the attributes a record holds
 //! wherever an attribute list has moved them, the index a directory's names
-//! live in — and the write path that keeps the bitmap, the index and the
+//! live in, and the write path that keeps the bitmap, the index and the
 //! MFT's own size in step with what a write claims.
 
 use alloc::collections::btree_map::BTreeMap;
@@ -78,7 +78,7 @@ const MAX_INDEX_DEPTH: u32 = 8;
 /// How far up a parent chain this driver will walk.
 ///
 /// A name's `$FILE_NAME` is the only link from a record to the record it is in,
-/// so a walk upward is a walk of those — and the bound is what keeps a loop
+/// so a walk upward is a walk of those, and the bound is what keeps a loop
 /// written by something else from being this driver's loop.
 const MAX_ANCESTORS: u32 = 64;
 
@@ -127,8 +127,8 @@ fn compare_names(left: &str, right: &str, upcase: &[u16]) -> core::cmp::Ordering
 #[derive(Clone)]
 enum IndexHome {
     /// In the `$INDEX_ROOT`'s value: the record that *holds* that attribute is
-    /// the buffer — the parent record itself, or an extension record an
-    /// `$ATTRIBUTE_LIST` moved the root into — and writing it back means
+    /// the buffer, the parent record itself, or an extension record an
+    /// `$ATTRIBUTE_LIST` moved the root into, and writing it back means
     /// writing that record whole, its update sequence array packed again.
     Record { holder: u64 },
     /// In an `$INDEX_ALLOCATION` block at a virtual cluster number: the block
@@ -164,8 +164,8 @@ fn names_the_same_attribute(entry: &fs::AttributeListEntry, attribute: &ParsedAt
 /// The attribute a record holds *in its own* bytes.
 ///
 /// A writer patches a field where it lies, so an attribute that lives in
-/// another record — an `$ATTRIBUTE_LIST` moved it — or in several — a run list
-/// *split* by virtual cluster number — is `NotImplemented`: there is no one
+/// another record, an `$ATTRIBUTE_LIST` moved it, or in several, a run list
+/// *split* by virtual cluster number, is `NotImplemented`: there is no one
 /// place the field is, and half a patch is worse than none.
 fn own_attribute(
     record_number: u64,
@@ -197,8 +197,8 @@ fn bytes_in_use(record: &[u8]) -> usize {
 /// the one failure a filesystem cannot report.  `NotImplemented` can be
 /// reported, and [RFC
 /// 0013](../../docs/rfcs/0013-refuse-the-ntfs-streams-this-driver-cannot-read.
-/// md) decides it is the answer: the file stays listed — its name and sizes are
-/// in its parent's index — and the operation that asks for its bytes is what
+/// md) decides it is the answer: the file stays listed, its name and sizes are
+/// in its parent's index, and the operation that asks for its bytes is what
 /// fails.
 fn refuse_a_stream_this_driver_cannot_read(attribute: &ParsedAttr) -> Result<()> {
     if attribute.flags & (ATTR_FLAG_COMPRESSED | ATTR_FLAG_ENCRYPTED) != 0 {
@@ -208,8 +208,8 @@ fn refuse_a_stream_this_driver_cannot_read(attribute: &ParsedAttr) -> Result<()>
 }
 
 /// The value of a record's `$ATTRIBUTE_LIST`, with an entry added for the
-/// attribute that is about to join an extension record of its own — and one
-/// for the index bitmap beside it — each where its own type sorts.
+/// attribute that is about to join an extension record of its own, and one
+/// for the index bitmap beside it, each where its own type sorts.
 ///
 /// `home` is the record the two new entries name, which is only known for
 /// certain once the record has been claimed; the measurement that decides
@@ -285,7 +285,7 @@ struct IndexParent {
 /// The key goes **before** the entry the walk descended through, because that
 /// entry keeps the greater names: the child a keyed entry points at holds the
 /// keys *less* than the one the entry carries.  `false` is the answer when the
-/// entry the walk came through is not in the node at all — the buffers are
+/// entry the walk came through is not in the node at all, the buffers are
 /// stale, and the change has to be worked out again.
 fn node_entries_with(parent: &IndexParent, separator: &[u8]) -> Result<(Vec<Vec<u8>>, bool)> {
     let mut entries: Vec<Vec<u8>> = Vec::new();
@@ -309,7 +309,7 @@ struct IndexKey {
     /// Where those bytes live, so the change can be written back.
     home: IndexHome,
     /// Where the entry that carries the name begins in the buffer, and how long
-    /// it is — the entry a change replaces or drops.
+    /// it is, the entry a change replaces or drops.
     offset: usize,
     length: usize,
 }
@@ -332,8 +332,8 @@ enum NewRecord<'a> {
 ///
 /// What a real one carries at the moment it is made: where it came from, its
 /// own name, the timestamps a volume with no clock leaves zero, and then
-/// either an empty `$DATA` — which is *resident*, because that is where an
-/// empty file's bytes live — or, for a directory, the empty index it grows
+/// either an empty `$DATA`, which is *resident*, because that is where an
+/// empty file's bytes live, or, for a directory, the empty index it grows
 /// into.  A file that grows out of its record has to convert that attribute,
 /// which is a step this driver does not take yet.
 fn record_attributes(
@@ -344,7 +344,7 @@ fn record_attributes(
     cluster_size: u32,
 ) -> Vec<Vec<u8>> {
     // A record's own standard information is where the file-attribute bits
-    // live, and archive is what a real volume writes there — for a directory
+    // live, and archive is what a real volume writes there, for a directory
     // too, whose "is a directory" bit lives in its name and its record header.
     let mut standard = alloc::vec![0u8; 48];
     standard[32..36].copy_from_slice(&0x20u32.to_le_bytes());
@@ -383,7 +383,7 @@ pub struct NtfsFs {
     /// Kept beside the device rather than read out of `info` on every record,
     /// because a *read* of a cached record has to check those numbers, and
     /// taking the info lock there would be taking it inside a caller that
-    /// already holds it — the lock the reader is documented to keep *outside*
+    /// already holds it, the lock the reader is documented to keep *outside*
     /// the reads below it.
     sector_size: usize,
 }
@@ -412,8 +412,8 @@ impl NtfsFs {
     pub fn read_mft_record(&self, record_number: u64) -> Result<Vec<u8>> {
         let mut cache = self.mft_cache.lock();
         if let Some(cached_record) = cache.get(&record_number) {
-            // A cached record is kept the way the **volume** holds it — its
-            // sectors ending in the sequence number — so reading it is
+            // A cached record is kept the way the **volume** holds it, its
+            // sectors ending in the sequence number, so reading it is
             // unpacking it, and a record whose sectors disagree with its own
             // array is one a write did not finish: refused here rather than
             // handed over as bytes that are half new and half old.
@@ -443,7 +443,7 @@ impl NtfsFs {
 
         // The cache keeps the volume's form of the record; the caller gets the
         // record's own bytes, which is the same bytes with each sector's
-        // sequence number put back — and a record whose sectors disagree with
+        // sequence number put back, and a record whose sectors disagree with
         // that array is one a write did not finish, so it is refused here.
         cache.insert(record_number, record.clone());
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
@@ -466,7 +466,7 @@ impl NtfsFs {
     /// The attributes a record holds, wherever they live.
     ///
     /// A record whose own bytes are not enough carries an **`$ATTRIBUTE_LIST`**
-    /// naming each of its attributes and the record that holds it — which is
+    /// naming each of its attributes and the record that holds it, which is
     /// the record itself, or an *extension* record of its, one with a base
     /// reference to the record it belongs to and no name of its own in any
     /// directory.  A non-resident attribute whose mapping pairs did not fit one
@@ -474,8 +474,8 @@ impl NtfsFs {
     /// attribute are put back together in the order their entries give them:
     /// what a reader wants is the one attribute the parts are.
     ///
-    /// The list does not name itself — the volume this was measured against
-    /// leaves its own entry out — so the attributes a record holds *in its own
+    /// The list does not name itself, the volume this was measured against
+    /// leaves its own entry out, so the attributes a record holds *in its own
     /// bytes* are kept as well, where the list does not name them.
     pub(crate) fn attributes_of(&self, record_number: u64) -> Result<Vec<ParsedAttr>> {
         let record = self.read_mft_record(record_number)?;
@@ -543,8 +543,8 @@ impl NtfsFs {
     /// The entries of an `$ATTRIBUTE_LIST`, wherever its own bytes are.
     ///
     /// A list is usually resident in the record that carries it, and can be a
-    /// file of its own — the volume this was measured against writes one that
-    /// is — in which case its entries are read through its own runs.
+    /// file of its own, the volume this was measured against writes one that
+    /// is, in which case its entries are read through its own runs.
     fn list_entries(&self, list: &ParsedAttr) -> Result<Vec<fs::AttributeListEntry>> {
         if list.data_runs_offset.is_none() {
             return Ok(fs::parse_attribute_list(&list.content));
@@ -593,7 +593,7 @@ impl NtfsFs {
     ///
     /// The base reference is the field that says so: a record whose header
     /// names a base record is an extension of it, and a record whose header
-    /// names none is not — the volume this was measured against marks such a
+    /// names none is not, the volume this was measured against marks such a
     /// record as in use and nothing else, with a link count of zero.
     fn base_record(&self, record_number: u64) -> Option<u64> {
         let record = self.read_mft_record(record_number).ok()?;
@@ -616,13 +616,13 @@ impl NtfsFs {
     /// does not free enough room by itself, the largest others go with it,
     /// until the list fits where they were.
     ///
-    /// `growing` is the attribute that asked for the room — an index root whose
+    /// `growing` is the attribute that asked for the room, an index root whose
     /// value has to be longer, or a `$DATA` whose run list does not fit.  It
     /// goes first, and the caller follows it to the record it lands in.
     ///
     /// A record that is *itself* an extension is a step of its own: its list is
     /// the **base** record's, so what leaves goes into another extension of the
-    /// same base and the base's list is what learns where — see
+    /// same base and the base's list is what learns where, see
     /// [`Self::make_room_in_an_extension`].
     fn make_room(&self, record_number: u64, growing: u32) -> Result<()> {
         if let Some(base) = self.base_record(record_number) {
@@ -641,7 +641,7 @@ impl NtfsFs {
         };
 
         // The entries the list has, or would have: one per attribute of the
-        // file, in the order the record holds them — and the entries that name
+        // file, in the order the record holds them, and the entries that name
         // an attribute in a record of its own keep the record they name.
         let mut entries: Vec<(u32, Option<String>, u16, u64, u64)> = match list {
             Some(list) => self
@@ -728,15 +728,15 @@ impl NtfsFs {
         }
 
         // One record for all of them, whose own header will name the record
-        // they belong to — and whose own room has to hold them.
+        // they belong to, and whose own room has to hold them.
         if moved_len + 64 > record.len() {
             return Err(Error::NoSpace);
         }
         // The attributes the extension record receives, in ascending **type**
         // order: a record's attributes are kept in that order and a checker
         // reads the chain until a type does not ascend, extension records
-        // included.  The selection above picks by *size* — the largest first,
-        // because that is what frees the most room — so the order they were
+        // included.  The selection above picks by *size*, the largest first,
+        // because that is what frees the most room, so the order they were
         // chosen in is not the order they may be written in.
         let mut to_go: Vec<Vec<u8>> = Vec::new();
         for attribute in &moved {
@@ -780,8 +780,8 @@ impl NtfsFs {
         }
 
         // The list itself: the one the record has, with the holders it just
-        // learnt — its value written through its own runs when it is a file of
-        // its own — or a new one, where its own type sorts.
+        // learnt, its value written through its own runs when it is a file of
+        // its own, or a new one, where its own type sorts.
         let list_attribute = match list {
             Some(list) => {
                 let mut bytes =
@@ -802,7 +802,7 @@ impl NtfsFs {
         };
 
         // The record, rebuilt: the attributes that stayed, and the list where
-        // it was — or where its own type sorts among them.
+        // it was, or where its own type sorts among them.
         let mut rebuilt = record[..base].to_vec();
         let mut placed = false;
         for attribute in &attributes {
@@ -871,7 +871,7 @@ impl NtfsFs {
     /// is room for a *growth* no one has measured yet.
     ///
     /// The order is what a crash leaves.  The new extension goes down first,
-    /// carrying the attributes the list still says are in the old one — a
+    /// carrying the attributes the list still says are in the old one, a
     /// record in use that nothing names is a leak, the harmless direction.  The
     /// base's list second, which is the write that moves them.  The old record
     /// last, cleaned of attributes nothing names any more.
@@ -886,8 +886,8 @@ impl NtfsFs {
         // whole attributes.  The list is the file's word on where each
         // attribute is, so an attribute it does not name is one this writer
         // cannot repoint and must not touch; and an attribute whose entries
-        // number more than one is *split* across records — a part here and a
-        // part elsewhere — so moving this part would corrupt it, and its parts
+        // number more than one is *split* across records, a part here and a
+        // part elsewhere, so moving this part would corrupt it, and its parts
         // are not one record's to rewrite.  The attribute that asked for the
         // room stays: moving it is what the move is for.
         let base_attributes = self.attributes_of(base)?;
@@ -1003,7 +1003,7 @@ impl NtfsFs {
     /// just moved out of an extension record at the record they moved to.
     ///
     /// An entry names the record that holds its attribute, so an attribute that
-    /// changes record changes one field of its entry and nothing else — the
+    /// changes record changes one field of its entry and nothing else, the
     /// order and the length stay, which is what lets the list go back where it
     /// lives: the base record's own bytes, or the runs of a list that is a file
     /// of its own.
@@ -1050,7 +1050,7 @@ impl NtfsFs {
     /// `$ATTRIBUTE_LIST` can have put the attribute in an extension record, and
     /// the fields are written wherever that record's bytes are.  A run list
     /// that no longer fits the room the attribute has *moves within* the record
-    /// — and a record with no room for that answers `NoSpace`, which is where
+    ///, and a record with no room for that answers `NoSpace`, which is where
     /// the caller moves the attribute into a record of its own.
     #[allow(clippy::too_many_arguments)]
     fn write_grown_data(
@@ -1092,7 +1092,7 @@ impl NtfsFs {
         let record_at = self.record_offset(&info, holder)?;
         let mut raw = record.clone();
 
-        // The run list, in the room the attribute has for it — written whether
+        // The run list, in the room the attribute has for it, written whether
         // or not the *number* of runs changed.  A claim that lands in the
         // cluster beside the last run extends that run: the list is as long as
         // it was and says more, and a record that kept the shorter one would
@@ -1104,7 +1104,7 @@ impl NtfsFs {
         raw[at..at + room].copy_from_slice(&field);
 
         // The clusters the file just took have never held its bytes.  A run
-        // the caller *added* is where they are — an allocation that grew inside
+        // the caller *added* is where they are, an allocation that grew inside
         // a run it already had has no new clusters and nothing to zero.
         if runs.len() > data.data_runs.len() {
             fs::write_to_runs(
@@ -1138,7 +1138,7 @@ impl NtfsFs {
         // Written **whole**, and its sequence array packed again.  Each field
         // here lives in the record's own bytes, and a run list long enough to
         // reach the end of a sector would write over the number that says which
-        // write put that sector there — the one thing the reader checks, and
+        // write put that sector there, the one thing the reader checks, and
         // what this function's own field-at-a-time writes were doing.
         let header = MftRecordHeader::parse(&raw).ok_or(Error::InvalidArgument)?;
         fs::pack_usa(
@@ -1159,13 +1159,13 @@ impl NtfsFs {
     /// A run list that no longer fits the room its attribute has means the
     /// attribute **grows in place**: the bytes after it shift up by the
     /// difference, and the record changes from end to end, so it is written in
-    /// one piece with the update sequence array packed again — the shift
+    /// one piece with the update sequence array packed again, the shift
     /// crosses sector ends, and a field write could not leave those as they
     /// were.
     ///
     /// It keeps its **place**, which is not a detail: a record's attributes are
     /// kept in ascending **type** order and a checker reads the chain until it
-    /// meets a type that does not ascend — `ntfs-3g` failing a record there is
+    /// meets a type that does not ascend, `ntfs-3g` failing a record there is
     /// where this was caught on a volume it had written (`Bad end of MFT
     /// record`): moving the attribute last put the index allocation after the
     /// bitmap, and no reader this tree has checks the order.  The attributes
@@ -1202,7 +1202,7 @@ impl NtfsFs {
         let last_vcn = u64::from(allocated) / u64::from(info.cluster_size) - 1;
         grown[24..32].copy_from_slice(&last_vcn.to_le_bytes());
 
-        // Every attribute as it is — this one grown, the rest shifted by the
+        // Every attribute as it is, this one grown, the rest shifted by the
         // difference, and the order untouched.
         let attributes = parse_attributes(&record[base..]);
         let mut rebuilt = record[..base].to_vec();
@@ -1276,7 +1276,7 @@ impl NtfsFs {
     /// A directory's index is a tree.  Its root lives in the record's
     /// `$INDEX_ROOT`, and a directory that has children keeps the entries
     /// themselves in an `$INDEX_ALLOCATION` whose blocks the root's last entry
-    /// points at by virtual cluster number — which is the shape a real volume
+    /// points at by virtual cluster number, which is the shape a real volume
     /// uses even for a single file, so this walks the tree rather than reading
     /// one node.
     fn directory_entries(&self, record_number: u64) -> Result<Vec<(String, u64)>> {
@@ -1288,7 +1288,7 @@ impl NtfsFs {
         let mut found: Vec<(FileName, u64)> = Vec::new();
         self.walk_index(&attributes, &root.content, 16, 0, &mut found)?;
 
-        // One file can have more than one name — a short one and a long one —
+        // One file can have more than one name, a short one and a long one
         // and the listing keeps the preferred of them.
         let mut best: Vec<(FileName, u64)> = Vec::new();
         for (name, record) in found {
@@ -1311,7 +1311,7 @@ impl NtfsFs {
     ///
     /// A node's entries hold its children between its own keys: an entry that
     /// points at a child carries a key, that child holds the keys *less than*
-    /// it, and the key is the child's successor — so a walk takes the child
+    /// it, and the key is the child's successor, so a walk takes the child
     /// first and the key after it, which is the order the names sort in.  The
     /// last entry of an internal node has no key and points at the child with
     /// the largest names.  A directory's own "." and ".." are links and not
@@ -1359,9 +1359,9 @@ impl NtfsFs {
     /// The **compression unit** a compressed attribute's stream is divided
     /// into, in bytes.
     ///
-    /// A volume compresses a *unit* at a time — sixteen clusters by the
+    /// A volume compresses a *unit* at a time, sixteen clusters by the
     /// standard's own maximum, and the exponent is a byte of the attribute
-    /// itself — and inside it the bytes are a sequence of 4096-byte LZNT1
+    /// itself, and inside it the bytes are a sequence of 4096-byte LZNT1
     /// **chunks**.  What a squeezed unit did not need of its clusters is left a
     /// **sparse run**, so a unit's bytes are at the unit's own place in the
     /// stream: the 4096 bytes above is the chunk, not the unit.
@@ -1379,7 +1379,7 @@ impl NtfsFs {
 
     /// How many clusters each compression unit of a compressed attribute has
     /// behind it: the runs read in the unit's own numbering, which is how a
-    /// reader tells a squeezed unit from one that was stored as it is — the
+    /// reader tells a squeezed unit from one that was stored as it is, the
     /// latter covers the whole unit with real clusters.
     fn compression_units_held(&self, data: &ParsedAttr, unit_clusters: u64) -> Result<Vec<u64>> {
         let mut held: Vec<u64> = Vec::new();
@@ -1407,14 +1407,14 @@ impl NtfsFs {
     /// wholly covers go back to the volume
     /// ([RFC 0016](../../docs/rfcs/0016-punch-a-hole-in-an-ntfs-file.md)).
     ///
-    /// The clusters the range only **partly** covers cannot go back — the bytes
-    /// beside the range are the file's — so those are written as the zeros the
+    /// The clusters the range only **partly** covers cannot go back, the bytes
+    /// beside the range are the file's, so those are written as the zeros the
     /// hole reads as.  What the file *is* does not change: its length stays,
     /// and its length is why a punch takes `KEEP_SIZE` with it.
     ///
     /// The order is stage 19's lesson: a punch **adds** runs to the list, so
     /// the list it will have is built and its room settled before a single
-    /// cluster is freed — a freed cluster cannot be taken again in the same
+    /// cluster is freed, a freed cluster cannot be taken again in the same
     /// operation, and a refusal that spends the volume's space is worse
     /// than one that does not.  The zeros go down first, the record names
     /// the runs second, and the clusters the hole replaced go last.
@@ -1594,7 +1594,7 @@ impl NtfsFs {
         Ok(())
     }
 
-    /// Write a compressed attribute's **compressed size** — the fourth of the
+    /// Write a compressed attribute's **compressed size**, the fourth of the
     /// four sizes a non-resident attribute carries, and the one a reader bounds
     /// the stream by.  The record goes back whole, its sectors' numbers packed
     /// again, like every other writer here.
@@ -1637,8 +1637,8 @@ impl NtfsFs {
     /// squeezed unit did not need of its clusters is a sparse run, so the units
     /// after a change move.  What this does is rewrite **whole compression
     /// units** from the one the write lands in to the end of the file: decode
-    /// the unit, splice the bytes in, encode it into chunks — or store it as it
-    /// is, when squeezing does not pay — and write its clusters where they were
+    /// the unit, splice the bytes in, encode it into chunks, or store it as it
+    /// is, when squeezing does not pay, and write its clusters where they were
     /// claimed.  The units before it keep their bytes and their places.
     ///
     /// Growing the file is a length change as well, and that is not built: a
@@ -1831,7 +1831,7 @@ impl NtfsFs {
         // The record: the units before the write as they were, the ones from it
         // on as the runs above say.  The size the attribute is *said* to have
         // is the virtual, unit-aligned one; the length does not move; and the
-        // fourth size — what the stream really holds — is written after,
+        // fourth size, what the stream really holds, is written after,
         // because it is not one of the fields the growth path knows.
         let virtual_size = units * unit_bytes;
         let length = data.data_size;
@@ -1862,7 +1862,7 @@ impl NtfsFs {
 
     /// Read a stream the volume **compressed**, one compression unit at a time.
     ///
-    /// A unit stored **as it is** — its real clusters cover it whole — is
+    /// A unit stored **as it is**, its real clusters cover it whole, is
     /// copied outright, and a squeezed one is decoded chunk by chunk.  The unit
     /// a range begins in is a count rather than a walk, because a unit's bytes
     /// are at the unit's own place.  A stream that ends before it has answered
@@ -1987,7 +1987,7 @@ impl NtfsFs {
         // `$DATA` carries, and what its runs hold is not index blocks: it is
         // an LZNT1 stream, so a reader that followed them would answer with
         // blocks that are not there.  RFC 0013 named the question and left it;
-        // the answer is the stream's own — refuse it, rather than misread it.
+        // the answer is the stream's own, refuse it, rather than misread it.
         refuse_a_stream_this_driver_cannot_read(allocation)?;
         let mut block = alloc::vec![0u8; info.index_block_size as usize];
         fs::read_from_runs(
@@ -2052,7 +2052,7 @@ impl NtfsFs {
     ///
     /// A name is matched the way the volume's index orders names: through the
     /// folding table it carries (`$UpCase`), so a name is found by the case a
-    /// real NTFS would find it by — and by the bytes it is stored as, for a
+    /// real NTFS would find it by, and by the bytes it is stored as, for a
     /// volume whose table cannot be read ([RFC 0012]).
     pub(crate) fn resolve(&self, path: &str) -> Result<(u64, String)> {
         let upcase = self.upcase_table();
@@ -2072,8 +2072,8 @@ impl NtfsFs {
 
     /// The volume's `$UpCase` table, when it has one this driver can read.
     ///
-    /// The table is a file like any other — the tenth record's `$DATA`, 128
-    /// KiB of code units — and it is what a name is folded through.  A volume
+    /// The table is a file like any other, the tenth record's `$DATA`, 128
+    /// KiB of code units, and it is what a name is folded through.  A volume
     /// whose table is missing or unreadable answers with none, and names are
     /// then compared as they are stored.
     fn upcase_table(&self) -> Vec<u16> {
@@ -2145,7 +2145,7 @@ impl NtfsFs {
 
     /// The volume's cluster bitmap, as many bytes of it as the volume needs.
     ///
-    /// The bitmap is a *file* — the sixth record's `$DATA` — with its own
+    /// The bitmap is a *file*, the sixth record's `$DATA`, with its own
     /// runs, so reading it is the same walk as reading any other file's data.
     pub(crate) fn read_bitmap(&self) -> Result<Vec<u8>> {
         let attributes = self.attributes_of(BITMAP_RECORD)?;
@@ -2190,7 +2190,7 @@ impl NtfsFs {
         let info = self.info.lock();
         if data.data_runs_offset.is_none() {
             // A resident bitmap is a value inside the record, so the field
-            // write and the record it lives in go together — which only a
+            // write and the record it lives in go together, which only a
             // record whose attributes are not listed is a writer's to make.
             let data = own_attribute(BITMAP_RECORD, &attributes, ATTR_TYPE_DATA)?;
             let record = self.read_mft_record(BITMAP_RECORD)?;
@@ -2208,7 +2208,7 @@ impl NtfsFs {
     ///
     /// The bitmap is the free list: the first run of `count` clear bits is
     /// what a growth gets, and the bits it took are set before the cluster is
-    /// handed out — so a crash after the answer leaves a cluster claimed and
+    /// handed out, so a crash after the answer leaves a cluster claimed and
     /// unused, which is the harmless direction to be wrong in.
     fn claim_clusters(&self, count: u64) -> Result<u64> {
         let volume_clusters = {
@@ -2272,7 +2272,7 @@ impl NtfsFs {
     /// The node a directory's entries are in, as the buffer it lives in.
     ///
     /// A directory's entries are in its index root, or in the
-    /// `$INDEX_ALLOCATION` block its root points at — and a block that has
+    /// `$INDEX_ALLOCATION` block its root points at, and a block that has
     /// children points at another.  The entries are in the node that has *no*
     /// children, which is where this descends to; the buffer comes back with
     /// the node's place and its room, so a change to the entries can be
@@ -2296,8 +2296,8 @@ impl NtfsFs {
     fn index_root_node(&self, holder: u64) -> Result<(Vec<u8>, usize)> {
         let record = self.read_mft_record(holder)?;
         let header = MftRecordHeader::parse(&record).ok_or(Error::InvalidArgument)?;
-        // An index *root*'s node begins after the root header — the indexed
-        // attribute's type, the collation rule and the buffer size — and the
+        // An index *root*'s node begins after the root header, the indexed
+        // attribute's type, the collation rule and the buffer size, and the
         // value it sits in is the resident attribute the record gives it.
         let root = self
             .attributes_of(holder)?
@@ -2439,7 +2439,7 @@ impl NtfsFs {
     /// Write a directory's index entries back where they live.
     ///
     /// A node's entries are replaced as a run, so what a caller hands over is
-    /// the run itself — the entries that were there, or the ones that should
+    /// the run itself, the entries that were there, or the ones that should
     /// be, with the node's own terminator last.
     ///
     /// The two places an index lives differ in what "room" means.  A block has
@@ -2498,7 +2498,7 @@ impl NtfsFs {
                     entries,
                 )?;
 
-                // Everything after the attribute — the end marker included —
+                // Everything after the attribute, the end marker included
                 // shifts up by what it grew.
                 let end = bytes_in_use(buffer);
                 let mut rebuilt = buffer[..attr_at].to_vec();
@@ -2552,7 +2552,7 @@ impl NtfsFs {
     /// A block a split makes needs a bit the bitmap may not have a *byte* for:
     /// the bitmap names eight blocks per byte, so the block numbered `bit`
     /// needs `bit / 8 + 1` bytes of it.  A bitmap that is short **grows** to
-    /// what the bit needs — the value longer where it lives — and the record
+    /// what the bit needs, the value longer where it lives, and the record
     /// that holds it makes room for the growth when it has none, the way any
     /// record with no room does.  A bitmap that is a *file* of its own would be
     /// grown by a step of its own, and refuses (`NotImplemented`).
@@ -2600,7 +2600,7 @@ impl NtfsFs {
             if bitmap.data_runs_offset.is_some() {
                 // A bitmap that is a **file** of its own: the bit goes where
                 // its runs say, and a byte it did not have grows the value and
-                // its sizes with it — taking clusters for it when the runs it
+                // its sizes with it, taking clusters for it when the runs it
                 // has are full.
                 self.write_index_bitmap(&bitmap, &bits, grew)?;
                 return Ok(());
@@ -2639,13 +2639,13 @@ impl NtfsFs {
     }
 
     /// Write an index bitmap that is a file back where its runs say, growing
-    /// the value — and the clusters behind it — when it needs a byte it did
+    /// the value, and the clusters behind it, when it needs a byte it did
     /// not have.
     ///
     /// A growth takes clusters of its own when the runs the bitmap has cannot
     /// hold the new length: the bitmap is a file like any other, so its run
     /// list is extended the way [`Self::write_grown_data`] extends one, and the
-    /// bytes between the old length and the new are written as zeros — a
+    /// bytes between the old length and the new are written as zeros, a
     /// bitmap's bytes are its bits, so what it never wrote reads as free.
     fn write_index_bitmap(&self, bitmap: &ParsedAttr, bits: &[u8], grew: bool) -> Result<()> {
         let cluster_size = u64::from(self.info.lock().cluster_size);
@@ -2731,13 +2731,13 @@ impl NtfsFs {
     /// Give the **tail** of a directory's `$INDEX_ALLOCATION` back to the
     /// volume, once the blocks it names are free.
     ///
-    /// A block that goes back keeps its clusters — they stay part of the
-    /// allocation, a free block inside it — until the blocks at *its* end are
+    /// A block that goes back keeps its clusters, they stay part of the
+    /// allocation, a free block inside it, until the blocks at *its* end are
     /// the free ones: the allocation's last blocks are then not ones the tree
     /// can reach, and the clusters behind them are clusters the volume is
     /// holding for nothing.  What leaves is one whole block's worth of trailing
-    /// free blocks at a time — the allocation's data size always divides into
-    /// whole blocks, which is the shape a split writes and a reader checks —
+    /// free blocks at a time, the allocation's data size always divides into
+    /// whole blocks, which is the shape a split writes and a reader checks
     /// and the run list shortens by what they held.
     ///
     /// Only blocks the bitmap says are **free** go back.  A block the bitmap
@@ -2750,7 +2750,7 @@ impl NtfsFs {
     ///
     /// The record goes first and the clusters second, which is the order every
     /// other shrink takes: the write drops the run list, so a crash between
-    /// the two leaves clusters nothing names — a leak — rather than an
+    /// the two leaves clusters nothing names, a leak, rather than an
     /// attribute naming clusters the volume has handed out again.
     fn shrink_index_allocation_tail(&self, parent_record: u64) -> Result<()> {
         let per_block = self.clusters_per_index_block();
@@ -2777,8 +2777,8 @@ impl NtfsFs {
             || allocation.data_runs.iter().any(|run| run.lcn < 0)
         {
             // A split across records is no one record's to rewrite, and an
-            // allocation whose size is not whole blocks — or that names a hole
-            // — is not the shape a split writes.
+            // allocation whose size is not whole blocks, or that names a hole
+            //, is not the shape a split writes.
             return Ok(());
         }
         let blocks = data_size / block_size;
@@ -2796,7 +2796,7 @@ impl NtfsFs {
         // reaches it: a byte the bitmap does not have names no block, but it
         // also does not say the block is free, and freeing the clusters of a
         // block on a bitmap that does not cover it is the direction a shrink
-        // must not take — a split taking such a block is harmless, giving its
+        // must not take, a split taking such a block is harmless, giving its
         // clusters back is not.
         let mut keep = blocks;
         while keep > 0 {
@@ -2808,7 +2808,7 @@ impl NtfsFs {
             }
             keep -= 1;
         }
-        // Nothing free at the end, or every block free — and a tree whose root
+        // Nothing free at the end, or every block free, and a tree whose root
         // points at a block keeps at least one, which is a conversion of its
         // own and not this shrink.
         if keep == blocks || keep == 0 {
@@ -2870,8 +2870,8 @@ impl NtfsFs {
     /// What answers that refusal is the shape of the node.  A root whose
     /// record has something to spare moves into a record of its own
     /// ([`Self::make_room`]), and the insertion is worked out again there.  A
-    /// root that cannot grow in *any* record — one already in a record of its
-    /// own, or one that filled the record it was moved to — hands its entries
+    /// root that cannot grow in *any* record, one already in a record of its
+    /// own, or one that filled the record it was moved to, hands its entries
     /// to an [`Self::entries_leave_for_a_block`] of their own, and the
     /// insertion lands in the block.  A *block* with no room is a split,
     /// which is not built, and refuses.
@@ -2895,8 +2895,8 @@ impl NtfsFs {
         );
 
         // Two attempts: a directory whose record has no room for the longer
-        // value makes it the way a file does — the index root moves into a
-        // record of its own — and that changes the node's place, so the whole
+        // value makes it the way a file does, the index root moves into a
+        // record of its own, and that changes the node's place, so the whole
         // insertion is worked out again.
         for attempt in 0..2 {
             let mut leaf = self.index_leaf(parent_record, name)?;
@@ -2980,8 +2980,8 @@ impl NtfsFs {
     ///
     /// A block with no room for a name is what the format splits: half the
     /// entries go to a block of their own, the entry between the halves becomes
-    /// a **key of the node above** — the entry the walk came through keeps that
-    /// node's keys *greater* than it — and the index bitmap gains a bit for the
+    /// a **key of the node above**, the entry the walk came through keeps that
+    /// node's keys *greater* than it, and the index bitmap gains a bit for the
     /// new block.
     ///
     /// A node above that cannot hold the key is the node above's own turn: a
@@ -3011,14 +3011,14 @@ impl NtfsFs {
         Err(Error::NoSpace)
     }
 
-    /// Whether the split will have the room it needs **above** the leaf — and
+    /// Whether the split will have the room it needs **above** the leaf, and
     /// which record has to make room when it will not.
     ///
     /// A split promotes one entry per level: the leaf's middle key goes into
     /// the node above it, and a node above that is a **block** with no room is
     /// split in turn, so *its* middle key goes into the node above that, and so
     /// on up.  What each level would hold is therefore known before anything is
-    /// written — the level's own entries, and the one key it takes from below —
+    /// written, the level's own entries, and the one key it takes from below
     /// and so is whether it fits.
     ///
     /// This is asked **before** the split claims anything, because a claim is
@@ -3082,7 +3082,7 @@ impl NtfsFs {
 
     /// The split itself: the block `leaf` is in is halved, its middle key goes
     /// to the node above it, and a node above that is a full **block** is split
-    /// in turn — the key it promotes is carried up into the node above *it*.
+    /// in turn, the key it promotes is carried up into the node above *it*.
     ///
     /// The writes are ordered by what a crash leaves, and every window is one a
     /// mount reads.  The allocation and the bitmap first: a block nothing
@@ -3136,7 +3136,7 @@ impl NtfsFs {
         // Where the half that leaves goes: a block the bitmap says is free
         // is one a deletion gave back, and the tree takes it before the
         // allocation grows.  With none to take, the block is the
-        // allocation's *next*, which is the number its size names — the
+        // allocation's *next*, which is the number its size names, the
         // leaf's own number plus one is that only while the leaf is the last
         // block, and a tree's blocks are reached in key order, which need
         // not be number order.
@@ -3201,7 +3201,7 @@ impl NtfsFs {
         // one along.  A **block** split in turn is an internal node, and there
         // the entry between the halves is a key *and* a child: that child holds
         // the names between the two halves, so the new block ends with a
-        // pointer to it — the same entry with its key taken off.
+        // pointer to it, the same entry with its key taken off.
         left.push(match fs::index_entry_child(&promoted) {
             Some(child) => fs::index_child_pointer(child),
             None => terminator.clone(),
@@ -3246,8 +3246,8 @@ impl NtfsFs {
         ) {
             Ok(()) => {}
             // A node above that is a **block** with no room for the key is
-            // split in turn, and the entries it would have held — this
-            // split's key among them — are what it is split by.  The node
+            // split in turn, and the entries it would have held, this
+            // split's key among them, are what it is split by.  The node
             // above *it* is one level further up the same walk, so that is
             // where its own key has to go; a record up there with no room
             // is the caller's to make room in, like any other.
@@ -3281,18 +3281,18 @@ impl NtfsFs {
         Ok(())
     }
 
-    /// This is the format's answer to a root that cannot grow in any record —
+    /// This is the format's answer to a root that cannot grow in any record
     /// the one a record full of *entries* needs, where the root's move into a
     /// record of its own has already been spent.  Every entry leaves the
     /// root's value for a **block**; the two attributes that describe the
-    /// allocation — the runs and the bitmap of the blocks, both named `$I30`
-    /// — go into an extension record of their own, the base's
+    /// allocation, the runs and the bitmap of the blocks, both named `$I30`
+    ///, go into an extension record of their own, the base's
     /// `$ATTRIBUTE_LIST` names them where they went, and the root's node
     /// keeps only the pointer to the block, whose virtual cluster number is
     /// the pointer's last eight bytes.
     ///
     /// The writes are ordered by what a crash between them leaves, and every
-    /// window is one a mount reads.  The record and the block go down first —
+    /// window is one a mount reads.  The record and the block go down first
     /// a record in use that nothing names and a block nothing points at are
     /// leaks, the harmless direction.  The base's list second: the root still
     /// holds its entries as a value, so a listing reads them where they were.
@@ -3302,7 +3302,7 @@ impl NtfsFs {
     /// A block smaller than a cluster is one no virtual cluster number can
     /// address (`NotImplemented`), a set of entries that does not fit one
     /// block refuses (`NoSpace`), and so does a base whose list cannot take
-    /// two more entries — refused before anything is claimed, so nothing is
+    /// two more entries, refused before anything is claimed, so nothing is
     /// half-spent.
     fn entries_leave_for_a_block(&self, parent_record: u64, entries: &[Vec<u8>]) -> Result<()> {
         let (index_block_size, cluster_size, sector_size) = {
@@ -3337,7 +3337,7 @@ impl NtfsFs {
         }
 
         // The base's list is what says where the root went, so it is what will
-        // say where the two attributes went — a list that is a file of its own
+        // say where the two attributes went, a list that is a file of its own
         // is grown by a step of its own, and is refused here.
         let mut base = self.read_mft_record(parent_record)?;
         let mut base_header = MftRecordHeader::parse(&base).ok_or(Error::InvalidArgument)?;
@@ -3357,7 +3357,7 @@ impl NtfsFs {
         // The base as the list will leave it: two entries longer than it is
         // now, each where its own type sorts.  The entries' lengths do not
         // depend on the record they name, so the fit is measured against a
-        // list built around a placeholder before anything is claimed — and a
+        // list built around a placeholder before anything is claimed, and a
         // base that cannot hold the growth makes room first, its largest
         // attribute that is not the list moving into a record of its own,
         // which is what the list's entry for it then names.
@@ -3393,7 +3393,7 @@ impl NtfsFs {
 
         // What the block and its two attributes are, and where: the clusters
         // first, then the block's own bytes, then the record that carries the
-        // two attributes — each of the three refused with what it took given
+        // two attributes, each of the three refused with what it took given
         // straight back.
         let first = match self.claim_clusters(clusters) {
             Ok(first) => first,
@@ -3565,7 +3565,7 @@ impl NtfsFs {
     /// Whether `ancestor` is the record `start` is inside.
     ///
     /// The only link from a record to its parent is the parent's reference in
-    /// its own `$FILE_NAME`, so this walks those up — which is what makes
+    /// its own `$FILE_NAME`, so this walks those up, which is what makes
     /// moving a directory into itself a refusal rather than a tree no walk can
     /// leave.
     fn is_inside(&self, ancestor: u64, start: u64) -> Result<bool> {
@@ -3606,7 +3606,7 @@ impl NtfsFs {
     /// write the record whole.
     ///
     /// A value that has grown shifts everything after it up by the difference,
-    /// which crosses sector ends — so the record goes back in one piece, with
+    /// which crosses sector ends, so the record goes back in one piece, with
     /// its update sequence array packed again.  A record with no room for the
     /// shift refuses (`NoSpace`), which is where the caller makes room; a value
     /// that lives in another record is patched there, and one that is split
@@ -3642,7 +3642,7 @@ impl NtfsFs {
     ///
     /// `at` is where the attribute begins in the record, and `old_len` what it
     /// occupies now.  The bytes may be longer or shorter than those, which
-    /// shifts everything after them — so the record goes back in one piece, its
+    /// shifts everything after them, so the record goes back in one piece, its
     /// update sequence array packed again; a record with no room for the shift
     /// refuses (`NoSpace`), which is where the caller makes room, and a record
     /// that cannot be addressed at all refuses too.
@@ -3695,9 +3695,9 @@ impl NtfsFs {
     /// wrong one.
     ///
     /// A name the *node above* the blocks holds is a key a split promoted, and
-    /// it comes out the way a key does — see [`Self::remove_index_key`].  A
+    /// it comes out the way a key does, see [`Self::remove_index_key`].  A
     /// name a block holds comes out of the block, and the block it left may
-    /// then be one the tree does not have to keep — see
+    /// then be one the tree does not have to keep, see
     /// [`Self::merge_block_if_it_fits`].
     fn index_remove(&self, parent_record: u64, name: &str, reference: u64) -> Result<()> {
         let leaf = self.index_leaf(parent_record, name)?;
@@ -3770,15 +3770,15 @@ impl NtfsFs {
     /// A key's entry carries the child whose keys are *less* than it, so the
     /// entry cannot simply go: that child would be left unreachable.  What
     /// takes its place is the key's **predecessor**, the largest name the child
-    /// holds — which keeps the child where it is, keeps every other name where
+    /// holds, which keeps the child where it is, keeps every other name where
     /// it was, and leaves the name that is going nowhere at all.  The
     /// predecessor is then taken out of the block it came from, which is the
     /// removal a block's name takes, and that block may then be one the tree
     /// does not have to keep.
     ///
     /// The node above goes first.  Written with the predecessor's key in it,
-    /// the removed name is gone and the predecessor appears **twice** — in the
-    /// node and still in the block — which a walk reads as one name, because
+    /// the removed name is gone and the predecessor appears **twice**, in the
+    /// node and still in the block, which a walk reads as one name, because
     /// both copies name the same record.  Taking it out of the block is the
     /// write that follows, and the other order would leave the name in neither.
     ///
@@ -3819,7 +3819,7 @@ impl NtfsFs {
         }
 
         // A predecessor whose name is longer than the one that goes makes the
-        // node above longer, and a record with no room makes room first — which
+        // node above longer, and a record with no room makes room first, which
         // moves the node, so the write is worked out again from where it is
         // now. A *block* has what is left of itself, and a name that does not
         // fit one is refused rather than moved anywhere.
@@ -3866,7 +3866,7 @@ impl NtfsFs {
         self.write_index_leaf(parent_record, &mut buffer, 24, &raws, &home)?;
         // The node the key was in, **read again**: the swing above wrote it,
         // and a merge that started from the copy the walk made would put the
-        // key it replaced back — the same staleness a split's node above has
+        // key it replaced back, the same staleness a split's node above has
         // when the allocation it names grows.
         let parent = self.index_node_above(&attributes, &key.home, child)?;
         self.merge_block_if_it_fits(parent_record, parent, child)
@@ -3909,8 +3909,8 @@ impl NtfsFs {
     ///
     /// A block that has lost names is a block the tree does not have to keep,
     /// and the key that separated the pair is what goes with it: it moves
-    /// **down** into the merged node, where it belongs between the two halves —
-    /// every name the two hold is on one side of it or the other — and the
+    /// **down** into the merged node, where it belongs between the two halves
+    /// every name the two hold is on one side of it or the other, and the
     /// entry that carried it is dropped.  What stays is the block whose key
     /// order came first, so the entry *after* the one that goes is the entry
     /// that points at it afterwards, with its own key unchanged.
@@ -3924,7 +3924,7 @@ impl NtfsFs {
     /// its names are then reachable twice, and a walk counts them once because
     /// both copies name the same record.  The node above next, after which the
     /// block that lost its names is not reachable at all.  Its bit in the index
-    /// bitmap last, which is what gives the block back — the clusters stay part
+    /// bitmap last, which is what gives the block back, the clusters stay part
     /// of the allocation, a free block inside it, because taking the tail of an
     /// allocation back is a step of its own.
     fn merge_block_if_it_fits(
@@ -4017,8 +4017,8 @@ impl NtfsFs {
             }
             parent_entries.push(bytes);
         }
-        // Written from a fresh read when it is a record's index root — a
-        // growth of this change's may have moved it — and where it is when the
+        // Written from a fresh read when it is a record's index root, a
+        // growth of this change's may have moved it, and where it is when the
         // node is a block.
         let (mut parent_buffer, parent_node) = match &parent.home {
             IndexHome::Record { holder } => self.index_root_node(*holder)?,
@@ -4172,8 +4172,8 @@ impl NtfsFs {
     ///
     /// The MFT is a file whose content is its records, so growing it is
     /// growing a file: clusters come from the volume's `$Bitmap`, the run list
-    /// in `$MFT`'s own record gains a run — or the last one gets longer, when
-    /// the clusters continue it — and the sizes that say how much of it is
+    /// in `$MFT`'s own record gains a run, or the last one gets longer, when
+    /// the clusters continue it, and the sizes that say how much of it is
     /// spoken for follow.  A record a volume has never written is all zeros,
     /// so the new clusters are **written as zeros**: that is what makes the
     /// records they hold free rather than whatever they held before.
@@ -4361,7 +4361,7 @@ impl NtfsFs {
     /// need.
     ///
     /// The MFT is a file whose content is its records, and its `$BITMAP` is
-    /// the volume's own list of which of them are in use — the thing a real
+    /// the volume's own list of which of them are in use, the thing a real
     /// NTFS allocates from.  A volume that does not carry one answers with
     /// none, and the record headers are then the only word on what is free.
     pub(crate) fn mft_bitmap(&self) -> Result<Option<Vec<u8>>> {
@@ -4470,7 +4470,7 @@ impl NtfsFs {
     }
 
     /// Take a record back: it stops being in use, and its number stops being
-    /// usable — the sequence number goes up, which is what makes a reference
+    /// usable, the sequence number goes up, which is what makes a reference
     /// that still named it stop matching.
     fn release_mft_record(&self, number: u64) -> Result<()> {
         let record = self.read_mft_record(number)?;
@@ -4508,7 +4508,7 @@ impl NtfsFs {
     /// Where the volume's `$VOLUME_INFORMATION` flags are, if it has them.
     ///
     /// The flags are the last two bytes of a twelve-byte value in the third
-    /// record, and bit zero is the one that says the volume is dirty — which is
+    /// record, and bit zero is the one that says the volume is dirty, which is
     /// what a reader that finds it left set is supposed to check rather than
     /// trust.
     pub(crate) fn volume_flags_offset(&self) -> Result<u64> {
@@ -4628,7 +4628,7 @@ impl FileSystem for NtfsFs {
     /// the new name and loses the old, and the record's own **`$FILE_NAME`**
     /// takes the name and the parent it now has.  The new name goes in first
     /// and the old one leaves last, so a crash between the two leaves two names
-    /// for one record — which a walk reads — rather than a file nothing names.
+    /// for one record, which a walk reads, rather than a file nothing names.
     /// The one order that cannot hold to that is a change of *spelling*: two
     /// names that fold together are one key, so the old one has to go before
     /// the new one arrives.
@@ -4700,7 +4700,7 @@ impl FileSystem for NtfsFs {
         }
         self.index_insert(new_parent, new_name, reference, directory, size)?;
         // The record's own name follows the name that is now its, and the old
-        // index entry — the one copy that now disagrees — goes last.  A name
+        // index entry, the one copy that now disagrees, goes last.  A name
         // that does not fit the record makes room the way any growth does, the
         // largest attribute that is not the name moving into a record of its
         // own.
@@ -4731,8 +4731,8 @@ impl FileSystem for NtfsFs {
     /// parent's index.
     ///
     /// The record goes down first and the name second, so a crash between them
-    /// leaves a record in use that nothing names — a leak, which is the
-    /// direction that does not break a walk — rather than a name pointing at a
+    /// leaves a record in use that nothing names, a leak, which is the
+    /// direction that does not break a walk, rather than a name pointing at a
     /// record that is not a file.
     fn create_file(&self, path: &str) -> Result<Arc<dyn VNode>> {
         let (parent_path, name) = split_parent(path);
@@ -4765,8 +4765,8 @@ impl FileSystem for NtfsFs {
     ///
     /// The record a directory gets differs from a file's in one attribute: an
     /// empty `$INDEX_ROOT` in the place of `$DATA`, which is what its children
-    /// are later added to.  The order is a creation's — the record down
-    /// first — and for the same reason.
+    /// are later added to.  The order is a creation's, the record down
+    /// first, and for the same reason.
     fn create_dir(&self, path: &str) -> Result<()> {
         let (parent_path, name) = split_parent(path);
         if name.is_empty() || name.encode_utf16().count() > 255 {
@@ -4823,8 +4823,8 @@ impl FileSystem for NtfsFs {
         // The clusters go back before the record stops naming them, so a crash
         // between the two leaves them claimed and unused rather than free and
         // spoken for.  Every non-resident attribute's runs go back, not only
-        // `$DATA`'s: a directory keeps its entries — and the bitmap of the
-        // blocks they are in — in files of their own.  The merged view is what
+        // `$DATA`'s: a directory keeps its entries, and the bitmap of the
+        // blocks they are in, in files of their own.  The merged view is what
         // is walked, so a part an `$ATTRIBUTE_LIST` put in an extension record
         // gives its clusters back too.
         let attributes = self.attributes_of(record_number)?;
@@ -4856,8 +4856,8 @@ impl FileSystem for NtfsFs {
     ///
     /// Settling is also when the **`$MFTMirr`** is brought back in step.  The
     /// mirror is the volume's own recovery copy of the MFT's first four
-    /// records — the records that say where the rest of them are, so a
-    /// checker that finds them whole can walk the volume — and a driver that
+    /// records, the records that say where the rest of them are, so a
+    /// checker that finds them whole can walk the volume, and a driver that
     /// moves any of them leaves the copy disagreeing with the original until
     /// something rewrites it.  This driver moves record 0 whenever the MFT
     /// **grows** (its run list gains a run) and record 3 whenever the volume's
@@ -4865,12 +4865,12 @@ impl FileSystem for NtfsFs {
     /// done.  The write goes **last**, after the dirty flag is cleared, for
     /// the same reason the flag exists: a checker reads the mirror next to
     /// the MFT, so the one moment it is allowed to look is the moment both
-    /// agree — and a crash before that moment leaves the volume dirty with
+    /// agree, and a crash before that moment leaves the volume dirty with
     /// the mirror stale, which is what a checker is told to expect.
     ///
-    /// A volume whose `$MFTMirr` record is one this driver cannot read — a
+    /// A volume whose `$MFTMirr` record is one this driver cannot read, a
     /// resident value, a list that moved it, fewer than four whole records of
-    /// room — is left alone: the volatile dirty flag is cleared, the mirror
+    /// room, is left alone: the volatile dirty flag is cleared, the mirror
     /// is not touched, and the mount says so rather than writing a copy that
     /// does not match.  That is the same shape as every other refusal here:
     /// what cannot be done whole is not half done.
@@ -4878,8 +4878,8 @@ impl FileSystem for NtfsFs {
         // The flag comes down **first**: record 3, whose flags these are, is
         // one of the four records the mirror copies, so a copy taken before
         // the clear would disagree with the original on the flag byte alone.
-        // The order costs one window — a crash between the two leaves a
-        // volume that reads clean with a stale copy — and a copy that fails
+        // The order costs one window, a crash between the two leaves a
+        // volume that reads clean with a stale copy, and a copy that fails
         // for any other reason puts the flag *back*, so "clean" is only ever
         // said about a volume whose copy was written or legitimately left.
         self.set_dirty(false)?;
@@ -4897,9 +4897,9 @@ impl NtfsFs {
     /// Bring the `$MFTMirr`'s four records in step with the MFT's, when the
     /// volume's own mirror is one this driver can write.
     ///
-    /// The bytes written are the volume's **own** record bytes — read back
+    /// The bytes written are the volume's **own** record bytes, read back
     /// through the device, so they are already USA-packed and already what a
-    /// checker compares against — rather than the cache's unpacked copies.
+    /// checker compares against, rather than the cache's unpacked copies.
     /// That matters: the fixup array a record carries is part of what the
     /// mirror compares, and a mirror written from unpacked bytes would
     /// disagree with the original on every sector end.
@@ -4914,8 +4914,8 @@ impl NtfsFs {
         let mirror_bytes = record_size * MFT_MIRR_RECORDS;
 
         // Where the mirror is, out of its own record's `$DATA`.  A record
-        // that does not parse — a volume whose mirror record was never
-        // formatted, or one a torn write left — is a shape the driver does
+        // that does not parse, a volume whose mirror record was never
+        // formatted, or one a torn write left, is a shape the driver does
         // not write: the copy is left alone, and the mount still settles the
         // volume.  An error *reading* the record is not a shape, and it
         // propagates: a device that cannot answer is not a volume to call
@@ -4953,7 +4953,7 @@ impl NtfsFs {
             return Ok(());
         }
 
-        // The originals, as the volume holds them, from the first record on —
+        // The originals, as the volume holds them, from the first record on
         // and the mirror beside them.  Reading through the *device* is what
         // makes these bytes the packed ones, and it also means a record the
         // cache is holding unpacked is not what lands here.
@@ -4980,8 +4980,8 @@ impl NtfsFs {
 
         // What the volume's copy says now, read through its own runs.  A copy
         // already in step is **not rewritten**: `sync` is called on every
-        // mounted volume — including one mounted read-only, whose copy is
-        // whatever the last writer left — and a settle that has nothing to
+        // mounted volume, including one mounted read-only, whose copy is
+        // whatever the last writer left, and a settle that has nothing to
         // settle must not become a write that can fail.
         let info = self.info.lock();
         let mut current = alloc::vec![0u8; originals.len()];
@@ -4999,7 +4999,7 @@ impl NtfsFs {
 
         // A copy that really is stale is written whole or not at all: the
         // run list was checked to hold four whole records, and `write_to_runs`
-        // stops at the end of what it can reach — so a count short of the
+        // stops at the end of what it can reach, so a count short of the
         // copy is a volume that would be left half-mirrored, which the caller
         // answers by raising the dirty flag again.
         let written = fs::write_to_runs(&self.device, &info, &data.data_runs, 0, &originals)?;
@@ -5137,7 +5137,7 @@ impl VNode for NtfsVnode {
 
         if data.data_runs_offset.is_none() {
             // A resident file's bytes are in the record itself, so the field
-            // write is the data write — and the volume is where the record is.
+            // write is the data write, and the volume is where the record is.
             let data = own_attribute(number, &attributes, ATTR_TYPE_DATA)?;
             let info = self.fs.info.lock();
             let mut record = self.fs.read_mft_record(number)?;
@@ -5196,8 +5196,8 @@ impl VNode for NtfsVnode {
     /// Punch a hole a caller asked for: the zeros, and the clusters the range
     /// wholly covers back to the volume.
     ///
-    /// A stream this driver does not have the bytes of — compressed or
-    /// encrypted — is one it cannot make zeros in, and so is a directory: both
+    /// A stream this driver does not have the bytes of, compressed or
+    /// encrypted, is one it cannot make zeros in, and so is a directory: both
     /// refuse with the answer their own kind gives.
     fn punch_hole(&self, offset: u64, length: u64) -> Result<()> {
         if self.kind() == NodeKind::Directory {
@@ -5235,8 +5235,8 @@ impl VNode for NtfsVnode {
             return Err(Error::NotImplemented);
         }
         if data.data_runs_offset.is_none() {
-            // A resident value's bytes are all there — its initialized size is
-            // its size — so it has no holes, and the trait's own default is the
+            // A resident value's bytes are all there, its initialized size is
+            // its size, so it has no holes, and the trait's own default is the
             // answer.
             let size = u64::from(data.data_size);
             return Ok(match kind {
@@ -5335,7 +5335,7 @@ impl NtfsVnode {
     ///
     /// The runs are the file's own runs with the claimed one appended, the
     /// allocated size is what they add up to, and the clusters the growth took
-    /// are written as zeros — they have never held the file's bytes.
+    /// are written as zeros, they have never held the file's bytes.
     fn grow_data(
         &self,
         data: &ParsedAttr,
@@ -5356,7 +5356,7 @@ impl NtfsVnode {
 
         if data.data_runs_offset.is_none() {
             // A resident value *shrinks* where it lies, and grows into the
-            // record's own room — and a growth the record has no room for is
+            // record's own room, and a growth the record has no room for is
             // what the conversion is for: the value leaves the record for runs
             // of its own, which is where a file that has outgrown its record
             // lives.
@@ -5378,7 +5378,7 @@ impl NtfsVnode {
         let mut runs = data.data_runs.clone();
         // A value that has come back **into the record** keeps nothing in
         // clusters: the attribute becomes one whose bytes are in the record
-        // again — the run list it no longer needs is room the value takes —
+        // again, the run list it no longer needs is room the value takes
         // and the clusters it held go back to the volume.  This is the order
         // the two writes go in: the other one leaves an attribute naming
         // clusters the volume has handed out again, and this one leaves
@@ -5420,7 +5420,7 @@ impl NtfsVnode {
             allocated as u32
         };
         // The zeros are what the claim added **that the length reaches**, which
-        // is `[the run list's end, length)` — not the whole claim, and not a
+        // is `[the run list's end, length)`, not the whole claim, and not a
         // region measured back from the length.  The bytes below that are the
         // file's own: a shrink leaves them there on purpose (they are what a
         // growth back reads), and a growth that zeroed them would answer a read
@@ -5439,14 +5439,14 @@ impl NtfsVnode {
     ///
     /// A sparse run names no cluster: its bytes read as zeros and a write that
     /// lands in it has nowhere to go.  What the format does is make the part
-    /// the write reaches real — the clusters those bytes *touch* are claimed
+    /// the write reaches real, the clusters those bytes *touch* are claimed
     /// from the volume, the sparse run is split into the hole before the claim,
     /// the claim, and the hole after it, and the run list goes back with the
     /// room the new clusters add.  A cluster is claimed **whole**: a hole is
     /// zeros throughout, so the rest of the cluster is those zeros.
     ///
-    /// The order is the growth path's.  The clusters are claimed — and written
-    /// as zeros, because nothing has ever put a byte there — **before** the
+    /// The order is the growth path's.  The clusters are claimed, and written
+    /// as zeros, because nothing has ever put a byte there, **before** the
     /// record names them, so a machine that stops in between leaves clusters
     /// nothing points at rather than a file whose bytes are not its own.
     fn fill_the_holes(
@@ -5551,7 +5551,7 @@ impl NtfsVnode {
     /// The record goes first and the clusters second, because the two orders
     /// leave different things behind: writing the record drops the run list (so
     /// the clusters are named by nothing), and freeing them first would leave
-    /// an attribute naming clusters the volume has handed out again — a
+    /// an attribute naming clusters the volume has handed out again, a
     /// leak in the first case, and a volume that reads another file's bytes
     /// in the second.
     ///
@@ -5603,7 +5603,7 @@ impl NtfsVnode {
     /// its record takes.
     ///
     /// The clusters are claimed for the whole length, the value's own bytes are
-    /// written into them, and the attribute — which keeps its instance number —
+    /// written into them, and the attribute, which keeps its instance number
     /// becomes one whose value is where the runs say.  The record that holds it
     /// has to have the room for the longer header, and one that has not makes
     /// room the way any record does, its largest attribute that is not the data

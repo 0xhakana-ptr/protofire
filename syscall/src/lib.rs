@@ -14,8 +14,8 @@
 //! that serves it.  Every entry names a subsystem, the filesystem, the
 //! network, the scheduler, so the table belongs where those are, and it moves
 //! when they do.  It is at `kernel/src/syscall/mod.rs` today, serving
-//! thirty-one numbers — the filesystem's, memory's, time's, the MAC policy's,
-//! and the datagram and stream setups — against the mounted volume and the
+//! thirty-one numbers, the filesystem's, memory's, time's, the MAC policy's,
+//! and the datagram and stream setups, against the mounted volume and the
 //! installed interface.  The split is the same one `fs` makes between `VNode`
 //! and a volume: this crate is the shape a call has, the kernel is what a call
 //! does.
@@ -24,7 +24,7 @@
 //!
 //! [`table::SyscallHandler`] takes the context alone, which is the right shape
 //! for a handler with no state.  The kernel's handlers need the table they
-//! were reached through — the descriptor array is in it — so the kernel names
+//! were reached through, the descriptor array is in it, so the kernel names
 //! its own type that takes the table as well.  This crate's type stays the
 //! statement of what a stateless handler is; a later `yield` or `getpid` can
 //! be registered through it by wrapping.

@@ -144,14 +144,14 @@ const AVAIL_ENTRY_LEN: usize = 2;
 /// which the driver wants the device to interrupt it.
 ///
 /// The slot exists only when `VIRTIO_F_RING_EVENT_IDX` is negotiated, and this
-/// driver negotiates it — but the first version **allocated no slot**, so the
+/// driver negotiates it, but the first version **allocated no slot**, so the
 /// device read the event index from whatever memory followed the ring.  A
 /// driver that does not maintain the slot therefore gets a device whose
 /// suppression is decided by garbage: notifications that arrive late, or a
 /// notification per completion.  Measured once a completion vector was wired
 /// to an IMSIC: the boot's own probe took **no** interrupt (the garbage said
-/// "do not notify"), and the mount that followed took one per completion —
-/// hundreds — because the adjacent bytes had changed.
+/// "do not notify"), and the mount that followed took one per completion
+/// hundreds, because the adjacent bytes had changed.
 const AVAIL_EVENT_LEN: usize = 2;
 /// The used ring's header: `flags` then `idx`.
 const USED_HEADER_LEN: usize = 4;
@@ -698,7 +698,7 @@ mod tests {
     /// The two trailing slots are pinned by their own lengths because the
     /// first version allocated neither: the device then read `used_event` from
     /// whatever followed the ring, and its suppression was decided by garbage
-    /// — measured once a completion vector reached an IMSIC, as no interrupt
+    ///, measured once a completion vector reached an IMSIC, as no interrupt
     /// during the driver's probe and one per completion afterwards.
     #[test]
     fn the_rings_are_contiguous() {

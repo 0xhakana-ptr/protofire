@@ -30,7 +30,7 @@ const BOOT_GREETING_PATH: &str = "/greeting.txt";
 ///
 /// The rule grants **write** as well as read, because the boot's programs do
 /// more than read.  Write is what every file-creating call a program makes is
-/// policed by — `open` with the create flag, the path mutations and their
+/// policed by, `open` with the create flag, the path mutations and their
 /// `*At` forms all ask it.  Without it the policy's read-only rule would let
 /// a program read everything and write nothing, and the first program to try
 /// would have met a denial whose reason was a rule the boot never chose to
@@ -41,8 +41,8 @@ pub fn exercise() {
     // Two rules granting two permissions each: the system label may read and
     // write an unlabelled file, and it may read and write the scratch zone.
     //
-    // A rule's permission field is a set — `decision` answers allow when the
-    // rule holds every permission the request asks for — so read and write
+    // A rule's permission field is a set, `decision` answers allow when the
+    // rule holds every permission the request asks for, so read and write
     // are one rule per object, not two that would otherwise have to be added
     // with `replace` off to avoid displacing each other: `add_rule` with
     // `replace` on removes every rule for the same subject, object and class
@@ -51,7 +51,7 @@ pub fn exercise() {
     //
     // The second object is `MAC_TYPE_TMP`, because `/tmp` is not unlabelled:
     // the layout resolves it to the scratch type, and the scratch zone is
-    // the one the boot mounts *for its programs* — a policy whose system
+    // the one the boot mounts *for its programs*, a policy whose system
     // label could not write the filesystem it provided for writing would
     // have every one of its programs' first writes meet a denial whose
     // reason was a rule the boot never chose to have.

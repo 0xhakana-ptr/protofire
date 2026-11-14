@@ -297,7 +297,7 @@ impl ExfatFs {
         Err(Error::NotFound)
     }
 
-    // ── the allocation bitmap ────────────────────────────────────────────
+    // the allocation bitmap
 
     /// Read one bit of the allocation bitmap.
     pub(super) fn read_bitmap_bit(&mut self, cluster: u32) -> Result<bool> {
@@ -403,7 +403,7 @@ impl ExfatFs {
         Ok(())
     }
 
-    // ── cluster data writes ──────────────────────────────────────────────
+    // cluster data writes
 
     /// Write bytes at an offset within a file's cluster chain, extending the
     /// chain as needed.  Answers the bytes written.
@@ -517,7 +517,7 @@ impl ExfatFs {
         Ok(bytes_written)
     }
 
-    // ── entry sets ───────────────────────────────────────────────────────
+    // entry sets
 
     /// Build the raw entry set for a file or directory: File (0x85), Stream
     /// (0xC0), and Filename (0xC1) entries.
@@ -867,7 +867,7 @@ pub(super) fn find_entry_set_position(raw: &[u8], name: &str) -> Option<usize> {
 }
 
 /// Scan the root directory for the allocation bitmap entry, answering
-/// `(first cluster, byte count)` — `(0, 0)` when there is none.
+/// `(first cluster, byte count)`, `(0, 0)` when there is none.
 pub(super) fn parse_exfat_bitmap_entry(raw: &[u8]) -> (u32, u64) {
     let num_entries = (raw.len() / DIR_ENTRY_SIZE).min(MAX_DIR_ENTRIES);
     let mut i = 0;

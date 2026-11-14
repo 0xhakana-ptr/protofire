@@ -470,7 +470,7 @@ const ZSTD_FILE_CONTENT: &[u8] = b"Hello from SquashFS ZSTD!\n";
 ///   1 byte   window descriptor (0x10: windowLog=12 → 4KB window)
 ///   3 bytes  block header (last, raw, size = data.len())
 ///   N bytes  raw data
-///   4 bytes  content checksum (zero — not verified by our decoder)
+///   4 bytes  content checksum (zero, not verified by our decoder)
 fn build_zstd_raw_frame(data: &[u8]) -> Vec<u8> {
     let mut frame = Vec::with_capacity(4 + 1 + 1 + 3 + data.len() + 4);
     // Magic

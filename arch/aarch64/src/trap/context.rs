@@ -54,8 +54,8 @@ pub fn resume_address(context: &Context) -> usize {
 ///
 /// A trap resumes at the instruction **after** the `svc`, and that is what
 /// `set_return` is for: the call has been answered, so the program continues.
-/// A call that **parked** has not been answered — its handler saved the frame
-/// and switched away — and resuming after the `svc` would skip it, leaving the
+/// A call that **parked** has not been answered, its handler saved the frame
+/// and switched away, and resuming after the `svc` would skip it, leaving the
 /// program to read whatever its answer register happened to hold.  The
 /// measured symptom was a `WaitProcess` that returned its caller's previous
 /// answer, and a reader that read one time fewer than its image says.
@@ -95,7 +95,7 @@ pub fn set_return_value(context: &mut Context, value: usize) {
 /// Put `value` in the register argument `index` travels in.
 ///
 /// The call convention puts the arguments in `x0`..`x7`, so this is
-/// `registers[index]` — the same array `set_return_value` writes.  It exists
+/// `registers[index]`, the same array `set_return_value` writes.  It exists
 /// as its own function because the two are different claims: one puts a
 /// call's **answer** where its caller reads it, and this puts an **argument**
 /// where a function the kernel is about to enter reads it.
@@ -113,7 +113,7 @@ pub fn set_argument(context: &mut Context, index: usize, value: usize) {
 /// The value in the register argument `index` travels in.
 ///
 /// The read side of [`set_argument`], for a kernel that must **keep** what a
-/// redirection displaces — a signal delivery takes the argument registers
+/// redirection displaces, a signal delivery takes the argument registers
 /// for its record and puts the program's own back on the way out.
 ///
 /// # Panics

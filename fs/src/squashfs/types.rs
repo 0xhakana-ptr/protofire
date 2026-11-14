@@ -297,7 +297,7 @@ pub fn parse_squashfs_xattrs(data: &[u8], count: u32) -> Vec<(Vec<u8>, Vec<u8>)>
             }
             let _val_pos = get_u64(data, off);
             off += 8;
-            // Can't read OOL value here — return empty.
+            // Can't read OOL value here, return empty.
             Vec::new()
         } else {
             if off + 4 > data.len() {

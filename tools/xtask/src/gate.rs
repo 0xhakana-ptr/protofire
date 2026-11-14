@@ -41,7 +41,7 @@ impl Machine {
         match self {
             Self::X8664 | Self::Aarch64 => &[
                 // The exec'd process exits with the **first byte of the file
-                // it read** — `t`, 116, of "the quick brown pyrofox" — and the
+                // it read**, `t`, 116, of "the quick brown pyrofox", and the
                 // forked child dies by its own bad write, with the kernel's
                 // fault status.  The fragments carry their trailing commas on
                 // purpose: `1 -> 1` is a *substring* of `1 -> 116`, and a
@@ -51,7 +51,7 @@ impl Machine {
                 // The reader waits for the writer **by pid** and exits with
                 // that process's status.  `3 -> 0` is the writer's, so a wait
                 // that answered about another process prints a different
-                // number here — which is what the unnamed `WaitProcess` could
+                // number here, which is what the unnamed `WaitProcess` could
                 // do, answering with the forked child's `139`.
                 &["exit statuses 1 -> 116,", "2 -> 0,", "3 -> 0,", "4 -> 139"],
                 // A task was placed on a CPU other than the one it last ran
@@ -59,15 +59,15 @@ impl Machine {
                 // is not always one**: placement depends on which CPU reaches
                 // the queue first, and two boots in twenty never move a task at
                 // all.  A gate that required the named move failed on those, so
-                // the fact this checks is the count's own line — the record
-                // ran — rather than that the boot happened to place a task
+                // the fact this checks is the count's own line, the record
+                // ran, rather than that the boot happened to place a task
                 // twice.  `required_lines` carries the prefix.
             ],
             Self::Riscv64 => &[
                 // The reader waits for the writer **by pid** and exits with
                 // that process's status.  `3 -> 0` is the writer's, so a wait
                 // that answered about another process prints a different
-                // number here — which is what the unnamed `WaitProcess` could
+                // number here, which is what the unnamed `WaitProcess` could
                 // do, answering with the forked child's `139`.
                 &["exit statuses 1 -> 116,", "2 -> 0,", "3 -> 0,", "4 -> 139"],
                 // The second CPU, on one line: the slot the kernel numbered it
@@ -93,7 +93,7 @@ impl Machine {
                 // driver used, and the hart line it reaches this hart on.  The
                 // context **number** is the consumer's position in the tree and
                 // follows the hart firmware cold-booted, so it is not asserted
-                // — see `required_lines`.  What the pair holds still is that
+                //, see `required_lines`.  What the pair holds still is that
                 // the count is the tree's and the line is on: a boot whose PLIC
                 // was named and never programmed prints `hart line off`, and a
                 // driver that read the wrong node prints a different count.
@@ -104,7 +104,7 @@ impl Machine {
             ],
             // The AIA machine: the same kernel on a tree that names an APLIC
             // and an IMSIC.  The first three pairs are the same facts as the
-            // PLIC machine's — the programs, the second CPU and the hart — and
+            // PLIC machine's, the programs, the second CPU and the hart, and
             // the rest is what only this machine prints.
             Self::Riscv64Aia => &[
                 &["exit statuses 1 -> 116,", "2 -> 0,", "3 -> 0,", "4 -> 139"],
@@ -118,11 +118,11 @@ impl Machine {
                 // reason the PLIC machine's context number is not asserted.
                 &[", 255 source(s), hart line on"],
                 // The IMSIC's geometry and its self-test, together: the stride
-                // is the tree's own arithmetic — the window divided by the
-                // `interrupts-extended` pairs — and the identity proves the
+                // is the tree's own arithmetic, the window divided by the
+                // `interrupts-extended` pairs, and the identity proves the
                 // message path with no device attached.
                 // The failure branch prints ` NOT delivered and claimed`,
-                // which **contains** `delivered and claimed` — so this pair
+                // which **contains** `delivered and claimed`, so this pair
                 // alone cannot tell the two apart, and `absent_lines` is what
                 // refuses the failure text on this machine.
                 &[
@@ -155,7 +155,7 @@ impl Machine {
     /// Everything above this is shared: both machines hand off through the same
     /// firmware, build the same table, start the same second hart and run the
     /// same programs.  What differs is the controller their trees name, and
-    /// that is what these two lists hold — the PLIC machine's window and the
+    /// that is what these two lists hold, the PLIC machine's window and the
     /// one console interrupt a line delivers, or the AIA machine's IMSIC, its
     /// message-mode APLIC and the device message it takes.
     pub(crate) fn controller_rows(self) -> &'static [(&'static str, bool)] {
@@ -165,7 +165,7 @@ impl Machine {
                 // states, and a message written to this hart's own page and
                 // claimed back.  The hart-file index and the identity follow
                 // the firmware's choice of cold-boot hart, so neither is
-                // asserted — `paired_lines` holds the shape.
+                // asserted, `paired_lines` holds the shape.
                 ("protofire: imsic at 0x28000000, stride ", false),
                 // The APLIC is locked in message mode here, so a wired source
                 // becomes an identity in the file rather than a line.  This is
@@ -187,7 +187,7 @@ impl Machine {
                 // trap that acknowledged the UART and counted it.
                 //
                 // The count is one because the boot asks for exactly one
-                // transmit interrupt and then silences the device — the same
+                // transmit interrupt and then silences the device, the same
                 // shape the PLIC machine's line has, reached by a different
                 // mechanism.  A boot whose `sourcecfg`/`target` writes are off
                 // by one source delivers identity 9 to a kernel waiting on 10
@@ -207,7 +207,7 @@ impl Machine {
                 // `interrupts-extended`, S-mode on hart N is context `2N+1`,
                 // and which hart firmware cold-boots is the firmware's choice.
                 // A boot whose firmware picked hart 1 printed `context 3`, and
-                // a gate requiring `context 1` failed on it — three boots in
+                // a gate requiring `context 1` failed on it, three boots in
                 // fifteen, with the controller programmed and the line taken.
                 // What is invariant is the shape, and `paired_lines` carries
                 // it.
@@ -235,7 +235,7 @@ impl Machine {
     /// can contain its own success text: the IMSIC self-test prints
     /// ` delivered and claimed` when it worked and ` NOT delivered and claimed`
     /// when it did not, so a required fragment cannot tell them apart.
-    /// Measured — deleting the claim from the success path left the required
+    /// Measured, deleting the claim from the success path left the required
     /// pair matching the failure line, and the gate stayed green.
     pub(crate) fn absent_lines(self) -> &'static [&'static str] {
         match self {
@@ -256,9 +256,9 @@ impl Machine {
     /// A fourth question, and the one this tree's device messages needed: "the
     /// line appeared with a number" passes on `= 0`, which is exactly what a
     /// wiring that armed every register and took nothing prints.  The count
-    /// itself cannot be asserted — an IMSIC file holds one pending bit per
+    /// itself cannot be asserted, an IMSIC file holds one pending bit per
     /// identity, so completions arriving before the first is claimed collapse
-    /// into one trap — so the claim is the one the mechanism makes: at least
+    /// into one trap, so the claim is the one the mechanism makes: at least
     /// one device message reached a handler.
     pub(crate) fn nonzero_lines(self) -> &'static [&'static str] {
         match self {
@@ -267,7 +267,7 @@ impl Machine {
             // boot whose wiring ran before the driver's reset prints as `= 0`,
             // which is the defect this gate exists to catch.  The card's is
             // the second identity in the same table: two devices, two bits in
-            // the file, two handlers, and each count is its own — a boot that
+            // the file, two handlers, and each count is its own, a boot that
             // took one device's message and not the other's fails here rather
             // than passing on a total.
             Self::Riscv64Aia => &[
@@ -309,7 +309,7 @@ impl Machine {
     ///
     /// The fourth is the heap's own bounds.  It is here rather than treated as
     /// a log line because reaching it means `bounds()` ran, which is what makes
-    /// the allocator lay out its free lists — a boot that printed the first
+    /// the allocator lay out its free lists, a boot that printed the first
     /// line and stopped before the second has a loader but no heap.  The
     /// address itself is not asserted: it moves with the image, and the gate
     /// is that the line is there, not where it points.
@@ -355,7 +355,7 @@ impl Machine {
                 // rate it counts at, both read from the machine.  A boot that
                 // recorded neither answers every `GetTimeOfDay` with
                 // `Unsupported`, which reads the same as a machine whose timer
-                // never came up — so the line is what separates the two.
+                // never came up, so the line is what separates the two.
                 ("protofire: time origin ", false),
                 // The generator, and a measurement of it: two 8-byte reads have
                 // to differ.  An exact line rather than a prefix, because
@@ -370,7 +370,7 @@ impl Machine {
                 ("protofire: block device from virtio-blk on pci", true),
                 // The network card, and the ARP exchange that proves both
                 // queues.  The first line is the bring-up, the second is a
-                // frame leaving and the reply coming back — the only evidence
+                // frame leaving and the reply coming back, the only evidence
                 // this tree has that the frame path runs on a machine.
                 //
                 // The reply's own fields are on the line, and the driver
@@ -401,8 +401,8 @@ impl Machine {
                 // boot execs: a file written and read back, a directory
                 // made and listed, a rename and a remove, and the `*At`
                 // calls resolving a relative name against a descriptor the
-                // program opened.  The two `wrote` lines are exact — the
-                // counts are the program's own constants — and the anchored
+                // program opened.  The two `wrote` lines are exact, the
+                // counts are the program's own constants, and the anchored
                 // lines are prefixes because the descriptor number is the
                 // table's to hand out, not the gate's to pin.
                 ("protofire: process 1 wrote 19 byte(s) to a file", true),
@@ -427,7 +427,7 @@ impl Machine {
                 ),
                 // The process model: a program starts another program and
                 // waits for it by pid, and the signal exchange between them
-                // runs both ways — the child's cooperative send, the
+                // runs both ways, the child's cooperative send, the
                 // parent's delivery to the child's own handler, and the
                 // queued record a suspend answers.  The pids are the
                 // table's, so prefixes.
@@ -443,9 +443,9 @@ impl Machine {
                 ),
                 // The time and the information calls, reached from ring 3 and
                 // answered by the registry.  Two lines each for the clock and
-                // the generator because the program calls each twice — the
+                // the generator because the program calls each twice, the
                 // clock to check it does not go backwards, the generator to
-                // check two draws differ — and one line each for the two
+                // check two draws differ, and one line each for the two
                 // records.  The length on the line is the program's own buffer
                 // size, which is a fact about the program and not about the
                 // kernel.
@@ -457,9 +457,9 @@ impl Machine {
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 // The IPv6 side, over the same card and the same receive
-                // path: a neighbour solicitation this stack answered — the
+                // path: a neighbour solicitation this stack answered, the
                 // line names the address asked about and the peer's MAC it
-                // took out of the solicitation's own option — and an echo
+                // took out of the solicitation's own option, and an echo
                 // request it replied to, with the identifier and sequence
                 // the request carried.
                 //
@@ -473,7 +473,7 @@ impl Machine {
                 ("protofire: ipv6 echo reply to fe80:", false),
                 // And the ring-3 half: a program reads the IPv6 record and
                 // checks the link-local address against the MAC it was told
-                // about — `fe80::` plus the modified EUI-64, the one fact a
+                // about, `fe80::` plus the modified EUI-64, the one fact a
                 // program can verify without the wire.
                 ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
                 // And the two transports over IPv6: a datagram and a stream,
@@ -505,19 +505,19 @@ impl Machine {
                 ),
                 // The ping: the echo reply is a packet QEMU's user-mode
                 // network built, matched against the identifier, sequence and
-                // data the request sent — the round trip IPv4 can carry, on
+                // data the request sent, the round trip IPv4 can carry, on
                 // every machine this gate boots.
                 ("protofire: icmp echo reply from 10.0.2.2, ", false),
                 // The datagram: one UDP send to a port nothing owns, and
                 // the port-unreachable refusal that comes back carrying the
-                // original — the peer's proof that a datagram this stack
+                // original, the peer's proof that a datagram this stack
                 // built arrived with its header intact.
                 ("protofire: udp sent from port 40000, refused by ", false),
                 // The datagram exchange, from ring 3: a bind, a fork, the
                 // child's send, and the receive that answers it.  The send's
-                // and receive's lines are exact — the lengths are the
+                // and receive's lines are exact, the lengths are the
                 // program's own constant and the sender record is what the
-                // kernel filled — and the bind is a prefix because the
+                // kernel filled, and the bind is a prefix because the
                 // descriptor number is the table's to hand out.
                 ("protofire: process 1 bound port 8612 as descriptor ", false),
                 (
@@ -529,7 +529,7 @@ impl Machine {
                     true,
                 ),
                 // The stream: a listener, a client, an echo, and the close
-                // that ends both ends, on loopback — the whole of a TCP
+                // that ends both ends, on loopback, the whole of a TCP
                 // exchange, run by the boot on every machine this gate
                 // boots.  The ids are the table's, so the connect line is a
                 // prefix; the echo's length beside the send's is exact,
@@ -539,7 +539,7 @@ impl Machine {
                 ("protofire: tcp closed, both ends done", true),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
-                // are prefixes — the descriptor number is the table's — and
+                // are prefixes, the descriptor number is the table's, and
                 // the connect, the two writes and the two reads are exact:
                 // the lengths are the program's own constant, and the
                 // child's exit status is the echo's first byte, which only
@@ -608,8 +608,8 @@ impl Machine {
                 ("protofire: parallel, programs ended on ", false),
                 // Every finished program's address space went back, and the
                 // pool it returned to is reported beside it.  The count is the
-                // boot's four spaces — the three programs plus the forked
-                // child — released once the machine is finished.  Releasing at
+                // boot's four spaces, the three programs plus the forked
+                // child, released once the machine is finished.  Releasing at
                 // each exit was tried and produced 186 page faults in six
                 // boots of eight, which is why the count is here at the end
                 // rather than absent.
@@ -618,8 +618,8 @@ impl Machine {
                 // with the tables each mapping built reclaimed beside the
                 // frames, every frame the boot took is back, and the free
                 // count is the pool's whole size.  A release that leaks even
-                // the walk's scaffolding — three tables per space, fifteen on
-                // this boot — prints a smaller number and fails here.
+                // the walk's scaffolding, three tables per space, fifteen on
+                // this boot, prints a smaller number and fails here.
                 (
                     "protofire: address spaces reaped 8, 131072 frame(s) free",
                     true,
@@ -648,7 +648,7 @@ impl Machine {
                 // The placement rule's preferred half: a switch put a task back
                 // on the CPU it last ran on.  Required because a rule that
                 // never preferred anything still printed the migration line
-                // above — the two numbers are what a reader compares, and a
+                // above, the two numbers are what a reader compares, and a
                 // boot whose home count was zero moved every task it placed.
                 ("protofire: task placings home ", false),
                 // Three programs in ring 3, each in an address space of its
@@ -668,7 +668,7 @@ impl Machine {
                 // there, and its second never is.
                 ("program 1 says hello", true),
                 // The pipe's reader waited for a process to end, and the
-                // kernel answered — the same claim the other machines carry,
+                // kernel answered, the same claim the other machines carry,
                 // and the line rather than an exit status because
                 // `WaitProcess` names no particular child.
                 ("protofire: a wait answered status ", false),
@@ -703,16 +703,16 @@ impl Machine {
                 // first write faults, and the count decides: one write finds
                 // the page still shared and is **copied**, the other finds
                 // itself the last holder and is handed the frame outright.
-                // Either order is correct — which process runs first decides
-                // which answer each gets — so the check is that both answers
+                // Either order is correct, which process runs first decides
+                // which answer each gets, so the check is that both answers
                 // exist, and the promote's frame is the copy's source frame,
                 // which is the pair reading itself.
                 ("protofire: copy-on-write copy at ", false),
                 ("protofire: copy-on-write promote at ", false),
                 // The exec, as a line that names both sides of the change:
                 // the task that called and the image it became.  The number
-                // and the image are this boot's facts — pid 1 calls, image 4
-                // is what it becomes — so the line is required whole.
+                // and the image are this boot's facts, pid 1 calls, image 4
+                // is what it becomes, so the line is required whole.
                 //
                 // And the opened line under it is the identity claim's new
                 // home: the exec'd image opens the boot's file, and the
@@ -825,7 +825,7 @@ impl Machine {
                     // The placement rule's preferred half: a switch put a task
                     // back on the CPU it last ran on.  Required because a rule
                     // that never preferred anything still printed the migration
-                    // line above — the two numbers are what a reader compares,
+                    // line above, the two numbers are what a reader compares,
                     // and a boot whose home count was zero moved every task it
                     // placed.
                     ("protofire: task placings home ", false),
@@ -958,7 +958,7 @@ impl Machine {
                     ("protofire: block device from virtio-blk on pci", true),
                     // The network card, and the ARP exchange that proves both
                     // queues.  The first line is the bring-up, the second is a
-                    // frame leaving and the reply coming back — the only
+                    // frame leaving and the reply coming back, the only
                     // evidence this tree has that the frame path runs on a
                     // machine.
                     //
@@ -991,8 +991,8 @@ impl Machine {
                     // boot execs: a file written and read back, a directory
                     // made and listed, a rename and a remove, and the `*At`
                     // calls resolving a relative name against a descriptor
-                    // the program opened.  The two `wrote` lines are exact —
-                    // the counts are the program's own constants — and the
+                    // the program opened.  The two `wrote` lines are exact
+                    // the counts are the program's own constants, and the
                     // anchored lines are prefixes because the descriptor
                     // number is the table's to hand out, not the gate's to
                     // pin.
@@ -1018,7 +1018,7 @@ impl Machine {
                     ),
                     // The process model: a program starts another program
                     // and waits for it by pid, and the signal exchange
-                    // between them runs both ways — the child's cooperative
+                    // between them runs both ways, the child's cooperative
                     // send, the parent's delivery to the child's own
                     // handler, and the queued record a suspend answers.  The
                     // pids are the table's, so prefixes.
@@ -1035,8 +1035,8 @@ impl Machine {
                     // The time and the information calls, reached from ring 3
                     // and answered by the registry.  Two lines each for the
                     // clock and the generator because the program calls each
-                    // twice — the clock to check it does not go backwards, the
-                    // generator to check two draws differ — and one line each
+                    // twice, the clock to check it does not go backwards, the
+                    // generator to check two draws differ, and one line each
                     // for the two records.  The length on the line is the
                     // program's own buffer size, which is a fact about the
                     // program and not about the kernel.
@@ -1048,9 +1048,9 @@ impl Machine {
                     ("protofire: virtio-net up, address ", false),
                     ("protofire: virtio-net arp reply ", false),
                     // The IPv6 side, over the same card and the same receive
-                    // path: a neighbour solicitation this stack answered — the
+                    // path: a neighbour solicitation this stack answered, the
                     // line names the address asked about and the peer's MAC it
-                    // took out of the solicitation's own option — and an echo
+                    // took out of the solicitation's own option, and an echo
                     // request it replied to, with the identifier and sequence
                     // the request carried.
                     //
@@ -1064,7 +1064,7 @@ impl Machine {
                     ("protofire: ipv6 echo reply to fe80:", false),
                     // And the ring-3 half: a program reads the IPv6 record and
                     // checks the link-local address against the MAC it was told
-                    // about — `fe80::` plus the modified EUI-64, the one fact a
+                    // about, `fe80::` plus the modified EUI-64, the one fact a
                     // program can verify without the wire.
                     ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
                     // And the two transports over IPv6: a datagram and a
@@ -1139,7 +1139,7 @@ impl Machine {
                     ("protofire: process 8 read 9 byte(s) from a stream", true),
                     // The stream exchange, from ring 3: the same two programs
                     // the datagram exchange used.  The listen and the accept
-                    // are prefixes — the descriptor number is the table's — and
+                    // are prefixes, the descriptor number is the table's, and
                     // the connect, the two writes and the two reads are exact:
                     // the lengths are the program's own constant, and the
                     // child's exit status is the echo's first byte, which only
@@ -1239,7 +1239,7 @@ impl Machine {
                 ("protofire: block device from virtio-blk on pci", true),
                 // The network card, and the ARP exchange that proves both
                 // queues.  The first line is the bring-up, the second is a
-                // frame leaving and the reply coming back — the only evidence
+                // frame leaving and the reply coming back, the only evidence
                 // this tree has that the frame path runs on a machine.
                 //
                 // The reply's own fields are on the line, and the driver
@@ -1270,8 +1270,8 @@ impl Machine {
                 // boot execs: a file written and read back, a directory
                 // made and listed, a rename and a remove, and the `*At`
                 // calls resolving a relative name against a descriptor the
-                // program opened.  The two `wrote` lines are exact — the
-                // counts are the program's own constants — and the anchored
+                // program opened.  The two `wrote` lines are exact, the
+                // counts are the program's own constants, and the anchored
                 // lines are prefixes because the descriptor number is the
                 // table's to hand out, not the gate's to pin.
                 ("protofire: process 1 wrote 19 byte(s) to a file", true),
@@ -1296,7 +1296,7 @@ impl Machine {
                 ),
                 // The process model: a program starts another program and
                 // waits for it by pid, and the signal exchange between them
-                // runs both ways — the child's cooperative send, the
+                // runs both ways, the child's cooperative send, the
                 // parent's delivery to the child's own handler, and the
                 // queued record a suspend answers.  The pids are the
                 // table's, so prefixes.
@@ -1312,9 +1312,9 @@ impl Machine {
                 ),
                 // The time and the information calls, reached from ring 3 and
                 // answered by the registry.  Two lines each for the clock and
-                // the generator because the program calls each twice — the
+                // the generator because the program calls each twice, the
                 // clock to check it does not go backwards, the generator to
-                // check two draws differ — and one line each for the two
+                // check two draws differ, and one line each for the two
                 // records.  The length on the line is the program's own buffer
                 // size, which is a fact about the program and not about the
                 // kernel.
@@ -1326,9 +1326,9 @@ impl Machine {
                 ("protofire: virtio-net up, address ", false),
                 ("protofire: virtio-net arp reply ", false),
                 // The IPv6 side, over the same card and the same receive
-                // path: a neighbour solicitation this stack answered — the
+                // path: a neighbour solicitation this stack answered, the
                 // line names the address asked about and the peer's MAC it
-                // took out of the solicitation's own option — and an echo
+                // took out of the solicitation's own option, and an echo
                 // request it replied to, with the identifier and sequence
                 // the request carried.
                 //
@@ -1342,7 +1342,7 @@ impl Machine {
                 ("protofire: ipv6 echo reply to fe80:", false),
                 // And the ring-3 half: a program reads the IPv6 record and
                 // checks the link-local address against the MAC it was told
-                // about — `fe80::` plus the modified EUI-64, the one fact a
+                // about, `fe80::` plus the modified EUI-64, the one fact a
                 // program can verify without the wire.
                 ("protofire: process 1 asked the ipv6 side, 56 byte(s)", true),
                 // And the two transports over IPv6: a datagram and a stream,
@@ -1372,19 +1372,19 @@ impl Machine {
                 ),
                 // The ping: the echo reply is a packet QEMU's user-mode
                 // network built, matched against the identifier, sequence and
-                // data the request sent — the round trip IPv4 can carry, on
+                // data the request sent, the round trip IPv4 can carry, on
                 // every machine this gate boots.
                 ("protofire: icmp echo reply from 10.0.2.2, ", false),
                 // The datagram: one UDP send to a port nothing owns, and
                 // the port-unreachable refusal that comes back carrying the
-                // original — the peer's proof that a datagram this stack
+                // original, the peer's proof that a datagram this stack
                 // built arrived with its header intact.
                 ("protofire: udp sent from port 40000, refused by ", false),
                 // The datagram exchange, from ring 3: a bind, a fork, the
                 // child's send, and the receive that answers it.  The send's
-                // and receive's lines are exact — the lengths are the
+                // and receive's lines are exact, the lengths are the
                 // program's own constant and the sender record is what the
-                // kernel filled — and the bind is a prefix because the
+                // kernel filled, and the bind is a prefix because the
                 // descriptor number is the table's to hand out.
                 ("protofire: process 1 bound port 8612 as descriptor ", false),
                 (
@@ -1396,7 +1396,7 @@ impl Machine {
                     true,
                 ),
                 // The stream: a listener, a client, an echo, and the close
-                // that ends both ends, on loopback — the whole of a TCP
+                // that ends both ends, on loopback, the whole of a TCP
                 // exchange, run by the boot on every machine this gate
                 // boots.  The ids are the table's, so the connect line is a
                 // prefix; the echo's length beside the send's is exact,
@@ -1406,7 +1406,7 @@ impl Machine {
                 ("protofire: tcp closed, both ends done", true),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
-                // are prefixes — the descriptor number is the table's — and
+                // are prefixes, the descriptor number is the table's, and
                 // the connect, the two writes and the two reads are exact:
                 // the lengths are the program's own constant, and the
                 // child's exit status is the echo's first byte, which only
@@ -1433,7 +1433,7 @@ impl Machine {
                 // IMSIC takes none, because no device can send it a message,
                 // and the boot says `= 0`.  What the line holds still is that
                 // the census ran and that the count is a number rather than
-                // absent — the AIA machine's own boot is where a non-zero
+                // absent, the AIA machine's own boot is where a non-zero
                 // count is evidence, and no gate machine has an IMSIC yet.
                 ("protofire: block completion message(s) taken = ", false),
                 // The card's own count, on its own identity.  Every machine
@@ -1468,7 +1468,7 @@ impl Machine {
                 ("protofire: a write woke ", false),
                 ("program 1 says hello", true),
                 // The pipe's reader waited for a process to end, and the
-                // kernel answered — the same claim the other machines carry,
+                // kernel answered, the same claim the other machines carry,
                 // and the line rather than an exit status because
                 // `WaitProcess` names no particular child.
                 ("protofire: a wait answered status ", false),
@@ -1559,7 +1559,7 @@ impl Machine {
                 // The placement rule's preferred half: a switch put a task back
                 // on the CPU it last ran on.  Required because a rule that
                 // never preferred anything still printed the migration line
-                // above — the two numbers are what a reader compares, and a
+                // above, the two numbers are what a reader compares, and a
                 // boot whose home count was zero moved every task it placed.
                 ("protofire: task placings home ", false),
             ],

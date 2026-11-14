@@ -41,7 +41,7 @@ pub struct BootSector {
 ///
 /// A positive value is a number of clusters; a negative one is the binary
 /// logarithm of a number of *bytes*, which is how a volume whose records are
-/// smaller than a cluster — the shape `mkntfs` makes by default — says so.
+/// smaller than a cluster, the shape `mkntfs` makes by default, says so.
 pub fn size_from_exponent(exponent: i8, cluster_size: u32) -> u32 {
     if exponent >= 0 {
         (exponent as u32)
@@ -145,7 +145,7 @@ pub const ATTR_TYPE_EA_INFORMATION: u32 = 0xD0;
 pub const ATTR_TYPE_REPARSE_POINT: u32 = 0xC0;
 pub const ATTR_TYPE_END: u32 = 0xFFFF_FFFF;
 
-/// An attribute's flags: the stream is **compressed** — its runs name clusters
+/// An attribute's flags: the stream is **compressed**, its runs name clusters
 /// that hold an LZNT1 bitstream, one compression unit at a time.
 pub const ATTR_FLAG_COMPRESSED: u16 = 0x0001;
 /// The stream is **encrypted** (EFS): what its runs name is ciphertext, and
@@ -218,7 +218,7 @@ pub struct ParsedAttr {
     /// there is no one such record.
     ///
     /// A writer patches a field where it lies, and the field of an attribute
-    /// an `$ATTRIBUTE_LIST` moved to an extension record lies in that record —
+    /// an `$ATTRIBUTE_LIST` moved to an extension record lies in that record
     /// while a non-resident attribute *split* across records by virtual
     /// cluster number lies in none of them, so patching "its run list" would
     /// patch a part of it.  [`parse_attributes`](super::fs::parse_attributes)
@@ -241,7 +241,7 @@ pub struct ParsedAttr {
     pub data_size: u32,
     /// How much of a non-resident value has ever been **written**: the format
     /// says what lies past it reads as zeros, which a record that holds the
-    /// value has no way to say — so a conversion has to make those bytes
+    /// value has no way to say, so a conversion has to make those bytes
     /// explicit.
     pub initialized_size: u32,
 }
@@ -445,7 +445,7 @@ pub fn parse_reparse_point(buf: &[u8]) -> Option<(u32, Option<String>)> {
 /// 0 = last)   u8   flags              (0x80 = NEED_EA)
 ///   u8   name_length        (in bytes, not characters)
 ///   u16  value_length       (in bytes)
-///   u8[] name               (name_length bytes — ASCII / ANSI)
+///   u8[] name               (name_length bytes, ASCII / ANSI)
 ///   u8[] value              (value_length bytes)
 ///   …    pad to 4-byte boundary
 pub fn parse_ea_entries(content: &[u8]) -> Vec<XattrEntry> {
@@ -487,7 +487,7 @@ pub fn parse_ea_entries(content: &[u8]) -> Vec<XattrEntry> {
         let _ea_flags = flags; // 0x80 = NEED_EA
 
         if next_off == 0 || next_off <= 8 {
-            // Last entry or malformed — stop.
+            // Last entry or malformed, stop.
             break;
         }
         pos += next_off;

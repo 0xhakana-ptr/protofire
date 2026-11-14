@@ -259,12 +259,12 @@ impl ExtentData {
     ///   17    encryption
     ///   18-19 other_encoding
     ///   20    type         (0=inline, 1=regular, 2=prealloc)
-    ///   —— type 1 (regular) ——
+    ///, type 1 (regular),
     ///   21-28 disk_bytenr
     ///   29-36 disk_num_bytes
     ///   37-44 offset
     ///   45-52 num_bytes
-    ///   —— type 0 (inline) ——
+    ///, type 0 (inline),
     ///   21..  inline data
     pub fn parse(buf: &[u8]) -> Option<Self> {
         if buf.len() < 21 {
@@ -304,7 +304,7 @@ impl ExtentData {
                 })
             }
             2 => {
-                // Prealloc — no data, just a reservation.
+                // Prealloc, no data, just a reservation.
                 if buf.len() < 53 {
                     return None;
                 }
@@ -325,7 +325,7 @@ impl ExtentData {
 
 // Root item (subvolume metadata)
 
-/// Parsed btrfs_root_item — key fields for subvolume traversal.
+/// Parsed btrfs_root_item, key fields for subvolume traversal.
 #[derive(Debug, Clone)]
 pub struct RootItem {
     /// Root directory inode number for this subvolume.
@@ -367,7 +367,7 @@ impl RootItem {
     }
 }
 
-/// Parsed btrfs_dev_item — describes a device in a multi-device filesystem.
+/// Parsed btrfs_dev_item, describes a device in a multi-device filesystem.
 ///
 /// On-disk layout (98 bytes):
 ///   0-7    devid
@@ -405,7 +405,7 @@ impl DevItem {
     }
 }
 
-/// A single stripe within a chunk — maps to a physical device + offset.
+/// A single stripe within a chunk, maps to a physical device + offset.
 ///
 /// On-disk layout (32 bytes):
 ///   0-7    devid
@@ -431,7 +431,7 @@ impl Stripe {
     }
 }
 
-/// Parsed btrfs_chunk item — maps a logical address range to physical stripes.
+/// Parsed btrfs_chunk item, maps a logical address range to physical stripes.
 ///
 /// On-disk layout (variable; header is 48 bytes + N × 32-byte stripes):
 ///   0-7    size (length of the chunk in bytes)

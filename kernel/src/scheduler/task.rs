@@ -94,7 +94,7 @@ pub struct Task {
     /// saying it has finished with it.
     ///
     /// The address is a virtual one in the program's own space, so it is only
-    /// meaningful together with the `space` this task runs through — which is
+    /// meaningful together with the `space` this task runs through, which is
     /// why it lives here and not in the registry.
     pub(crate) handler: Option<usize>,
     /// The CPU slot this task last ran on, or `usize::MAX` before its first
@@ -122,7 +122,7 @@ pub struct Task {
     ///
     /// The difference is what a boot's own evidence line turns on.  A program
     /// that ran hundreds of ticks on the started CPU and then finished on the
-    /// boot one — a migration that `task migrations` reports — was a program
+    /// boot one, a migration that `task migrations` reports, was a program
     /// that ran in parallel, and reading the CPU at the moment of its exit said
     /// it had not.  The gate required `program ended on cpu 1` and the boot
     /// printed `parallel, programs ended on 0`, both truthfully, because the
@@ -132,15 +132,15 @@ pub struct Task {
     ///
     /// A fixed ring rather than a growable list: a sender that fills it has
     /// a target that is not consuming, and `Busy` is the answer that says so
-    /// — an unbounded queue would be one process's runaway loop holding
+    ///, an unbounded queue would be one process's runaway loop holding
     /// every other task's memory.  The depth is eight, which is what a boot
     /// whose programs exchange one signal needs and far short of a heap's
     /// worth.
     pub(crate) signals: [Option<PendingSignal>; TASK_SIGNAL_QUEUE],
     /// The mask whose bit `n` blocks signal `n`.
     ///
-    /// A masked signal still queues — the sender's send succeeded and the
-    /// target is not consuming, which is the ring's business — but a wait
+    /// A masked signal still queues, the sender's send succeeded and the
+    /// target is not consuming, which is the ring's business, but a wait
     /// does not take it until something clears the bit.  `0` is the fresh
     /// task's mask: everything deliverable.
     pub(crate) signal_mask: u32,
@@ -155,14 +155,14 @@ pub struct Task {
     /// The handlers a program installed, by signal number.
     ///
     /// An installed handler changes what a send **does**: the signal is
-    /// delivered — the program's context redirected to the handler with the
-    /// record in its argument registers — rather than queued for a wait.
+    /// delivered, the program's context redirected to the handler with the
+    /// record in its argument registers, rather than queued for a wait.
     /// `None` is the default, which is the queue.
     pub(crate) signal_handlers: [Option<usize>; SIGNAL_COUNT],
     /// A signal waiting to be delivered, on the task's next install.
     ///
     /// The task that owns this may be running on another CPU, whose trap
-    /// frame is live — a context the kernel must not reach into mid-flight.
+    /// frame is live, a context the kernel must not reach into mid-flight.
     /// So the send only records, and the one place that copies this task's
     /// context into a frame the epilogue is about to resume is where the
     /// redirection happens.
@@ -172,7 +172,7 @@ pub struct Task {
     ///
     /// The delivery redirects the program's registers to the record, and the
     /// program was interrupted between two instructions that were budgeting
-    /// **no call at all** — an address computed into a register with its load
+    /// **no call at all**, an address computed into a register with its load
     /// one instruction ahead is the measured case, and a handler that runs on
     /// the interrupted registers destroys exactly such a value by every rule
     /// of its own calling convention.  Six words saved here would cover the
@@ -183,7 +183,7 @@ pub struct Task {
     pub(crate) delivery_saved: Option<Context>,
 }
 
-/// How many signals the ABI defines, `1..=31` — and therefore the width of
+/// How many signals the ABI defines, `1..=31`, and therefore the width of
 /// a handler table indexed by signal.
 pub(crate) const SIGNAL_COUNT: usize = 32;
 
@@ -211,7 +211,7 @@ impl Task {
 /// three of these fields, not a number alone.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PendingSignal {
-    /// Which signal, `1..=31` — the range the ABI validates at the call.
+    /// Which signal, `1..=31`, the range the ABI validates at the call.
     pub(crate) signal: usize,
     /// The process that sent it.
     pub(crate) sender_pid: u32,

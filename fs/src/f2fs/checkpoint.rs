@@ -1,7 +1,7 @@
 //! fs/src/f2fs/checkpoint.rs
 //!
 //! The checkpoint: two copies, the newer one wins, and a new one is written
-//! to the *other* copy with its version bumped — which is what leaves a
+//! to the *other* copy with its version bumped, which is what leaves a
 //! valid copy on the disk no matter when the write is interrupted.
 //!
 //! The checkpoint also carries the NAT journal, and the NAT and SIT caches
@@ -55,7 +55,7 @@ impl F2fsFs {
     /// Write a new checkpoint to the *other* copy, version bumped.
     ///
     /// The dirty NAT entries flush to the NAT area first, the valid counts
-    /// come from the caches, and the block goes through write-through — a
+    /// come from the caches, and the block goes through write-through, a
     /// checkpoint the cache held back would be a recovery point the disk
     /// never saw.
     pub(super) fn write_checkpoint(&self) -> Result<()> {
@@ -146,7 +146,7 @@ impl F2fsFs {
     }
 
     /// Build the NAT cache from the NAT area, with the checkpoint's journal
-    /// applied over it — the journal's entries are the newer facts.
+    /// applied over it, the journal's entries are the newer facts.
     pub(super) fn init_nat_cache(
         cache: &BlockCache,
         sb: &F2fsSuperblock,

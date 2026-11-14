@@ -8,7 +8,7 @@
 //! ## What replay is here, and what it is not
 //!
 //! The driver is read-only, so the replay runs through the one path a
-//! read-only volume has — `check_and_repair`, the volume check the VFS's
+//! read-only volume has, `check_and_repair`, the volume check the VFS's
 //! repair question asks.  A dirty journal answers the check with an issue
 //! detected; the replay applies what the log holds and the report counts
 //! it as the repair that was made.
@@ -43,10 +43,10 @@ const XFS_BLF_HDR_SIZE: usize = 32;
 const XFS_LI_BUF: u16 = 0x3132;
 /// The buffer format's "more buffer data" flag.
 const XFS_BLF_INODE_BUF: u16 = 0x2;
-/// The buffer format's tail flag — the item's last piece.
+/// The buffer format's tail flag, the item's last piece.
 const XFS_BLF_TAIL: u16 = 0x20;
 
-// ── the header's fields ──────────────────────────────────────────────────
+// the header's fields
 
 fn xlog_magic(buf: &[u8], off: usize) -> u32 {
     read_be32(buf, off)
@@ -84,14 +84,14 @@ fn blf_map_size(buf: &[u8], off: usize) -> u16 {
     u16::from_be_bytes([buf[off + 18], buf[off + 19]])
 }
 
-// ── the replay ───────────────────────────────────────────────────────────
+// the replay
 
 /// Replay the XFS journal if it is dirty.
 ///
 /// The log area is scanned record by record; each record's buffer items
 /// name metadata blocks whose logged pieces are written back to the places
-/// they came from.  A clean journal — no records, or a scan that finds none
-/// — answers `Ok` without writing anything.
+/// they came from.  A clean journal, no records, or a scan that finds none
+///, answers `Ok` without writing anything.
 pub(super) fn replay_xfs_journal(device: &Arc<dyn BlockDevice>, sb: &Superblock) -> Result<bool> {
     // A read-only device cannot be brought up to date: the replay's writes
     // would be refused.
@@ -163,7 +163,7 @@ pub(super) fn replay_xfs_journal(device: &Arc<dyn BlockDevice>, sb: &Superblock)
                         data_off + (i as u64 * sector_size as u64),
                         &mut piece,
                     )?;
-                    // The piece lands at `blkno + i` — the block the log
+                    // The piece lands at `blkno + i`, the block the log
                     // says this piece belongs to.
                     let target = blkno as u64 * sb.sector_size as u64 + (i * sector_size) as u64;
                     write_device_bytes(device, target, &piece)?;

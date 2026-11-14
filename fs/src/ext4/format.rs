@@ -9,7 +9,7 @@
 //! volume it writes to, and this tree has no host tool to borrow: the tree
 //! is the whole world, and a test that needs `mkfs.ext4` is a test the gate
 //! cannot run.  So the formatter is here, next to the reader it makes
-//! volumes for — a fresh volume is one superblock, one descriptor table per
+//! volumes for, a fresh volume is one superblock, one descriptor table per
 //! group, the two bitmaps, the inode table, a root directory with its dot
 //! entries, and a journal inode whose first block is a journal superblock.
 //!
@@ -17,7 +17,7 @@
 //! reads is real: one kilobyte blocks, one group per few thousand blocks,
 //! 128-byte inodes at revision one, the file-type and extents features set,
 //! and the journal feature with inode 8 carrying a real journal
-//! superblock — so a formatted volume exercises the write path's
+//! superblock, so a formatted volume exercises the write path's
 //! write-ahead logging end to end.
 
 use alloc::vec;
@@ -91,7 +91,7 @@ pub(super) fn format(device: &BlockCache, total_blocks: u32) -> Result<()> {
         Ok(())
     };
 
-    // ── the superblock ───────────────────────────────────────────────────
+    // the superblock
 
     let mut sb = vec![0_u8; block_size];
     sb[0x00..0x04].copy_from_slice(&total_blocks.to_le_bytes()); // inodes_count placeholder
@@ -118,7 +118,7 @@ pub(super) fn format(device: &BlockCache, total_blocks: u32) -> Result<()> {
     sb[0x54..0x58].copy_from_slice(&11u32.to_le_bytes());
     write_block(device, superblock_block, &sb)?;
 
-    // ── the group descriptors ────────────────────────────────────────────
+    // the group descriptors
 
     let mut bgdt = vec![0_u8; block_size];
     for (group, start) in group_starts.iter().enumerate() {
@@ -142,7 +142,7 @@ pub(super) fn format(device: &BlockCache, total_blocks: u32) -> Result<()> {
     }
     write_block(device, bgdt_block, &bgdt)?;
 
-    // ── the bitmaps and inode tables ─────────────────────────────────────
+    // the bitmaps and inode tables
 
     for (group, start) in group_starts.iter().enumerate() {
         let block_bitmap = *start;
@@ -227,11 +227,11 @@ pub(super) fn format(device: &BlockCache, total_blocks: u32) -> Result<()> {
         })?;
     }
 
-    // ── the root directory's block: the dot entries ──────────────────────
+    // the root directory's block: the dot entries
 
     let mut root = vec![0_u8; block_size];
     // "." points at the root itself, and spans the whole block so that the
-    // first real entry the write path adds rides in this block's slack —
+    // first real entry the write path adds rides in this block's slack
     // which is what add_dir_entry's shrink-and-insert expects to find.
     root[0x00..0x04].copy_from_slice(&2u32.to_le_bytes());
     root[0x04..0x06].copy_from_slice(&12u16.to_le_bytes());
@@ -247,7 +247,7 @@ pub(super) fn format(device: &BlockCache, total_blocks: u32) -> Result<()> {
     root[21] = b'.';
     write_block(device, root_data_block, &root)?;
 
-    // ── the journal's superblock ─────────────────────────────────────────
+    // the journal's superblock
 
     let mut jsb = vec![0_u8; block_size];
     super::journal::write_u32_be(

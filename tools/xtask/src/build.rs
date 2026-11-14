@@ -28,7 +28,7 @@ const DISK_BYTES: usize = 1024 * 1024;
 /// The volume's label and the greeting file, as the kernel's own constants
 /// name them.
 ///
-/// Two copies of each string — here and in `kernel/src/volume.rs` — because
+/// Two copies of each string, here and in `kernel/src/volume.rs`, because
 /// the disk is formatted **here**, before the machine runs, and the kernel's
 /// self-check reads back the constant it carries.  The boot's read-back line
 /// is what polices the pairing: drift and the gate goes red.
@@ -43,7 +43,7 @@ const SHELL_PATH: &str = "/bin/shell";
 /// One constant because the build and the read have to name the same
 /// directory: the first version built the default profile and read the
 /// release one, which a tree that had never built it by hand could not
-/// satisfy — the gate failed with "no such file" on a clean clone and only
+/// satisfy, the gate failed with "no such file" on a clean clone and only
 /// passed on a machine where an earlier manual build had left the file.
 const INIT_PROFILE: &str = "release";
 
@@ -51,9 +51,9 @@ const INIT_PROFILE: &str = "release";
 ///
 /// One constant, and not a per-machine table: the script carries no machine
 /// fact.  It fixes the base the kernel's user window computes and lets the
-/// target triple choose the container, which is why `arch/<machine>/` — where
+/// target triple choose the container, which is why `arch/<machine>/`, where
 /// the kernel's scripts live, because their load addresses *are* their
-/// machines' loader conventions — is the wrong home for this one.
+/// machines' loader conventions, is the wrong home for this one.
 const INIT_LINKER_SCRIPT: &str = "apps/init/linker.ld";
 
 /// Build one program crate for `machine`'s target, answering the ELF's bytes.
@@ -63,14 +63,14 @@ const INIT_LINKER_SCRIPT: &str = "apps/init/linker.ld";
 /// program links as PIC, because its window base is far past the absolute
 /// relocations a static build would emit, and the precompiled core the
 /// sysroot carries is built with the default code model, which the program's
-/// own CGUs must not contradict.  Every shipped program goes through here —
-/// `init` and, since the tree carried two, `shell` — so their images share
+/// own CGUs must not contradict.  Every shipped program goes through here
+/// `init` and, since the tree carried two, `shell`, so their images share
 /// one construction and one set of flags rather than two.
 fn build_program(machine: Machine, package: &str) -> Result<Vec<u8>> {
     // The image is a PIE container with `relocation-model=pic` alone, and a
     // PIE's calls to its own library symbols go through a GOT whose slots
     // are filled by `R_X86_64_RELATIVE` relocations the kernel's loader does
-    // not apply — measured: the first program big enough to make the linker
+    // not apply, measured: the first program big enough to make the linker
     // route a `bcmp` through the GOT died on its first comparison, at
     // address 0.  `-no-pie` resolves those slots at link time, which is
     // honest for an image whose load address the linker script fixes anyway;
@@ -163,7 +163,7 @@ pub(crate) fn run(
     // The volume, formatted **here**: the greeting the boot's self-check reads
     // back, and `/bin/init`, the compiled program the kernel execs from its
     // own filesystem.  A PyroFS image built on the host from the same crate
-    // the kernel mounts — the disk file is the delivery channel, and the
+    // the kernel mounts, the disk file is the delivery channel, and the
     // kernel's `format_if_empty` finds it already a volume.
     let init = build_program(machine, "init")?;
     let shell = build_program(machine, "shell")?;

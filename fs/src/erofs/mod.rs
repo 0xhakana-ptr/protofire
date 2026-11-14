@@ -8,7 +8,7 @@
 //!
 //! ## Architecture
 //!
-//! [`EroFsVolume`] is the public entry point — it wraps an `Arc<EroFs>`
+//! [`EroFsVolume`] is the public entry point, it wraps an `Arc<EroFs>`
 //! so that [`crate::vnode::VNode`] handles created by `lookup()` can cheaply
 //! hold a reference to the underlying filesystem state.
 //!

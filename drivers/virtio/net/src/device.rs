@@ -5,8 +5,8 @@
 //!
 //! ## The initialisation order (specification 2.1.1)
 //!
-//! The same sequence a block device goes through — reset, `ACKNOWLEDGE`,
-//! `DRIVER`, features, `FEATURES_OK` read back, queues, `DRIVER_OK` — because
+//! The same sequence a block device goes through, reset, `ACKNOWLEDGE`,
+//! `DRIVER`, features, `FEATURES_OK` read back, queues, `DRIVER_OK`, because
 //! it is the protocol's sequence and not any one device's.  What differs is the
 //! second queue and the address the device publishes instead of a capacity.
 //!
@@ -76,7 +76,7 @@ const QUEUE_SIZE_LIMIT: u16 = 256;
 /// 1514 is the largest Ethernet frame with a VLAN tag, and 1526 is that plus
 /// the twelve-byte header a mergeable-receive device would write.  This driver
 /// negotiates neither, so the buffer is 1514 and a device that writes more is
-/// [degraded](Health::Degraded) rather than believed — a length past the
+/// [degraded](Health::Degraded) rather than believed, a length past the
 /// buffer would be a read past the allocation.
 pub const RECEIVE_BUFFER_LEN: usize = 1514;
 
@@ -92,7 +92,7 @@ struct Pending {
     head: u16,
     /// The frame's bytes, which the device reads.
     ///
-    /// Never read by this driver again — the device is the reader — and held
+    /// Never read by this driver again, the device is the reader, and held
     /// anyway, because the descriptor points at it.
     #[allow(dead_code)]
     _frame: Box<[u8]>,
@@ -426,7 +426,7 @@ impl VirtioNet {
 
     /// Take one frame the card has received, if any.
     ///
-    /// Writes the frame's bytes — without the device's header — into `into` and
+    /// Writes the frame's bytes, without the device's header, into `into` and
     /// answers how many there are.  `None` when the card has nothing waiting,
     /// and an error when `into` is too short for the frame: a short buffer is
     /// the caller's mistake, and truncating would hand up a frame that is not
@@ -629,7 +629,7 @@ mod tests {
     /// configured, at which size, with which addresses, and whether it was
     /// enabled.  The servicing half is what the frame tests need: it reads the
     /// descriptor chain the driver published, and answers the way a device
-    /// does — the transmit completion on the used ring, and for an ARP request,
+    /// does, the transmit completion on the used ring, and for an ARP request,
     /// a reply written into a posted receive buffer.
     struct RecordingCard {
         status: AtomicU64,
@@ -864,7 +864,7 @@ mod tests {
         fn max_queue_size(&self, index: u16) -> u16 {
             // A card answers whatever its register holds, and a register for a
             // queue the device does not have holds the last value written or
-            // the device's default — a *plausible* number, not zero.  That is
+            // the device's default, a *plausible* number, not zero.  That is
             // why the queue count has to be checked before anything is
             // selected: the size answer cannot be trusted to reveal that the
             // queue does not exist.
@@ -1097,7 +1097,7 @@ mod tests {
     ///
     /// A driver that handed the whole buffer up would put ten bytes of device
     /// header in front of every frame, and an ARP parser reads the ethertype
-    /// from bytes 12 and 13 — so the frame would parse as something else and
+    /// from bytes 12 and 13, so the frame would parse as something else and
     /// the mistake would look like a device sending garbage.
     #[test]
     fn the_devices_header_is_not_part_of_the_frame() {

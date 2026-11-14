@@ -49,13 +49,13 @@ cargo fmt --all -- --check    # what the gate runs, must be clean
 
 Settings worth knowing before you fight the formatter:
 
-`max_width = 100` — line width, wider than the usual 80, which is why separator
-rules fill to ~100.  `comment_width = 80` — comments wrap narrower than code.
-`wrap_comments = true` — the formatter reflows your comment text, so write
-comments as prose and let it wrap.  `imports_granularity = Item` — one `use` per
-item; it will not merge them.  `binop_separator = Front` — a wrapped expression
-breaks *before* the operator.  `trailing_comma = Vertical` — multi-line lists
-get a trailing comma.  `merge_derives = true` — multiple `#[derive]` attributes
+`max_width = 100`, line width, wider than the usual 80, which is why separator
+rules fill to ~100.  `comment_width = 80`, comments wrap narrower than code.
+`wrap_comments = true`, the formatter reflows your comment text, so write
+comments as prose and let it wrap.  `imports_granularity = Item`, one `use` per
+item; it will not merge them.  `binop_separator = Front`, a wrapped expression
+breaks *before* the operator.  `trailing_comma = Vertical`, multi-line lists
+get a trailing comma.  `merge_derives = true`, multiple `#[derive]` attributes
 are merged.
 
 Two things the formatter does **not** do, and which are therefore yours to get
@@ -66,12 +66,12 @@ of string literals (`format_strings = false`).
 
 ## 3. Naming
 
-**Types, structs, enums and traits** are `UpperCamelCase` —
-`MemoryManager`, `SyscallDispatch`.  **Enum variants** are `UpperCamelCase` —
+**Types, structs, enums and traits** are `UpperCamelCase`
+`MemoryManager`, `SyscallDispatch`.  **Enum variants** are `UpperCamelCase`
 `InvalidArgument`, `ReturnFromException`.  **Functions, methods and locals** are
-`snake_case` — `install_global_unchecked`, `try_read_byte`.  **Constants and
-statics** are `SCREAMING_SNAKE_CASE` — `SYSCALL_COUNT`, `GLOBAL_TABLE`,
-`PERCPU_OFFSET_SCHEDULER`.  **Modules and files** are `snake_case` —
+`snake_case`, `install_global_unchecked`, `try_read_byte`.  **Constants and
+statics** are `SCREAMING_SNAKE_CASE`, `SYSCALL_COUNT`, `GLOBAL_TABLE`,
+`PERCPU_OFFSET_SCHEDULER`.  **Modules and files** are `snake_case`
 `block_cache.rs`, `pci_transport.rs`.
 
 Files are named after what they contain, in `snake_case`, with no camel case
@@ -84,18 +84,18 @@ These suffixes carry meaning, and a reader will assume them:
 
 These suffixes carry meaning, and a reader will assume them.
 
-- **`install_global` / `install_global_unchecked` / `global()`** — the
+- **`install_global` / `install_global_unchecked` / `global()`**, the
   global-singleton pattern, see §8.  `_unchecked` marks the variant that skips
   the lifetime requirement and is therefore `unsafe`.
-- **`_locked`** — requires the caller to already hold the relevant lock.
+- **`_locked`**, requires the caller to already hold the relevant lock.
   Almost always `pub(crate)`, and always documented as such.  Examples:
   `resolve_path_locked`, `allocate_locked`.
-- **`try_*`** — a non-blocking or fallible attempt.  Returns `Option<T>`,
+- **`try_*`**, a non-blocking or fallible attempt.  Returns `Option<T>`,
   `Result<T>`, or `bool`, never a bare value.  Examples: `try_read_byte`,
   `try_consume_send_nonce`.
-- **`raw_*`** — hands back an underlying handle or un-wrapped object rather than
+- **`raw_*`**, hands back an underlying handle or un-wrapped object rather than
   a safe abstraction.  Examples: `raw_sockets`, `raw_socket_object`.
-- **`*_count`, `*_initialized`, `*_probed`** — counter and status-flag statics.
+- **`*_count`, `*_initialized`, `*_probed`**, counter and status-flag statics.
 
 ### The `GLOBAL_*` singleton convention
 
@@ -500,8 +500,8 @@ points at the same layer or upward.  A crate may name a crate in a lower layer
 and nothing else.
 
 The layers are argued in that file rather than assumed, and the one edge that
-is a decision rather than a consequence — `sync` names `arch`, because closing
-a spinlock's interrupt window needs the machine's flag — is written there with
+is a decision rather than a consequence, `sync` names `arch`, because closing
+a spinlock's interrupt window needs the machine's flag, is written there with
 its cost.  A new edge has to be argued for in the change that adds it, not
 discovered later.
 

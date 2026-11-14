@@ -235,7 +235,7 @@ impl FatFs {
         Ok(())
     }
 
-    /// Write the FSInfo sector — and its backup — reflecting the current
+    /// Write the FSInfo sector, and its backup, reflecting the current
     /// accounting.
     pub(super) fn write_fsinfo(&mut self) -> Result<()> {
         if self.geom.fat_type != FatType::Fat32 || self.geom.fsinfo_sector == 0 {
@@ -517,7 +517,7 @@ impl FatFs {
         self.write_file_data_extend(start_cluster, data)
     }
 
-    /// A directory's raw bytes — the read-modify-write's read half.
+    /// A directory's raw bytes, the read-modify-write's read half.
     pub(super) fn get_dir_raw(
         &mut self,
         dir_cluster: u32,
@@ -532,7 +532,7 @@ impl FatFs {
         }
     }
 
-    /// Write raw directory content back — the modify-write half.
+    /// Write raw directory content back, the modify-write half.
     pub(super) fn put_dir_raw(
         &mut self,
         dir_cluster: u32,

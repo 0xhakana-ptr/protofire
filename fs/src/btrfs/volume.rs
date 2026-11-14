@@ -134,7 +134,7 @@ impl BtrfsVolume {
                     current_ino = child_ino;
                 }
                 None => {
-                    // Not in the current tree — check if this inode is the
+                    // Not in the current tree, check if this inode is the
                     // root directory of a known subvolume.
                     if let Some((_tree_id, ri)) = self
                         .subvolumes

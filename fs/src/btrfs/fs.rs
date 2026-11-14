@@ -425,7 +425,7 @@ pub fn read_file(
         let target_device = &devices[dev_index];
 
         if ext.compression == 0 {
-            // Uncompressed — read directly from the mapped device.
+            // Uncompressed, read directly from the mapped device.
             read_device_bytes(
                 target_device,
                 physical,
@@ -491,7 +491,7 @@ pub struct ChunkMap {
 }
 
 impl ChunkMap {
-    /// Identity mapping — all logical addresses map directly to device 0.
+    /// Identity mapping, all logical addresses map directly to device 0.
     pub fn identity() -> Self {
         Self {
             entries: vec![ChunkMapEntry {
@@ -506,7 +506,7 @@ impl ChunkMap {
     /// Build a [`ChunkMap`] by parsing the chunk tree.
     ///
     /// The chunk tree root is read from device 0 using direct (untranslated)
-    /// addressing — this is the Btrfs bootstrap convention: system chunks that
+    /// addressing, this is the Btrfs bootstrap convention: system chunks that
     /// contain the chunk tree itself are placed at physical addresses that
     /// match their logical addresses on device 0.
     pub fn from_chunk_tree(
@@ -554,7 +554,7 @@ impl ChunkMap {
         }
 
         if entries.is_empty() {
-            // No chunk entries found — fall back to identity mapping
+            // No chunk entries found, fall back to identity mapping
             // (single-device or test images without a real chunk tree).
             return Ok(Self::identity());
         }

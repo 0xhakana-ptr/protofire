@@ -178,7 +178,7 @@ pub fn on_boot_cpu() -> bool {
 /// hand may still be walking a page table, restoring a frame, or one
 /// instruction away from reading a user address.  Releasing then is a race, and
 /// it is the race that produced a data abort inside the heap allocator's
-/// free-list walk and an instruction abort at 0x0 — both on the started CPU's
+/// free-list walk and an instruction abort at 0x0, both on the started CPU's
 /// behalf, in a table the boot CPU had already handed back to the pool.
 ///
 /// So the claim is counted rather than assumed.  Each CPU records itself here

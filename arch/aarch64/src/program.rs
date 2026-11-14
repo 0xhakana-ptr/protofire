@@ -25,7 +25,7 @@ pub const PROGRAM_WORDS_FOR_TEST: usize = 34;
 
 /// The longest of the four images: the announcing program, the pipe writer,
 /// the pipe reader and the exec target.  A program is copied into a whole
-/// page, so this matters only to the copy — but it must be at least the
+/// page, so this matters only to the copy, but it must be at least the
 /// longest, and the reader grew past thirty-two words when its reads, its wait
 /// and its status filled out.  Thirty-four leaves the announcing program's own
 /// thirty-two untouched and is what every image now fits inside.
@@ -80,7 +80,7 @@ const PIPE_WRITER_PROGRAM: [u32; 25] = [
     0xD280_00C8, // movz x8, #6   (Write to the pipe)
     0xD400_0001, // svc #0
     // **No `Close`.**  The program exits with its write end still open, and
-    // the reader's end-of-file is then the exit's release — the descriptor
+    // the reader's end-of-file is then the exit's release, the descriptor
     // belongs to the process, so the process ending closes it.  That is the
     // claim this image makes on the boot: a release that did not run would
     // leave the reader parked on a writer that no longer exists, the boot
@@ -114,8 +114,8 @@ const PIPE_WRITER_PROGRAM: [u32; 25] = [
 /// with the boot unfinished, which is what the gate refuses.
 ///
 /// `WaitProcess` after it is the boot's own proof of the wait.  Which of its
-/// two paths runs is a race the program cannot control — the writer may have
-/// exited while this read was returning, or may still be one call short — and
+/// two paths runs is a race the program cannot control, the writer may have
+/// exited while this read was returning, or may still be one call short, and
 /// **both are the mechanism working**: a status that has arrived answers at
 /// once, and one that has not parks this task until the writer's exit wakes
 /// it.  The exit takes its status from the wait's answer, so a wait that
@@ -156,7 +156,7 @@ const PIPE_READER_PROGRAM: [u32; 42] = [
     // the direction in `x2`, and the handler's `ReturnFromException` is what
     // brings it back here.
     // The handler's **virtual** address: this page's base plus the handler's
-    // offset.  `movz x0, #offset` alone installs an offset — `0x68` — and the
+    // offset.  `movz x0, #offset` alone installs an offset, `0x68`, and the
     // first fault then lands outside the program's mapping, which is a fault
     // the handler answers by faulting again.  Measured: an endless run of
     // `handled its own fault at 0x68`.
@@ -168,14 +168,14 @@ const PIPE_READER_PROGRAM: [u32; 42] = [
     0xB900_001F, // str wzr, [x0]   (the fault the handler answers)
     // Wait for **the writer**, by pid, and make its status this program's.
     // `WaitProcess` answers about whichever process finished first, and this
-    // boot's forked child dies before the writer does — so the status it
+    // boot's forked child dies before the writer does, so the status it
     // hands back can be another process's.  `WaitProcessOf(2)` names the one
     // this program is waiting for, and `2` is the writer's own number because
     // the boot names each program after the number it was built with.
     0xD280_0040, // movz x0, #2     (the writer's pid)
     0xD280_1888, // movz x8, #196   (WaitProcessOf)
     0xD400_0001, // svc #0
-    0xD280_0068, // movz x8, #3     (Exit — the status is the writer's)
+    0xD280_0068, // movz x8, #3     (Exit, the status is the writer's)
     0xD400_0001, // svc #0
     // The fault handler, at `HANDLER_OFFSET` bytes into the page.  It
     // writes one line saying it ran and returns the fault's vector as the
@@ -188,7 +188,7 @@ const PIPE_READER_PROGRAM: [u32; 42] = [
     // argument, in `x3`, is where the fault happened; this machine's
     // instructions are four bytes, so the instruction after it is `+ 4`.  On
     // x86_64 that size is not a constant and the handler is the only thing
-    // that knows it — which is why the kernel asks rather than computes.
+    // that knows it, which is why the kernel asks rather than computes.
     0x9100_1080, // add x0, x4, #4    (the instruction after the fault)
     0xD280_0021, // movz x1, #1      (the value the call answers with)
     0xD280_02E8, // movz x8, #23     (ReturnFromException)
@@ -198,9 +198,9 @@ const PIPE_READER_PROGRAM: [u32; 42] = [
 
 /// Where the reader's fault handler sits, in words from the page's base.
 ///
-/// The program installs it by address, so the two numbers — the one the
+/// The program installs it by address, so the two numbers, the one the
 /// `InstallExceptionHandler` call carries and the one the array puts the
-/// handler at — have to agree.  A test pins them together; a program whose
+/// handler at, have to agree.  A test pins them together; a program whose
 /// handler offset drifted would install an address inside its own code and the
 /// fault it then took would be answered by whatever word happened to be there.
 pub const HANDLER_OFFSET: u32 = 136;
@@ -223,7 +223,7 @@ pub const SLEEP_MICROSECONDS: u64 = 20_000;
 /// makes the wake visible: a program that never woke prints one line, not two.
 ///
 /// After the fork the two processes part ways on the answer alone, and each
-/// writes the stack page it inherited — `sub sp, sp, #16` moving the pointer
+/// writes the stack page it inherited, `sub sp, sp, #16` moving the pointer
 /// below the boundary and `str x0, [sp]` writing through it, which is what a
 /// `push` would have done.  The page is shared and read-only now, so the
 /// write faults, and the kernel's answer to that fault is the whole of what
@@ -280,8 +280,8 @@ const fn program_words(number: u16) -> [u32; 34] {
         // is and exits with the answer.
         // The pointer comes before the sub: `sp` here is the hand-over top,
         // and `[sp, #-32]` is exactly where the boot left the exec path.
-        // `x0` survives the copy-on-write fault below — the resolver restores
-        // every register — so the exec that follows reads what this loaded.
+        // `x0` survives the copy-on-write fault below, the resolver restores
+        // every register, so the exec that follows reads what this loaded.
         0xF85C_03E0, // ldur x0, [sp, #-64] (the boot's exec path)
         0xD100_43FF, // sub sp, sp, #16     (room below the boundary)
         0xF900_03E0, // str x0, [sp]        (the copy-on-write fault)
@@ -289,7 +289,7 @@ const fn program_words(number: u16) -> [u32; 34] {
         0xD400_0001, // svc #0
         0x1400_0000, // b .               (never reached: exec replaced the program)
         // The child: the same write, on its own copy of the page, and then
-        // the deliberate one — a store into its own **code** page, read-only
+        // the deliberate one, a store into its own **code** page, read-only
         // and not copy-on-write, which no resolver answers.  The kernel kills
         // the process for it and the machine goes on; the child's status is
         // the kernel's, not its own.
@@ -407,7 +407,7 @@ mod tests {
 
     /// Every syscall number the program uses is the ABI's own.
     ///
-    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess` — and no
+    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and no
     /// `Exit` at all: the parent's path ends in the exec, and the child's ends
     /// in the fault the kernel kills it for, so neither path exits itself.  A
     /// program compiled against a number this build does not serve would print
@@ -457,7 +457,7 @@ mod tests {
     /// write end still open, so the reader's end-of-file is the **exit's
     /// release**: the descriptor belongs to the process, and the process ending
     /// closes it.  A release that did not run would leave the reader parked on
-    /// a writer that no longer exists — the boot would never print its report,
+    /// a writer that no longer exists, the boot would never print its report,
     /// and the gate requires that report.
     #[test]
     fn the_writer_puts_bytes_in_the_pipe_and_exits_with_its_end_open() {
@@ -507,7 +507,7 @@ mod tests {
                 abi::SyscallNumber::Write as usize,
                 abi::SyscallNumber::ReturnFromException as usize,
             ],
-            "the reader installs a handler, faults, waits by pid, exits — and the handler writes and returns"
+            "the reader installs a handler, faults, waits by pid, exits, and the handler writes and returns"
         );
 
         // The handler's address and its place in the array are one fact written

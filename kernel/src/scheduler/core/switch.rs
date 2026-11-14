@@ -5,7 +5,7 @@
 //! A switch is: save the frame into the task this CPU was running, pick the
 //! next task, copy its context over the frame, and write its root if it
 //! differs. The frame is the trap path's, and the epilogue that restores it is
-//! the assembly a switch is made of — there is none here, which is the point.
+//! the assembly a switch is made of, there is none here, which is the point.
 //!
 //! Which CPU is the argument everywhere in this file.  A switch belongs to one
 //! CPU: it saves into the task **that** CPU held and marks the next one as
@@ -143,7 +143,7 @@ impl Scheduler {
                 self.exited += 1;
                 // A waiter's question just answered itself: a process
                 // finished, and the wait parks on exactly that.  Wake what a
-                // pipe's write wakes — every blocked task — and let the
+                // pipe's write wakes, every blocked task, and let the
                 // woken caller retry its own check, which is what makes a
                 // spurious wake cost a retry instead of a hang.  A wake that
                 // never fires leaves the waiter parked beside the exit it
@@ -155,7 +155,7 @@ impl Scheduler {
                 // woken by `sev`, which is what `send_ipi_to_others` issues
                 // beside its SGI.  Without this a parent parked in
                 // `WaitProcessOf` stays parked beside a child that has already
-                // exited — the boot's log stops at `a program waits for
+                // exited, the boot's log stops at `a program waits for
                 // process N`, and the machine sits there.
                 //
                 // Unconditional, not "when a task was woken": the wake that
@@ -263,8 +263,8 @@ impl Scheduler {
     /// array, and its cost was visible in every boot: `task migrations 6` on a
     /// two-program rotation, because the task a CPU had just preempted was as
     /// likely to be taken by the *other* CPU as by the one that left it.  A
-    /// migration is not free — each machine's address-space switch is a whole
-    /// TLB flush — so a rule that moves work for no reason is a rule that pays
+    /// migration is not free, each machine's address-space switch is a whole
+    /// TLB flush, so a rule that moves work for no reason is a rule that pays
     /// for every switch.
     ///
     /// So the pass is by preference, and each step exists for a reason a boot
@@ -277,8 +277,8 @@ impl Scheduler {
     ///    and every CPU is equally cold to it, so it goes to whichever CPU is
     ///    asking, which spreads the load the way a boot with more work than
     ///    CPUs wants.
-    /// 3. **Anything else runnable**, in rotation order — the task CPU 1 ran
-    ///    and CPU 0 is now free to take.  This is the **steal**, and it is last
+    /// 3. **Anything else runnable**, in rotation order, the task CPU 1 ran and
+    ///    CPU 0 is now free to take.  This is the **steal**, and it is last
     ///    because it is the only step that makes a migration.
     ///
     /// The rotation's starting point is kept for step 3 only: a CPU with
@@ -289,8 +289,8 @@ impl Scheduler {
     /// Deliver the task's pending signal into the frame about to be resumed,
     /// answering whether one was.
     ///
-    /// The record travels in the **argument registers** — signal, sender,
-    /// payload, and the fourth is where the program was — because the handler
+    /// The record travels in the **argument registers**, signal, sender,
+    /// payload, and the fourth is where the program was, because the handler
     /// is the program's own `extern "C"` code and reads them the ABI names.
     /// A machine whose answer register is not its first argument register
     /// would otherwise hand a Rust handler its signal in a register the
@@ -346,14 +346,14 @@ impl Scheduler {
         // the whole placement rule.
         //
         // **First**: a task this CPU running it would not move.  That is one it
-        // last ran — warm in this CPU's TLB and, on every machine here, already
-        // the root its address-space register named — or one no CPU has run,
+        // last ran, warm in this CPU's TLB and, on every machine here, already
+        // the root its address-space register named, or one no CPU has run,
         // which has no home to lose.  The rotation order is kept inside the
         // scan, so fairness between the tasks that qualify is unchanged.
         //
         // **Second**: anything runnable, which is the **steal**.  It is a
         // migration whenever the task last ran on another CPU, and it is only
-        // reached when the first scan found nothing — every runnable task
+        // reached when the first scan found nothing, every runnable task
         // belongs to somebody else, and this CPU would otherwise sit idle with
         // work in the queue.
         //
@@ -411,7 +411,7 @@ mod tests {
     //! The rule decides **which** CPU runs a task, and the property that makes
     //! it worth having is the one its first version lacked: a task a CPU has
     //! run is offered back to that CPU before it is offered to another.  These
-    //! tests name the three arms — warm, fresh, steal — because a rule that
+    //! tests name the three arms, warm, fresh, steal, because a rule that
     //! preferred one of them and forgot another is a rule that either pins work
     //! or moves every task on every switch.
 
@@ -423,14 +423,14 @@ mod tests {
     /// The rule this test pins is the whole of the placement change: a pass
     /// with no preference takes whichever runnable task the rotation reaches
     /// first, and on a two-CPU boot that was as often the other CPU's task as
-    /// this one's — `task migrations 6` on a rotation of two programs, and each
+    /// this one's, `task migrations 6` on a rotation of two programs, and each
     /// of those is a whole-TLB flush.  The property here is narrower than the
     /// boot's and exactly the one the code decides: with one warm task and one
     /// fresh one runnable, the CPU that last ran the warm one gets it.
     ///
     /// The fresh task is placed first because the rule prefers a task with no
-    /// home as strongly as it prefers a warm one — both are placements that do
-    /// not move work — so the two are separated by rotation order and not by
+    /// home as strongly as it prefers a warm one, both are placements that do
+    /// not move work, so the two are separated by rotation order and not by
     /// preference.  What the test asserts is the thing that is *not* ordered:
     /// the warm task never goes to the wrong CPU.
     #[test]
@@ -520,7 +520,7 @@ mod tests {
         assert_eq!(last, Some((0, 1)));
 
         // CPU 0 has only another CPU's tasks to take, so its placement is a
-        // steal and the home count does not move — whichever of the two the
+        // steal and the home count does not move, whichever of the two the
         // rotation reaches, both last ran on CPU 1 and neither is CPU 0's.
         scheduler.assign(0, usize::MAX);
         let stolen = scheduler.next_runnable(0).expect("a task is runnable");

@@ -19,7 +19,7 @@
 //! IPv6 has no header checksum: the link layer and the transports each check
 //! their own bytes, and a router no longer rewrites a field that has to be
 //! summed again.  What IPv6 *did* keep is the **pseudo-header**, which its
-//! upper layers sum in front of their own bytes — the source, the
+//! upper layers sum in front of their own bytes, the source, the
 //! destination, the upper-layer length and the next-header value.  It is
 //! forty bytes and it exists so that a datagram delivered to the wrong
 //! address fails its checksum rather than being read as someone else's.
@@ -34,7 +34,7 @@
 //! `next_header` 0, 43, 44, 51 and 60 all mean "another header follows, and
 //! the first byte of *that* header is the next hop in the chain".  A reader
 //! that stopped at the base header would hand a transport the extension
-//! header's bytes as its payload — a TCP segment whose ports are a hop-by-hop
+//! header's bytes as its payload, a TCP segment whose ports are a hop-by-hop
 //! header is a segment this stack would answer with nonsense.  [`walk`]
 //! follows the chain to the first header that is not one of them, and answers
 //! where the real payload starts.
@@ -50,7 +50,7 @@
 //! A fragment header is one the chain carries, and a fragment is a packet
 //! this stack reads only when it is whole: [`walk`] answers [`Next::Fragment`]
 //! with the fragment's own fields so a caller can decide, and this crate has
-//! no reassembly buffer.  The reason is the one IPv4's module gives — nothing
+//! no reassembly buffer.  The reason is the one IPv4's module gives, nothing
 //! above this layer has asked for one, and a reassembly buffer is a
 //! per-sender table with a timer, not a parse.
 //!
@@ -187,9 +187,9 @@ pub fn write_header(
 
 /// The same header, with a traffic class and a flow label.
 ///
-/// The two are packed into the first four bytes — version in the top four
+/// The two are packed into the first four bytes, version in the top four
 /// bits, then the class's high four, then the class's low four and the flow
-/// label's high four, then the label's low sixteen — which is the format's
+/// label's high four, then the label's low sixteen, which is the format's
 /// arrangement and not a choice.
 pub fn write_header_classified(
     packet: &mut [u8],
@@ -331,7 +331,7 @@ pub fn walk(frame: &[u8], packet: &Packet) -> Option<Next> {
 ///
 /// A chain is a linked list with no bound of its own, and a packet whose
 /// headers point at each other is a reader that never returns.  Eight is more
-/// than any sender writes — RFC 8200's own examples use two — and few enough
+/// than any sender writes, RFC 8200's own examples use two, and few enough
 /// that the walk is bounded by arithmetic rather than by trust.
 pub const MAX_CHAIN: usize = 8;
 
@@ -362,7 +362,7 @@ pub fn write_fragment_header(
 /// The forty bytes IPv6 sums instead of a header checksum: the source, the
 /// destination, the upper-layer length and the next-header value, then the
 /// protocol's own bytes.  The answer is already complemented and ready to
-/// write into the protocol's checksum field — the same contract
+/// write into the protocol's checksum field, the same contract
 /// [`crate::ipv4::checksum`] has.
 ///
 /// The length in the pseudo-header is `bytes.len()`, which is why this takes
@@ -385,7 +385,7 @@ pub fn checksum_with_pseudo(source: Addr, destination: Addr, next_header: u8, by
 /// is a sum of sixteen-bit words over one buffer, so **the buffer's length
 /// decides where its last word ends**.  A function that let a caller hand in
 /// pieces would have to know whether a piece's trailing byte is the high half
-/// of a word continued in the next piece or the padded end of the last one —
+/// of a word continued in the next piece or the padded end of the last one
 /// a fact no piece carries.
 ///
 /// So a caller with several pieces concatenates them, or calls this on each
@@ -431,7 +431,7 @@ pub fn is_for(packet: &Packet, address: Addr, joined: &[Addr]) -> bool {
     joined.contains(&packet.header.destination)
 }
 
-// ── addresses ────────────────────────────────────────────────────────────
+// addresses
 
 /// The unspecified address, `::`.
 pub const UNSPECIFIED: Addr = [0_u8; 16];
@@ -464,7 +464,7 @@ pub fn solicited_node(target: Addr) -> Addr {
 /// modified EUI-64, as RFC 2464 applies it to Ethernet).
 ///
 /// The interface identifier is the MAC's three bytes, `FF:FE`, the MAC's last
-/// three — and the universal/local bit of the first byte **inverted**, which
+/// three, and the universal/local bit of the first byte **inverted**, which
 /// is what tells a reader that the address was derived from a hardware
 /// address rather than assigned by an administrator.  The answer is
 /// `fe80::` plus that identifier.
@@ -498,7 +498,7 @@ pub fn is_multicast(address: Addr) -> bool {
 /// The Ethernet address a multicast IPv6 address maps to (RFC 2464 §7).
 ///
 /// The first two bytes are `33:33`, and the last four are the group's last
-/// four — a mapping that drops the group's middle eight bytes, which is why
+/// four, a mapping that drops the group's middle eight bytes, which is why
 /// only thirty-two bits of a multicast group reach the wire.
 pub fn multicast_mac(address: Addr) -> [u8; 6] {
     [
@@ -615,7 +615,7 @@ mod tests {
     }
 
     /// A hop-by-hop header is eight bytes when its length byte is zero, and
-    /// sixteen when it is one — the unit is eight octets past the first
+    /// sixteen when it is one, the unit is eight octets past the first
     /// eight, which is the format's own arithmetic and the one an off-by-one
     /// gets wrong.
     #[test]
@@ -834,7 +834,7 @@ mod tests {
     }
 
     /// The link-local address is `fe80::` plus the modified EUI-64, with the
-    /// universal/local bit inverted — the one bit that says the identifier
+    /// universal/local bit inverted, the one bit that says the identifier
     /// came from hardware rather than an administrator.
     #[test]
     fn the_link_local_address_is_the_modified_eui_64() {
@@ -887,7 +887,7 @@ mod tests {
     fn the_minimum_mtu_is_what_the_format_requires() {
         assert_eq!(MIN_MTU, 1280);
         // The header is 40 and the MTU 1280, so a packet of the minimum size
-        // carries 1240 bytes of payload — which is what a sender with no
+        // carries 1240 bytes of payload, which is what a sender with no
         // larger MTU may write.
         assert_eq!(MIN_MTU - HEADER_LEN, 1240);
     }

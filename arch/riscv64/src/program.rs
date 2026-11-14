@@ -23,7 +23,7 @@
 
 /// The longest of the four images: the announcing program, the pipe writer,
 /// the pipe reader and the exec target.  A program is copied into a whole
-/// page, so this matters only to the copy — but it must be at least the
+/// page, so this matters only to the copy, but it must be at least the
 /// longest, and the reader grew past thirty-two words when its reads, its wait
 /// and its status filled out.
 pub const PROGRAM_LEN: usize = 44 * 4;
@@ -94,7 +94,7 @@ const fn bne_against_zero(rs: u32, offset: i32) -> u32 {
 ///
 /// The fork's only branch: the child's answer is zero, and this is the one
 /// instruction that sends it down its own path.  The same B-type layout
-/// [`bne_against_zero`] spells, with the function bits zero — `beq` and `bne`
+/// [`bne_against_zero`] spells, with the function bits zero, `beq` and `bne`
 /// differ in those three bits and in nothing else, which is why both are
 /// encoded here rather than one of them being a masked copy of the other.
 const fn beq_against_zero(rs: u32, offset: i32) -> u32 {
@@ -161,7 +161,7 @@ const BUSY_LOOP: [u32; 6] = [
 /// makes the wake visible: a program that never woke prints one line, not two.
 ///
 /// After the fork the two processes part ways on the answer alone, and each
-/// writes the stack page it inherited — the pointer moved below the boundary
+/// writes the stack page it inherited, the pointer moved below the boundary
 /// and a doubleword stored through it, which is what a push would have done.
 /// The page is shared and read-only now, so the write faults, and the
 /// kernel's answer to that fault is the whole of what this image exercises.
@@ -208,8 +208,8 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         // is and exits with the answer.
         // The pointer comes before the addi: `sp` here is the hand-over top,
         // and `-32(sp)` is exactly where the boot left the exec path.  `a0`
-        // survives the copy-on-write fault below — the resolver restores every
-        // register — so the exec that follows reads what this loaded.
+        // survives the copy-on-write fault below, the resolver restores every
+        // register, so the exec that follows reads what this loaded.
         0xFC01_3503,                          // ld a0, -64(sp)     (the boot's exec path)
         addi(2, 2, -16),                      // addi sp, sp, -16
         store_against_sp(REGISTER_A6 as u32), // sd a6, 0(sp) (the fault)
@@ -221,7 +221,7 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
         0x0000_0073, // ecall
         0x0000_006F, // j .   (never reached: exec replaced the program)
         // The child: the same write, on its own copy of the page, and then
-        // the deliberate one — a store into its own **code** page, read-only
+        // the deliberate one, a store into its own **code** page, read-only
         // and not copy-on-write, which no resolver answers.  The kernel kills
         // the process for it and the machine goes on; the child's status is
         // the kernel's, not its own.
@@ -235,13 +235,13 @@ const fn program_words(number: u16) -> [u32; PROGRAM_WORDS] {
 
 /// The image `exec` hands a process over to: announce, then read a file.
 ///
-/// `exec` leaves one word of inheritance below the stack top — a pointer to a
-/// NUL-terminated path, the bytes themselves just above it — and this image
+/// `exec` leaves one word of inheritance below the stack top, a pointer to a
+/// NUL-terminated path, the bytes themselves just above it, and this image
 /// is the one that uses it: it opens the path, reads thirty-two bytes into
 /// its own stack below the block, closes the descriptor, and exits with the
 /// **first byte it read**, `a0` being `Exit`'s argument register.  A boot
 /// line that reports `process 1 opened /greeting.txt` and an exit status of
-/// `116` — the `t` of "the quick brown pyrofox" — are the pair that proves a
+/// `116`, the `t` of "the quick brown pyrofox", are the pair that proves a
 /// task the exec rebuilt, with its own pid and its own window, read the
 /// boot's own file from ring 3.
 ///
@@ -569,7 +569,7 @@ mod tests {
     ///
     /// The calls this program makes, in order.
     ///
-    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess` — and no
+    /// `Write`, `Sleep`, `Write`, `Fork`, `Write`, `ExecProcess`, and no
     /// `Exit` at all: the parent's path ends in the exec, and the child's ends
     /// in the fault the kernel kills it for, so neither path exits itself.  A
     /// program compiled against a number this build does not serve would print
@@ -738,7 +738,7 @@ mod tests {
                 abi::SyscallNumber::Write as usize,
                 abi::SyscallNumber::ReturnFromException as usize,
             ],
-            "the reader announces, reads to end-of-file, installs a handler, waits, exits — and the handler writes and returns"
+            "the reader announces, reads to end-of-file, installs a handler, waits, exits, and the handler writes and returns"
         );
 
         // The handler's address is the `auipc`'s own PC plus the delta the

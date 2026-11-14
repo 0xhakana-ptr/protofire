@@ -7,9 +7,9 @@
 //! Every other candidate would have been a byte slice dressed as a device:
 //! `async_io`'s own `MemoryBlockService` is exactly that, and registering it
 //! would have made the table's first entry a copy of the thing it was built to
-//! demonstrate.  A clock is different in the two ways that matter — it answers
+//! demonstrate.  A clock is different in the two ways that matter, it answers
 //! from hardware rather than from memory, and its answer is different every
-//! time it is asked — so a boot that submits to it and gets a number back has
+//! time it is asked, so a boot that submits to it and gets a number back has
 //! shown that a *real* source of values fits behind the trait.
 //!
 //! It is also the smallest such service: one operation, no state to corrupt, no
@@ -21,7 +21,7 @@
 //! The request's two argument words are unused: "read the counter" takes no
 //! parameters, and inventing a parameter so the request looks busy would be a
 //! wire format with nothing in it.  The completion's value is the counter's
-//! reading, which is `u64` narrowed to `usize` — on every machine this tree
+//! reading, which is `u64` narrowed to `usize`, on every machine this tree
 //! builds for those are the same width, and the truncation is named here rather
 //! than left as a cast a reader has to trust.
 
@@ -66,7 +66,7 @@ impl Clock {
     /// A host has no counter to read, so it answers a constant.
     ///
     /// Not a fabricated reading: a host build cannot install this service at
-    /// all — there is no boot — so the only caller is a test, and a test that
+    /// all, there is no boot, so the only caller is a test, and a test that
     /// wanted a moving number would be testing the host's clock.
     #[cfg(not(target_os = "none"))]
     fn read() -> usize {

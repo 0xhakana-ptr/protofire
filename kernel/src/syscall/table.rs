@@ -62,7 +62,7 @@ pub struct Arguments<'a> {
     pub context: &'a mut SyscallContext,
     /// The path `open` was given, when this is an `open`.
     pub path: Option<&'a str>,
-    /// The second path of a call that names two — `rename`'s destination.
+    /// The second path of a call that names two, `rename`'s destination.
     ///
     /// A separate slot rather than a pair packed into [`Self::path`], because
     /// a call with one path and a call with two differ in more than arity:
@@ -105,7 +105,7 @@ pub enum Handler {
 ///
 /// One table, one numbering: a pipe end and an open file are both "a thing a
 /// descriptor holds", and two tables numbering from zero would make a file's
-/// descriptor 0 and a pipe's descriptor 0 the same word meaning two things —
+/// descriptor 0 and a pipe's descriptor 0 the same word meaning two things
 /// which is exactly the ambiguity a caller cannot be asked to resolve.  A
 /// descriptor is a descriptor, and this is the one table that numbers them.
 pub(crate) enum Descriptor {
@@ -116,7 +116,7 @@ pub(crate) enum Descriptor {
         /// Whether the open asked to write.
         ///
         /// Recorded per descriptor, like `readable`: the right is the open's,
-        /// not the node's — a node the filesystem would accept bytes for is
+        /// not the node's, a node the filesystem would accept bytes for is
         /// still not writable *through a descriptor* that opened it for
         /// reading, which is the reading least privilege needs.
         writable: bool,
@@ -130,7 +130,7 @@ pub(crate) enum Descriptor {
         ///
         /// The `*At` calls' anchor: a relative path resolves against the
         /// directory the descriptor was opened from, and that directory is
-        /// where the open happened, not a name the node carries — a node
+        /// where the open happened, not a name the node carries, a node
         /// knows its own last component and nothing of the namespace above
         /// it, which is the namespace a relative path is relative *to*.
         path: alloc::string::String,
@@ -146,7 +146,7 @@ pub(crate) enum Descriptor {
     },
     /// A bound datagram socket.  The socket lives behind an `Arc`, so a fork's
     /// copy shares the one bound port and queue the way two descriptors on
-    /// one file share the node — and the port stops being routable when the
+    /// one file share the node, and the port stops being routable when the
     /// last descriptor goes, which is what the port table's `Weak` reads.
     UdpSocket {
         socket: Arc<crate::net::UdpSocket>,
@@ -175,7 +175,7 @@ pub(crate) enum Descriptor {
 /// A descriptor copied into another process, with that process as its owner.
 ///
 /// `fork`'s inheritance, written by hand rather than derived because the two
-/// variants copy in two different ways — and one of them is not a plain copy.
+/// variants copy in two different ways, and one of them is not a plain copy.
 /// A file descriptor is a node and an offset, both of which copy freely.  A
 /// pipe **end** raises the pipe's count as it copies, which is what makes the
 /// count mean "live handles" rather than "the two the pipe was made with": a
@@ -299,7 +299,7 @@ impl SyscallTable {
     /// A descriptor belongs to the process that opened it, so another process
     /// naming it is naming something that is not its own.  The answer is
     /// `InvalidArgument` rather than `PermissionDenied`: the number is not a
-    /// **descriptor** to this caller at all, and the difference matters — a
+    /// **descriptor** to this caller at all, and the difference matters, a
     /// caller told "denied" learns that the slot exists and can probe for
     /// which numbers are in use.
     ///
@@ -366,7 +366,7 @@ impl SyscallTable {
     /// relative to.
     ///
     /// Three readings, in the order they are decided: an absolute path is
-    /// anchored at the root and the descriptor is bypassed — a caller that
+    /// anchored at the root and the descriptor is bypassed, a caller that
     /// named `/x` from where it was meant `/x`; the `AT_FDCWD` sentinel asks
     /// for the caller's own base, and this tree has no per-process current
     /// directory yet, so the base is `/`, the one base every process shares;
@@ -553,7 +553,7 @@ impl SyscallTable {
     /// The exit path's release.  A process that exits without closing what it
     /// opened would otherwise leave its ends in the table for ever: a pipe's
     /// write end would keep a reader waiting for a writer that had ceased to
-    /// exist, and the slot would be unreachable — a descriptor number a program
+    /// exist, and the slot would be unreachable, a descriptor number a program
     /// could name only after it had gone.
     ///
     /// Dropping a `Descriptor` is the whole close: a pipe `End`'s drop moves
@@ -641,7 +641,7 @@ impl SyscallTable {
     /// write starts where the descriptor is and moves it by the bytes
     /// accepted, which is what makes "append by writing again" one call.  The
     /// checks run in the order a write that cannot be attempted should fail
-    /// in — owner, then kind, then the right — so a refusal answers before
+    /// in, owner, then kind, then the right, so a refusal answers before
     /// the node sees a byte.
     ///
     /// A zero-length write to a descriptor the caller may write is a success
@@ -664,7 +664,7 @@ impl SyscallTable {
         // semantics are the pipe's; the ring-3 branch that serves it answers
         // before the registry is reached.  A write that arrives here naming
         // one is a write to the wrong kind of thing, and "wrong kind" is the
-        // answer — not a silent fall-through to the node.
+        // answer, not a silent fall-through to the node.
         let Descriptor::File {
             node,
             writable,
@@ -837,7 +837,7 @@ pub fn has_registry() -> bool {
 ///
 /// The exec path's way in: the program names a file it wants to **become**,
 /// and the bytes come back for the loader to map.  The MAC policy is asked
-/// first, with the boot's own identity, exactly as `open` asks it — an exec
+/// first, with the boot's own identity, exactly as `open` asks it, an exec
 /// is a read of the file plus a jump, and the read half does not get to skip
 /// the policy the open half is policed by.
 ///
@@ -1111,7 +1111,7 @@ mod tests {
     /// reads its own bytes back through the same descriptor.
     ///
     /// This is the whole of what `Write` exists for, and every link is on
-    /// this path — the create flag reaching the filesystem, the descriptor
+    /// this path, the create flag reaching the filesystem, the descriptor
     /// recording the right, the write starting at the position and moving it,
     /// and the read continuing where the write stopped.  A break in any of
     /// them fails the comparison.
@@ -1133,7 +1133,7 @@ mod tests {
         );
 
         // The position moved with each write, so a read from the descriptor's
-        // own position starts past what was written — which is how a caller
+        // own position starts past what was written, which is how a caller
         // knows the bytes are behind it rather than ahead of it.
         let mut buffer = [0u8; 4];
         assert_eq!(
@@ -1157,7 +1157,7 @@ mod tests {
     ///
     /// The right is the open's, recorded per descriptor: a node the
     /// filesystem would accept bytes for is still not writable through a
-    /// descriptor that did not ask.  The answer is `PermissionDenied` —
+    /// descriptor that did not ask.  The answer is `PermissionDenied`
     /// the descriptor exists and the caller owns it; what it may not do is
     /// write.
     #[test]
@@ -1241,7 +1241,7 @@ mod tests {
     ///
     /// The two halves pin the branch: a create of an existing file is the
     /// open that was asked for, and a create the filesystem cannot grant is
-    /// `PermissionDenied` — the volume's refusal, not the lookup's miss,
+    /// `PermissionDenied`, the volume's refusal, not the lookup's miss,
     /// because reporting `NotFound` for a path the caller asked to create
     /// would tell it the wrong thing about why.
     #[test]
@@ -1363,7 +1363,7 @@ mod tests {
     /// A descriptor belongs to the process that opened it: its exit is the
     /// release a `Close` would have made, and a process that exits without
     /// closing leaves nothing behind.  Two owners are opened here because the
-    /// second half of the claim is the one a single-owner test cannot make — a
+    /// second half of the claim is the one a single-owner test cannot make, a
     /// release keyed on the wrong field, or on "any", would pass the first half
     /// and silently take another process's descriptors with it.
     #[test]
@@ -1414,7 +1414,7 @@ mod tests {
     ///
     /// The whole point of an owner on a descriptor.  A number is a number, so a
     /// process that guessed one would otherwise read another's file or close
-    /// its pipe end — a reach into a process it never touched, which is exactly
+    /// its pipe end, a reach into a process it never touched, which is exactly
     /// the power a bad pointer would give it.  The refusal is `InvalidArgument`
     /// and not `PermissionDenied`: a caller told "denied" learns the slot is in
     /// use and can probe for which numbers are.
@@ -1585,7 +1585,7 @@ mod tests {
     /// A record shorter than the stat is refused, not partly written.
     ///
     /// A caller handed eight bytes would otherwise read a size field that
-    /// holds the kind's bytes — a number that looks like a size, which is
+    /// holds the kind's bytes, a number that looks like a size, which is
     /// the kind of wrong answer that survives a program's own checking.
     #[test]
     fn a_record_shorter_than_the_stat_is_refused() {
@@ -1753,8 +1753,8 @@ mod tests {
     /// refused, and moves nothing.
     ///
     /// No filesystem sees both names, so the only ways to serve the call
-    /// are a copy and a delete — whose crash between the halves is the one
-    /// outcome a rename exists to make impossible — or a refusal.  The
+    /// are a copy and a delete, whose crash between the halves is the one
+    /// outcome a rename exists to make impossible, or a refusal.  The
     /// refusal is what this tree answers.
     #[test]
     fn a_rename_across_filesystems_is_refused() {
@@ -1822,7 +1822,7 @@ mod tests {
         let size = word(8);
         let name_offset = word(16);
         let name_len = word(24);
-        // The answer is the bytes the call wrote — header and name together —
+        // The answer is the bytes the call wrote, header and name together
         // which is the number a caller sizes its next buffer from.
         assert_eq!(
             written,
@@ -2021,7 +2021,7 @@ mod tests {
     ///
     /// The whole of what `*At` is for, in one path: the caller holds a
     /// directory it opened, and names what it wants by where it is relative
-    /// to that directory — not by a path it had to know in advance.
+    /// to that directory, not by a path it had to know in advance.
     #[test]
     fn a_relative_path_resolves_against_the_descriptor_it_names() {
         let mut table = writable();
@@ -2057,7 +2057,7 @@ mod tests {
     /// process shares.
     ///
     /// This tree has no per-process current directory yet, so the sentinel
-    /// cannot mean "wherever I am" — it means the root, and the test pins
+    /// cannot mean "wherever I am", it means the root, and the test pins
     /// that reading so the day a current directory arrives it has to argue
     /// with this test rather than drift past it.
     #[test]
@@ -2107,8 +2107,8 @@ mod tests {
         let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
         let file = open_path(&mut table, "/plain.txt", flags).expect("create");
         // The path is `.` on purpose.  A name like `x` is refused twice
-        // over — once by the anchor check and once by the filesystem, whose
-        // parent resolution will not put a child under a file — and a test
+        // over, once by the anchor check and once by the filesystem, whose
+        // parent resolution will not put a child under a file, and a test
         // that passes on the filesystem's refusal proves nothing about the
         // kernel's.  `.` anchored at a file resolves to the file's own
         // path, so without the anchor check this call would **open the
@@ -2277,7 +2277,7 @@ mod tests {
 
     /// A memory call whose arguments are well-formed gets past validation.
     ///
-    /// On a host there is no page table, so the answer is `NotImplemented` —
+    /// On a host there is no page table, so the answer is `NotImplemented`
     /// and that is the assertion: the call was **accepted by the validator**
     /// and refused by the machine it could not reach, which is a different
     /// outcome from `InvalidArgument` and is what a host can honestly check.
@@ -2412,7 +2412,7 @@ mod tests {
     /// `GetTimeOfDay` refuses a clock this build does not have, and answers a
     /// defined one on a host with `Unsupported` rather than a fabricated time.
     ///
-    /// A host has no counter, so `CLOCK_MONOTONIC` cannot be answered — and
+    /// A host has no counter, so `CLOCK_MONOTONIC` cannot be answered, and
     /// that is the honest assertion.  An id outside the ABI's known set is a
     /// caller's mistake and answers `InvalidArgument`, which is a different
     /// fact from the kernel not having the clock.

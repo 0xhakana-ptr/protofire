@@ -138,7 +138,7 @@ pub unsafe fn message_frame() -> Option<()> {
 /// Where a device's MSI must be written, when this boot wires one.
 ///
 /// `None`: x86_64's destination is the local APIC itself, and an MSI capability
-/// is an address-and-data pair the device writes there — but the address this
+/// is an address-and-data pair the device writes there, but the address this
 /// machine would name is the APIC's MSI window, which is per-device programming
 /// this boot does not do.  A device's completion is reached by the driver's
 /// polling, as it is today.

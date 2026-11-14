@@ -17,14 +17,14 @@
 //! 42 bytes, needs no address assignment, and QEMU's user-mode network answers
 //! one for its gateway without being asked to.  So a boot that sends one and
 //! reads the answer has exercised the transmit chain, the device's send path,
-//! the receive chain and the device's receive path — four things a bring-up
+//! the receive chain and the device's receive path, four things a bring-up
 //! cannot reach.
 //!
 //! ## The cache, and why it does not expire
 //!
 //! A question the wire answered once should not be asked again, which is what
 //! [`Cache`] is for: a fixed table from a protocol address to the hardware
-//! address that holds it.  It has no timer, deliberately — an entry that
+//! address that holds it.  It has no timer, deliberately, an entry that
 //! outlives its truth is a wrong delivery, but the conversations this stack
 //! carries are minutes long against a cache that lives for a boot, and an
 //! expiry the boot never reaches is a timer nobody checks.  A stack that runs
@@ -145,8 +145,8 @@ pub fn parse(frame: &[u8]) -> Option<Arp> {
 
 /// How many answers the cache remembers.
 ///
-/// Eight covers the peers one boot talks to — a gateway, a name server, the
-/// hosts a program dials — with room to spare, and a fixed table is one array
+/// Eight covers the peers one boot talks to, a gateway, a name server, the
+/// hosts a program dials, with room to spare, and a fixed table is one array
 /// rather than a growable structure: the cache is checked on every send, and
 /// one a caller could grow is one a caller could grow without bound.
 pub const CACHE_CAPACITY: usize = 8;
@@ -193,7 +193,7 @@ impl Cache {
     /// Record an answer the wire gave, replacing what it said before.
     ///
     /// A repeated answer for an address already held updates that entry in
-    /// place — a sender that changed its hardware address is a fact the cache
+    /// place, a sender that changed its hardware address is a fact the cache
     /// should follow, not a second entry for one address.  A full table
     /// replaces the slot the cursor names and moves past it, which is the
     /// oldest entry's slot by construction: every entry between the cursor

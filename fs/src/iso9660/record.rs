@@ -92,8 +92,8 @@ pub struct Record {
     ///
     /// The record says where a file's *extent* is; this says where the record
     /// is, which is what a resize rewrites.  The parser knows it because it
-    /// walks the extent, and the mount turns it into an offset on the volume —
-    /// the volume is what knows where the extent it read came from — so a node
+    /// walks the extent, and the mount turns it into an offset on the volume
+    /// the volume is what knows where the extent it read came from, so a node
     /// can change the length the record carries without walking the path
     /// again.
     pub source_offset: usize,
@@ -126,7 +126,7 @@ impl Record {
             return None;
         }
         // The System Use area begins after the identifier and one padding
-        // byte when the identifier's length is **even** — 33 + an even length
+        // byte when the identifier's length is **even**, 33 + an even length
         // is odd, and the padding is what makes the record's length even and
         // the area begin at an even offset.  An odd length is followed by no
         // padding at all.  A record with no identifier has its area right
@@ -173,13 +173,13 @@ impl Record {
     /// Serialise the record: the write half of [`Record::parse`].
     ///
     /// The two fields that say where a file is and how long it is are each
-    /// stored twice — little-endian then big-endian — because a reader is free
+    /// stored twice, little-endian then big-endian, because a reader is free
     /// to check either, and the recording date is left as all-zero, which the
     /// standard reads as "not specified" and this driver does not use.  The
     /// System Use area follows the identifier's padding, and the whole record
     /// is padded to an even length like every other.
     ///
-    /// `None` is a record with more in it than its own length byte can say —
+    /// `None` is a record with more in it than its own length byte can say
     /// the caller asked for an entry too long to write, and it is the caller
     /// that has to refuse it rather than store part of it.
     pub fn build(
@@ -208,7 +208,7 @@ impl Record {
         if identifier.len().is_multiple_of(2) {
             // 33 + an even identifier is odd: this is the padding byte that
             // makes the System Use area begin at an even offset and the
-            // record's length even — the rule the parser reads by.
+            // record's length even, the rule the parser reads by.
             rec.push(0);
         }
         rec.extend_from_slice(system_use);

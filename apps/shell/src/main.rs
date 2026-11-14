@@ -5,13 +5,13 @@
 //!
 //! ## What it is
 //!
-//! Not the interactive shell the doc comment once promised — that one needs a
+//! Not the interactive shell the doc comment once promised, that one needs a
 //! console descriptor this kernel does not serve yet.  What it is, is the
 //! smallest program whose **running is somebody else's doing**: `init` starts
 //! it, and the exit status it answers is the evidence the start worked.  A
 //! program that reads the greeting and answers its length is the shortest
 //! body whose exit status cannot be produced without the kernel having
-//! loaded, mapped and run a second image from the filesystem — 23 is the
+//! loaded, mapped and run a second image from the filesystem, 23 is the
 //! greeting's length, and no constant this program was handed can fake it.
 //!
 //! ## Ring 3, and where the wrappers live
@@ -50,7 +50,7 @@ use user_abi::sys_set_signal_handler;
 use user_abi::sys_sigreturn;
 
 /// The path the shell reads, NUL-terminated in its own `.rodata`: the same
-/// file `init` reads, which is what makes the two statuses comparable — the
+/// file `init` reads, which is what makes the two statuses comparable, the
 /// shell answers the file's length where `init` answers its first byte.
 #[cfg(target_os = "none")]
 static GREETING_PATH: &[u8] = b"/greeting.txt\0";
@@ -89,11 +89,11 @@ pub extern "C" fn _start() -> ! {
     }
 
     // The signal, in both directions.  First this process arms its own
-    // handler — the address is its own code, and the contract is the fault
+    // handler, the address is its own code, and the contract is the fault
     // handler's: the record arrives in the argument registers, and the way
     // out is `ReturnFromException(resume, value)`.  Then it tells the
     // parent it is ready, and spins for the delivery, which the kernel
-    // makes at the next install of this context — the first tick after the
+    // makes at the next install of this context, the first tick after the
     // parent's send, not the send itself, because a context mid-flight on
     // another CPU is the kernel's to leave alone.
     let handler = signal_handler as usize;
@@ -114,8 +114,8 @@ static DELIVERED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUs
 /// signal in the answer register, the sender and its payload beside it, and
 /// the interrupted resume as the fourth word.
 ///
-/// The checks are the program's own reading of who spoke and why — a record
-/// that disagrees is a delivery this process refuses to count — and the way
+/// The checks are the program's own reading of who spoke and why, a record
+/// that disagrees is a delivery this process refuses to count, and the way
 /// out is the same `ReturnFromException` the fault handler exits through:
 /// the interrupted flow resumes at the address the kernel supplied, reading
 /// zero as the answer.  Control does not come back here.

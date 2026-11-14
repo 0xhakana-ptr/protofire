@@ -162,7 +162,7 @@ pub fn bring_up() {
     // A counter that moves slower than the rate it reports is the defect this
     // line exists for: `CNTFRQ_EL0` said 1 GHz on the machine where a slice
     // computed from it was a wait longer than the boot, and nothing in the log
-    // said so because nothing compared the two.  This is the comparison — not a
+    // said so because nothing compared the two.  This is the comparison, not a
     // proof, since a spin loop's duration is not known in seconds, but a number
     // a reader can sanity-check: a gigahertz counter crosses millions of ticks
     // while a hundred thousand instructions run, and one that crosses a handful

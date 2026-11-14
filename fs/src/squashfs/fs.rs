@@ -166,7 +166,7 @@ pub fn read_metadata_block(
                     out_block.truncate(n);
                 }
                 _ => {
-                    // Unsupported compression for metadata — return what we
+                    // Unsupported compression for metadata, return what we
                     // have so far.
                     return Err(Error::Unsupported);
                 }
@@ -291,7 +291,7 @@ pub fn lz4_decompress(input: &[u8], out: &mut [u8]) -> Result<usize, Error> {
         // Copy literals.
         if literal_len > 0 {
             if src + literal_len > input.len() || dst + literal_len > out_len {
-                // Truncated or overflow — stop gracefully.
+                // Truncated or overflow, stop gracefully.
                 return Ok(dst);
             }
             out[dst..dst + literal_len].copy_from_slice(&input[src..src + literal_len]);

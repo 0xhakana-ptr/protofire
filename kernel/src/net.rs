@@ -7,9 +7,9 @@
 //!
 //! The `net` crate computes what a frame means: it parses a header, builds a
 //! request, checks a sum, and every one of its functions is a pure call over a
-//! byte slice.  The state it does hold — [`net::tcp_table::Table`], the streams
+//! byte slice.  The state it does hold, [`net::tcp_table::Table`], the streams
 //! a machine owns, and [`net::udp_socket::Queue`], what arrived for one bound
-//! port — it holds as **values** its caller owns, with no lock and no
+//! port, it holds as **values** its caller owns, with no lock and no
 //! `static`, which is what lets that arithmetic be a host test as well.  So
 //! does the writing of a reply frame: [`net::reply`] composes one from
 //! addresses, and this file decides **whose** addresses and when.
@@ -25,7 +25,7 @@
 //! second stack: `net` never learns which card carried a frame, and this file
 //! never reads a field of one.  It is also what keeps this module's size from
 //! following the protocol count: a protocol added to `net` adds nothing here,
-//! and the one thing that had grown here — the connection table — moved out.
+//! and the one thing that had grown here, the connection table, moved out.
 //!
 //! ## Why this is a module and not a field of the boot
 //!
@@ -33,7 +33,7 @@
 //! probes found, so a call made after the boot has finished answers from
 //! state rather than from constants a caller would have to guess.  The
 //! interface is installed once, when the card comes up, and every network
-//! call reads through it — which is what makes `NetworkStatus` a fact about
+//! call reads through it, which is what makes `NetworkStatus` a fact about
 //! this boot's machine rather than about the QEMU defaults a reader could
 //! have looked up.
 //!
@@ -41,7 +41,7 @@
 //!
 //! A datagram socket is a bound port and a queue of what arrived for it.  It
 //! lives behind an `Arc` a descriptor holds, and the port table beside this
-//! file's interface holds a `Weak` — so a socket's port is routable for
+//! file's interface holds a `Weak`, so a socket's port is routable for
 //! exactly as long as some descriptor holds the socket, and a process that
 //! exits releases its descriptors the way it releases its files and pipes,
 //! with the port going with the last of them.  The demux prunes the dead
@@ -74,7 +74,7 @@ use abi::network::NetworkStatusRecord;
 /// One IPv4 packet's payload on this interface: a frame is fifteen hundred
 /// bytes, and the IP and UDP headers take twenty-eight of them.  A send
 /// larger than this is refused before the frame is built, because a frame
-/// the card cannot carry is a send that failed twice — once in the build
+/// the card cannot carry is a send that failed twice, once in the build
 /// and once on the wire.
 pub const MAX_DATAGRAM_BYTES: usize = 1472;
 
@@ -108,7 +108,7 @@ pub struct Interface {
     ///
     /// A fixed array and not a `Vec`: `install` runs before the heap is
     /// certain, and an allocation there took the whole network bring-up with
-    /// it when this was first written — the ARP exchange's lines disappeared
+    /// it when this was first written, the ARP exchange's lines disappeared
     /// and the boot still exited zero.  Three is all a link-local-only
     /// interface has; a global address adds its own group at the point a
     /// router configures it.
@@ -230,7 +230,7 @@ pub fn arp_learn(protocol: [u8; 4], hardware: [u8; 6]) {
 /// One datagram socket: a bound port and the queue of what arrived for it.
 ///
 /// The `Arc` is the socket's life: the descriptor table holds one, the port
-/// table holds a `Weak`, and the socket lives while either is alive — which
+/// table holds a `Weak`, and the socket lives while either is alive, which
 /// is what makes a fork's copy of a descriptor keep the bound port
 /// routable, and the last close take it off the wire.
 ///
@@ -252,7 +252,7 @@ impl UdpSocket {
     /// Take the next datagram the queue holds, answering where it came from
     /// and how many bytes of it fit in `into`.
     ///
-    /// `None` is "nothing arrived, ask again" — the answer a caller parks on.
+    /// `None` is "nothing arrived, ask again", the answer a caller parks on.
     /// A datagram longer than `into` is refused with the datagram **kept**:
     /// a caller whose buffer is small learns that from the error and asks
     /// again with a larger one, and a take that discarded the bytes would
@@ -281,7 +281,7 @@ static UDP_SOCKETS: Mutex<Vec<(u16, Weak<UdpSocket>)>> = Mutex::new(Vec::new());
 /// Drop every entry whose socket no longer has a descriptor.
 ///
 /// Called wherever the table is walked, so a closed socket's port is free
-/// again by the time the next bind looks — and never as its own pass,
+/// again by the time the next bind looks, and never as its own pass,
 /// because a sweep nothing else needed would be a sweep nothing would run.
 fn prune_sockets(sockets: &mut Vec<(u16, Weak<UdpSocket>)>) {
     sockets.retain(|(_, socket)| socket.upgrade().is_some());
@@ -343,7 +343,7 @@ fn is_loopback(destination: net::address::Address) -> bool {
 /// differently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
-    /// A socket took it, and this many tasks were woken by it — zero when
+    /// A socket took it, and this many tasks were woken by it, zero when
     /// nobody was parked on the socket, which is a fact and not a failure.
     Queued(usize),
     /// No socket owns the port, which is the one case a sender can be told
@@ -382,7 +382,7 @@ pub fn deliver_udp(
     socket.push(source, source_port, bytes)?;
 
     // A datagram in a queue is what a parked receive was waiting for, so
-    // this is where the wake belongs — the same one a pipe's write makes,
+    // this is where the wake belongs, the same one a pipe's write makes,
     // with the same discipline on the waiter's side.
     let woken = crate::scheduler::wake_blocked();
     #[cfg(target_os = "none")]
@@ -413,7 +413,7 @@ pub fn deliver_udp(
 /// instead, which is what loopback is: the sender's call and the receiver's
 /// answer meet at the port table, not on the wire.  For anyone else, the
 /// gateway's hardware address comes from the ARP cache, which is this
-/// build's whole routing decision — one interface, one gateway, and every
+/// build's whole routing decision, one interface, one gateway, and every
 /// datagram for another machine leaves by it.  A cache with no answer is
 /// `NotFound`, because a frame with no destination address is a frame the
 /// card cannot carry.
@@ -571,7 +571,7 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
     // bytes at an offset are not a segment, and parsing them as one is how a
     // stack answers with a truncated segment that looks complete.  The last
     // piece completes the datagram, and what comes back is the payload as the
-    // sender wrote it — which then takes the same path an unfragmented
+    // sender wrote it, which then takes the same path an unfragmented
     // packet's payload takes.
     let whole;
     let payload = if packet.is_fragment() {
@@ -744,7 +744,7 @@ fn peer_hardware_v4(address: [u8; 4]) -> Option<[u8; 6]> {
 /// The chain is walked before anything else: a packet with an extension
 /// header that this stack read as a transport header would deliver a
 /// solicitation's bytes to a socket's port.  A fragment is dropped rather
-/// than reassembled — this stack has no reassembly buffer, and the
+/// than reassembled, this stack has no reassembly buffer, and the
 /// alternative is to read the first piece as the whole packet, which is a
 /// wrong answer that looks like a right one.
 ///
@@ -854,7 +854,7 @@ fn demux_ipv6(frame: &[u8]) {
 /// Three answers and nothing else: an advertisement fills the neighbour
 /// cache, a solicitation for one of this host's addresses is answered, and
 /// an echo request is replied to.  A message that is none of those is read
-/// for nothing — this stack has no error path above it yet, and pretending
+/// for nothing, this stack has no error path above it yet, and pretending
 /// to react to a packet-too-big would be a reaction with no shrunken send.
 fn handle_icmpv6(packet: &net::ipv6::Packet, payload: &[u8]) {
     let Some(message) = net::icmpv6::parse(payload) else {
@@ -952,7 +952,7 @@ fn answer_echo_request(packet: &net::ipv6::Packet, message: &net::icmpv6::Messag
 /// The hardware address a unicast IPv6 destination's frame is sent to.
 ///
 /// The neighbour cache's answer when the wire gave one, and the solicited-node
-/// group's mapping when it did not — a reply to a node this stack has not
+/// group's mapping when it did not, a reply to a node this stack has not
 /// resolved goes to a group that node joined, which is what makes an
 /// advertisement's answer reach a host whose cache is empty.
 fn peer_hardware(destination: net::ipv6::Addr) -> [u8; 6] {
@@ -969,7 +969,7 @@ fn peer_hardware(destination: net::ipv6::Addr) -> [u8; 6] {
 /// Answer a solicitation for an address this host holds.
 ///
 /// The answer is the advertisement the asker wanted, sent to the asker's own
-/// address rather than to a group — which is what the solicited flag means —
+/// address rather than to a group, which is what the solicited flag means
 /// and it is sent only when the target is one of ours: answering for another
 /// node's address is how two hosts claim one address.
 fn answer_neighbor_solicitation(
@@ -996,7 +996,7 @@ fn answer_neighbor_solicitation(
 
     // The solicitation's source is the asker's address; `::` is the
     // duplicate-address check, and an advertisement sent to `::` would go
-    // nowhere — a check that hears an advertisement answers it later, at its
+    // nowhere, a check that hears an advertisement answers it later, at its
     // real address, and this stack's own check is the boot's probe.
     let destination = packet.header.source;
     if destination == net::ipv6::UNSPECIFIED {
@@ -1054,7 +1054,7 @@ fn answer_neighbor_solicitation(
 /// the one exchange QEMU's user-mode network cannot fake, because it never
 /// leaves the machine.
 ///
-/// The alternative — sending to a QEMU gateway — was measured and refused:
+/// The alternative, sending to a QEMU gateway, was measured and refused:
 /// slirp forwards IPv6 datagrams but does not implement NDP, so a solicitation
 /// for its address goes unanswered and the boot would have no advertisement
 /// to learn from.  A probe that printed a line for an exchange that never
@@ -1069,7 +1069,7 @@ pub fn ipv6_probe() -> bool {
         (interface.card.clone(), interface.hardware, interface.ipv6)
     };
 
-    // ── the neighbour solicitation, answered by this stack itself ────────
+    // the neighbour solicitation, answered by this stack itself
     //
     // Sent to the address's own solicited-node group, which is a group this
     // interface joined, so the receive path's `is_for` accepts it.  The
@@ -1096,13 +1096,13 @@ pub fn ipv6_probe() -> bool {
 
     // The frame goes through the demux the receive path uses, not a private
     // copy of its logic: what this proves is the path a real frame takes.
-    // The slice is the frame's true length — a buffer's trailing zeros parse
+    // The slice is the frame's true length, a buffer's trailing zeros parse
     // only because the header carries the length, and a probe that relied on
     // that would be hiding a wrong length behind a right one.
     demux_ipv6(&frame[netdev::ETHERNET_HEADER_LEN..total]);
 
-    // A solicitation from `::` is not answerable — an advertisement sent to
-    // `::` goes nowhere — so this stack learns nothing from that one, and
+    // A solicitation from `::` is not answerable, an advertisement sent to
+    // `::` goes nowhere, so this stack learns nothing from that one, and
     // the line says so rather than claiming a cache entry it does not have.
     let learned_from_dad = {
         let interface = INTERFACE.lock();
@@ -1118,11 +1118,11 @@ pub fn ipv6_probe() -> bool {
         return false;
     }
 
-    // ── and the solicitation a host answers ─────────────────────────────
+    // and the solicitation a host answers
     //
     // From the gateway-shaped peer: a link-local address built from another
     // MAC, asking for ours.  This one names a source link-layer address, so
-    // the answer has somewhere to go — and it goes through the same write
+    // the answer has somewhere to go, and it goes through the same write
     // helper a real advertisement uses.
     let peer = net::ipv6::link_local_from_mac([0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]);
     let peer_mac = [0x52, 0x55, 0x0A, 0x00, 0x02, 0x02];
@@ -1183,7 +1183,7 @@ pub fn ipv6_probe() -> bool {
     }
     arch::serial::write_str("\n");
 
-    // ── and the echo a host answers ─────────────────────────────────────
+    // and the echo a host answers
     //
     // An echo request from the peer to our link-local address, through the
     // demux: the reply is built by the same path a real ICMPv6 answering
@@ -1199,7 +1199,7 @@ pub fn ipv6_probe() -> bool {
 
     // The echo's evidence is the line `answer_echo_request` prints: the
     // request reached the answer path, which is the same path a frame from
-    // the wire takes.  What this checks is that the demux did not drop it —
+    // the wire takes.  What this checks is that the demux did not drop it
     // a request no handler saw prints no line, and the boot's gate requires
     // one.
     true
@@ -1238,14 +1238,14 @@ fn write_ipv6(address: net::ipv6::Addr) {
 /// task that parked on the answer.
 ///
 /// One lock and not one per connection, because the loopback exchange is
-/// re-entrant — a segment delivered to a peer's state machine is answered
-/// inside the same call — and a per-connection lock is a deadlock the first
+/// re-entrant, a segment delivered to a peer's state machine is answered
+/// inside the same call, and a per-connection lock is a deadlock the first
 /// full-duplex exchange would find.
 /// The pieces of fragmented datagrams this machine is holding, and the clock
 /// they expire on.
 ///
-/// The cache is `net`'s — the bounds, the overlap rule and the completion
-/// test are the wire's — and what is here is the lock and the tick it is
+/// The cache is `net`'s, the bounds, the overlap rule and the completion
+/// test are the wire's, and what is here is the lock and the tick it is
 /// given.  A piece is memory a peer spends by sending, which is why the
 /// bound lives beside the arithmetic rather than at this call site.
 static FRAGMENTS: Mutex<net::reassembly::Cache> = Mutex::new(net::reassembly::Cache::new());
@@ -1285,7 +1285,7 @@ pub fn tcp_has_pending(listener: usize) -> bool {
 /// Take the connection a listener has been holding, answering its id.
 ///
 /// `NotFound` for an id that names no listener, and `Ok(None)` when the
-/// listener holds nothing — which is the caller's signal to park, the same
+/// listener holds nothing, which is the caller's signal to park, the same
 /// shape a datagram receive is.
 pub fn tcp_accept(listener: usize) -> Result<Option<usize>> {
     TCP.lock().accept(listener)
@@ -1297,7 +1297,7 @@ pub fn tcp_accept(listener: usize) -> Result<Option<usize>> {
 /// answer comes back through the demux, the client's acknowledgement goes
 /// back, and by the time this returns both ends hold an open stream.  A
 /// connect to another machine would have to wait for its answer on the
-/// wire, which is a wait this build does not make a call do — the answer
+/// wire, which is a wait this build does not make a call do, the answer
 /// for a destination that is not this machine is `Unsupported`, and the
 /// exchange that proves the layer runs where the proof is, on loopback.
 pub fn tcp_connect(destination: net::address::Address, destination_port: u16) -> Result<usize> {
@@ -1351,7 +1351,7 @@ pub fn tcp_has_data(id: usize) -> bool {
 
 /// Read bytes off a stream, answering how many.
 ///
-/// `None` is "nothing arrived, ask again" — the answer a caller parks on,
+/// `None` is "nothing arrived, ask again", the answer a caller parks on,
 /// the same shape a datagram receive is.  A stream whose connection is gone
 /// reached its close, and answers zero: end of file, which is what a reader
 /// whose writer finished reads.  A read that never answered zero would be a
@@ -1371,7 +1371,7 @@ pub fn tcp_read(id: usize, into: &mut [u8]) -> Result<Option<usize>> {
 /// between them.
 ///
 /// A close of an id that names nothing is `Ok`, because the close already
-/// happened — the orderly one this call ran, or the abrupt one a process's
+/// happened, the orderly one this call ran, or the abrupt one a process's
 /// exit ran when it released its descriptors.
 pub fn tcp_close(id: usize) -> Result<()> {
     let noteworthy = {
@@ -1393,7 +1393,7 @@ pub fn tcp_close(id: usize) -> Result<()> {
 /// Wake what a stream event parked, from a context that holds no lock.
 ///
 /// The count is printed when it is not zero, because the wake is the fact
-/// the parked caller's retry answers — and the IPI, for the reason every
+/// the parked caller's retry answers, and the IPI, for the reason every
 /// wake here carries one: the woken task may be held by another CPU parked
 /// in a wait whose own clock may never move.
 fn note_stream_wake(noteworthy: bool) {
@@ -1424,7 +1424,7 @@ fn note_stream_wake(noteworthy: bool) {
 /// inside the same locked region, whose replies queue behind it, and the
 /// loop runs until nothing is left.  A segment for another machine goes out
 /// through the card in an IPv4 packet, which is the whole of the
-/// difference between the two wires — the state machine never learns which
+/// difference between the two wires, the state machine never learns which
 /// one carried its bytes.
 fn tcp_exchange(
     table: &mut net::tcp_table::Table,
@@ -1433,7 +1433,7 @@ fn tcp_exchange(
     // Whether anything happened that a parked caller was waiting for: a
     // connection a SYN opened, bytes that landed in a stream's inbox, a
     // finish that ends a read.  The answer comes back to the caller, which
-    // wakes **after** this function returns — the table's lock is its
+    // wakes **after** this function returns, the table's lock is its
     // caller's, and the scheduler's is never taken inside it.
     let mut noteworthy = false;
     let mut queue = queue;
@@ -1617,7 +1617,7 @@ fn tcp_send_on_wire(
 /// names, or open one for it on a listener.
 ///
 /// The SYN's connection is created here, with the listener's answer sent
-/// before the accept ever runs — which is why a client's connect completes
+/// before the accept ever runs, which is why a client's connect completes
 /// against a listener nothing has accepted from yet, and why the data
 /// before an accept is in the connection's own inbox when the accept
 /// returns it.
@@ -1664,7 +1664,7 @@ fn demux_tcp(packet: net::ipv4::Packet, payload: &[u8]) -> bool {
         let _ = tcp_exchange(&mut table, queued);
     }
     // Anything the peer has waiting is what a parked reader was waiting
-    // for — but the wake takes the scheduler's lock, and this function
+    // for, but the wake takes the scheduler's lock, and this function
     // holds the table's, so the answer is returned and the wake happens
     // where the lock is no longer held.
     noteworthy
@@ -1735,9 +1735,9 @@ fn demux_tcp6(packet: &net::ipv6::Packet, payload: &[u8]) -> bool {
 /// The boot's reassembly exchange: a datagram split into pieces, delivered to
 /// this machine's own socket, and the payload read back whole.
 ///
-/// The split is the one a shrinking path forces — the first piece carries the
+/// The split is the one a shrinking path forces, the first piece carries the
 /// transport header and some data with more to follow, the second carries the
-/// rest and says it is the last — and the delivery goes through the same
+/// rest and says it is the last, and the delivery goes through the same
 /// `demux` a frame from the wire takes, so the reassembly under test is the
 /// one a real fragment meets.  What the line names is the payload's length and
 /// its first and last byte, which only a correctly reassembled datagram could
@@ -1834,7 +1834,7 @@ pub fn reassembly_probe() -> bool {
 /// segment written by [`send_datagram`] and [`tcp_connect`] with an IPv6
 /// address, framed for the card's ethertype, parsed back by [`demux_ipv6`] and
 /// routed to the socket or the connection the address names.  The exchange
-/// never touches the card — QEMU's user-mode network forwards IPv6 but does
+/// never touches the card, QEMU's user-mode network forwards IPv6 but does
 /// not answer NDP, so a probe aimed at its gateway would ask a question
 /// nothing answers.
 ///
@@ -1852,7 +1852,7 @@ pub fn ipv6_transport_probe() -> bool {
     };
     let _ = &card;
 
-    // ── a datagram to this machine, through the demux ───────────────────
+    // a datagram to this machine, through the demux
     let socket = match bind_udp(9100) {
         Ok(socket) => socket,
         Err(_) => {
@@ -1888,7 +1888,7 @@ pub fn ipv6_transport_probe() -> bool {
         return false;
     }
 
-    // ── a stream to this machine, through the demux ─────────────────────
+    // a stream to this machine, through the demux
     let listener = match tcp_listen(9102) {
         Ok(id) => id,
         Err(_) => {
@@ -1939,7 +1939,7 @@ pub fn ipv6_transport_probe() -> bool {
 /// The boot's stream exchange: a listener on this machine, a client to it,
 /// an echo, and the close that ends both ends.
 ///
-/// The whole of a TCP exchange, on loopback, with no card in the path — the
+/// The whole of a TCP exchange, on loopback, with no card in the path, the
 /// same exchange the protocol crate's tests run on a host, run by the boot
 /// so the lines below are a machine's evidence rather than a host's.  Each
 /// line names what only a completed exchange could have carried: the ids
@@ -1979,7 +1979,7 @@ pub fn tcp_probe() -> bool {
         }
     };
 
-    // The client's bytes, the server's echo, and the read-back — each one a
+    // The client's bytes, the server's echo, and the read-back, each one a
     // segment that crossed the demux inside this call.
     let sent = match tcp_write(client, b"protofire") {
         Ok(count) => count,
@@ -2039,7 +2039,7 @@ mod tests {
     use sync::Mutex;
 
     /// A card that records what it was asked to send, and hands back the
-    /// frames a test queues for it — the same shape a driver has, without a
+    /// frames a test queues for it, the same shape a driver has, without a
     /// machine behind it.
     struct FakeCard {
         sent: Mutex<Vec<Vec<u8>>>,
@@ -2281,7 +2281,7 @@ mod tests {
         }
 
         // The pump: a real frame in the card's ring, a datagram in a
-        // socket's queue after it — built by the same writers the send path
+        // socket's queue after it, built by the same writers the send path
         // uses, so the pump is tested against the wire's own bytes.
         let datagram_socket = bind_udp(40008).expect("a bind");
         let udp_len = net::udp::datagram_len(5);
@@ -2378,7 +2378,7 @@ mod tests {
     /// This is the assertion a boot cannot make: the boot sees no report,
     /// because a report only goes to a sender that sent something.  What the
     /// test can do is build the report the kernel would send and check the
-    /// bytes a sender acts on — its own source port and destination port, at
+    /// bytes a sender acts on, its own source port and destination port, at
     /// the offsets its own header layout puts them.
     #[test]
     fn a_port_unreachable_report_quotes_the_datagram_it_answers() {
@@ -2468,7 +2468,7 @@ mod tests {
 
         let socket = bind_udp(40007).expect("a bind");
         // A real frame: Ethernet to this machine, IPv4 to its address, and
-        // the datagram in the payload — built by the same writers the send
+        // the datagram in the payload, built by the same writers the send
         // path uses, so the pump is tested against the wire's own bytes.
         let udp_len = net::udp::datagram_len(5);
         let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;

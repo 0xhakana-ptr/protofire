@@ -4,9 +4,9 @@
 //! On-disk data structures for EROFS (Enhanced Read-Only File System).
 //!
 //! EROFS is a read-only filesystem format published with its kernel driver's
-//! documentation; the layout described here is that on-disk format — the
+//! documentation; the layout described here is that on-disk format, the
 //! superblock's magic and offsets, the inode variants and the compression
-//! cluster headers — and every field is named where the format names it.
+//! cluster headers, and every field is named where the format names it.
 //!
 //! All multi-byte fields are little-endian unless noted otherwise.
 
@@ -27,9 +27,9 @@ pub const EROFS_SUPERBLOCK_SIZE: usize = 128;
 pub const EROFS_COMPACT_INODE_SIZE: usize = 32;
 
 // Inode format field masks:
-//   i_format[15]: inline   — data is stored inside the inode itself
-//   i_format[14]: extent   — data uses an extent list
-//   i_format[13]: compress — data is compressed
+//   i_format[15]: inline, data is stored inside the inode itself
+//   i_format[14]: extent, data uses an extent list
+//   i_format[13]: compress, data is compressed
 //   i_format[11:0] → remaining bits for the actual layout variant
 
 /// Inode mode constants (same values as ext2/ext3).
@@ -95,7 +95,7 @@ pub(crate) struct ErofsSuperblock {
 
 // SAFETY: the superblock is read from a byte buffer.
 unsafe impl Send for ErofsSuperblock {}
-// SAFETY: as the `Send` impl above — a plain `#[repr(C)]` superblock record
+// SAFETY: as the `Send` impl above, a plain `#[repr(C)]` superblock record
 // with no interior mutability.
 unsafe impl Sync for ErofsSuperblock {}
 
@@ -288,7 +288,7 @@ pub(crate) struct ErofsDirEntry {
 ///
 /// EROFS directory entries consist of 12-byte headers followed by
 /// names packed at the tail of the block.  Names are NOT
-/// NUL-terminated — each name extends from its `name_off` to the
+/// NUL-terminated, each name extends from its `name_off` to the
 /// start of the adjacent name (or to the end of the block for the
 /// name closest to the block tail).
 ///
@@ -330,7 +330,7 @@ pub(crate) fn parse_erofs_dir_entries(
         raw_entries.iter().map(|(off, _, _)| *off).collect();
     sorted_offs.sort();
     sorted_offs.dedup();
-    sorted_offs.push(block_size); // sentinel — end of last name
+    sorted_offs.push(block_size); // sentinel, end of last name
 
     let mut entries = alloc::vec::Vec::new();
     for (name_off, nid, file_type) in &raw_entries {

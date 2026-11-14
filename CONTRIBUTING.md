@@ -16,30 +16,30 @@ sh scripts/verify.sh p3
 That is the gate, and it is the whole of what "green" means.  It runs, in
 order:
 
-- `cargo fmt --check` — refuses formatting drift.
-- `scripts/check-docs.sh` — refuses a document that cites a file the tree does
+- `cargo fmt --check`, refuses formatting drift.
+- `scripts/check-docs.sh`, refuses a document that cites a file the tree does
   not have.
-- `cargo doc --workspace` — refuses a doc comment that links to an item the
+- `cargo doc --workspace`, refuses a doc comment that links to an item the
   crate does not have.
-- `cargo build --workspace` — refuses a crate that does not build for the host.
-- `cargo build -p kernel --target <machine>`, three times — refuses a machine
+- `cargo build --workspace`, refuses a crate that does not build for the host.
+- `cargo build -p kernel --target <machine>`, three times, refuses a machine
   the kernel does not build for.
-- `cargo test --workspace` — refuses a failing test.
-- `cargo xtask check --machine <machine>`, for each machine that has an image —
+- `cargo test --workspace`, refuses a failing test.
+- `cargo xtask check --machine <machine>`, for each machine that has an image
   refuses a boot that does not print what its gate requires.
-- `scripts/check-arch-fanout.sh` — refuses a `target_arch` gate outside `arch/`
+- `scripts/check-arch-fanout.sh`, refuses a `target_arch` gate outside `arch/`
   that nothing argued for.
-- `scripts/check-layering.sh` — refuses a dependency that points at its own
+- `scripts/check-layering.sh`, refuses a dependency that points at its own
   layer or above.
-- `scripts/check-crate-tests.sh` — refuses a crate with code and no tests, or
+- `scripts/check-crate-tests.sh`, refuses a crate with code and no tests, or
   one that lost tests.
-- `scripts/check-repo-integrity.sh` — refuses a tracked file that is ignored,
+- `scripts/check-repo-integrity.sh`, refuses a tracked file that is ignored,
   or a build product that is tracked.
-- `scripts/check-ignored-files.sh` — refuses the other direction: a file that is
+- `scripts/check-ignored-files.sh`, refuses the other direction: a file that is
   ignored and **not** tracked, when it is not a build product.  `git add -A`
   skips one without a word, so a source file hidden by an ignore rule reaches
   neither the index nor the commit.
-- `cargo clippy`, four times — refuses a lint, in every configuration the tree
+- `cargo clippy`, four times, refuses a lint, in every configuration the tree
   builds.
 
 The tiers below `p3` exist so the common case is fast: `p0` is formatting, builds
@@ -112,9 +112,9 @@ A test that cannot fail is worse than no test, because it is counted.
 
 ## Where the rest lives
 
-- **Why is this crate here, and what may it name?** — `docs/architecture.md` and
+- **Why is this crate here, and what may it name?**, `docs/architecture.md` and
   `scripts/layering.txt`.
-- **How does the asynchronous model work?** — `docs/async_io.md`.
-- **What exists and what is missing?** — each crate's `//!` header, and
+- **How does the asynchronous model work?**, `docs/async_io.md`.
+- **What exists and what is missing?**, each crate's `//!` header, and
   `docs/status.md` for the per-machine census.
-- **What does a gate refuse?** — the gate's own header comment.
+- **What does a gate refuse?**, the gate's own header comment.

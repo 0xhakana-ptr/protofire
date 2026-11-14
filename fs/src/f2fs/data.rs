@@ -2,7 +2,7 @@
 //!
 //! File data writes: the log-structured read-modify-write.  Every affected
 //! logical block's new content goes to a *fresh* physical block, and the
-//! inode's pointer moves there — the old block is invalidated in the SIT,
+//! inode's pointer moves there, the old block is invalidated in the SIT,
 //! never erased.
 
 use abi::Result;
@@ -50,7 +50,7 @@ impl F2fsFs {
             buf.resize(self.block_size(), 0);
 
             if old_phys != F2FS_NULL_ADDR && old_phys != F2FS_NEW_ADDR {
-                // Read, modify, write — the old content around the written
+                // Read, modify, write, the old content around the written
                 // range survives.
                 self.read_fs_block(old_phys, &mut buf[..])?;
                 let write_start = (seg_start - block_start) as usize;

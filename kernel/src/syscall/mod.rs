@@ -22,8 +22,8 @@
 //!
 //! Thirty-one numbers, and the split between this table and `process.rs` is
 //! the one that matters: a call that answers inside its own frame is a handler
-//! here, and a call that must **park** — a pipe read, a datagram receive, an
-//! accept, a sleep — is a branch in `process.rs`, because parking needs the
+//! here, and a call that must **park**, a pipe read, a datagram receive, an
+//! accept, a sleep, is a branch in `process.rs`, because parking needs the
 //! scheduler and a handler taking `&mut SyscallTable` cannot hold a trap frame.
 //!
 //! Every other number answers `Error::NotImplemented` rather than being
@@ -34,8 +34,8 @@
 //! ## Arguments, and what a pointer means here
 //!
 //! `SyscallContext` carries six words, and a word may be an address.  No
-//! user-space caller reaches this registry — the boot's programs make their
-//! calls through `process`, which validates a ring-3 address itself — so the
+//! user-space caller reaches this registry, the boot's programs make their
+//! calls through `process`, which validates a ring-3 address itself, so the
 //! registry's only callers are the kernel's, and the two address-shaped
 //! arguments arrive as borrows, [`Arguments::path`] and [`Arguments::buffer`],
 //! rather than as integers a handler would have to turn back into pointers.

@@ -8,7 +8,7 @@
 //! ## Why a node remembers where its entry is
 //!
 //! A FAT file's size and first cluster are the directory entry's fields,
-//! not the file's — so a write that changes either has to find the entry
+//! not the file's, so a write that changes either has to find the entry
 //! again.  Resolving the parent and scanning it on every write would be
 //! the same bytes read twice; the node records the entry's offset and LFN
 //! count at lookup, and invalidates that record whenever the driver cannot
@@ -303,7 +303,7 @@ impl crate::filesystem::FileSystem for FatVolume {
             match found_pos {
                 Some((entry_start, lfn_entries)) => {
                     // The old set goes deleted, the new set takes a free
-                    // slot — the rename this format can express.
+                    // slot, the rename this format can express.
                     let total_old_entries = lfn_entries + 1;
                     for i in 0..total_old_entries {
                         let off = entry_start + i * ENTRY_SIZE;
@@ -430,7 +430,7 @@ struct FatVNode {
     entry_offset: usize,
     lfn_count: usize,
     is_parent_root: bool,
-    /// Whether `entry_offset` and `lfn_count` are valid — write and
+    /// Whether `entry_offset` and `lfn_count` are valid, write and
     /// `set_len` skip the on-disk entry update when it is not.
     has_entry_info: bool,
 }
@@ -528,7 +528,7 @@ impl VNode for FatVNode {
 
         self.file_size.store(final_size as u32, Ordering::Relaxed);
 
-        // The write persists immediately — a crash after write() must not
+        // The write persists immediately, a crash after write() must not
         // lose bytes sitting in the block cache.
         self.fs.lock().flush()?;
 
@@ -602,7 +602,7 @@ impl VNode for FatVNode {
             }
             fs.flush()?;
         } else {
-            // An extension writes zeros beyond the current end — write()
+            // An extension writes zeros beyond the current end, write()
             // updates the on-disk entry itself.
             drop(fs);
             let zeros = alloc::vec![0u8; (length - current_size) as usize];
@@ -612,7 +612,7 @@ impl VNode for FatVNode {
     }
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────
+// helpers
 
 /// Split a path into `(parent, leaf)`.
 fn split_parent(path: &str) -> (&str, &str) {
@@ -689,7 +689,7 @@ fn find_entry_by_cluster(
     None
 }
 
-/// Whether an entry's 11-byte short name matches a user-visible name —
+/// Whether an entry's 11-byte short name matches a user-visible name
 /// case-insensitive, space-padded 8.3 against the name's own split.
 fn short_name_matches(entry_data: &[u8], expected: &str) -> bool {
     let expected = expected.to_uppercase();

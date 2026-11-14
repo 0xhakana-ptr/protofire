@@ -61,7 +61,7 @@ pub const USER_BASE: usize = 0x80_0000_0000;
 /// The loader's budget, not the space's: `MAX_IMAGE_BYTES` is a quarter of the
 /// boot disk and admits a 64-page image, and one slot past the pages is the
 /// stack the exec path adds.  It is derived rather than written down because
-/// the two have to agree and they did not once — a legal 64 KiB program was
+/// the two have to agree and they did not once, a legal 64 KiB program was
 /// refused by a bound whose own documentation described a smaller thing.
 ///
 /// This is the number the **exec** path checks; a space's total ownership has
@@ -87,7 +87,7 @@ pub const MAX_OWNED_FRAMES: usize = 4096;
 /// Not `Copy`, and the reason is the frame list below.  It was `Copy` while the
 /// list was a fixed array, and two call sites relied on that: a fork read the
 /// parent's space out of the task table by value, and a task answered its root
-/// the same way.  Both now borrow, which is the honest description — a space is
+/// the same way.  Both now borrow, which is the honest description, a space is
 /// one object a task owns, not a value to be duplicated at each question.
 #[cfg(target_os = "none")]
 #[derive(Debug)]
@@ -130,7 +130,7 @@ pub struct AddressSpace {
     /// mapping may take, and one past the highest.
     ///
     /// Recorded rather than derived, because deriving it needs the image's base
-    /// and the image does not keep it — `exec` computes where the image ends
+    /// and the image does not keep it, `exec` computes where the image ends
     /// and what window it went into, and this is where those two facts live
     /// afterwards.  `(0, 0)` for a space no image was loaded into, which is the
     /// boot's own machine-code programs; they never reserve.
@@ -210,12 +210,12 @@ impl AddressSpace {
 
     /// Map `physical` at `virtual_address` with the caller's permissions.
     ///
-    /// `map` is the convenience shape the boot's two-page programs use — code
+    /// `map` is the convenience shape the boot's two-page programs use, code
     /// and stack, both executable, writability the only question.  A loaded
     /// image's segments know better than that: text is read-execute, data is
     /// read-write and *not* executable, and the permissions travel with the
-    /// segment rather than with a bool.  `user` is always set — everything an
-    /// `AddressSpace` maps is a program's — and a caller passing `user: false`
+    /// segment rather than with a bool.  `user` is always set, everything an
+    /// `AddressSpace` maps is a program's, and a caller passing `user: false`
     /// is refused rather than mapped, because the one mapping that must not
     /// exist is a kernel page a program can reach.
     ///
@@ -372,7 +372,7 @@ impl AddressSpace {
     ///
     /// The whole of `Mmap` after the arguments are validated: reserve the
     /// range, allocate a frame per page, map each, and record it as owned.  A
-    /// step that fails undoes the ones before it — a mapping that allocated
+    /// step that fails undoes the ones before it, a mapping that allocated
     /// nine of ten pages and returned an error would leave nine frames the
     /// program has no name for and the space has forgotten.
     ///
@@ -403,7 +403,7 @@ impl AddressSpace {
             let Some(frame) = crate::address_space::allocate_image_frame() else {
                 // Out of frames: undo what this call did and answer no.  The
                 // frames themselves are the space's `own`s, so `release` is
-                // not what undoes this — each is unmapped and disowned here,
+                // not what undoes this, each is unmapped and disowned here,
                 // one at a time, which is the only thing that knows which
                 // pages this call is responsible for.
                 // SAFETY: the caller's contract covers the whole function.
@@ -450,7 +450,7 @@ impl AddressSpace {
     /// Unmap everything in `[base, base + length)` and give its frames back.
     ///
     /// Answers how many pages were taken away, which is zero for a range
-    /// nothing was mapped in — an unmapped range is not an error, for the
+    /// nothing was mapped in, an unmapped range is not an error, for the
     /// reason [`unmap_page`](Self::unmap_page) gives.
     ///
     /// The frames go back through the pool's co-owner count, so a page a fork
@@ -498,7 +498,7 @@ impl AddressSpace {
     ///
     /// The copy-on-write resolver's bookkeeping: the faulting space copied the
     /// shared frame away, so what it owns now is its private copy.  One record
-    /// out, one in — the bound does not move, and the count in the pool moves
+    /// out, one in, the bound does not move, and the count in the pool moves
     /// with it, because the resolver released the shared frame's reference
     /// when it copied and this records the copy's ownership in the same
     /// breath.  `false` means this space never owned `old_frame`, which is not
@@ -596,7 +596,7 @@ impl AddressSpace {
     ///
     /// `requested == 0` is a query and answers the current break.  Anything
     /// else has to be page-aligned, at or above the current break, and below
-    /// the cursor `Mmap` is counting down from — a break that grew past it
+    /// the cursor `Mmap` is counting down from, a break that grew past it
     /// would hand the program a page `reserve` also believes it may use, and
     /// the two would map over each other with no error anywhere.
     ///
@@ -713,7 +713,7 @@ impl AddressSpace {
     ///
     /// A linear scan of the user window's tables, which is what a diagnostic
     /// may do and a fault path may not.  It stops at the first hit, and it
-    /// walks only tables that exist — an absent second level is a window with
+    /// walks only tables that exist, an absent second level is a window with
     /// nothing in it.
     fn maps(&self, frame: usize) -> bool {
         // SAFETY: `self.root` is this space's live root table.
@@ -795,18 +795,18 @@ impl AddressSpace {
     /// on-write fork: a frame two spaces hold is returned by the *last* space
     /// to let go, and each release before that is one reference fewer.  The
     /// pool answers whether a release was the last, and the frame goes back
-    /// only then — a release that freed unconditionally would hand a live
+    /// only then, a release that freed unconditionally would hand a live
     /// frame to the next allocation while its other owner still mapped it.
     ///
     /// The **tables** are a second accounting the frames array never carried.
     /// Mapping one page builds a table at each level it needs, and none of
-    /// those frames is a page's — they are the walk's scaffolding, allocated
+    /// those frames is a page's, they are the walk's scaffolding, allocated
     /// by [`AddressSpace::map`] and [`walk_or_create`], recorded nowhere, and
     /// the first version of this function left every one of them behind:
     /// three frames per space on this kernel's four-level walk, measurable in
     /// the boot's free count, and one `exec`'s worth paid at runtime rather
-    /// than only at the boot's end.  They are strictly per space — a fork
-    /// shares frames, never tables — so freeing them needs no count.
+    /// than only at the boot's end.  They are strictly per space, a fork
+    /// shares frames, never tables, so freeing them needs no count.
     ///
     /// # Safety
     ///
@@ -837,7 +837,7 @@ impl AddressSpace {
 /// The kernel's entry 0 is the shared one, so the walk starts at the user
 /// window's entry and takes each table it finds, deepest first.  An entry
 /// that decodes as a leaf where a table was expected is skipped rather than
-/// freed or followed — a block mapping is not a frame this kernel's walk
+/// freed or followed, a block mapping is not a frame this kernel's walk
 /// created, and freeing or descending into one would be a guess about memory
 /// this space does not own.
 ///
@@ -1012,7 +1012,7 @@ pub fn allocate_image_frame() -> Option<usize> {
 /// `stack_va`, and nothing else.
 ///
 /// `exec`'s builder.  The mapping is the boot's own [`map_user_page`]-shaped
-/// pair — image read-only and executable, stack writable — and the addresses
+/// pair, image read-only and executable, stack writable, and the addresses
 /// are the **caller's**, not this function's choice: `exec` swaps the frames
 /// behind the window a task already owns rather than giving the task a new
 /// window, because the window is the one thing about a process that its
@@ -1021,7 +1021,7 @@ pub fn allocate_image_frame() -> Option<usize> {
 /// Every failure returns with the space released: the root and each frame the
 /// builder recorded go back, so a failed `exec` does not shrink the pool by a
 /// program.  The image frame is recorded **before** the stack is taken, which
-/// is the order that makes that true — a builder that took both frames first
+/// is the order that makes that true, a builder that took both frames first
 /// and recorded them after would leak the image frame of every `exec` that
 /// found the pool empty at its second ask.
 ///
@@ -1117,7 +1117,7 @@ pub unsafe fn self_check_frame_pool() -> bool {
 /// One page a program has mapped, as the walk found it.
 ///
 /// The virtual address, the frame behind it, and whether the mapping allows
-/// writes — everything a fork needs to know about the page it is about to
+/// writes, everything a fork needs to know about the page it is about to
 /// share, and nothing about the page tables themselves, so a caller that only
 /// reads this list cannot corrupt a walk by holding a reference into it.
 #[cfg(target_os = "none")]
@@ -1220,8 +1220,8 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
 /// Every page the parent maps in the user window, the child maps as **the same
 /// frame**.  A page the parent could write is demoted first: the parent's
 /// entry is rewritten read-only and the frame is marked for copy-on-write, so
-/// the first write on either side faults, and the fault handler — the reason
-/// this kernel has a write-fault path at all — copies the frame while the
+/// the first write on either side faults, and the fault handler, the reason
+/// this kernel has a write-fault path at all, copies the frame while the
 /// other owner still holds it and hands it over outright when it does not.  A
 /// page the parent could not write is shared as it stands: it was already
 /// read-only, there is nothing to demote, and a write to it is the program
@@ -1240,7 +1240,7 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
 /// own: a fork is a supervisor call, and the CPU that took it is the one the
 /// parent runs on.  Every machine's `switch_address_space` is a whole-TLB
 /// flush, so a CPU that is not running the parent holds no translations for
-/// the parent's pages — it discarded them at its last switch and has not
+/// the parent's pages, it discarded them at its last switch and has not
 /// re-fetched them through this root since.  The parent cannot write between
 /// the demotion and the share either: it is suspended inside its own syscall.
 /// One local flush is therefore the whole of the invalidation, and the
@@ -1316,9 +1316,9 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
 /// demotion is what makes the *next* write fault, and the mark is what makes
 /// that fault resolvable.  A demotion whose mark landed in a later section
 /// would leave a window in which the parent faults and the handler has
-/// nothing to read.  Nothing can actually take the window — the fork runs on
+/// nothing to read.  Nothing can actually take the window, the fork runs on
 /// the parent's own CPU, the task is suspended inside its syscall, and no
-/// other CPU walks this root — but the single section is cheaper than the
+/// other CPU walks this root, but the single section is cheaper than the
 /// argument it saves.
 ///
 /// The walk also checks the frame it lands on: `frame` was read out of this
@@ -1372,7 +1372,7 @@ fn share_frame(root: usize, address: usize, frame: usize, demote: bool) -> bool 
 
 /// Drop one co-owner of `frame`, returning the frame if that was the last.
 ///
-/// For undoing a share that a caller cannot carry through — a fork whose child
+/// For undoing a share that a caller cannot carry through, a fork whose child
 /// ran out of records mid-page.  The release answers whether the frame still
 /// has owners, and a frame it does not goes back; the share this undoes
 /// always had the child as its second owner, so the answer is always "still
@@ -1390,8 +1390,8 @@ fn unshare_frame(frame: usize) {
 /// Resolve a write fault on a copy-on-write page of `space`.
 ///
 /// Called from the fault path with the space the faulting CPU is running and
-/// the address the fault named.  The page must be one a fork demoted — the
-/// pool's mark says so — and the count decides the answer:
+/// the address the fault named.  The page must be one a fork demoted, the
+/// pool's mark says so, and the count decides the answer:
 ///
 /// - **Co-owners remain.** The faulting space gets a private copy: a new frame,
 ///   the bytes moved, the entry rewritten writable, and the shared frame's
@@ -1403,7 +1403,7 @@ fn unshare_frame(frame: usize) {
 ///
 /// Anything else is not a copy-on-write fault and answers `false`: the caller
 /// prints its diagnostic and stops the machine, which is the honest answer
-/// for a program writing a page that was never meant to be written — its own
+/// for a program writing a page that was never meant to be written, its own
 /// code, most likely.  The mark is what separates those: a fork demoted a
 /// writable page, so the fault is repairable; a page mapped read-only from
 /// the start was never writable at all, and no copy changes that.
@@ -1412,7 +1412,7 @@ fn unshare_frame(frame: usize) {
 /// faulting CPU was translating through: a fault served against a different
 /// root than the one it happened in would rewrite an entry nobody faulted on.
 ///
-/// The caller holds the scheduler's lock and this takes the pool's inside it —
+/// The caller holds the scheduler's lock and this takes the pool's inside it
 /// the order a fork holds the two, and the only order any code in this kernel
 /// takes them.
 #[cfg(target_os = "none")]
@@ -1465,8 +1465,8 @@ pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usi
             core::ptr::copy_nonoverlapping(frame as *const u8, new_frame, GRANULE);
         }
         // The faulting owner's claim on the shared frame goes with the copy.
-        // The answer is `false` by construction — this branch ran because a
-        // co-owner remained — so nothing is deallocated, and the count that
+        // The answer is `false` by construction, this branch ran because a
+        // co-owner remained, so nothing is deallocated, and the count that
         // stays is whoever is left.
         let _ = tables.frames.release_reference(frame);
         leaf.set_entry(
@@ -1502,7 +1502,7 @@ pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usi
         // The entry this CPU will next translate through changed under it: a
         // stale read-only entry would fault the very same instruction all
         // over again.  Every machine's flush is whole-TLB, which is also why
-        // no other CPU needs telling — none of them translates through this
+        // no other CPU needs telling, none of them translates through this
         // root.
         arch::flush_translation();
     }
@@ -1512,7 +1512,7 @@ pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usi
 /// The most pages one `fork` shares.
 ///
 /// The boot's own programs map two pages each, and a loaded image maps
-/// several more — segments plus a stack.  The bound rose with the loader, and
+/// several more, segments plus a stack.  The bound rose with the loader, and
 /// a program with more pages than this is one whose fork is refused rather
 /// than one whose share is silently partial, which is the only other way this
 /// could go wrong.
@@ -1520,7 +1520,7 @@ pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usi
 /// Derived from the **image** bound and not from [`MAX_OWNED_FRAMES`]: a
 /// program the loader admits has to be one a `fork` can share, and those two
 /// describe the same set of pages.  The ownership bound describes a different
-/// set — everything a space may add at run time as well — and tying them
+/// set, everything a space may add at run time as well, and tying them
 /// together made this a stack array of 4096 entries, 98 KiB the kernel stack
 /// does not have.  Measured: raising `MAX_OWNED_FRAMES` alone took every
 /// riscv64 boot down with a store page fault at the bottom of the kernel

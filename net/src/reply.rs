@@ -2,20 +2,20 @@
 //!
 //! The two frames a host answers on its own: an echo reply and a neighbour
 //! advertisement.  Both are composed here, byte for byte, from addresses and
-//! link-layer facts — no card, no state, and a buffer the caller supplies.
+//! link-layer facts, no card, no state, and a buffer the caller supplies.
 //!
 //! ## Why the composition is here
 //!
 //! The kernel knows which address is its own and which hardware address a
 //! frame goes to; it does not know where the ICMPv6 header begins inside a
-//! frame, and it should not have to.  A reply is three headers stacked — the
-//! Ethernet frame, the IPv6 packet, the ICMPv6 message — and each of them is
+//! frame, and it should not have to.  A reply is three headers stacked, the
+//! Ethernet frame, the IPv6 packet, the ICMPv6 message, and each of them is
 //! this crate's layout.
 //!
 //! The reason to insist on that is not tidiness.  The neighbour advertisement
 //! carries a checksum over a pseudo-header built from the *addresses the
 //! answer is sent from and to*, and a composer that got either one wrong
-//! produced a frame that parsed and then failed verification — which is
+//! produced a frame that parsed and then failed verification, which is
 //! exactly the defect the first IPv6 round found, eight phantom bytes of a
 //! solicitation's length inside a checksum.  A builder that a host test can
 //! run and verify is what makes that class of mistake visible before a boot.
@@ -99,7 +99,7 @@ pub const ADVERTISEMENT_LEN: usize = icmpv6::HEADER_LEN + icmpv6::NEIGHBOR_LEN +
 /// Compose a solicited neighbour advertisement into `frame`.
 ///
 /// `target` is the address that was asked about and `local` is the address the
-/// answer is sent **from** — the same one, which is what makes the asker's
+/// answer is sent **from**, the same one, which is what makes the asker's
 /// cache and checksum agree with it.  `destination` is the asker, which is why
 /// the solicited flag is set: an advertisement that answered a solicitation
 /// goes to the one node that asked rather than to a group.
@@ -202,7 +202,7 @@ pub fn echo_request(
 ///
 /// `source_link_layer` is the option a solicitation carries when its source is
 /// a real address; `None` is the duplicate-address form, whose source is `::`
-/// and whose length is the message's fixed part alone — the difference the
+/// and whose length is the message's fixed part alone, the difference the
 /// first IPv6 round got wrong, by counting eight bytes of an option the
 /// message did not contain.
 ///
@@ -349,7 +349,7 @@ mod tests {
     }
 
     /// An advertisement is a frame the asker's verifier accepts, and it
-    /// carries its own hardware address as the target option — the whole
+    /// carries its own hardware address as the target option, the whole
     /// answer to the question it is answering.
     #[test]
     fn a_neighbour_advertisement_verifies_and_carries_the_option() {
@@ -405,7 +405,7 @@ mod tests {
     }
 
     /// A solicitation's length is the fixed part alone when it carries no
-    /// option, and the option's eight bytes when it does — the difference
+    /// option, and the option's eight bytes when it does, the difference
     /// that a first attempt got wrong by counting them in both cases, which
     /// made the checksum cover eight zeros nobody wrote.
     #[test]

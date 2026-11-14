@@ -16,7 +16,7 @@ directories.
 **A shelf** is a directory that groups crates of one kind.  It has no
 manifest, compiles nothing, and means nothing to the gates.  `drivers/` is
 five crates; `libs/` is twelve; `apps/` is three; `arch/` is four.  Moving a
-crate between shelves changes addresses and nothing else — which is how
+crate between shelves changes addresses and nothing else, which is how
 `devices/` appeared and `ipc` joined `libs/` without a gate noticing anything
 but the file headers.
 
@@ -36,16 +36,16 @@ protofire/
 ├── syscall/         what a call carries: the context, the argument
 │                    validators, the actions
 │
-│   ── the kernel and its machine ─────────────────────────────────────
+│   the kernel and its machine
 ├── kernel/          the core: scheduling, processes, address spaces,
 │                    the syscalls, the service table
 ├── bootloader/      the image's entry: what a boot does once the machine
 │                    runs Rust
-├── arch/            shelf: the machines — x86_64/, aarch64/, riscv64/
+├── arch/            shelf: the machines, x86_64/, aarch64/, riscv64/
 ├── memory/          the frame pool and the numbered regions
 ├── async_io/        the request/completion model
 │
-│   ── the subsystems ─────────────────────────────────────────────────
+│   the subsystems
 ├── fs/              the VFS: PyroFS, tmpfs, ISO 9660
 ├── net/             the protocol stack: Ethernet, ARP, IPv4, IPv6, ICMP,
 │                    ICMPv6, NDP, UDP, TCP, and the connection table
@@ -55,21 +55,21 @@ protofire/
 │                    worth driving
 ├── virt/            reserved: virtualisation, argued and no code yet
 │
-│   ── devices: the traits, then the drivers ──────────────────────────
-├── devices/         shelf: what a device is — the traits a driver
+│   devices: the traits, then the drivers
+├── devices/         shelf: what a device is, the traits a driver
 │   ├── block/       implements: a disk,
 │   └── netdev/      and a network card
-├── drivers/         shelf: who drives one — bus/pci/, virtio/ (core,
+├── drivers/         shelf: who drives one, bus/pci/, virtio/ (core,
 │                    block, net), net/e1000/ (reserved)
 │
-│   ── infrastructure: the shelf of pure tools ────────────────────────
+│   infrastructure: the shelf of pure tools
 ├── libs/            allocator, audit, cell, crypto, fdt, ipc, irq,
 │                    paging, profiler, rights, sync, unicode
 │
-│   ── ring 3 ─────────────────────────────────────────────────────────
+│   ring 3
 ├── apps/            shelf: init/, shell/, service_manager/
 │
-│   ── the tree's own operations ──────────────────────────────────────
+│   the tree's own operations
 ├── docs/            the documents: status, roadmap, architecture,
 │                    migration, async_io, fmts/, this file
 ├── scripts/         the gates: verify.sh, the checks, the baselines
@@ -84,10 +84,10 @@ boundary they define.
 
 ## The groups
 
-### The contract — abi, user_abi, syscall
+### The contract, abi, user_abi, syscall
 
 `abi` is the wire: the numbers, the `#[repr(C)]` records, the error
-encoding — the one thing both sides of the privilege boundary name, and
+encoding, the one thing both sides of the privilege boundary name, and
 therefore the frozen surface a change argues before it touches.
 `user_abi` is the program's half: one call gate per machine and the
 wrappers that pack arguments, every constant derived from `abi`'s own
@@ -95,37 +95,37 @@ value, so a number that moves there breaks the program side's build
 instead of drifting.  `syscall` is what a call carries on the kernel's
 side: the context a handler reads and the validators that refuse a
 malformed argument before a handler ever sees it.  The handlers themselves
-live in the kernel — `kernel/src/syscall/` is where a number becomes work —
+live in the kernel, `kernel/src/syscall/` is where a number becomes work
 because a handler needs everything the kernel has, and what this crate
 holds is what a host test can check without one.
 
-### The kernel and its machine — kernel, bootloader, arch, memory, async_io
+### The kernel and its machine, kernel, bootloader, arch, memory, async_io
 
 `kernel` is what the rest of the tree is for: the scheduler, the
 processes, the address spaces, the syscall handlers, the service table.
 `bootloader` is the entry the image boots through, a protocol rather than
 a driver.  `arch/` is a shelf of three machines behind one router, so a
 caller names "the machine" and the target decides which implementation
-answers.  `memory` is the frame pool and the region pools — physical
+answers.  `memory` is the frame pool and the region pools, physical
 memory before anyone has a heap.  `async_io` is the request/completion
 model and its `Service` trait, parked: built, tested, and waiting for a
 device to get behind it.
 
-### The subsystems — fs, net, power, security, sound, virt
+### The subsystems, fs, net, power, security, sound, virt
 
 The large things a kernel exists to do, one directory each.  `fs` holds
-the VFS, PyroFS and tmpfs, and the ten Level 6 formats — six writing and
+the VFS, PyroFS and tmpfs, and the ten Level 6 formats, six writing and
 four (`xfs`, `squashfs`, `erofs` and `btrfs`) reading, with `fuse` a protocol
-whose writes are its server's.  `net` is the protocol stack —
+whose writes are its server's.  `net` is the protocol stack
 Ethernet, ARP, IPv4, IPv6, ICMP, ICMPv6, neighbour discovery, UDP, TCP
-and the connection table — sent through the trait in
+and the connection table, sent through the trait in
 `devices/netdev`.  `power` is the governor policy: a load sample and a
 frequency range in, a target frequency out.  `security` labels subjects
 and objects and refuses what the policy refuses.  `sound` and `virt` are
-the two honest placeholders — reserved plots, with `virt`'s header
+the two honest placeholders, reserved plots, with `virt`'s header
 carrying the guest/host argument for the day it is filled.
 
-### Devices — devices, drivers
+### Devices, devices, drivers
 
 Two shelves, one relationship.  `devices/` holds what a device *is*: the
 traits a driver implements and a subsystem above reads through.
@@ -135,7 +135,7 @@ boot with.  A driver names a trait and never a stack; a stack names a
 trait and never a driver; the kernel is the only crate that names both,
 which is the whole reason the traits live on a shelf of their own.
 
-### Infrastructure — libs
+### Infrastructure, libs
 
 The shelf of pure tools: a heap, a record format, an `UnsafeCell`,
 ciphers, a device-tree parser, a ring, a handler table, page-table
@@ -144,21 +144,21 @@ they share is not a topic but a discipline: each names nothing above
 itself, which is what lets each be tested on a host in seconds rather
 than only during a boot.
 
-### Ring 3 — apps
+### Ring 3, apps
 
 Three programs compiled by the same workspace and shipped inside the
 image, reaching the kernel through `user_abi` and nothing else.  `init` is
 the first: exec'd from the kernel's own filesystem, it spawns the shell
 and supervises it.  `shell` is the first program something other than the
 boot can start.  `service_manager` is a shell headed for service
-supervision — the mechanism it waited on has landed, and what is missing
+supervision, the mechanism it waited on has landed, and what is missing
 is the policy.
 
-### The tree's own operations — docs, scripts, tools, certs, LICENSES
+### The tree's own operations, docs, scripts, tools, certs, LICENSES
 
 The parts that exist for the tree rather than in it.  `docs/` carries what
 is true and why: the status census, the roadmap, the architecture
-argument, the migration record, the async_io review, and `fmts/` — the
+argument, the migration record, the async_io review, and `fmts/`, the
 formats other code is written against.  `scripts/` carries the gates, and
 `tools/xtask` is the build tool that drives them.  `certs/` holds the
 trust anchors; `LICENSES/` the licence texts.
@@ -166,7 +166,7 @@ trust anchors; `LICENSES/` the licence texts.
 ## Where the truth goes from here
 
 This file says what lives where.  It does not say what may depend on what
-— [`scripts/layering.txt`](../scripts/layering.txt) is that spec, and
+, [`scripts/layering.txt`](../scripts/layering.txt) is that spec, and
 `scripts/verify.sh` is what enforces it.  It does not say what works on
 which machine ([`status.md`](status.md)), why the tree is shaped this way
 ([`architecture.md`](architecture.md)), how it got here

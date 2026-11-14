@@ -13,7 +13,7 @@ Two words are used strictly below:
 - **verified** means a gate boots it or a test pins it.
 
 Where a machine's entry says nothing about a gap, no gap is known and recorded
-here — which is not the same as the machine having none.  Where this document
+here, which is not the same as the machine having none.  Where this document
 and the tree disagree, the tree is right and this document is the bug;
 `scripts/check-docs.sh` enforces the part of that a machine can check: every
 path named here has to exist.
@@ -25,8 +25,8 @@ heap, mounts PyroFS at `/`, tmpfs at `/tmp` and an ISO 9660 disc at `/cdrom`,
 installs the syscall table, asks the MAC policy both ways, and starts three
 ring-3 programs: one that sleeps and maps memory, one blocked on a pipe, and one
 writing to it.  The sleeping one is `/bin/init`, which then does the rest of the
-boot's demonstration itself — it forks, spawns `/bin/shell` twice, exchanges
-signals with each child, and reads the clock and two ABI records — so the boot's
+boot's demonstration itself, it forks, spawns `/bin/shell` twice, exchanges
+signals with each child, and reads the clock and two ABI records, so the boot's
 `every program exited` counts **six** exits from the three tasks it started.
 The four parts below are the same on all three machines, so they are stated
 once.  A machine's own section carries only what differs.
@@ -36,7 +36,7 @@ pipe and woken by a write.  Each task carries a pid, a parent, and the status
 it exited with.  `Fork` shares the running process's pages with its child and
 hands its context down, writable pages demoted read-only and copied only when a
 write faults, once per page that is actually written.  `ExecProcess` rebuilds
-the running task around the **file its argument names** — a NUL-terminated path
+the running task around the **file its argument names**, a NUL-terminated path
 read through the registry's namespace, parsed by the kernel's ELF64 loader, and
 mapped segment by segment at the addresses the loader accepted, with a
 writable-executable segment refused by name.  The task keeps its pid, and the
@@ -45,7 +45,7 @@ exits with the first byte it read, `116`, the `t` of "the quick brown pyrofox".
 Pipes and files share one descriptor numbering, and a descriptor belongs to
 the process that holds it: its exit releases every slot it owned, which for a
 pipe end is the close that ends a reader's wait.  Every operation checks the
-owner, so another process's number is `InvalidArgument` — the same answer as a
+owner, so another process's number is `InvalidArgument`, the same answer as a
 number that names nothing, because "denied" would tell a caller which slots
 exist.  A `fork` copies the parent's descriptors to the child, owned by the
 child; a pipe end copies as a **handle**, so the pipe's count rises and
@@ -66,7 +66,7 @@ A park saves its resume **at the call**, not after it: a trap leaves `ELR_EL1`
 past the instruction, which is what an answered call wants, and a parked call
 has no answer, so resuming past it would skip the handler and leave the
 program reading whatever its register held from the call before.  The rewind
-lives in `block` (each machine's `arch` answers the call's width — four bytes
+lives in `block` (each machine's `arch` answers the call's width, four bytes
 for `svc` and `ecall`, two for `int 0x80`), and a host test requires it.
 
 Two things a wait does not promise, one of which is now answered:
@@ -84,7 +84,7 @@ Two things a wait does not promise, one of which is now answered:
   but an image that wants both in one call needs a loop, and this one has none.
 
 A wake reports its count whether or not it woke anyone, because zero is a fact
-— a reader already awake is still a reader the bytes reached — and a line that
+, a reader already awake is still a reader the bytes reached, and a line that
 printed only the non-zero case made the gate depend on an interleaving.
 Measured: 120 aarch64 boots with the wake line required, and 60 more with the
 wait line required as well, all clean.
@@ -113,16 +113,16 @@ The handler receives the faulting instruction's address in the **fifth**
 argument register, not the fourth: x86_64's fourth is `rcx`, which `int 0x80`
 uses for its return address.  It answers `ReturnFromException(resume, value)`
 with the address to continue at, because an instruction's length is the
-program's fact and not the kernel's — x86_64's vary.
+program's fact and not the kernel's, x86_64's vary.
 
 **Devices.**  The PCI scan, BARs assigned by the boot, and virtio-blk
 attached.  Verified by `block device from virtio-blk on pci` and
 `virtio-blk wrote and read back sector `.
 
 The virtio network card is **attached on all four boots**.  `virtio_net` brings
-a card up — the same status sequence the block device runs, the address read
+a card up, the same status sequence the block device runs, the address read
 from the configuration region under `VIRTIO_NET_F_MAC`, and both queues,
-receive 0 and transmit 1 — and then moves a frame in each direction.  The
+receive 0 and transmit 1, and then moves a frame in each direction.  The
 exchange is an ARP request for QEMU's user-mode gateway and the reply:
 `qemu_arguments` gives every bootable machine `-netdev user` and a
 `virtio-net-pci`, and the gate requires `protofire: virtio-net arp reply ` on
@@ -137,12 +137,12 @@ protofire: icmp echo reply from 10.0.2.2, 17 byte(s), waited 1 time(s)
 protofire: udp sent from port 40000, refused by 127.0.0.1: port unreachable, waited 1 time(s)
 ```
 
-The driver's reads of the reply are checked against the request it sent — the
-reply has to name this card's address and the address this boot asked about —
+The driver's reads of the reply are checked against the request it sent, the
+reply has to name this card's address and the address this boot asked about
 so the line is evidence that a frame left, a frame arrived, and the frame that
 arrived answers the question.  The two lines after it are the answer's second
 half: the reply goes into `net`'s ARP cache, and the same question read back
-answers from the table — which is why every later consumer of the gateway's
+answers from the table, which is why every later consumer of the gateway's
 address resolves there first and the wire's ask count stays at one for the
 whole boot.  The gate requires both lines on all four machines, the second
 exact, because its tail is the one fact a lookup could not vary.
@@ -150,7 +150,7 @@ exact, because its tail is the one fact a lookup could not vary.
 The last line is the ping: an echo request to the gateway, and a reply QEMU's
 user-mode network built.  The boot matches the reply's identifier, sequence
 and echoed bytes against the request it sent, so the line is evidence that a
-packet another machine built parsed through `net`'s IPv4 and ICMP layers —
+packet another machine built parsed through `net`'s IPv4 and ICMP layers
 checksum verified on the way in, which a packet this boot had written itself
 could never prove.  A frame that is not the reply is skipped rather than
 matched, because the wire carries strangers' frames and a match that could
@@ -159,12 +159,12 @@ the line on all four machines.
 
 The last line is the datagram: one UDP send to a port on the gateway nothing
 owns, and the refusal that comes back.  A port nothing listens on is the one
-datagram a peer is guaranteed to answer — ICMP's port unreachable, carrying
+datagram a peer is guaranteed to answer, ICMP's port unreachable, carrying
 the original datagram's first bytes.  The boot parses the embedded original
 and reads its UDP header, so the port on the line came out of what the peer
 echoed, not out of this boot's own constants: a datagram this stack built
 was received, its header parsed, and its source port named back.  The
-refusal's source address is `127.0.0.1`, which is the gateway's host side —
+refusal's source address is `127.0.0.1`, which is the gateway's host side
 QEMU's user-mode network speaking as the host it proxies to.  The gate
 requires the line on all four machines.
 
@@ -180,19 +180,19 @@ found because each was invisible to a host test and to every register read-back:
 - **The header is twelve bytes, not ten.**  A probe that filled the frame with
   its own byte indices had the wire carry `2, 3, 4, …`: the card skipped twelve
   bytes of a buffer whose header the driver wrote as ten.  Two more probes
-  pinned the number — a header descriptor declaring eight bytes shifted the
+  pinned the number, a header descriptor declaring eight bytes shifted the
   frame to `4, 5, 6, …`, and a single buffer with twelve leading zeros
   delivered it whole.  The driver writes twelve now, and
   `drivers/virtio/net/src/header.rs` records which measurement decided it.
 - **The receive path stripped the wrong header.**  With the card writing twelve
-  bytes and the driver reading ten, the reply was on the wire — captured with
-  QEMU's `filter-dump` — while the driver parsed the frame four bytes into its
+  bytes and the driver reading ten, the reply was on the wire, captured with
+  QEMU's `filter-dump`, while the driver parsed the frame four bytes into its
   own ARP message and reported it as not an ARP.
 
 **The card's receive queue has its own message, and it is the second identity in
 the same table.**  On `riscv64-aia` both devices wire a queue to an IMSIC
-identity — the block device's transmit queue to 200, the card's receive queue to
-201 — and the boot reports each device's count on its own line:
+identity, the block device's transmit queue to 200, the card's receive queue to
+201, and the boot reports each device's count on its own line:
 
 ```
 protofire: block message wired to imsic page 0x28000000, identity 200, vector 2, queue 0
@@ -211,27 +211,27 @@ function that named identity 200, vector 2 and queue 0 in its body; the card
 would have been a second copy of the table arithmetic, and a second copy is a
 second place the same bug can hide.  `MessagePlan` carries the three numbers and
 a name, `wire_device_message` carries the mechanism, and each device names its
-own handler — a function pointer, because the registry stores one and the trap
+own handler, a function pointer, because the registry stores one and the trap
 path hands it the identity.  The compile-time assertions moved onto the list of
 plans, which is also the only place a **pair** of devices can be checked for
 sharing an identity: a per-device pair of assertions could not see the
 collision.
 
 **The independence was measured, not assumed.**  With the card's queue vector
-left unset — a control that leaves the block device's wiring untouched — the
+left unset, a control that leaves the block device's wiring untouched, the
 boot printed `net message wiring refused: ..., queue vector cleared, identity
 enabled` and `network message(s) taken = 0`, while `block completion message(s)
 taken = 2` did not move.  That is the evidence that the card's 1 is its own
 queue's message, and not the block device's count reaching a second counter by
 accident.  A first attempt at this control moved the card's *vector number*
-instead of failing the write, and the count stayed at 1 — a vector a device is
+instead of failing the write, and the count stayed at 1, a vector a device is
 told about is a vector it sends to, whatever number it is, so the control had
 not disconnected anything.
 
 **The receive wait is bounded by the timer, and the wait itself has never run.**
 The ARP exchange used to spin: a `spin_loop` poll with a turn count.  It now
 checks the ring and, when it is empty, arms the machine's timer for a slice and
-stops the core until an interrupt arrives — the card's message is one of the two
+stops the core until an interrupt arrives, the card's message is one of the two
 that can end it, and the timer's is the other.
 
 Two things were measured about that loop, and only two:
@@ -240,14 +240,14 @@ Two things were measured about that loop, and only two:
   put the reply and the loop exhausts its turns: the boot prints `virtio-net
   arp request went unanswered after 41 turn(s)` and **continues**, rather than
   stopping in a wait.  That is the difference between a bound and a count that
-  can never be reached — the first version of this change counted turns and was
+  can never be reached, the first version of this change counted turns and was
   killed by the checker's timeout instead, because `wait_for_a_wakeup` does not
   return without an interrupt.
 - **The wait branch does not execute on this machine.**  The boot prints
   `virtio-net waited 0 time(s) for the reply`: QEMU puts the reply in the
   receive ring inside the doorbell write, so the ring is already populated when
   the loop first looks.  A frame's arrival does not depend on the message at
-  all — measured by removing the card's queue vector, after which the reply
+  all, measured by removing the card's queue vector, after which the reply
   still arrived and `network message(s) taken` read 0.
 
 So the card's message is **delivered and counted, and the driver does not yet
@@ -258,8 +258,8 @@ The count is what the message's own mechanism has for evidence, and it is
 required non-zero on the AIA machine.
 
 **The network's first call is served.**  `NetworkStatus` (37) answers from the
-interface the boot's exercise installed — the card up, the hardware address
-it published, the protocol address this boot claims, and the gateway — and a
+interface the boot's exercise installed, the card up, the hardware address
+it published, the protocol address this boot claims, and the gateway, and a
 program reads the record back through `user_abi`'s wrapper:
 
 ```
@@ -275,7 +275,7 @@ boot with no card would have left.
 
 **The datagram calls are served, and the receive parks.**  `BindUdp` (58) and
 `SendToUdp` (59) answer through the registry; `RecvFromUdp` (60) is served by
-the trap path, because it parks — the pipe reader's shape, with the same
+the trap path, because it parks, the pipe reader's shape, with the same
 re-check under the scheduler's lock.  `init` proves the whole of it with a
 fork: the parent binds port 8612 and receives, the child binds 8613, sends
 one datagram to the parent's port, and exits with the length it sent as its
@@ -290,19 +290,19 @@ protofire: process 1 received 9 byte(s) from 10.0.2.15 port 8613
 ```
 
 The datagram never touched the card: its destination is this machine's own
-address, which is what loopback is — the sender's call and the receiver's
+address, which is what loopback is, the sender's call and the receiver's
 answer meet at the kernel's port table, so the exchange runs identically on
 every machine the gate boots.  The wake line's count is a fact about the
 interleaving, the way a pipe write's is: the parent parked before the child
 sent in this boot, and a child that ran first would have found the datagram
 already in its queue, parked nothing, and printed `woke 0`.  The two lines
-the gate requires exact are the send's and the receive's — the lengths are
+the gate requires exact are the send's and the receive's, the lengths are
 the program's own constant, and the sender record's port came out of the
 datagram the kernel delivered, which only a delivered datagram could have
 carried.
 
-**The stream is whole, on loopback.**  TCP's state machine lives in `net` —
-the handshake, the segments, the acknowledgements, and the orderly close —
+**The stream is whole, on loopback.**  TCP's state machine lives in `net`
+the handshake, the segments, the acknowledgements, and the orderly close
 and the boot runs the whole of an exchange through it: a listener on this
 machine, a client whose connect completes inside the call, the client's
 bytes echoed through the accepted end, and the close that leaves both ends
@@ -316,7 +316,7 @@ protofire: tcp closed, both ends done
 
 The exchange never touches the card: both ends are connections in the
 kernel's own table, and a segment for this machine is delivered to the
-peer's state machine inside the same exchange that carried it — which is
+peer's state machine inside the same exchange that carried it, which is
 what loopback is, and why the exchange runs identically on every machine
 the gate boots.  What the state machine does not do is deliberate, and its
 own header says so: no retransmission and no flow control.  The exchanges
@@ -331,7 +331,7 @@ the trap path, because it parks, and a stream's data rides the same `Read`
 and `Write` a file and a pipe ride.  `init` proves the whole of it with the
 same two processes the datagram exchange used: this process listens on port
 9003 and accepts, the fork connects, writes nine bytes, and reads the echo
-back — the child's own read parks until the echo arrives.  Measured on
+back, the child's own read parks until the echo arrives.  Measured on
 x86_64:
 
 ```
@@ -350,7 +350,7 @@ protofire: process 8 read 9 byte(s) from a stream
 
 Both parks ran, and each wake is the other process's call: the connect woke
 the parked accept, and the echo's write woke the parked read.  The child's
-exit status is the echo's first byte — `112`, which is `p` — a number only a
+exit status is the echo's first byte, `112`, which is `p`, a number only a
 completed round trip could have carried, and the gate requires it as the
 status line's own fact.  The accept and the listen are prefixes on every
 machine, because the descriptor numbers are the table's to hand out; the
@@ -361,11 +361,11 @@ A network stack above this is done as `docs/roadmap.md` Level 5 promised it:
 seven numbers the level serves are reachable from ring 3.  What it did not
 promise stands: the twenty-three protocol numbers beside them, routing
 beyond one gateway, DNS beyond a hosts table, and a stream connect to
-another machine — each its own level's decision.
+another machine, each its own level's decision.
 
-**Where the connection table lives.**  The streams a machine holds — the id
+**Where the connection table lives.**  The streams a machine holds, the id
 per end, the port a listener reserves, the queue a completed handshake waits
-in, and the counters that hand out ids and sequence numbers — are
+in, and the counters that hand out ids and sequence numbers, are
 `net::tcp_table::Table`, not `kernel/src/net.rs`.  All of it is protocol
 state: the four fields a segment is keyed on are the wire's, and nothing in
 the table needs a card, a scheduler or a lock.  What stayed in the kernel is
@@ -375,11 +375,11 @@ hardware address a frame goes to, and when a parked task wakes.
 The split is what made the table testable off a machine.  Seven host tests
 now run the lookups, the id and sequence counters, the listener's pending
 queue, the prune, and the rule that only a SYN with no ACK opens a
-connection — none of which a boot could isolate.  One of them found a defect
+connection, none of which a boot could isolate.  One of them found a defect
 on its first run: `accept_syn` built the SYN with ACK and **dropped** it, so
 a caller had no way to answer a client whose handshake it had just accepted.
 The function answers the reply now, which is the same shape every other move
-in that crate has — compute a value, let the caller decide its wire.
+in that crate has, compute a value, let the caller decide its wire.
 
 Two more pieces followed it, by the same test: does it need a card, a
 scheduler or a lock?
@@ -391,7 +391,7 @@ scheduler or a lock?
 
 The second is not tidiness.  A neighbour advertisement's checksum covers a
 pseudo-header built from the addresses the answer is sent from and to, and
-the first IPv6 round had already produced one wrong checksum — eight bytes of
+the first IPv6 round had already produced one wrong checksum, eight bytes of
 an option the message did not contain, counted into the length.  Four host
 tests now compose each frame and **verify it against the ends it names**, and
 one asserts the solicitation's length difference is exactly the option's
@@ -418,7 +418,7 @@ protofire: ipv6 tcp echoed 2 byte(s) of 2, round trip
 Each is a real round trip through the receive path, not a claim about code: a
 datagram written by `send_datagram` with an IPv6 address, framed for the
 card's ethertype, parsed back by `demux_ipv6`, routed to the socket the
-address names, and read off it — and a stream that opens, carries two bytes,
+address names, and read off it, and a stream that opens, carries two bytes,
 echoes them and closes, all over IPv6.  The sender the datagram answers with
 is checked to be this machine, so a demux that routed by the wrong address
 would print the other line and fail.
@@ -426,7 +426,7 @@ would print the other line and fail.
 **A fragmented datagram is put back together.**  Both families' receive paths
 used to read a piece as the whole or drop it: IPv4 had no reassembly, and IPv6
 refused the fragment header outright.  `net::reassembly::Cache` holds the
-pieces now — bounded in every direction a sender controls, and asserted on
+pieces now, bounded in every direction a sender controls, and asserted on
 every machine:
 
 ```
@@ -441,7 +441,7 @@ it is intact, which only a correct reassembly produces.
 Two bounds are worth naming because a peer chooses them.  A payload past
 sixty-five thousand five hundred and fifteen less a header is refused before
 anything is held, and a piece that covers bytes another piece already covered
-**and disagrees with them** takes the whole datagram with it — [RFC 5722]'s
+**and disagrees with them** takes the whole datagram with it, [RFC 5722]'s
 rule, and the reason the cache keeps the bytes rather than a bitmap of what
 arrived: coverage alone cannot tell a retransmission from an attack, and the
 first version of this code could not either until a test failed.
@@ -449,15 +449,15 @@ first version of this code could not either until a test failed.
 [RFC 5722]: https://www.rfc-editor.org/rfc/rfc5722
 
 **A closed port is now told, not silent.**  `deliver_udp` answers
-`Delivery::Unbound` when no socket owns the port — a fact it could not report
+`Delivery::Unbound` when no socket owns the port, a fact it could not report
 before, because "nobody was waiting" and "nobody owns it" were the same
 `Ok(0)`.  The demux turns that into [RFC 792]'s port-unreachable report: the
 sender's own header and the first eight payload bytes quoted back, so the
 sender can match the report to its socket.  Nothing is sent about a datagram
 addressed to a group or to the broadcast address, which is [RFC 1122]'s rule.
 
-A boot cannot check the report's contents — a report only goes to a sender
-that sent something, and this stack's own senders are the loopback — so the
+A boot cannot check the report's contents, a report only goes to a sender
+that sent something, and this stack's own senders are the loopback, so the
 assertion is a host test that builds the frame `answer_port_unreachable` would
 send and reads the sender's source and destination ports back out of the
 quote, at the offsets the sender's own header layout puts them.
@@ -471,19 +471,19 @@ all three had a reserved word that must be zero.  That word is now a flags
 word, and `NETWORK_FLAG_IPV6` is the only bit: with it set, the address slot
 is a pointer to sixteen bytes instead of a packed word, and the sender record
 is the wider one.  A caller passing zero behaves exactly as it did before,
-which is what `docs/fmts/syscall-abi.md` §3.2 permits in the frozen range —
-"additive *optional* behaviour is the only permitted change" — and the section
+which is what `docs/fmts/syscall-abi.md` §3.2 permits in the frozen range
+"additive *optional* behaviour is the only permitted change", and the section
 there now states the flag's meaning per call.
 
 A second number per call was the alternative.  It would have spent
 experimental-range numbers to say something the flags word had room for, and
 left two spellings of one operation to keep in step.
 
-**Services — built, and deliberately parked.**  A table from a name to a
+**Services, built, and deliberately parked.**  A table from a name to a
 service, installed during boot and frozen before anything looks one up; a caller
 asks for a name and drives what it gets through one trait, without knowing which
 crate implements it.  The first
-service in it is the clock, whose answer is the machine's own counter — so the
+service in it is the clock, whose answer is the machine's own counter, so the
 boot shows the shape working end to end rather than only in host tests:
 
 ```
@@ -507,7 +507,7 @@ test first:
   each service kept its queue in a private field, so a `&mut dyn Service` could
   be driven and never read.  `Service::take_completion` is the fourth method,
   and the test for it is written over the trait object rather than a concrete
-  type — a generic bound would have passed without the trait being usable.
+  type, a generic bound would have passed without the trait being usable.
 
 Two halves of one crate and one ring-3 program answer to the word "service",
 and they are not the same thing:
@@ -523,12 +523,12 @@ and they are not the same thing:
 - **`apps/service_manager`** is a ring-3 program, and it is where "everything is
   a service" is meant to end up: it supervises processes with lifecycle policies.
   Its own header still says it is a shell because supervising needs a restart
-  policy — the spawn, wait and signal calls it was waiting on have since landed,
+  policy, the spawn, wait and signal calls it was waiting on have since landed,
   so what is missing now is the policy and not the mechanism.
 
 The first two split for a reason worth keeping: the table is a mechanism, the
 list is this boot's content, the same division as `fs`'s `MountTable` and
-`kernel`'s `volume` module — one the merge made a division inside the crate
+`kernel`'s `volume` module, one the merge made a division inside the crate
 rather than between crates.
 
 What a service is **not**, yet: a device.  Every driver still submits through
@@ -537,7 +537,7 @@ queue, so nothing in a boot exercises the *pending* half of the model.
 
 **This is parked on purpose, not half-finished in the way.**  "Everything is a
 service" is a direction for later, and the work above exists so the direction has
-a base when it is reached — not because it is the next thing to build.  It landed
+a base when it is reached, not because it is the next thing to build.  It landed
 early: `async_io` was being reviewed for whether it should exist at all with no
 caller, and the answer "keep it, and here is the layer it is missing" turned into
 building that layer.  The reasoning was sound and the result is gate-green, but
@@ -555,7 +555,7 @@ be started without deciding it is time.  In particular:
   half that matters when this direction is picked up.
 
 The four items this section lists below are the prerequisites for that half, and
-they are prerequisites for a userland of any shape — which is why they are worth
+they are prerequisites for a userland of any shape, which is why they are worth
 reading whether or not this direction is taken.
 
 ### What the user-space half needed, and what it got
@@ -567,9 +567,9 @@ than the list.
 
 | prerequisite | state | evidence |
 |---|---|---|
-| the memory layer | **done** — `Mmap`, `Munmap`, `Brk`, `ReclaimPages` served | the `program memory call` lines below |
-| a process a program can start | **done** — `SpawnProcess` plus the six signal calls | `process 1 spawned /bin/shell as pid 5` |
-| a way to reach the table from ring 3 | **done** — 51 numbers reachable, the registry holding 31 of them | `syscall table installed, 31 number(s) served` |
+| the memory layer | **done**, `Mmap`, `Munmap`, `Brk`, `ReclaimPages` served | the `program memory call` lines below |
+| a process a program can start | **done**, `SpawnProcess` plus the six signal calls | `process 1 spawned /bin/shell as pid 5` |
+| a way to reach the table from ring 3 | **done**, 51 numbers reachable, the registry holding 31 of them | `syscall table installed, 31 number(s) served` |
 | **a handle that can be given away** | **not started** | `Descriptor` still has two variants, `File` and `Pipe` |
 
 The last one is the one that matters now, and the fourth line of the old list
@@ -583,7 +583,7 @@ supervising needs a restart policy, and a manager of processes and a manager of
 services are the same code until something needs one.
 
 **Memory.**  A program can ask for memory and get it.  `Mmap`, `Munmap`, `Brk`
-and `ReclaimPages` are served from ring 3 — four numbers that had none — and the
+and `ReclaimPages` are served from ring 3, four numbers that had none, and the
 boot shows a program using two of them:
 
 ```
@@ -592,12 +592,12 @@ protofire: program memory call 92 answered 0x8040003000
 ```
 
 `67` is `Mmap` and `92` is `Brk`.  The mapping's base is the last page of init's
-own window — reservations count **down** from the top, because the image starts
+own window, reservations count **down** from the top, because the image starts
 at the window's base, its stack is one page above the image, and `Brk` grows up
 from the stack; growing mappings down from the top keeps the two ends apart.  The
 break is one page past that stack.  Both are addresses the kernel computed from
 the program's own layout, and a kernel that had mapped nothing could not name
-either — which is why the two lines are the evidence and not the fact that the
+either, which is why the two lines are the evidence and not the fact that the
 call returned.
 
 The store is the other half: init writes a byte into the page it was given, and
@@ -606,21 +606,21 @@ would fault there instead.
 
 `AddressSpace` changed to make room: the frame list was a fixed array sized by
 what an **image** may weigh, and a heap has nothing to do with an image's size.
-It is a `Vec` now and the bounds are two — `MAX_IMAGE_FRAMES` (65) for the
+It is a `Vec` now and the bounds are two, `MAX_IMAGE_FRAMES` (65) for the
 loader's budget and `MAX_OWNED_FRAMES` (4096) for what one space may hold.
 
 **Raising that bound was not enough to raise it.**  Two stack arrays had been
 sized by it while it was 65: `fork_from`'s page list (98 KiB at 4096) and the
 exec path's (32 KiB).  The kernel stack has neither, and every riscv64 boot died
-with a store page fault three frames below `USER_BASE` — reported as
+with a store page fault three frames below `USER_BASE`, reported as
 `unhandled exception ... on cpu 4294967295`, because the fault had already
 destroyed the register that names the CPU.  Both are sized by the image bound
 now, which is the set of pages each actually describes.
 
 **The file interface.**  A program can write, measure, list, move and remove.
-Eleven numbers serve the filesystem now — `Write` (6), `CreateDir` (19),
+Eleven numbers serve the filesystem now, `Write` (6), `CreateDir` (19),
 `RemovePath` (21), `Stat` (27), `ReadDir` (28), `Rename` (29) and the five
-`*At` forms (32–36) — where a program could previously only open, read and
+`*At` forms (32–36), where a program could previously only open, read and
 close, and `Write` printed a fixed line instead of writing anything.  The boot
 execs a program that does the whole of it against the tmpfs and shows each
 answer beside the call that produced it:
@@ -644,7 +644,7 @@ The descriptor number on those lines is the table's, not the program's, which
 is why the gate takes them as prefixes.  The checks the program makes on its
 own are stricter than the lines: it compares the read-back bytes, the stat
 record's kind and size, and the listed name against what it wrote, and exits
-with a status that is not the greeting's byte when any of them disagrees —
+with a status that is not the greeting's byte when any of them disagrees
 so the boot's `exit statuses 1 -> 116` is the whole program's claim, and a
 broken step turns the gate red rather than printing something plausible.
 
@@ -652,7 +652,7 @@ The rights a descriptor holds are the open's: a `writable` flag recorded
 beside `readable`, refused with `PermissionDenied` on a descriptor that did
 not ask.  A create is the volume's own refusal when the volume cannot create,
 not the lookup's miss that prompted it.  A rename whose two names resolve to
-different filesystems is refused outright — the alternative is a copy and a
+different filesystems is refused outright, the alternative is a copy and a
 delete, whose halfway failure is the one outcome a rename exists to make
 impossible.
 
@@ -668,7 +668,7 @@ Two defects the first ring-3 exercise found, both recorded because a gate
 that had never called these numbers was green through both:
 
 - The five `*At` handlers were wired but **never registered** in the boot's
-  table — a silent python replacement in the change that added them skipped
+  table, a silent python replacement in the change that added them skipped
   `boot.rs` and nothing in that change's gate called the numbers.  The first
   program to call one got `NotImplemented`, and the probe that found it is
   the reason the registrations carry a comment.
@@ -676,8 +676,8 @@ that had never called these numbers was green through both:
   GOT whose slots are filled by `R_X86_64_RELATIVE` relocations the loader
   does not apply.  The first image big enough to make the linker route a
   `bcmp` that way died jumping to address 0.  init now links `-no-pie`, which
-  resolves those slots at link time — honest for an image whose load address
-  the linker script fixes — and the flag lives in the command that builds
+  resolves those slots at link time, honest for an image whose load address
+  the linker script fixes, and the flag lives in the command that builds
   init, not in the target's config, so the kernel's own relocatable build is
   untouched.
 
@@ -692,17 +692,17 @@ epilogue restores everywhere else.
 
 The boot's policy grew the permission these calls are policed by: the system
 label may read and write unlabelled files **and** the scratch zone, because
-`/tmp` is not unlabelled — the layout resolves it to `MAC_TYPE_TMP`, and the
+`/tmp` is not unlabelled, the layout resolves it to `MAC_TYPE_TMP`, and the
 scratch zone is the one the boot mounts for its programs.  The rule's
 permission field is a set, which is what makes read and write one rule per
 object; two `add_rule` calls with `replace` on would have displaced each
-other, and the first attempt did exactly that — the boot's own allow probe
+other, and the first attempt did exactly that, the boot's own allow probe
 printed `MISPOLICED`, which is what caught it.
 
 **The process model.**  A program can start a program, and processes can
-signal each other.  Seven numbers serve the level — `SpawnProcess` (25) and
+signal each other.  Seven numbers serve the level, `SpawnProcess` (25) and
 the six signal calls (`SendSignal` 40, `WaitSignal` 41, `SetSignalHandler`
-104, `SetSignalMask` 94, `SigReturn` 134, `SigSuspend` 135) — and the boot's
+104, `SetSignalMask` 94, `SigReturn` 134, `SigSuspend` 135), and the boot's
 `init` runs the whole of it: it starts `/bin/shell`, the child announces
 itself with a signal, the parent delivers one to the child's **own handler**,
 and each child exits with the greeting's length.
@@ -715,13 +715,13 @@ protofire: a suspend answered signal 10 from process 6, mask put back
 protofire: every program exited, 6 exit(s), 429 tick(s), 32 switch(es), 2 signal delivery(ies)
 ```
 
-The spawn shares one image construction with `exec` — read, parse, map,
-stack, exec block — and the child inherits nothing: a fresh process opens
+The spawn shares one image construction with `exec`, read, parse, map,
+stack, exec block, and the child inherits nothing: a fresh process opens
 its own files.  The signal's ring is the target's own, eight deep, FIFO,
 carrying the sender **with** the signal; a masked signal stays queued and a
 wait skips it, which is what a mask means.  A handled, unmasked signal is
-**delivered** — the target's context redirected to the program's handler at
-the one moment the kernel owns the frame — with the whole displaced context
+**delivered**, the target's context redirected to the program's handler at
+the one moment the kernel owns the frame, with the whole displaced context
 kept for the handler's `SigReturn`, because a delivery that is not
 transparent is a corruption: the measured case was a resumed flow reading
 through a base register the handler's own `ecall` had overwritten, one
@@ -731,20 +731,20 @@ Two defects the first boot of this found, both in code the signal demo was
 the first to exercise:
 
 - The riscv64 trap path destroyed the program's `x5` and `x6` **twice
-  over** — the head computed the hart id in `t0`/`t1` before saving them,
+  over**, the head computed the hart id in `t0`/`t1` before saving them,
   and the epilogue spent the same registers on its own return after
   restoring them.  Every `ecall` cost the program two registers, and
   nothing noticed while the only programs were machine code that reloaded
   before every call.  The shell's compiler kept a value in `t0` across one.
 - `preempt` declined to switch when no other task was runnable, and a
-  delivery rode the switch — an armed child spinning as the only runnable
+  delivery rode the switch, an armed child spinning as the only runnable
   task never got its delivery, and the boot hung with both processes
   waiting for each other.  The delivery now moves without a switch, which
   is what it is: the signal's arrival, not a scheduling decision.
 
 The `user_abi` crate is the other structural fact of the level: the
 wrappers every program compiles against, with the numbering derived from
-the ABI's own enum — a number that moves in `abi` breaks the program
+the ABI's own enum, a number that moves in `abi` breaks the program
 side's build rather than drifting until a host test notices.
 
 Verified by the lines above on every machine, by the gate's required lines
@@ -756,8 +756,8 @@ reachable from ring 3.
 `SystemInfo` (53) and `AbiInfo` (39) answer from three different places, and
 the boot says which of them it has: the machine's counter divided by the rate
 the machine reported, a ChaCha20 stream seeded from that counter, and the
-scheduler's own counts.  `init` reads the clock twice — a reading, then
-another after work, and the pair must not go backwards — draws two blocks of
+scheduler's own counts.  `init` reads the clock twice, a reading, then
+another after work, and the pair must not go backwards, draws two blocks of
 randomness that must differ, and reads both records back against the ABI's own
 constants.
 
@@ -786,13 +786,13 @@ an early output does not yield the later ones.
 Two defects the first ring-3 boot of this found:
 
 - `AbiInfo` names its record in `a0`, and the intercept read the record and
-  length from `a1`/`a2` — the pair every other call in the group uses because
+  length from `a1`/`a2`, the pair every other call in the group uses because
   they have a selector in front.  The length word was validated as an address,
   the range check refused it, and the program exited 200, which is the status
   `insist` uses for a refused call: indistinguishable in the log from a kernel
   that serves nothing.  The refusal prints its own line now.
 - The `crypto` dependency the generator needs was absent from `kernel`'s
-  manifest, so the module compiled on the host — where `fill` is never called —
+  manifest, so the module compiled on the host, where `fill` is never called
   and failed only for a target.
 
 Verified by the six lines above on every machine, by the gate's required lines
@@ -803,10 +803,10 @@ served` with the census at **51 of 196**.
 is placed again, and the boot counts and names the placement.  Placement
 follows a rule rather than the rotation: a task the asking CPU last ran is
 offered back to it first, a task no CPU has run comes next, and a task another
-CPU ran is taken only when neither exists — the **steal**, which is the one
+CPU ran is taken only when neither exists, the **steal**, which is the one
 placement that migrates.  Measured on the same image: `task migrations` read 6,
 9, 9, 7, 7 and 16 on six boots before the rule, and 1, 1, 2, 3, 3 and 3 after
-it, against 12 to 16 `task placings home` — which is the rule's preferred arm
+it, against 12 to 16 `task placings home`, which is the rule's preferred arm
 running, not merely a lower number.
 
 Verified by `hart 1 online`, `ipi to 1 other cpu(s), taken`, `cpu 1 runs process `,
@@ -831,7 +831,7 @@ candidate the two rotation scans look at, over six boots of the same image:
 Five to seven candidates per placement, with four tasks in the machine and a
 hard ceiling of eight: the scan is two linear passes over an array that fits in
 a cache line.  Sharding would move that cost, not remove it, and would add a
-steal path between queues — the same migration, one indirection further away.
+steal path between queues, the same migration, one indirection further away.
 What would change the arithmetic is a machine with many more runnable tasks than
 CPUs, and nothing here has that yet.  So the shape stays, and the number is
 recorded so the next reader can see it was measured.
@@ -857,7 +857,7 @@ protofire: process 1 asked the ipv6 side, 56 byte(s)
 **What each line is evidence of.**  The first is a neighbour solicitation this
 stack built, parsed by the same `demux_ipv6` a frame off the wire takes, whose
 target was an address the interface holds and whose source link-layer option
-carried the peer's MAC into the cache — the read-back names the peer and the
+carried the peer's MAC into the cache, the read-back names the peer and the
 MAC, so the answer is the exchange's and not a constant.  The second is an echo
 request that reached `answer_echo_request` through the same demux, with the
 identifier and sequence the request carried.  The third is a ring-3 program
@@ -910,22 +910,22 @@ became a writer by being ported would be a claim this tree cannot support.
 **What each suite proves.**  Every format's tests build a volume of its own
 and mount it, so no test depends on an image nobody rebuilt:
 
-- `cargo test -p fs ext4` — 15 tests, a formatter that writes the superblock
+- `cargo test -p fs ext4`, 15 tests, a formatter that writes the superblock
   and the group descriptors so a test needs no host tool, and the JBD2 journal
   replayed and then written.
-- `cargo test -p fs f2fs` — 11 tests, the segment, node and data paths plus
+- `cargo test -p fs f2fs`, 11 tests, the segment, node and data paths plus
   the two checkpoint copies.
-- `cargo test -p fs fat32` and `exfat` — 9 and 6, including FAT12's 12-bit
+- `cargo test -p fs fat32` and `exfat`, 9 and 6, including FAT12's 12-bit
   packing written into both FAT copies and exFAT's NoFatChain runs.
-- `cargo test -p fs iso9660` — 92, RFC 0011's stages in the order it took
+- `cargo test -p fs iso9660`, 92, RFC 0011's stages in the order it took
   them, with the block map, the tail rule and the two-tree refusals.
-- `cargo test -p fs ntfs` — 106, over a fixture built to RFC 0012's shapes;
+- `cargo test -p fs ntfs`, 106, over a fixture built to RFC 0012's shapes;
   two more are `#[ignore]`d and driven by the harness below.
-- `cargo test -p fs xfs`, `squashfs`, `erofs`, `btrfs` — 9, 40, 17 and 12.
+- `cargo test -p fs xfs`, `squashfs`, `erofs`, `btrfs`, 9, 40, 17 and 12.
 
 **The one foreign judge.**  `sh scripts/check-ntfs-image.sh` makes a volume
-with `mkntfs`, injects a file with `ntfscp` — a name and bytes this tree never
-wrote — hands it to the driver, and then has `ntfs-3g`'s own reader list the
+with `mkntfs`, injects a file with `ntfscp`, a name and bytes this tree never
+wrote, hands it to the driver, and then has `ntfs-3g`'s own reader list the
 names, read both files back, and `ntfsfix -n` walk the metadata of what the
 driver wrote.  Its second section does the same for a compressed stream on a
 volume `mkntfs -C` made.  Run here:
@@ -935,7 +935,7 @@ ntfs image check passed: mounted a volume mkntfs made, read the host's file, and
 ntfs image check passed (compressed): the driver decoded the file the host injected back
 ```
 
-A punch through the interface — the old tree's third section — needs a userspace
+A punch through the interface, the old tree's third section, needs a userspace
 harness this tree does not have yet, and the script says so rather than
 skipping it silently.
 
@@ -958,8 +958,8 @@ delivers and the kernel counts.  Verified by `interrupt delivered to its handler
 **Timer and clock.**  The APIC timer, calibrated once against the PIT, and the
 TSC as the monotonic clock, calibrated separately.  The two rates differ and
 the boot proves both.  Verified by `timer armed at ` and `timer counter `.  That
-second line carries a count between its two fragments —
-`timer counter 5395 ticks apart` — which is why the gate asserts the prefix
+second line carries a count between its two fragments
+`timer counter 5395 ticks apart`, which is why the gate asserts the prefix
 rather than a whole line.
 
 **Ring 3.**  A GDT with DPL-3 code and data segments, a TSS whose `RSP0` names
@@ -1004,7 +1004,7 @@ hopes the controller delivers.  Measured: a `wfi` in the idle left a started
 core parked in **22 boots of 40**, and the boot ended `ended without
 confirmation`; `wfe` beside a `sev` from `send_ipi_to_others` ended clean in
 **100 of 100**, and in 40 more with the bounded spin behind the hint removed,
-which is what shows the event — not the spin — is what ends the wait.  Verified
+which is what shows the event, not the spin, is what ends the wait.  Verified
 by the absence of the confirmation line across those 100 boots and by the
 started core's own record (`cpu 1 id 1, ticking, ` with a non-zero tick count).
 
@@ -1032,29 +1032,29 @@ on it.  Shared-table changes are broadcast and acknowledged.
 
 Missing: about two boots in a hundred used to end wrong; fixed by masking the
 trap entry's restore.  The boot's last exit printed `program ended on cpu 1`
-and then the machine either took a data abort one byte past the RAM's top —
+and then the machine either took a data abort one byte past the RAM's top
 `fault at 0x60000000, read, mapped read-write, supervisor`, PC in
-`exception_entry`'s first `ldp` of a restore — or wedged before `every
+`exception_entry`'s first `ldp` of a restore, or wedged before `every
 program exited`, the reaping side waiting in `send_ipi_to_others` for a core
 that halted in the unhandled path.  Measured 2 in 100 and 1 in 60 on the
 pre-session baseline, never on x86_64 (80 boots) or riscv64 (20).
 
 The cause was a trap taken during the restore.  The handler **deliberately
-unmasks** — a park or a wait clears `I` so the wake can arrive — and returned
+unmasks**, a park or a wait clears `I` so the wake can arrive, and returned
 with `I` clear, so the restore that writes `ELR_EL1`/`SPSR_EL1`/`SP_EL0` and
 reloads 32 SIMD registers ran interruptible.  An IRQ taken there entered the
 vector with `SP_EL1` still at the frame, built a second frame over the first
 one's, and its `eret` resumed the first restore with a `sp` that a temporary
 trap-entry probe showed landing on a **frame-pool page** (`0x449a7000`,
-`0x449913c0`) rather than the RAM's top — a saved slot the second frame had
+`0x449913c0`) rather than the RAM's top, a saved slot the second frame had
 overwritten.  Masking the entry alone was not enough and measured 3 in 200;
 masking again after the dispatch, before the restore, measured **200 of 200
 clean**.  `eret` reloads `DAIF` from `SPSR_EL1`, so neither mask needs an
 unmask.
 
 **Fixed: a boot that stopped between a signal and the wait that follows it.**
-With two CPUs and the signal exchange `init` runs — `SpawnProcess`, the child's
-announcement, the parent's delivery, the parent's `WaitProcessOf` — a boot
+With two CPUs and the signal exchange `init` runs, `SpawnProcess`, the child's
+announcement, the parent's delivery, the parent's `WaitProcessOf`, a boot
 sometimes stopped after `a program waits for process N` and never reached
 `every program exited`.  Measured at 4 boots in 10 on the machine the gate
 boots.  The scheduler was never at fault: its state read correctly throughout.
@@ -1066,18 +1066,18 @@ That was a symptom read as a cause.  QEMU's `-d int` exception log and its
 `gic_*` trace events, from **one** stalled boot, show what actually happened:
 
 - The started core's last acknowledge was `irq 0`, a software interrupt, and
-  **no `EOIR` write for it followed** — the SGI stayed active.
+  **no `EOIR` write for it followed**, the SGI stayed active.
 - Every later `gic_update_bestirq` for that core read
   `irq 30 priority 128 cpu priority mask 255 cpu running priority 0`: the
   distributor had the timer pending and could not forward it, because a
   priority-128 line cannot preempt a running priority of 0.
 - The exception log then recorded **no exception at all** on that core while
-  its program kept executing in ring 3 with `IRQs` unmasked — 507 IRQs taken
+  its program kept executing in ring 3 with `IRQs` unmasked, 507 IRQs taken
   and then none, over the remaining twelve million lines of log.
 
 A running priority of 0 is the SGI's, and nothing in this tree ever wrote one.
 `GICD_IPRIORITYR` resets to **zero**, zero is the *highest* priority a GIC has,
-and `enable_interrupt` never routes an SGI — its enable bits are read-only — so
+and `enable_interrupt` never routes an SGI, its enable bits are read-only, so
 every inter-processor interrupt outranked the timer's `0x80`.  One un-finished
 SGI then blocked that core's entire interrupt path.
 
@@ -1105,18 +1105,18 @@ consistent with the cause being outside the timer path altogether:
 `wait_for_a_wakeup` still waits on the `sev` **event**, and that is no longer a
 workaround for a broken timer: a park should end on a call this kernel makes
 rather than on a line it hopes the controller delivers.  The design those three
-failed repairs pointed at — "the boot core's tick drives every core" — was
+failed repairs pointed at, "the boot core's tick drives every core", was
 never implemented, and this measurement shows it was aimed at the wrong module.
 
 Also ruled out along the way, each by measuring rather than by argument: the
-machine's CPU model (cortex-a57 7 in 10, `max` 6 in 10 — the same defect); the
+machine's CPU model (cortex-a57 7 in 10, `max` 6 in 10, the same defect); the
 GIC version (`virt,gic-version=2` 6 in 10, and `gic-version=3` 0 in 10 because
 this tree implements the v2 register interface only); a missing `sev` after the
 exit wake (real, fixed, not the whole of it); the order of `idle_until_woken`
 and `switch_without_saving` (removing the idle call made it worse, 5 in 6); and
 an exit whose `running[cpu]` was already clear (the probe for it never fired);
 a stalled global clock (the global `TIMER_TICKS` keeps climbing at a stopped
-boot — it is the started core's own count that stops, which is why the per-CPU
+boot, it is the started core's own count that stops, which is why the per-CPU
 census is the number to read); and the `has_runnable`-counts-blocked reading
 (the scheduler's state was correct throughout).
 
@@ -1124,7 +1124,7 @@ Three measurement details are worth keeping, because each cost a wrong
 conclusion:
 
 1. An early attempt booted **one** CPU against a disk formatted by the kernel's
-   own built-in image — the one that carries the greeting and no init image —
+   own built-in image, the one that carries the greeting and no init image
    and every such boot stopped five times in five.  That stop was
    `ExecProcess` failing on a file the disk did not have.  Any future
    measurement here has to name which disk it booted.
@@ -1154,7 +1154,7 @@ Verified by `page table built and installed, 4 KiB granule`.
 
 **Interrupts.**  Four lines, all bits in `sie`: the timer's, the software one
 the machine raises on itself, and the external one a PLIC source arrives on.
-The PLIC is programmed and the console's UART is claimed as a real source —
+The PLIC is programmed and the console's UART is claimed as a real source
 enabled at the controller, asked for one transmitter interrupt, acknowledged at
 the device before the source is completed.  Verified by
 `interrupt delivered to its handler`, `external controller at `, and
@@ -1168,7 +1168,7 @@ is read.  Measured on both the PLIC and the APLIC, six boots each: exactly one
 delivery whose `IIR` read says "mine" and exactly one whose read says "not
 mine", every time.  The trap path completes the second and returns without
 handing it to the sink, so the count describes interrupts rather than
-deliveries.  A probe is what found it — without one, the same boot printed
+deliveries.  A probe is what found it, without one, the same boot printed
 `taken = 1` or `taken = 2` depending on where the print landed.
 
 The AIA's APLIC is driven in **direct delivery mode**: the machine is
@@ -1182,25 +1182,25 @@ source(s)` and `console interrupt(s) taken = 2`, with the boot completing in
 4 of 4 runs.
 
 **The IMSIC is driven, and the boot walks its message path.**  When the tree
-names a supervisor IMSIC — the node whose `interrupts-extended` pairs carry
-cause 9; the one carrying 11 is machine mode and is not this kernel's — the boot
+names a supervisor IMSIC, the node whose `interrupts-extended` pairs carry
+cause 9; the one carrying 11 is machine mode and is not this kernel's, the boot
 reads the group's base, stride and `riscv,num-ids`, enables this hart's file
 (`eithreshold` zero, `eidelivery` on), and then proves the path with no device
-attached: it enables the file's **highest** identity — one past any a device
-could be given — writes that identity into **this hart's own MSI page** exactly
+attached: it enables the file's **highest** identity, one past any a device
+could be given, writes that identity into **this hart's own MSI page** exactly
 as an MSI-X table entry would, and reads it back with the `stopei` claim.
 
     protofire: imsic at 0x28000000, hart file 0, 255 identit(ies), self-test identity 254 delivered and claimed
 
 That line is the evidence: the page's address, the bare-identity data word, the
 pending bit, the enable bit and the claim were all executed. QEMU's `virt` with
-`-machine virt,aia=aplic-imsic` is where it runs — `cargo xtask check --machine
+`-machine virt,aia=aplic-imsic` is where it runs, `cargo xtask check --machine
 riscv64-aia`, which is part of `sh scripts/verify.sh p1` and therefore of every
 tier above it.  It is a **gate machine**, not a measurement made by hand: the
 same image the PLIC machine boots, on a tree that names an APLIC and an IMSIC,
 with its own required lines.  The default machine and `virt,aia=aplic` print no
 such line because their trees name no IMSIC, and the code that would touch
-`siselect`/`sireg` is not reached — which is load-bearing rather than tidy,
+`siselect`/`sireg` is not reached, which is load-bearing rather than tidy,
 because on those machines the pair is an **illegal instruction**.  Measured:
 `virt` and `virt,aia=aplic` both stop with `unhandled exception 2 (illegal
 instruction), address 0x15051073` if the CSRs are read unconditionally, and both
@@ -1220,17 +1220,17 @@ each was mutation-tested by breaking the kernel it guards:
 carries its own number.**  On `-machine virt,aia=aplic-imsic` the APLIC is
 locked in message mode (`domaincfg` reads `0x80000104`, `DM` set and
 read-only), so a wired source becomes a message into the IMSIC.  Each source's
-target word names the hart and **the source's own number as the identity** —
+target word names the hart and **the source's own number as the identity**
 measured, a constant there put every wired source's message onto identity 1,
 which is also the firmware's inter-processor identity (`eie` reads `0x2` at hart
 start, set by the firmware), and a trap that claimed identity 1 could not tell
 the console's level wire from an IPI: the wire stayed high and the APLIC
 re-sent for ever, 16,052 claims in six seconds.  With the identity as the
-source's own, the file's enable is the **filter** — only the sources a driver
+source's own, the file's enable is the **filter**, only the sources a driver
 claims get one, because enabling the whole range turned every wired line with
 nobody to answer it into a storm (41,201 deliveries in ten seconds from one
 source, silenced at its controller once the trap path stopped re-arming it).
-Those boots finish, with `console interrupt(s) taken = 1` — the console's own
+Those boots finish, with `console interrupt(s) taken = 1`, the console's own
 message, delivered through the APLIC, claimed as its source's identity, and
 acknowledged at the UART.
 
@@ -1239,7 +1239,7 @@ read could show it.**  The APLIC's `sourcecfg` and `target` arrays are indexed
 by **source number, which starts at one**: source `N`'s word is at the array's
 base plus `(N - 1) * 4`.  The driver wrote `number * 4`, so every word landed one
 source too high.  The console's source 10 therefore carried the target written
-for source 9 — identity 9 — and the APLIC delivered every console message to
+for source 9, identity 9, and the APLIC delivered every console message to
 identity 9 while the kernel had enabled and was waiting on identity 10.  Every
 register read back correctly, because the driver read its own wrong offsets;
 `CLRIP` showed the wire asserted at source 10, `SETIE` showed it enabled, and the
@@ -1253,14 +1253,14 @@ What found it was QEMU's own MMIO trace, which is external to the guest:
 
 Identity **9** arriving at the file, written for a kernel waiting on 10, is the
 whole of the defect in one line.  After the fix the same trace reads `value 0xa`,
-and the count is one on **6 of 6** boots — the same number the PLIC machine has
+and the count is one on **6 of 6** boots, the same number the PLIC machine has
 reached by a different mechanism.  `check --machine riscv64-aia` requires that
 one, and reverting the `- 1` makes the gate fail on exactly that line.
 
 **A PCI device's MSI-X reaches the IMSIC, and the reason it once did not is the
 order the wiring ran in.**  The block device's queue is mapped to a message: an
 MSI-X table entry naming this hart's file page and the bare identity 200,
-MSI-X enabled, the queue's vector set, and the identity enabled in the file —
+MSI-X enabled, the queue's vector set, and the identity enabled in the file
 every step read back from the device, then the handler registered under the
 identity.  Measured on `-machine virt,aia=aplic-imsic`: **8 of 8 boots** take
 the completion message, and the census line reports it:
@@ -1279,7 +1279,7 @@ The wiring has to run **after** the driver is constructed, and that is the whole
 of the defect the previous session could not reproduce: the driver's first step
 is a device reset (`write_status(0)`), and a reset is the device forgetting
 every queue's interrupt state.  Armed before it, the table entry and the queue
-vector are both discarded and the transport drops every completion silently —
+vector are both discarded and the transport drops every completion silently
 QEMU's trace records the notifications, and no `virtio_pci_notify` follows
 because the queue's vector is `VIRTIO_NO_VECTOR` again.  The same code at the
 two positions, one variable apart: **0 of 4** boots before the reset, **8 of 8**
@@ -1297,7 +1297,7 @@ One limit remains, measured:
   out and the handler table is per identity, so a second device is a second
   identity and a second handler rather than a controller change; what is
   missing is a driver per device, not a message path.  The APLIC's wired sources
-  are claimed too — each delivers as its own identity — and the console's is
+  are claimed too, each delivers as its own identity, and the console's is
   both delivered and taken, which the line above records as `taken = 1`.
 
 **Timer and clock.**  The SBI's legacy `set_timer`; arming is a trap into

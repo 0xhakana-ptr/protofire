@@ -85,7 +85,7 @@ impl FuseFileSystem {
 
     /// Best-effort handshake with the daemon: try to discover the real root
     /// inode via an initial `LOOKUP("/")`.  This runs once, lazily, on the
-    /// first VFS operation (by then the daemon is running — the mount syscall
+    /// first VFS operation (by then the daemon is running, the mount syscall
     /// itself never touches the pipes).
     ///
     /// If the daemon does not support a root LOOKUP (e.g. the demo daemon,
@@ -112,7 +112,7 @@ impl FuseFileSystem {
         let root_ino = self.root_ino.load(core::sync::atomic::Ordering::Acquire);
         let trimmed = path.trim_start_matches('/');
         if trimmed.is_empty() {
-            // Root — return root inode info via STAT.
+            // Root, return root inode info via STAT.
             let resp = self
                 .conn
                 .dispatch(&build_request(0, FuseOpcode::Stat, root_ino, &[]))?;

@@ -6,7 +6,7 @@
 //!
 //! Nothing consumes these constants yet, and this header says so plainly:
 //! they are a reserved plot, like `sound`'s and `virt`'s, for the mechanism
-//! `docs/roadmap.md` Level 10 describes — a filesystem checking a read
+//! `docs/roadmap.md` Level 10 describes, a filesystem checking a read
 //! against the right the opener asked for, a device descriptor declaring what
 //! its device supports, the audit log opening its own file with one, and the
 //! handle table storing the set.  The reason they are written down anyway is

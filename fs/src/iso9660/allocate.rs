@@ -12,21 +12,21 @@
 //! claimed by an extent, and everything from it on is not.  So an allocator
 //! has two honest shapes, and this module has both:
 //!
-//! - **The map.**  A walk of the whole volume that names every structure — the
+//! - **The map.**  A walk of the whole volume that names every structure, the
 //!   system area, the descriptor set, the path tables a descriptor names (with
 //!   their optional copies), the boot catalog a Boot Record names and the
 //!   images its entries point at, the directory trees, and the continuation
 //!   areas a record's `CE` entry names.  What the gaps between those runs hold
 //!   is free, and a hole a removal left is handed out again from here.  The map
 //!   has to be **complete**: a volume with anything this driver cannot account
-//!   for — a descriptor it does not know, an extended attribute record, no
-//!   terminator on the descriptor set — gives no map at all, and then
+//!   for, a descriptor it does not know, an extended attribute record, no
+//!   terminator on the descriptor set, gives no map at all, and then
 //!   allocations append, because handing a block to a file that a structure
 //!   already holds is the one thing that must not happen.
 //! - **The end of the volume.**  The blocks begin where the declared size ends,
 //!   and the one metadata field the allocation moves is the size itself.  It
 //!   never hands out a block the image already wrote, which is what makes it
-//!   correct without knowing what is on the volume — and what it costs is that
+//!   correct without knowing what is on the volume, and what it costs is that
 //!   nothing in the middle is ever handed out again.
 
 use alloc::sync::Arc;
@@ -113,11 +113,11 @@ pub(crate) fn volume_blocks(device: &dyn BlockDevice) -> Result<u32> {
 
 /// Declare the volume to be `blocks` logical blocks long.
 ///
-/// The size is stored twice — little-endian then big-endian — and a reader is
+/// The size is stored twice, little-endian then big-endian, and a reader is
 /// free to check either, so both halves move in one write.
 pub(crate) fn set_volume_blocks(device: &dyn BlockDevice, blocks: u32) -> Result<()> {
     // The room has to be there in the device's own block size, not the
-    // volume's — a volume that claimed blocks the medium does not have would
+    // volume's, a volume that claimed blocks the medium does not have would
     // be a volume whose last files cannot be read.
     let needed = blocks as u64 * SECTOR_SIZE as u64;
     let available = device.block_count() * device.block_size() as u64;
@@ -174,7 +174,7 @@ pub(crate) fn release_volume_tail(
     set_volume_blocks(device, new_end)
 }
 
-// ── what the volume holds ────────────────────────────────────────────────
+// what the volume holds
 
 /// The blocks a volume's structures occupy, as sorted, disjoint runs.
 ///
@@ -247,7 +247,7 @@ impl Occupied {
 /// cannot account for all of them.
 ///
 /// The structures a well-formed volume can have are a closed list, and every
-/// one of them is claimed here — and anything else, from a descriptor this
+/// one of them is claimed here, and anything else, from a descriptor this
 /// driver does not know to an extended attribute record it does not read,
 /// gives an error rather than a map with a hole in it.
 pub fn occupied_blocks(device: &dyn BlockDevice, block_size: u16) -> Result<Occupied> {
@@ -413,7 +413,7 @@ struct BootCatalogEntry {
 
 /// Parse an El Torito catalog's initial and section entries.
 ///
-/// The validation entry is checked — a header id of 1 and the key bytes — and
+/// The validation entry is checked, a header id of 1 and the key bytes, and
 /// a catalog without it names nothing, which is the same answer the reader's
 /// own parser gives.
 fn parse_boot_catalog(sector: &[u8]) -> Vec<BootCatalogEntry> {
@@ -426,7 +426,7 @@ fn parse_boot_catalog(sector: &[u8]) -> Vec<BootCatalogEntry> {
     while pos + 32 <= sector.len() {
         let entry_type = sector[pos];
         if entry_type == 0x90 || entry_type == 0x91 {
-            // Section header — skip.
+            // Section header, skip.
             pos += 32;
             continue;
         }
@@ -446,12 +446,12 @@ fn parse_boot_catalog(sector: &[u8]) -> Vec<BootCatalogEntry> {
     entries
 }
 
-// ── the allocator ────────────────────────────────────────────────────────
+// the allocator
 
 /// Where a new extent comes from.
 ///
 /// The volume's free blocks are everything its structures do not name, and
-/// finding them means walking the whole volume — so it happens once per
+/// finding them means walking the whole volume, so it happens once per
 /// operation, and the blocks are claimed here as they are handed out.
 pub struct Allocator<'a> {
     device: &'a Arc<dyn BlockDevice>,
@@ -495,7 +495,7 @@ impl<'a> Allocator<'a> {
 /// structures this driver cannot account for: the blocks begin where the
 /// volume's declared extent ends, and the one metadata field it moves is the
 /// volume's own size.  It never hands out a block the image already wrote,
-/// which is what makes it correct without knowing what is on the volume — and
+/// which is what makes it correct without knowing what is on the volume, and
 /// what it costs is that nothing in the middle is ever handed out again.
 pub(crate) fn allocate_blocks(
     device: &dyn BlockDevice,
@@ -517,7 +517,7 @@ pub(crate) fn allocate_blocks(
 ///
 /// An extent is **one contiguous run**, so there are two ways to make it
 /// bigger and this picks by where it is.  When it is the last thing the volume
-/// holds, the blocks it needs follow it and the volume grows over them — no
+/// holds, the blocks it needs follow it and the volume grows over them, no
 /// copy.  Otherwise something is in the way, and the extent **moves** to the
 /// free blocks the allocator gives it: the data first, and the caller writes
 /// the record that points at it afterwards, so a crash before that leaves the

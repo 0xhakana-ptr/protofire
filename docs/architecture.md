@@ -73,15 +73,15 @@ normalisation; `rights` is two constants nothing names yet; `audit` is the recor
 and its ring buffer.
 
 `rights` deserves a sentence because sixteen lines is an odd size for a crate.
-The flags are what a handle will carry when handles carry rights — the
+The flags are what a handle will carry when handles carry rights, the
 filesystem's check on a read, the device descriptor's declaration, the audit
-log's own open, the handle table's stored set — and no layer reads them yet.
+log's own open, the handle table's stored set, and no layer reads them yet.
 The definition sits at layer 0 so that the day one does is a dependency on a
 leaf rather than a convention to copy: a value several layers will name cannot
 be a private detail of any one of them.
 
 `user_abi` is here for a reason its name states: it is the program's half of the
-ABI — the numbering under call-site names, one call gate per machine, and the
+ABI, the numbering under call-site names, one call gate per machine, and the
 wrappers above them.  It names `abi` and nothing else of this tree, which is
 what this row's test asks, and every constant it carries is derived from abi's
 own value rather than copied, so a number that moves in `abi` breaks this
@@ -225,7 +225,7 @@ block driver would make them depend on block code to reach a queue.
 queue operation could act on "the queue last selected" and be right, because a
 block device uses one queue and cannot tell the difference.  A card receives on
 0 and transmits on 1, so a driver that selected 1 and then programmed queue 0's
-addresses would fill a ring nothing reads — with every register reading back
+addresses would fill a ring nothing reads, with every register reading back
 exactly what was written.  The index is a parameter of every queue operation
 now, and `virtio_net`'s host test is what holds it there: a fake records the
 index of each call and the addresses each queue was given, and a driver that
@@ -348,12 +348,12 @@ A test run is `cargo test -p crypto`: seconds, and no machine.
 
 ## What the gates hold
 
-- **`check-layering.sh`** — does every dependency point downward?
-- **`check-arch-fanout.sh`** — does anything outside `arch/` know which machine
+- **`check-layering.sh`**, does every dependency point downward?
+- **`check-arch-fanout.sh`**, does anything outside `arch/` know which machine
   it is?
-- **`check-crate-tests.sh`** — does every crate with code have tests, and has
+- **`check-crate-tests.sh`**, does every crate with code have tests, and has
   none lost any?
-- **`xtask check`** — does the image reach its console, its heap, and a file
+- **`xtask check`**, does the image reach its console, its heap, and a file
   read through the syscalls?
 
 The first three are censuses: each records a number, refuses growth, and refuses a

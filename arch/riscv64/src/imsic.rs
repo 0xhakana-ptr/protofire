@@ -35,8 +35,8 @@
 //! ## The claim
 //!
 //! `stopei` is a read-and-claim in one instruction: `csrrw stopei, zero`
-//! answers the identity on top and claims it.  The value is **packed** —
-//! identity in bits 16.., priority in bits 0..8 — exactly as the APLIC's
+//! answers the identity on top and claims it.  The value is **packed**
+//! identity in bits 16.., priority in bits 0..8, exactly as the APLIC's
 //! `claimi` is, and a driver that read it as a number gets a source it cannot
 //! match.  That defect cost this tree a boot on the APLIC (`unhandled external
 //! interrupt 655361`), and this file's tests pin the packing so it cannot cost
@@ -66,8 +66,8 @@ pub const SELECT_STRIDE: u64 = 2;
 /// The identity OpenSBI's S-mode inter-processor interrupt arrives as.
 ///
 /// The firmware enables this identity in every hart's supervisor file at hart
-/// start — measured: `eie` read `0x2` before this kernel enabled anything but
-/// the self-test's own identity — and delivers an IPI by writing it into the
+/// start, measured: `eie` read `0x2` before this kernel enabled anything but
+/// the self-test's own identity, and delivers an IPI by writing it into the
 /// target hart's file.  A kernel that mapped a device onto identity 1 would be
 /// mapped onto the machine's IPI, and the two would be counted as each other.
 ///
@@ -111,7 +111,7 @@ pub const fn claimed_identity(claim: u64) -> Option<u32> {
 /// a device's message must name.
 #[derive(Debug, Clone, Copy)]
 pub struct Imsic {
-    /// The window the tree's `reg` named — hart index zero's file.
+    /// The window the tree's `reg` named, hart index zero's file.
     base: usize,
     /// The distance between consecutive harts' files.
     stride: usize,
@@ -151,8 +151,8 @@ impl Imsic {
 
     /// The **MSI page** of hart `index`: where a device's message is written.
     ///
-    /// This is the one address a device needs.  It is the file's first page —
-    /// the register file is reached through CSRs, not through memory — so a
+    /// This is the one address a device needs.  It is the file's first page
+    /// the register file is reached through CSRs, not through memory, so a
     /// message is four bytes at exactly this address.
     pub const fn msi_page(&self, index: usize) -> usize {
         self.base + index * self.stride
@@ -169,7 +169,7 @@ impl Imsic {
 /// The same shape the APLIC's controller static is: written once, before any
 /// line can arrive, read from the trap path where there is no context to be
 /// handed one.  `None` on a machine whose tree names no IMSIC, which is the
-/// state the CSR pair's legality rides on — see this module's table.
+/// state the CSR pair's legality rides on, see this module's table.
 #[cfg(target_os = "none")]
 static CONTROLLER: cell::SyncUnsafeCell<Option<Imsic>> = cell::SyncUnsafeCell::new(None);
 
@@ -219,7 +219,7 @@ pub fn message_page() -> Option<usize> {
 /// Allow `identity` to be delivered to the boot hart's file.
 ///
 /// An identity the file does not have enabled is one whose messages are held
-/// pending for ever — the device did its part, the file kept them — which looks
+/// pending for ever, the device did its part, the file kept them, which looks
 /// exactly like a device that never sent anything.  So the enable is part of
 /// wiring a device's message path, not an optimisation.
 ///
@@ -260,7 +260,7 @@ mod registers {
     /// # Safety
     ///
     /// The machine must implement the AIA's supervisor half.  On one that does
-    /// not, both instructions are illegal and stop the machine — see this
+    /// not, both instructions are illegal and stop the machine, see this
     /// module's own table of measurements.  Every caller of this function is
     /// reached only when the device tree named an IMSIC.
     unsafe fn read(register: u64) -> u64 {
@@ -298,7 +298,7 @@ mod registers {
     ///
     /// `csrrw` with zero is the claim: reading `stopei` answers the identity
     /// and writing zero claims it, in one instruction, which is what a message
-    /// needs — a read that did not claim would leave the identity pending and
+    /// needs, a read that did not claim would leave the identity pending and
     /// the interrupt would arrive again.
     ///
     /// # Safety
@@ -321,8 +321,8 @@ mod registers {
         /// Turn this hart's file on: delivery enabled, every priority accepted.
         ///
         /// This is the whole of what a hart must do to receive an MSI.  A file
-        /// left with `eidelivery` clear holds messages — a device's write still
-        /// sets the pending bit — and delivers none of them, which looks
+        /// left with `eidelivery` clear holds messages, a device's write still
+        /// sets the pending bit, and delivers none of them, which looks
         /// exactly like a device that never sent one.
         ///
         /// # Safety
@@ -392,7 +392,7 @@ mod registers {
         /// Deliver `identity` to hart `index`'s file exactly as a device would.
         ///
         /// The 4-byte store is the whole message protocol: the address selects
-        /// the file and the word is the identity, bare — no bit set above it.
+        /// the file and the word is the identity, bare, no bit set above it.
         /// The older `setip`-style encoding put a bit above the identity and
         /// this machine reads the word as the identity alone, so a message
         /// carrying `(1 << 31) | identity` is dropped as out of range.
@@ -434,8 +434,8 @@ mod tests {
     ///
     /// The identity sits sixteen bits up.  Measured on the APLIC, whose claim
     /// word has the same packing: a driver that used the word as a source index
-    /// printed `unhandled external interrupt 655361` — `0x000A_0001`, identity
-    /// 10 with priority 1 — for every interrupt the boot took.
+    /// printed `unhandled external interrupt 655361`, `0x000A_0001`, identity
+    /// 10 with priority 1, for every interrupt the boot took.
     #[test]
     fn a_claim_word_packs_the_identity_above_the_priority() {
         // Identity 10 at priority 1 is what a real claim looks like.
@@ -453,7 +453,7 @@ mod tests {
     ///
     /// The specification gives each 64-bit register an even/odd pair of 32-bit
     /// select numbers, and on RV64 the even one addresses the whole word.  A
-    /// driver that stepped by one would write a different register's word —
+    /// driver that stepped by one would write a different register's word
     /// which on a file with 256 identities is the difference between enabling
     /// identity 64 and enabling nothing.
     #[test]
@@ -478,7 +478,7 @@ mod tests {
     /// A file's MSI pages are one stride apart, and the stride is not the
     /// window's size.
     ///
-    /// The device tree's `reg` says `0x2000` — one file's own two pages — while
+    /// The device tree's `reg` says `0x2000`, one file's own two pages, while
     /// consecutive harts' files are `0x4000` apart on this machine.  A driver
     /// that stepped by the `reg` size would address the second hart's file for
     /// hart one, and every message would arrive at a hart with no handler.
@@ -497,8 +497,8 @@ mod tests {
 
     /// An identity the file holds is one above zero and below its count.
     ///
-    /// Identity zero is not an interrupt — it is what a claim of nothing reads
-    /// as — and an identity at the count is past the last the file has.
+    /// Identity zero is not an interrupt, it is what a claim of nothing reads
+    /// as, and an identity at the count is past the last the file has.
     #[test]
     fn a_file_holds_identities_above_zero_and_below_its_count() {
         let imsic = Imsic::new(0x2800_0000, 0x4000, 256);

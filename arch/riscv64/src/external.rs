@@ -6,9 +6,9 @@
 //!
 //! This machine can describe either a **PLIC** or the AIA's **APLIC**, and the
 //! trap path's job is the same for both: claim the source that arrived, run the
-//! handler, complete it.  The registers differ — a PLIC's enables are per
+//! handler, complete it.  The registers differ, a PLIC's enables are per
 //! context and its target is a bitmask of harts, an APLIC's are per domain and
-//! its target is a word per source — which is why the two drivers are separate
+//! its target is a word per source, which is why the two drivers are separate
 //! modules, and why this is the one place the trap path names either.
 //!
 //! An enum rather than a trait object: the set is closed, the machine is known
@@ -22,8 +22,8 @@
 ///
 /// The **order of the arms is the order of the machines**: an AIA machine that
 /// pairs its APLIC with an IMSIC delivers every external interrupt as a message
-/// into a hart's interrupt file — its APLIC is locked in message mode, so
-/// nothing arrives through `claimi` — and the IMSIC is what the trap claims
+/// into a hart's interrupt file, its APLIC is locked in message mode, so
+/// nothing arrives through `claimi`, and the IMSIC is what the trap claims
 /// through there.  On the other two machines a wired source arrives through the
 /// controller's own claim register, and no IMSIC exists.
 #[derive(Debug, Clone, Copy)]
@@ -93,7 +93,7 @@ impl External {
             External::Plic(plic) => unsafe { plic.claim() },
             // SAFETY: as above.
             External::Aplic(aplic) => unsafe { aplic.claim() },
-            // SAFETY: as above — the claim is `stopei`, which this hart's own
+            // SAFETY: as above, the claim is `stopei`, which this hart's own
             // file answers.
             External::Imsic(imsic) => unsafe { imsic.claim() }.map(|identity| identity as usize),
         }
@@ -125,7 +125,7 @@ impl External {
             // SAFETY: as above.
             External::Aplic(aplic) => unsafe { aplic.disable_source(number) },
             // The IMSIC's claim **is** its own completion, so there is nothing
-            // here to silence at the file — but on this machine the message may
+            // here to silence at the file, but on this machine the message may
             // have come **through the APLIC**, whose level wire re-sends for as
             // long as it is asserted, and the APLIC's source enable is the stop
             // this kernel owns.  So an unhandled identity is silenced at the

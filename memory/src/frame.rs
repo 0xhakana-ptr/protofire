@@ -25,7 +25,7 @@
 //! Beside the bitmap sit two arrays with the same shape: one byte per frame
 //! counting the address spaces that own it, and one bit per frame saying the
 //! frame was demoted for copy-on-write.  Both exist for the same reason the
-//! bitmap does — a fork that shares a frame needs a fact the allocator holds
+//! bitmap does, a fork that shares a frame needs a fact the allocator holds
 //! rather than one each owner re-derives, and a count kept anywhere else is a
 //! second record of the same fact, and the first thing to diverge.
 
@@ -148,7 +148,7 @@ pub struct FrameAllocator {
     /// One byte per frame, 128 KiB for [`MAX_FRAMES`], the same trade the free
     /// bitmap made: fixed-size, no heap, indexed by the frame's own position in
     /// the pool.  Zero is the ordinary state of every frame the pool hands out
-    /// — one owner, untracked — and a fork that shares a frame raises it to one
+    ///, one owner, untracked, and a fork that shares a frame raises it to one
     /// per additional address space.
     ///
     /// The count is the co-owners and not the total on purpose, because the
@@ -160,8 +160,8 @@ pub struct FrameAllocator {
     /// [`Self::release_reference`] and returns the frame only when that answers
     /// `true`, and [`Self::deallocate`] refuses a frame whose co-owner count is
     /// above zero, which is the one shape of a premature free the count can
-    /// see. The shape it cannot see — a free after the co-owner released but
-    /// before the first owner did — is not reachable by any caller here,
+    /// see. The shape it cannot see, a free after the co-owner released but
+    /// before the first owner did, is not reachable by any caller here,
     /// because the only ones that free a shared frame go through the protocol.
     refs: [u8; MAX_FRAMES],
     /// Per frame, one bit: set means the frame is **demoted for
@@ -169,8 +169,8 @@ pub struct FrameAllocator {
     ///
     /// A demoted frame is one whose owners were given read-only mappings and
     /// will be copied on the first write.  The bit is not derivable from the
-    /// count — a fork shares read-only image pages too, and those have the same
-    /// count with no demotion — so it is its own bit rather than a value
+    /// count, a fork shares read-only image pages too, and those have the same
+    /// count with no demotion, so it is its own bit rather than a value
     /// smuggled into `refs`.
     cow: [u64; BITMAP_WORDS],
     /// Frame allocator profiler (zero-cost when `alloc_profiler` feature is
@@ -336,7 +336,7 @@ impl FrameAllocator {
         // A double free is the caller's bug and a corruption if believed: the
         // frames would be handed out twice and two owners would write to one.
         // A frame with co-owners is the same corruption wearing a different
-        // coat — one owner freeing while another still maps it — and it is
+        // coat, one owner freeing while another still maps it, and it is
         // refused here rather than at the page table, where the symptom would
         // be a fault in whichever program kept the page.
         for frame in start_frame..end_frame {
@@ -363,7 +363,7 @@ impl FrameAllocator {
     /// The caller is a fork that has decided two address spaces will map one
     /// frame; the count is what turns that decision into a fact the allocator
     /// can police.  `false` means the frame is outside the pool or the count
-    /// ran out — a fork that adds a reference to a frame nobody allocated would
+    /// ran out, a fork that adds a reference to a frame nobody allocated would
     /// otherwise be a share of nothing, and the pool would learn of it only as
     /// a double free much later.
     pub fn add_reference(&mut self, frame: usize) -> bool {
@@ -383,7 +383,7 @@ impl FrameAllocator {
     /// One owner of `frame` lets go, answering whether it was the last.
     ///
     /// `true` means the caller must return the frame to the pool; `false`
-    /// means another owner still maps it and the frame stays — and **must**:
+    /// means another owner still maps it and the frame stays, and **must**:
     /// the caller that frees on a `false` is the double free the protocol
     /// exists to prevent.  A frame whose count is zero was never shared, so
     /// the sole owner leaving is the last owner leaving, which is why the
@@ -407,8 +407,8 @@ impl FrameAllocator {
     ///
     /// Zero also answers for a frame outside this pool, which is the right
     /// answer there too: a frame the pool does not manage has no co-owners to
-    /// copy away from, and the fault handler's other checks — the walk, the
-    /// demotion bit — refuse it long before the count decides.
+    /// copy away from, and the fault handler's other checks, the walk, the
+    /// demotion bit, refuse it long before the count decides.
     pub fn co_owners(&self, frame: usize) -> usize {
         match self.frame_index(frame) {
             Some(index) => self.refs[index] as usize,
@@ -421,7 +421,7 @@ impl FrameAllocator {
     /// A fork sets this on every writable page it shares, at the same moment
     /// it demotes both mappings to read-only.  The pair is one fact in two
     /// places, and the fault handler reads the bit to tell a page a fork
-    /// demoted from one that was mapped read-only to begin with — the first
+    /// demoted from one that was mapped read-only to begin with, the first
     /// wants a copy, the second wants the program to stop writing its own
     /// code.
     pub fn set_cow(&mut self, frame: usize, demoted: bool) {
@@ -645,8 +645,8 @@ impl FrameAllocator {
     /// The pool position of a frame **address**, or `None` when the address is
     /// not one this allocator manages.
     ///
-    /// The refcount API speaks in addresses because its callers do — a page
-    /// table names frames, not indices — and this is the one place the two
+    /// The refcount API speaks in addresses because its callers do, a page
+    /// table names frames, not indices, and this is the one place the two
     /// vocabularies meet.  Unaligned or out-of-span addresses answer `None`
     /// rather than indexing a neighbour, which is what a truncating division
     /// would do.
@@ -663,10 +663,10 @@ impl FrameAllocator {
     }
 
     /// Forget everything sharing says about a range the allocator is handing
-    /// out: a frame that comes back has one owner — the one taking it now,
-    /// untracked — and is not demoted.
+    /// out: a frame that comes back has one owner, the one taking it now,
+    /// untracked, and is not demoted.
     ///
-    /// Both allocation paths call this — the recycled holes and the bump tail —
+    /// Both allocation paths call this, the recycled holes and the bump tail
     /// because a reset done on one path only is a stale co-owner count on the
     /// other, and the symptom is a fork that trusts a count a previous owner
     /// left behind.

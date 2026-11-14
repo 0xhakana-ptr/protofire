@@ -2,7 +2,7 @@
 //!
 //! The f2fs tests, on a host: a volume this module's own formatter makes on
 //! an in-memory device, mounted, written, checkpointed, and **reopened from
-//! the raw bytes** — which is the round trip a boot actually runs, and the
+//! the raw bytes**, which is the round trip a boot actually runs, and the
 //! one a parser that agreed with its own writer could never catch.
 
 use alloc::sync::Arc;
@@ -30,7 +30,7 @@ fn mounted(device: &Arc<MemoryBlockDevice>) -> Arc<F2fsVolume> {
     F2fsVolume::open(device.clone()).expect("a mounted volume")
 }
 
-/// A volume, mounted from the bytes the device now holds — the round trip
+/// A volume, mounted from the bytes the device now holds, the round trip
 /// a boot runs, with nothing surviving in memory the first volume holds.
 fn remounted(device: &Arc<MemoryBlockDevice>) -> Arc<F2fsVolume> {
     let mut image = Vec::with_capacity(TEST_BLOCKS * 4096);
@@ -59,7 +59,7 @@ fn a_formatted_volume_opens_and_its_root_is_a_directory() {
 }
 
 /// A file created, written, checkpointed, and read back **after a
-/// remount** — the write path's own proof, through the log-structured
+/// remount**, the write path's own proof, through the log-structured
 /// append and the checkpoint that commits it.
 #[test]
 fn a_written_file_is_the_disks_own_bytes_after_a_remount() {
@@ -75,7 +75,7 @@ fn a_written_file_is_the_disks_own_bytes_after_a_remount() {
         let mut live = [0_u8; 64];
         let live_read = node.read(0, &mut live).expect("a live read");
         assert_eq!(&live[..live_read], b"hello from the f2fs write path");
-        // A write rides the cache; the sync is what commits it — the same
+        // A write rides the cache; the sync is what commits it, the same
         // call a program's fsync makes, and the reason the remount below
         // sees the bytes at all.
         volume.sync().expect("a flush");
@@ -201,7 +201,7 @@ fn a_write_in_the_middle_keeps_the_bytes_around_it() {
 }
 
 /// Directories: created, listed, a file made inside one, and the listing
-/// answers with the names the volume holds — after a remount.
+/// answers with the names the volume holds, after a remount.
 #[test]
 fn a_directory_holds_what_was_made_in_it() {
     let device = formatted();
@@ -310,7 +310,7 @@ fn a_device_node_answers_its_number() {
 }
 
 /// A file truncated to a shorter length reads nothing past it, and its
-/// blocks are invalidated — the one direction of `set_len` the
+/// blocks are invalidated, the one direction of `set_len` the
 /// log-structured model takes without a garbage collector.
 #[test]
 fn a_truncated_file_reads_nothing_past_its_new_end() {
@@ -332,7 +332,7 @@ fn a_truncated_file_reads_nothing_past_its_new_end() {
 }
 
 /// Many small files: the NAT hands out distinct NIDs, every file reads
-/// back its own bytes, and no file sees another's — the collision the
+/// back its own bytes, and no file sees another's, the collision the
 /// node-id scan exists to prevent.
 #[test]
 fn many_files_read_back_their_own_bytes() {

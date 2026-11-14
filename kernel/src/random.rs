@@ -13,7 +13,7 @@
 //! place that says so rather than a caveat in a commit message.  The tree has
 //! no `RDRAND`, `RNDR` or `RDSEED` probe, so the seed is timing: the counter
 //! readings this boot happened to observe.  A program that can read the same
-//! counter — and any program can, through `GetTimeOfDay` — knows the *kind* of
+//! counter, and any program can, through `GetTimeOfDay`, knows the *kind* of
 //! material the seed was made from.  It cannot know the exact readings, because
 //! the seed is taken across boot steps a program never runs, but "cannot
 //! practically" is a weaker claim than "cannot at all".
@@ -39,7 +39,7 @@ use sync::Mutex;
 
 /// How many blocks the generator produces before it re-keys.
 ///
-/// A block is 64 bytes, so this is 64 KiB between ratchets — small enough that
+/// A block is 64 bytes, so this is 64 KiB between ratchets, small enough that
 /// a program reading megabytes still crosses it, large enough that the hash is
 /// not on a path a program calls per byte.
 pub const RESEED_BLOCKS: u32 = 1024;
@@ -48,7 +48,7 @@ pub const RESEED_BLOCKS: u32 = 1024;
 ///
 /// `counter` is the ChaCha20 block counter and is what makes successive fills
 /// different; `since_reseed` counts blocks toward the ratchet and is a separate
-/// number because the two mean different things — a wrapped counter is a stream
+/// number because the two mean different things, a wrapped counter is a stream
 /// restart, a spent budget is a re-key.
 pub struct Keystream {
     key: [u8; 32],
@@ -60,7 +60,7 @@ pub struct Keystream {
 impl Keystream {
     /// A generator over `seed`, with a nonce derived from it.
     ///
-    /// The nonce is the first twelve bytes of `sha256(seed)` — not the seed's
+    /// The nonce is the first twelve bytes of `sha256(seed)`, not the seed's
     /// own first twelve, because a ChaCha20 key and nonce that share bytes are
     /// two values an attacker gets for the price of one, and the hash costs one
     /// pass over 32 bytes at boot.
@@ -217,7 +217,7 @@ mod tests {
 
     /// The same seed produces the same stream.
     ///
-    /// Determinism is not a security property here — it is what makes the
+    /// Determinism is not a security property here, it is what makes the
     /// ratchet testable: two generators built from one seed must agree before
     /// their state can be shown to diverge after a re-key.
     #[test]

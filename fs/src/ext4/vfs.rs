@@ -4,7 +4,7 @@
 //! the [`VNode`]s it hands out, and the path arithmetic both of them share.
 //!
 //! Every node records its inode number and resolves it from disk on demand
-//! — a node is a handle into the volume, not a copy of its bytes — which is
+//!, a node is a handle into the volume, not a copy of its bytes, which is
 //! why two nodes on one file are two handles onto one inode, and why a
 //! node's kind and size are read fresh from the table each time.
 
@@ -49,7 +49,7 @@ impl Ext4Volume {
         Ok(Arc::new(Self { name, fs }))
     }
 
-    /// Whether this mount replayed a dirty journal — the fact a check
+    /// Whether this mount replayed a dirty journal, the fact a check
     /// reports and a boot line can carry.
     pub fn journal_replayed(&self) -> bool {
         self.fs.journal_replayed
@@ -437,7 +437,7 @@ impl VNode for Ext4VNode {
     }
 }
 
-// ── the path arithmetic ──────────────────────────────────────────────────
+// the path arithmetic
 
 /// Split a path into `(parent, leaf)`.
 ///

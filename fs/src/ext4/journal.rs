@@ -9,8 +9,8 @@
 //! first block is the journal's own superblock: a descriptor block naming
 //! the metadata blocks the transaction touches, the data blocks themselves,
 //! and a commit block that says the transaction is whole.  The journal
-//! superblock's `errno` is the volume's dirty flag — one from the first
-//! write of a transaction, zero at its commit — and replay walks from the
+//! superblock's `errno` is the volume's dirty flag, one from the first
+//! write of a transaction, zero at its commit, and replay walks from the
 //! superblock's `start` to the commit blocks, writing each descriptor's
 //! data to the place it names.
 //!
@@ -18,7 +18,7 @@
 //!
 //! Checksums, when the journal carries them: a v3 tag's CRC32C over its
 //! data block, and the commit block's own checksum.  A mismatch during
-//! replay is reported and the block is written anyway — replay is already
+//! replay is reported and the block is written anyway, replay is already
 //! the recovery path, and a half-good block the format's rules accept is
 //! better than a volume the mount refuses.
 
@@ -139,8 +139,8 @@ fn parse_jbd2_superblock(raw: &[u8]) -> Option<Jbd2Superblock> {
 
 /// Replay a dirty journal, answering whether anything was replayed.
 ///
-/// A clean journal — no journal, `errno` zero, or a superblock this parser
-/// cannot read — is a volume the crash did not interrupt, and answers
+/// A clean journal, no journal, `errno` zero, or a superblock this parser
+/// cannot read, is a volume the crash did not interrupt, and answers
 /// false.
 pub(super) fn replay_ext4_journal(
     cache: &BlockCache,
@@ -346,7 +346,7 @@ pub(super) fn replay_ext4_journal(
     }
 
     // Mark the journal clean, whether or not the pass replayed anything: a
-    // pass that walked the whole ring and found nothing is the recovery —
+    // pass that walked the whole ring and found nothing is the recovery
     // the flag's job was to bring this mount here, and leaving it set would
     // bring every later mount on the same walk that does nothing.
     let mut jsb_buf = vec![0u8; JBD2_SUPERBLOCK_SIZE];

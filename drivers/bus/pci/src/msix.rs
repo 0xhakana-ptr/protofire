@@ -47,7 +47,7 @@ use crate::config::DeviceAddress;
 
 /// PCI command register bit 10: the function must not use its INTx pin.
 ///
-/// The MSI-X message control's bit 14 is **not** this — it is the function
+/// The MSI-X message control's bit 14 is **not** this, it is the function
 /// mask, which holds the whole table down.  A driver that asked MSI-X for the
 /// pin's silence in the wrong register masked its own vectors, and the
 /// interrupt it wired never fired.
@@ -62,7 +62,7 @@ pub const CAPABILITY_ID: u8 = 0x11;
 /// Message control, bit 15: MSI-X is enabled.
 pub const CONTROL_ENABLE: u16 = 1 << 15;
 
-/// Message control, bit 14: the **function mask** — set means every vector
+/// Message control, bit 14: the **function mask**, set means every vector
 /// the function has is masked, which is the opposite of what its name
 /// suggests.
 ///
@@ -187,7 +187,7 @@ impl Capability {
     ///
     /// Bit 15 is the feature's enable; bit 14 is the function mask, which set
     /// would hold every vector down.  The INTx fallback is refused in the
-    /// command register's own `INTx Disable` bit, not here — see
+    /// command register's own `INTx Disable` bit, not here, see
     /// [`COMMAND_INTX_DISABLE`].
     pub const fn enabled_control(&self) -> u16 {
         (self.control & CONTROL_TABLE_SIZE_MASK) | CONTROL_ENABLE
@@ -411,7 +411,7 @@ mod tests {
     /// Enabling sets both the feature bit and the "do not use the pin" bit.
     ///
     /// Bit 15 turns MSI-X on and **bit 14 must stay clear**: it is the
-    /// function mask, and set it holds every vector the function has down —
+    /// function mask, and set it holds every vector the function has down
     /// the opposite of an enablement.  The first version set it on the
     /// argument that it refused the INTx pin; the device then sent nothing,
     /// and the interrupt a boot wired never fired.  The pin's silence is the

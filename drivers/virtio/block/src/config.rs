@@ -44,7 +44,7 @@ pub const SEG_MAX: u64 = 0x08;
 /// A `le64` in a configuration region that is read a dword at a time is two
 /// reads and a shift: low word first, high word at `CAPACITY + 4`.  Doing it in
 /// one place is what keeps a second caller from getting the order wrong, and
-/// the order is not free — a high-word-first read reports a capacity of zero
+/// the order is not free, a high-word-first read reports a capacity of zero
 /// for every disk under four gigabytes.
 pub fn capacity_sectors(read: impl Fn(u64) -> u32) -> u64 {
     let low = read(CAPACITY) as u64;
@@ -92,7 +92,7 @@ mod tests {
 
         // A capacity that fits in the low word stays there rather than being
         // shifted, which is the case a boot with a small disk exercises.  The
-        // high word is read too, and it is zero here — a reader that answered
+        // high word is read too, and it is zero here, a reader that answered
         // the low word for both offsets would report a disk 2^32 times larger.
         assert_eq!(
             capacity_sectors(|offset| if offset == CAPACITY { 0x0800 } else { 0 }),

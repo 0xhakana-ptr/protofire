@@ -131,7 +131,7 @@ fn directory_extent(records: &[Vec<u8>]) -> Vec<u8> {
 ///
 /// The read tests mount it on the device that lies about nothing; the write
 /// tests hand the same bytes to a `MemoryBlockDevice`, whose 512-byte blocks
-/// are a device's, not a disc's — the two block sizes are exactly what the
+/// are a device's, not a disc's, the two block sizes are exactly what the
 /// write path's arithmetic has to keep apart.
 fn image_bytes() -> Vec<u8> {
     let mut bytes = vec![0u8; IMAGE_SECTORS * SECTOR_SIZE];
@@ -311,8 +311,8 @@ fn a_device_that_is_not_a_disc_is_refused() {
 }
 
 /// Every mutation is refused on a read-only device, because the device is:
-/// a volume mounted from a read-only slice of the boot disk — which is how
-/// `/system` is mounted — rejects the device write, not the filesystem.
+/// a volume mounted from a read-only slice of the boot disk, which is how
+/// `/system` is mounted, rejects the device write, not the filesystem.
 #[test]
 fn a_disc_refuses_every_write() {
     let volume = mounted();
@@ -360,8 +360,8 @@ fn the_image_geometry_is_what_the_tests_say() {
     assert_eq!(image.bytes.len(), IMAGE_SECTORS * SECTOR_SIZE);
 }
 
-// ── the write path (the order is RFC 0011's: data, length, space, record,
-//    directories, rename) ─────────────────────────────────────────────────
+// the write path (the order is RFC 0011's: data, length, space, record,
+// directories, rename)
 
 use super::allocate;
 use super::record::OFFSET_DATA_LENGTH;
@@ -474,7 +474,7 @@ fn root_identifiers(device: &Arc<MemoryBlockDevice>) -> Vec<Vec<u8>> {
 
 /// The directories a path table names, as `(number, parent, identifier,
 /// extent)`.  A record's number is its position, so it is not read from the
-/// table — it *is* the table's order.
+/// table, it *is* the table's order.
 fn parse_path_table(bytes: &[u8], big_endian: bool) -> Vec<(u16, u16, Vec<u8>, u32)> {
     let mut entries = Vec::new();
     let mut at = 0usize;
@@ -545,7 +545,7 @@ fn path_tables(device: &Arc<MemoryBlockDevice>) -> (PathTableRecords, PathTableR
 
 /// Check the properties a reader depends on, in both tables.
 ///
-/// The reader never consults a path table — it walks records — so nothing in
+/// The reader never consults a path table, it walks records, so nothing in
 /// the driver would notice a table that was wrong.  This is the checker.
 fn assert_path_tables_name(device: &Arc<MemoryBlockDevice>, expected: &[(Vec<u8>, u32)]) {
     let (little, big) = path_tables(device);
@@ -650,11 +650,11 @@ fn record_length_field(device: &Arc<MemoryBlockDevice>, identifier: &[u8]) -> [u
     panic!("no record for {identifier:?}");
 }
 
-// Stage 1 — the data path
+// Stage 1, the data path
 
 /// An overwrite inside the file is what the reader reads back, and it is on
 /// the medium: the sector the extent lives in carries it, and the padding
-/// after the file inside that sector is untouched — the file is 13 bytes of a
+/// after the file inside that sector is untouched, the file is 13 bytes of a
 /// 2048-byte sector, so this is the read-modify-write path.
 #[test]
 fn an_overwrite_inside_a_file_is_what_the_reader_reads_back() {
@@ -735,7 +735,7 @@ fn an_extent_write_keeps_every_byte_it_was_not_given() {
 }
 
 /// A write at the end grows the file by what it takes, so a caller can write
-/// a file the way it writes any other — and a second mount sees the length
+/// a file the way it writes any other, and a second mount sees the length
 /// and the bytes, which is what says both are on the medium.
 #[test]
 fn a_write_past_the_end_grows_the_file() {
@@ -755,7 +755,7 @@ fn a_write_past_the_end_grows_the_file() {
     assert_eq!(&buf[HELLO_CONTENT.len()..], &data);
 }
 
-// Stage 2 — the length, which is one field
+// Stage 2, the length, which is one field
 
 /// A truncation reads back short, a second mount sees it, and both halves of
 /// the field carry it.  A shrink does not lose the block: the length can go
@@ -786,7 +786,7 @@ fn truncating_a_file_rewrites_the_length_its_record_carries() {
 }
 
 /// 13 bytes occupy one 2048-byte block, and every extent begins on a block
-/// boundary, so the rest of that block belongs to this file alone — and
+/// boundary, so the rest of that block belongs to this file alone, and
 /// nothing was allocated for it: the file is still where it was.
 #[test]
 fn growing_a_file_stays_inside_the_block_it_already_has() {
@@ -813,7 +813,7 @@ fn growing_a_file_stays_inside_the_block_it_already_has() {
 }
 
 /// HELLO's extent is one block and INNER begins in the next one, and an
-/// extent is one contiguous run — so the file moves, and what it moves into
+/// extent is one contiguous run, so the file moves, and what it moves into
 /// is the volume's free space, which is a hole below its end here rather
 /// than the end itself.  The neighbour it used to sit beside is untouched,
 /// and a second mount reads the file the record now points at.
@@ -856,7 +856,7 @@ fn growing_past_the_block_moves_a_file_that_has_something_after_it() {
 }
 
 /// The file a create makes is empty and points at where the volume's space
-/// ends — the upgrade that opened this volume took the blocks after INNER —
+/// ends, the upgrade that opened this volume took the blocks after INNER
 /// so the blocks that follow it belong to no one, and growing it takes them
 /// where it is, with no copy.
 #[test]
@@ -897,7 +897,7 @@ fn growing_past_the_block_extends_the_last_file_in_place() {
 }
 
 /// A length the medium cannot hold is `NoSpace`, and a write that cannot
-/// grow is short — the contract's own answer for a byte it could not take.
+/// grow is short, the contract's own answer for a byte it could not take.
 #[test]
 fn growth_the_medium_cannot_hold_is_refused() {
     let (_device, volume) = writable_volume();
@@ -936,10 +936,10 @@ fn a_directory_and_a_read_only_device_refuse_a_length_change() {
     assert_eq!(node.set_len(1), Err(abi::Error::PermissionDenied));
 }
 
-// Stage 3b — the directory, which is where a record lives
+// Stage 3b, the directory, which is where a record lives
 
 /// The name the caller used goes into the record's `NM` entry, so that is
-/// the name the file has — not the identifier's own upper-cased form — and a
+/// the name the file has, not the identifier's own upper-cased form, and a
 /// second mount reads the record the create wrote into the directory.
 #[test]
 fn a_created_file_is_empty_and_findable() {
@@ -988,7 +988,7 @@ fn a_created_file_makes_its_directory_longer() {
 
 /// The root's records start part-way into a 2048-byte block, so filling it
 /// takes about forty records and the one that does not fit starts the next
-/// block — which the volume has to give the directory.
+/// block, which the volume has to give the directory.
 #[test]
 fn a_directory_that_fills_a_block_takes_another() {
     let (device, volume) = writable_volume();
@@ -1020,7 +1020,7 @@ fn creating_a_file_that_exists_is_refused() {
 }
 
 /// The record's identifier is the mangled form a reader without Rock Ridge
-/// sees, and `NM` is what a reader with it — and this driver — reports.
+/// sees, and `NM` is what a reader with it, and this driver, reports.
 #[test]
 fn a_name_the_format_cannot_hold_is_kept_in_a_name_entry() {
     let (device, volume) = writable_volume();
@@ -1070,7 +1070,7 @@ fn a_name_too_long_for_one_record_is_refused() {
 }
 
 /// A removal takes the record out, the neighbour survives, a second mount
-/// agrees, and the directory is shorter by exactly the record that left it —
+/// agrees, and the directory is shorter by exactly the record that left it
 /// 44 bytes of `HELLO.TXT;1`.
 #[test]
 fn removing_a_file_takes_its_record_out_of_the_directory() {
@@ -1092,7 +1092,7 @@ fn removing_a_file_takes_its_record_out_of_the_directory() {
     assert_eq!(reopened.lookup("/").expect("the root").size(), before - 44);
 }
 
-// Stage 3c — directories, which means the path tables
+// Stage 3c, directories, which means the path tables
 
 #[test]
 fn a_created_directory_is_empty_and_findable() {
@@ -1108,7 +1108,7 @@ fn a_created_directory_is_empty_and_findable() {
         Some(abi::Error::NotFound)
     );
 
-    // A second mount sees it, and the path tables name it — at the extent its
+    // A second mount sees it, and the path tables name it, at the extent its
     // own record does, which is the property the tables have to hold whether
     // the new extent came from the volume's end or from a hole.
     let (root, root_size) = root_extent(&device);
@@ -1209,7 +1209,7 @@ fn removing_a_directory_that_holds_something_is_refused() {
     assert_eq!(volume.remove_path("/SUB"), Err(abi::Error::Busy));
 }
 
-// Stage 3d — renaming and moving
+// Stage 3d, renaming and moving
 
 #[test]
 fn renaming_a_file_keeps_its_contents() {
@@ -1323,7 +1323,7 @@ fn moving_a_directory_rewrites_its_parent_record() {
     assert_eq!(volume.lookup("/mover").err(), Some(abi::Error::NotFound));
 }
 
-/// Filling the root's first block makes it take a second — and the root is
+/// Filling the root's first block makes it take a second, and the root is
 /// not the last extent on the volume, so it *moves*, which is what leaves a
 /// child's ".." naming the address it left.
 #[test]
@@ -1371,7 +1371,7 @@ fn renaming_onto_an_existing_name_is_refused() {
     );
 }
 
-// Stage 3f — the extension, which is what makes the names believed
+// Stage 3f, the extension, which is what makes the names believed
 
 /// The signatures a System Use area's entries carry, in the order they sit.
 fn area_entries(system_use: &[u8]) -> Vec<Vec<u8>> {
@@ -1407,7 +1407,7 @@ fn area_continuation(device: &Arc<MemoryBlockDevice>, system_use: &[u8]) -> Vec<
 
 /// The root's own "." record is where a volume says what its System Use
 /// areas are: `SP` that they are SUSP's at all, `PX` for its attributes, and
-/// `CE` naming where the reference continues — the entry is far longer than
+/// `CE` naming where the reference continues, the entry is far longer than
 /// a record can hold.
 #[test]
 fn opening_a_writable_volume_declares_the_extension() {
@@ -1513,7 +1513,7 @@ fn the_rebuilt_root_still_lists_what_it_listed() {
 }
 
 /// A volume whose descriptor set has no terminator is one this driver
-/// cannot say the structures of — so it hands blocks out from the end, which
+/// cannot say the structures of, so it hands blocks out from the end, which
 /// is where the image's own space stops.
 #[test]
 fn a_volume_that_cannot_be_accounted_for_is_appended_to() {
@@ -1533,7 +1533,7 @@ fn a_volume_that_cannot_be_accounted_for_is_appended_to() {
 
 /// A volume whose descriptor set has no terminator, on a medium that is
 /// exactly its size: the driver cannot say what the volume's structures
-/// are, so the allocation appends — and there is nowhere to append the
+/// are, so the allocation appends, and there is nowhere to append the
 /// reference either, so the volume is left as it was.  It is still writable,
 /// because a create is a record appended to a directory that already has the
 /// room for it.
@@ -1561,7 +1561,7 @@ fn a_volume_with_no_room_for_the_reference_still_mounts() {
 }
 
 /// The root's size is a field of the descriptor's own root record, so it is
-/// the first thing a broken image can lie about — and the upgrade would
+/// the first thing a broken image can lie about, and the upgrade would
 /// allocate what it says.  It is bounded the way a directory read is, and
 /// the volume opens without it.
 #[test]
@@ -1581,8 +1581,8 @@ fn a_broken_root_size_does_not_stop_a_writable_open() {
 
 /// Opening a *writable* volume runs code an image can steer: the extension
 /// upgrade reads a foreign root record and then writes by what it says.  So
-/// the bytes worth flipping are the ones it reads — the descriptor's root
-/// record and the records of a directory — and every one of these has to end
+/// the bytes worth flipping are the ones it reads, the descriptor's root
+/// record and the records of a directory, and every one of these has to end
 /// in an answer rather than a panic.
 #[test]
 fn a_writable_open_survives_a_mutated_image() {
@@ -1620,8 +1620,8 @@ fn a_writable_open_survives_a_mutated_image() {
 
     for (index, bytes) in cases.into_iter().enumerate() {
         let device = MemoryBlockDevice::new("iso-hostile", bytes, false);
-        // Whatever it answers — and it is allowed to fail, and allowed to skip
-        // the upgrade — it must not take the volume with it.
+        // Whatever it answers, and it is allowed to fail, and allowed to skip
+        // the upgrade, it must not take the volume with it.
         if let Ok(volume) = Volume::open(device) {
             let _ = volume.lookup("/HELLO.TXT");
             let _ = volume.read_dir("/", 0);
@@ -1630,7 +1630,7 @@ fn a_writable_open_survives_a_mutated_image() {
     }
 }
 
-// Stage 3g — giving back what it took
+// Stage 3g, giving back what it took
 
 /// A removal at the end lowers the size the volume declares over the blocks
 /// it gives up, and the next thing that needs a block is handed one of them.
@@ -1662,7 +1662,7 @@ fn a_removal_at_the_end_of_the_volume_gives_its_blocks_back() {
 }
 
 /// `HELLO.TXT` is in the middle: the volume's space ends past it, so the
-/// *declared size* does not move.  What is free there is not lost, though —
+/// *declared size* does not move.  What is free there is not lost, though
 /// the block map is what the next allocation looks in.
 #[test]
 fn a_removal_inside_the_volume_gives_nothing_back() {
@@ -1676,7 +1676,7 @@ fn a_removal_inside_the_volume_gives_nothing_back() {
 /// A file with something after it moves into the volume's free space when it
 /// grows, and here that is a hole below the volume's end.  Removing it
 /// leaves two free blocks that are not the volume's tail, so the declared
-/// size stays where it is — and the next file that needs two of them is
+/// size stays where it is, and the next file that needs two of them is
 /// handed those.
 #[test]
 fn a_removal_inside_the_volume_frees_its_blocks_for_the_next_allocation() {
@@ -1720,7 +1720,7 @@ fn a_removal_inside_the_volume_frees_its_blocks_for_the_next_allocation() {
 }
 
 /// A directory's extent is an allocation like any other, so it comes from
-/// the volume's free space — and goes back to it when the directory does.
+/// the volume's free space, and goes back to it when the directory does.
 #[test]
 fn a_removed_directory_gives_its_extent_to_the_next_one() {
     let (device, volume) = writable_volume();
@@ -1769,8 +1769,8 @@ fn a_truncation_at_the_end_of_the_volume_gives_its_blocks_back() {
 
 /// A medium that is exactly the volume: the open cannot declare the
 /// extension, so the image is the one it came with.  `INNER.TXT` is the last
-/// file it holds and ends exactly where the volume does — the shape the tail
-/// rule would give back — and the volume's own floor is what says no,
+/// file it holds and ends exactly where the volume does, the shape the tail
+/// rule would give back, and the volume's own floor is what says no,
 /// because the blocks the image came with are the image's.
 #[test]
 fn the_blocks_an_image_came_with_are_never_handed_out_again() {
@@ -1835,7 +1835,7 @@ fn the_block_map_is_absent_for_a_volume_it_cannot_account_for() {
 /// A walk of a tree whose records point back up the tree is a walk that
 /// never ends unless something says where the end is.  The root's record for
 /// its subdirectory is pointed at the root's own extent, so every level
-/// leads to the same directory — and the walk has to come back with an
+/// leads to the same directory, and the walk has to come back with an
 /// answer, which is "no map", rather than not come back at all.
 #[test]
 fn a_directory_that_names_its_ancestor_is_not_walked_forever() {
@@ -1856,7 +1856,7 @@ const JOLIET_ROOT_SECTOR: u64 = 33;
 const JOLIET_SUB_SECTOR: u64 = 34;
 /// The supplementary root extent: its own two records, a file whose data is
 /// the primary tree's, and a directory whose identifier is one UCS-2 code
-/// unit — a name of one character below U+0100, whose first byte is zero and
+/// unit, a name of one character below U+0100, whose first byte is zero and
 /// which is nevertheless not a "." record.
 const JOLIET_ROOT_BYTES: u32 = 36 + 36 + 36 + 64; // ".", "..", "A", "Hello World.txt"
 /// The supplementary directory's extent: its own two records, and nothing.
@@ -1872,7 +1872,7 @@ fn ucs2(name: &str) -> Vec<u8> {
 /// The Supplementary Volume Descriptor of the two-tree fixture.
 ///
 /// Its root record is the descriptor's own 34-byte field, which holds the one
-/// byte identifier 0x00 whatever the tree's identifiers look like — the field
+/// byte identifier 0x00 whatever the tree's identifiers look like, the field
 /// has no room for more, and that is what a released image has too.
 fn build_svd(root_sector: u64, root_size: u32) -> [u8; SECTOR_SIZE] {
     let mut sector = [0u8; SECTOR_SIZE];
@@ -1982,7 +1982,7 @@ fn joliet_records(
 }
 
 /// The extent the first entry of a descriptor's little-endian path table
-/// names — which is that descriptor's tree's root.
+/// names, which is that descriptor's tree's root.
 fn table_root_extent(device: &Arc<MemoryBlockDevice>, sector: u64) -> u32 {
     let mut sector_bytes = [0u8; SECTOR_SIZE];
     write::read_exact(
@@ -2007,7 +2007,7 @@ fn table_root_extent(device: &Arc<MemoryBlockDevice>, sector: u64) -> u32 {
 
 /// The label comes from the supplementary descriptor, and the names a reader
 /// is meant to see are that tree's.  A name whose identifier begins below
-/// U+0100 is a name — not a "." record — and the primary tree names the same
+/// U+0100 is a name, not a "." record, and the primary tree names the same
 /// *data* differently, which is the record the primary parser reads.
 #[test]
 fn a_two_tree_volume_reads_its_supplementary_tree() {
@@ -2070,8 +2070,8 @@ fn a_supplementary_descriptor_behind_a_boot_record_is_found() {
 }
 
 /// Opening a writable volume rebuilds the tables of every tree it has: the
-/// primary descriptor's name the primary root — which the extension upgrade
-/// moved — and the supplementary descriptor's name the supplementary one,
+/// primary descriptor's name the primary root, which the extension upgrade
+/// moved, and the supplementary descriptor's name the supplementary one,
 /// which is a different extent and a different tree.
 #[test]
 fn each_tree_gets_its_own_path_tables() {
@@ -2098,7 +2098,7 @@ fn each_tree_gets_its_own_path_tables() {
 }
 
 /// The data is one extent both records name, so an overwrite inside the
-/// length is a change every tree sees — and a length is not.  Each tree's
+/// length is a change every tree sees, and a length is not.  Each tree's
 /// record carries its own copy of it, and nothing on the volume says which
 /// record in the other tree is this file's: the trees spell a name
 /// differently by design.  A change that would leave one tree saying five

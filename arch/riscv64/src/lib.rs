@@ -421,17 +421,17 @@ pub unsafe fn install_interrupt_table() -> bool {
     // **The IMSIC, before the controller**: a machine that pairs an APLIC with
     // one locks the APLIC in message mode, so its sources become MSIs this hart
     // must be able to receive.  A machine with no IMSIC in its tree does no
-    // part of this — the CSR pair an IMSIC is driven through is an **illegal
+    // part of this, the CSR pair an IMSIC is driven through is an **illegal
     // instruction** there, measured on `virt` and on `virt,aia=aplic`.
     // The controller **the trap claims through**, in the order the machines
     // deliver: an IMSIC first, because a machine that has one delivers every
-    // external interrupt as a message into a hart's file — including the ones
-    // an APLIC in message mode generates from its wired sources — and its claim
+    // external interrupt as a message into a hart's file, including the ones
+    // an APLIC in message mode generates from its wired sources, and its claim
     // is the only one that answers.  An APLIC in direct mode next; a PLIC last.
     //
     // A machine with an APLIC **and** an IMSIC still claims through the IMSIC,
     // and the APLIC is enabled beside it: its domain is locked in message mode
-    // — `domaincfg` reads `0x80000104`, `DM` set and read-only — so a wired
+    //, `domaincfg` reads `0x80000104`, `DM` set and read-only, so a wired
     // source becomes a message, and what this boot is missing is the sending
     // half (the domain's message address and each source's identity), which
     // nothing here would exercise because no device on these machines sends
@@ -465,8 +465,8 @@ pub unsafe fn install_interrupt_table() -> bool {
             // identity is not enabled is held pending for ever, and the device
             // it came from looks silent.  That is the shape this kernel wants,
             // and deliberately not the whole range: measured, enabling every
-            // identity 1..96 turned every wired line on this machine — most of
-            // them belonging to devices with no driver — into a trap per turn
+            // identity 1..96 turned every wired line on this machine, most of
+            // them belonging to devices with no driver, into a trap per turn
             // of a storm, because a level wire with nobody to answer it is
             // answered by nobody.  Only the sources a driver claims get an
             // identity, which is the same rule the PLIC path follows: a source
@@ -516,7 +516,7 @@ pub unsafe fn install_interrupt_table() -> bool {
 ///
 /// No device on these machines sends an MSI, so nothing else would ever
 /// exercise the path: a file that was enabled and never received anything looks
-/// exactly like one that was never enabled.  So the boot walks it once — enable
+/// exactly like one that was never enabled.  So the boot walks it once, enable
 /// an identity the device range does not use, write that identity into **this
 /// hart's own MSI page** exactly as a device's MSI-X table entry would, and
 /// read it back out with the claim.  That covers the page's address, the
@@ -561,7 +561,7 @@ unsafe fn bring_up_imsic(imsic: &imsic::Imsic) {
         crate::serial::write_str("protofire: imsic has no identity to test\n");
         return;
     };
-    // SAFETY: as above — the identity is one the file holds, and the page is
+    // SAFETY: as above, the identity is one the file holds, and the page is
     // this group's own arithmetic, which the caller bounded.
     let delivered = unsafe {
         imsic.enable_identity(test_identity);
@@ -599,7 +599,7 @@ unsafe fn bring_up_imsic(imsic: &imsic::Imsic) {
 /// The **boot hart's** IMSIC page, because the code that submits to the
 /// machine's devices runs on the boot CPU and the trap that answers a message
 /// arrives on the hart whose file the message named.  `None` on a machine whose
-/// tree names no IMSIC — and that answer is load-bearing, since the CSR pair an
+/// tree names no IMSIC, and that answer is load-bearing, since the CSR pair an
 /// IMSIC is driven through is an illegal instruction on those machines.
 ///
 /// The identity is the caller's to choose, from the range this file holds; see
@@ -616,7 +616,7 @@ pub fn message_page() -> Option<usize> {
 /// identity enables are per-hart state a `hart_start` does not carry over, so a
 /// started hart that skipped this would hold every message addressed to it
 /// pending for ever.  And the self-test runs here too, because the boot hart's
-/// own self-test only exercises the boot hart's file — the **stride** between
+/// own self-test only exercises the boot hart's file, the **stride** between
 /// files is what a second hart's self-test proves, and a wrong stride is a
 /// message delivered to a hart with no handler.
 ///

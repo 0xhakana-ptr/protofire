@@ -8,14 +8,14 @@
 //! only one of them holds state.
 //!
 //! [`crate::per_cpu`] is the **record**: which slots exist, which CPU is
-//! running now, and what each one has counted — ticks, interrupts, whether it
+//! running now, and what each one has counted, ticks, interrupts, whether it
 //! is parked.  Its values are atomics, and it is the one part of the kernel
 //! safe to touch from any CPU without a lock.
 //!
 //! This file is the **sequence**: the boot-time act of starting the others and
 //! proving each one came up, the IPI that makes that observable, and the line
-//! that reports what happened.  It owns no state of its own — every fact it
-//! reports it read out of `per_cpu` — and it runs once, from the boot CPU,
+//! that reports what happened.  It owns no state of its own, every fact it
+//! reports it read out of `per_cpu`, and it runs once, from the boot CPU,
 //! which is why everything here is `#[cfg(target_os = "none")]`.
 //!
 //! The test of the split: `per_cpu` compiles and is tested on a host, this

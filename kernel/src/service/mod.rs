@@ -4,7 +4,7 @@
 //! the freeze that closes it.
 //!
 //! **Parked on purpose.**  The clock is the one service, and it is here to show
-//! the table working end to end — not as the start of a list that should grow
+//! the table working end to end, not as the start of a list that should grow
 //! now.  `docs/status.md` says why, and what has to exist before it resumes.
 //!
 //! ## Why the boot installs and the table does not
@@ -68,7 +68,7 @@ pub fn install_all() -> usize {
 /// Ask the clock what the counter reads, through the table.
 ///
 /// This is the self-test: it does not call [`clock::Clock`] directly, because
-/// what is being checked is the **table** — that a name resolves, that the
+/// what is being checked is the **table**, that a name resolves, that the
 /// handle drives the service through the trait, and that the completion comes
 /// back with the caller's token.  A boot that called the service directly would
 /// exercise none of it.

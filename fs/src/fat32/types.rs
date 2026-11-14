@@ -2,8 +2,8 @@
 //!
 //! FAT12/16/32's on-disk types: the BPB geometry parsed from the boot
 //! sector, the FAT type classification, directory entry parsing and
-//! serialisation — 8.3 short names, LFN fragments, and the entry sets a
-//! create builds — and the DOS date arithmetic the timestamps ride on.
+//! serialisation, 8.3 short names, LFN fragments, and the entry sets a
+//! create builds, and the DOS date arithmetic the timestamps ride on.
 //!
 //! Every multi-byte field is little-endian on the disk, and the format's
 //! own quirks are its own: 12-bit entries packed two into three bytes, a
@@ -21,16 +21,16 @@ use crate::types::NodeKind;
 use abi::Error;
 use abi::Result;
 
-// ── the FAT family ───────────────────────────────────────────────────────
+// the FAT family
 
 /// The FAT type, decided by the data cluster count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FatType {
-    /// FAT12 — fewer than 4085 data clusters.
+    /// FAT12, fewer than 4085 data clusters.
     Fat12,
-    /// FAT16 — 4085 to 65524.
+    /// FAT16, 4085 to 65524.
     Fat16,
-    /// FAT32 — 65525 or more.
+    /// FAT32, 65525 or more.
     Fat32,
 }
 
@@ -74,14 +74,14 @@ pub(super) const ATTR_VOLUME_ID: u8 = 0x08;
 pub(super) const ATTR_DIRECTORY: u8 = 0x10;
 #[allow(dead_code)] // the format's own bit; this driver never sets it
 pub(super) const ATTR_ARCHIVE: u8 = 0x20;
-/// The attribute combination an LFN entry carries — illegal for a real
+/// The attribute combination an LFN entry carries, illegal for a real
 /// file, which is how every OS detects one.
 pub(super) const ATTR_LFN_MASK: u8 = ATTR_READ_ONLY | ATTR_HIDDEN | ATTR_SYSTEM | ATTR_VOLUME_ID;
 
 /// A directory entry's size, thirty-two bytes.
 pub(super) const DIR_ENTRY_SIZE: usize = 32;
 
-// ── the BPB ──────────────────────────────────────────────────────────────
+// the BPB
 
 /// BPB field offsets in the boot sector.
 pub(super) const BPB_BYTES_PER_SECTOR: usize = 11;
@@ -109,7 +109,7 @@ pub(super) const FSINFO_NEXT_FREE_OFFSET: usize = 492;
 pub(super) const FSINFO_TRAIL_SIGNATURE: [u8; 2] = [0x55, 0xAA];
 pub(super) const FSINFO_UNKNOWN: u32 = 0xFFFF_FFFF;
 
-// ── the geometry ─────────────────────────────────────────────────────────
+// the geometry
 
 /// The volume's geometry, parsed from the BPB: where the FAT tables sit,
 /// where the data area starts, and how many clusters it holds.
@@ -238,7 +238,7 @@ impl FatGeometry {
     }
 }
 
-// ── little-endian reads ──────────────────────────────────────────────────
+// little-endian reads
 
 pub(super) fn read_u16(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([data[offset], data[offset + 1]])
@@ -253,12 +253,12 @@ pub(super) fn read_u32(data: &[u8], offset: usize) -> u32 {
     ])
 }
 
-// ── DOS dates ────────────────────────────────────────────────────────────
+// DOS dates
 
 /// A DOS date+time pair, in Unix epoch seconds.
 ///
 /// The date field's year counts from 1980, its month is 1-based, and its
-/// time field's seconds are halved — a zero date means "unset" and answers
+/// time field's seconds are halved, a zero date means "unset" and answers
 /// zero rather than a fabricated epoch.
 pub(crate) fn dos_datetime_to_unix(date: u16, time: u16) -> u64 {
     if date == 0 {
@@ -300,7 +300,7 @@ fn days_since_epoch(year: u32, month: u32, day: u32) -> u32 {
     era as u32 * 146097 + doe - 719468
 }
 
-// ── directory entries ────────────────────────────────────────────────────
+// directory entries
 
 /// A parsed directory entry.
 #[derive(Debug, Clone)]
@@ -315,7 +315,7 @@ pub(super) struct FatDirEntry {
 }
 
 /// Parse one 32-byte directory entry, answering `None` for the deleted,
-/// the volume-label and the LFN entries — the LFN fragments are the
+/// the volume-label and the LFN entries, the LFN fragments are the
 /// caller's to collect.
 pub(super) fn parse_short_dir_entry(data: &[u8], code_page: OemCodePage) -> Option<FatDirEntry> {
     if data.len() < DIR_ENTRY_SIZE {
@@ -449,8 +449,8 @@ pub(super) fn parse_lfn_fragment(data: &[u8]) -> Option<(u8, [u16; 13])> {
     Some(((if last { 0x80 } else { 0 }) | seq_num, code_units))
 }
 
-/// Build a long name from the collected LFN fragments — reverse order, the
-/// fragments stored last-first — decoded through the UTF-16 converter so
+/// Build a long name from the collected LFN fragments, reverse order, the
+/// fragments stored last-first, decoded through the UTF-16 converter so
 /// surrogate pairs land.
 pub(super) fn build_lfn_name(fragments: &[(u8, [u16; 13])]) -> String {
     let mut code_units: Vec<u16> = Vec::new();
@@ -465,7 +465,7 @@ pub(super) fn build_lfn_name(fragments: &[(u8, [u16; 13])]) -> String {
     unicode::utf16le_to_utf8(&code_units)
 }
 
-// ── the write path's serialisation ───────────────────────────────────────
+// the write path's serialisation
 
 /// The LFN checksum over an 11-byte short name.
 pub(super) fn lfn_checksum(short_name: &[u8; 11]) -> u8 {
@@ -481,7 +481,7 @@ pub(super) fn lfn_checksum(short_name: &[u8; 11]) -> u8 {
 
 /// Generate an 8.3 short name from a long one: up to six kept characters,
 /// a `~1` suffix when the name needs one, and the extension's first three
-/// characters — unmappable characters become underscores.
+/// characters, unmappable characters become underscores.
 pub(super) fn generate_short_name(long_name: &str, code_page: OemCodePage) -> [u8; 11] {
     let mut short = [b' '; 11];
 
@@ -593,8 +593,8 @@ pub(super) fn write_short_entry(
     entry[31] = (file_size >> 24) as u8;
 }
 
-/// Build the raw bytes of a directory entry set — LFN entries, then the
-/// short entry — answering how many entries were written.
+/// Build the raw bytes of a directory entry set, LFN entries, then the
+/// short entry, answering how many entries were written.
 pub(super) fn build_dir_entry_set(
     raw: &mut [u8],
     name: &str,

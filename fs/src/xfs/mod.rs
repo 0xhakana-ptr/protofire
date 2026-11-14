@@ -7,8 +7,8 @@
 //!
 //! ## Why this volume is read-only
 //!
-//! The write path a mutating filesystem needs — allocation, transaction,
-//! journal commit — is the format's hardest third, and the read path this
+//! The write path a mutating filesystem needs, allocation, transaction,
+//! journal commit, is the format's hardest third, and the read path this
 //! module carries is complete without it: a read-only volume answers
 //! lookups, listings, reads and xattrs, and its mutation half is fixed by
 //! [`crate::filesystem::ReadOnlyFileSystem`]'s blanket implementation, so
@@ -347,7 +347,7 @@ impl VNode for XfsVNode {
     }
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────
+// helpers
 
 /// A path's segments, cleaned.
 fn segments_of(clean: &str) -> Vec<&str> {

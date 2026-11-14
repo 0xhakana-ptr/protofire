@@ -1,7 +1,7 @@
 # `async_io`: requests, completions, and what a service is
 
-`async_io` is a request/completion model — a request, a completion, a bounded
-queue, and a trait with three methods — and it is deliberately small: no
+`async_io` is a request/completion model, a request, a completion, a bounded
+queue, and a trait with three methods, and it is deliberately small: no
 executor, no task, no future, no scheduler, and this document says why each of
 those is absent.
 
@@ -9,7 +9,7 @@ those is absent.
 
 This crate is the foundation of **everything is a service**.  A disk queue, a
 socket's read half, a timer, a kernel thread and a user program all accept a
-request and complete it later, and one trait describes all of them — that is
+request and complete it later, and one trait describes all of them, that is
 [What "everything is a service" buys](#what-everything-is-a-service-buys) below,
 and it is the reason the request is opaque instead of an operation code.
 
@@ -22,28 +22,28 @@ Two layers are named and neither exists yet:
 - **A device or a process behind the trait**: the implementations are
   `MemoryBlockService`, which is a byte slice, and nothing else.  Every driver
   in the tree submits through `block`'s `QueuedBlockDevice` or through a virtio
-  queue of its own — a typed method per operation, a ticket per request, an
-  `unsafe` buffer contract — and that is a working shape, which is exactly why
+  queue of its own, a typed method per operation, a ticket per request, an
+  `unsafe` buffer contract, and that is a working shape, which is exactly why
   moving one onto this trait is the step that would test the idea instead of
   describing it.
 
 **One of the two layers has landed since this was written.**  `kernel/src/service/table.rs`
 is the registry: a name, a handle, and a freeze that closes the table after the
 boot installs what it has.  Its first occupant is a clock in the kernel, whose
-answer is the machine's own counter — so the shape is no longer only argued, it
+answer is the machine's own counter, so the shape is no longer only argued, it
 is a boot that submits a request by name, drives a `dyn Service` through the
 trait, and prints the number that came back.
 
 What is still missing, and it is the larger half: a **device** behind the trait.
 The clock answers in the call and has no queue, so nothing yet exercises a
 service that completes later except the host tests.  `VirtioBlock` is the
-candidate and it is a real change — its `unsafe` buffer contract has to be
+candidate and it is a real change, its `unsafe` buffer contract has to be
 described in a request that carries only two words.
 
 The section
 [The obligation the trait states and cannot enforce](#the-obligation-the-trait-states-and-cannot-enforce)
 already said a driver's version of the check is "a different gate and a later
-change" — this section is the same admission in the place a reader starts.
+change", this section is the same admission in the place a reader starts.
 
 ## The model
 
@@ -73,8 +73,8 @@ finished, so a service is the thing that holds the tokens until a caller comes
 for them.  Putting the queue in the caller would mean the caller had to be told
 where to put a completion before it knew whether the work succeeded.
 
-The queue's accounting is what makes the trait's one obligation checkable —
-what went in, what came out, what was refused — and the count of refused pushes
+The queue's accounting is what makes the trait's one obligation checkable
+what went in, what came out, what was refused, and the count of refused pushes
 stays on the queue for the same reason.
 
 ## Why a trait and not a table of operation codes

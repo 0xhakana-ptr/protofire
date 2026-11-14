@@ -1,8 +1,8 @@
 //! fs/src/fat32/tests.rs
 //!
 //! The FAT32 tests, on a host: a writable volume the test's own builder
-//! makes on an in-memory device — the boot sector, two FAT tables, and a
-//! root directory with its dot entries — and the read and write paths
+//! makes on an in-memory device, the boot sector, two FAT tables, and a
+//! root directory with its dot entries, and the read and write paths
 //! exercised against it through mount, write, flush, and re-open on the
 //! same device, which is what a boot does when it finds one.
 
@@ -120,7 +120,7 @@ fn a_volume_opens_and_its_root_is_a_directory() {
 }
 
 /// A file created, written, flushed, and read back **after a fresh open on
-/// the same device** — the device is the disk, and re-opening it is what a
+/// the same device**, the device is the disk, and re-opening it is what a
 /// boot does when it finds one.
 #[test]
 fn a_written_file_is_the_disks_own_bytes_after_a_remount() {

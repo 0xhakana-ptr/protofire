@@ -199,7 +199,7 @@ pub fn invalidate_others() -> Report {
 /// a third round covers it; a machine that keeps advancing the epoch faster
 /// than this CPU can flush is one whose sender is waiting too, and stopping
 /// after a few rounds leaves the last epoch recorded, which is the honest thing
-/// to record — the flush covered everything up to what the store says.
+/// to record, the flush covered everything up to what the store says.
 #[cfg(target_os = "none")]
 pub fn acknowledge() {
     let slot = crate::per_cpu::current_slot();

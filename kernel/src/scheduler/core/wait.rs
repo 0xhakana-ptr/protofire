@@ -77,8 +77,8 @@ impl Scheduler {
     ///
     /// A trap leaves `ELR_EL1` at the instruction **after** the `svc`, which
     /// is what an answered call wants: the handler wrote the answer and the
-    /// program continues.  A **parked** call was not answered — its handler
-    /// found the wait real and is leaving it for a wake — so resuming after
+    /// program continues.  A **parked** call was not answered, its handler
+    /// found the wait real and is leaving it for a wake, so resuming after
     /// the call would skip it, and the program would continue with whatever its
     /// answer register held from the call before.  The wake is what retries the
     /// call, and that is only true if the saved position is the call itself.
@@ -86,8 +86,8 @@ impl Scheduler {
     /// This lives **here**, in the park, rather than at every caller: the
     /// rewind is part of what parking means, and a caller that had to remember
     /// it would be a caller that could forget.  The first attempt did put it at
-    /// the callers and rewound the wrong copy — `task.context = *frame` had
-    /// already copied the frame — so the saved position kept pointing past the
+    /// the callers and rewound the wrong copy, `task.context = *frame` had
+    /// already copied the frame, so the saved position kept pointing past the
     /// call and the wait never resumed.
     pub fn block(&mut self, cpu: usize, frame: &Context) {
         if let Some(task) = self.running.get(cpu).copied().flatten()
@@ -108,7 +108,7 @@ impl Scheduler {
     ///
     /// The sequencing with [`Self::wake_blocked`] is the reason this exists.
     /// A caller that checks a fact, then parks, has a gap between the two, and
-    /// on a machine with two CPUs the wake can fire inside it — the task then
+    /// on a machine with two CPUs the wake can fire inside it, the task then
     /// parks **after** the wake it was waiting for, and nothing will ever wake
     /// it.  The caller of this method holds the same lock
     /// [`Self::wake_blocked`]
@@ -133,7 +133,7 @@ impl Scheduler {
     ///
     /// The wait `WaitProcess` makes, written with the same discipline as
     /// [`Self::block_unless`] and for the same reason: the caller's own check
-    /// — has a process finished? — and the park have a gap, and on a machine
+    ///, has a process finished?, and the park have a gap, and on a machine
     /// with two CPUs a child's exit can fire inside it, waking a blocked set
     /// that does not hold the waiter yet.  The re-check reads the exit
     /// statuses under the same lock, so a child that died while the call was
@@ -162,7 +162,7 @@ impl Scheduler {
     /// wrong:
     ///
     /// - the process ended, with its status;
-    /// - no task has that pid — a fact to report, not a reason to wait;
+    /// - no task has that pid, a fact to report, not a reason to wait;
     /// - it exists and has not ended, which is the one case that parks.
     pub fn block_unless_pid(&mut self, cpu: usize, frame: &Context, pid: u32) -> PidWait {
         let answer = match self.exit_status(pid) {
@@ -178,8 +178,8 @@ impl Scheduler {
 
     /// Queue a signal for `pid`, from `sender_pid`, and wake what waits.
     ///
-    /// The target must exist — an unknown pid is `NotFound`, the answer a
-    /// caller checks its own argument against — and a full ring is `Busy`,
+    /// The target must exist, an unknown pid is `NotFound`, the answer a
+    /// caller checks its own argument against, and a full ring is `Busy`,
     /// which is the target saying it is not consuming rather than the
     /// kernel losing what it was sent.  The wake is the pipe write's: the
     /// waiter retries under the wake, so a signal that arrives while the
@@ -225,9 +225,9 @@ impl Scheduler {
         // The wait this ends is `wfe` on this tree's aarch64, and `wfe` returns
         // for an event rather than for a memory write; the inter-CPU line is
         // what sets one.  The pipe's write and close paths send it after their
-        // wake for exactly this reason.  This path — the one `WaitSignal` and
+        // wake for exactly this reason.  This path, the one `WaitSignal` and
         // `SigSuspend` park on, and the one that carries a handled signal to a
-        // program's own handler — did not, and a boot whose waiter was parked
+        // program's own handler, did not, and a boot whose waiter was parked
         // on another core ended at `a program waits for process N` with the
         // record sitting unread in its ring.
         //
@@ -251,7 +251,7 @@ impl Scheduler {
     /// Take this task's oldest pending signal, or park it until one arrives.
     ///
     /// The same discipline as [`Self::block_unless_exit`]: the caller's own
-    /// check — is a signal here? — and the park have a gap, and a signal
+    /// check, is a signal here?, and the park have a gap, and a signal
     /// sent inside that gap wakes the blocked set, which is why the send
     /// wakes.  The record travels as the three fields the ABI's
     /// `ProcessSignalRecord` carries.
@@ -301,8 +301,8 @@ impl Scheduler {
     ///
     /// The park is the subtlety: the wake resumes the **call**, so the retry
     /// re-enters with the same argument and cannot know what the mask was
-    /// before the first entry.  The task's own slot carries it — set on the
-    /// first entry, taken on the answering path — which is what makes the
+    /// before the first entry.  The task's own slot carries it, set on the
+    /// first entry, taken on the answering path, which is what makes the
     /// restore survive a park.
     pub fn sigsuspend_current(
         &mut self,
@@ -341,7 +341,7 @@ impl Scheduler {
 
     /// Install or withdraw the running task's handler for one signal.
     ///
-    /// The address is the program's own code, in its own space — the same
+    /// The address is the program's own code, in its own space, the same
     /// trust an exception handler's install already extends, and the reason
     /// the address means nothing until the task's next install names it.
     pub fn set_signal_handler_current(
@@ -410,7 +410,7 @@ impl Scheduler {
 ///
 /// Three outcomes rather than an `Option<Option<_>>`: the nested option has
 /// the same three cases but nothing forces a caller to name them, and the
-/// mistake it invites — treating "no such process" as "not yet" — is a wait
+/// mistake it invites, treating "no such process" as "not yet", is a wait
 /// that parks for ever on a pid nothing will ever have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PidWait {

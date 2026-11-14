@@ -31,7 +31,7 @@ use core::mem::size_of;
 /// added: a program that checks this and sees a version it knows can rely on
 /// every call that version served, and a new number is found by its own
 /// presence rather than by a bumped version.  The frozen range is what makes
-/// that safe — a number at or below 120 cannot be reassigned, so nothing a
+/// that safe, a number at or below 120 cannot be reassigned, so nothing a
 /// program already calls can become something else under it.
 pub const ABI_VERSION: usize = 1;
 

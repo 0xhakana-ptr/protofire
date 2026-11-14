@@ -19,8 +19,8 @@ belongs: separating the tests from the code they check makes a reader open two
 files to see one thing, and a `tests.rs` that exists only to hold a module's
 tests is a directory created for the tests rather than for the code.
 
-A second file is worth it when the **module** is already split — `mod.rs`
-beside `space.rs`, `table.rs` and so on — and its tests have outgrown one
+A second file is worth it when the **module** is already split, `mod.rs`
+beside `space.rs`, `table.rs` and so on, and its tests have outgrown one
 `mod tests`.  Then a `tests.rs` sibling, declared `#[cfg(test)]
 mod tests;`, keeps the module's own files about the mechanism.  A module small
 enough to be one file keeps its tests in that file, however long the tests

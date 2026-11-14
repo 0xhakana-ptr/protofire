@@ -7,7 +7,7 @@
 //! ## The addressing
 //!
 //! An inode number names its allocation group in the upper bits and its
-//! position within the group below — which is why the volume's geometry is
+//! position within the group below, which is why the volume's geometry is
 //! the superblock's to give, and every read goes through
 //! [`inode_addr`] rather than an offset a caller computed.
 
@@ -44,7 +44,7 @@ use super::types::parse_block_dir;
 use super::types::parse_extents;
 use super::types::parse_shortform_dir;
 
-// ── the superblock ───────────────────────────────────────────────────────
+// the superblock
 
 /// Read and validate the superblock from the device's first sector.
 pub(super) fn read_superblock(device: &Arc<dyn BlockDevice>) -> Result<Superblock> {
@@ -56,8 +56,8 @@ pub(super) fn read_superblock(device: &Arc<dyn BlockDevice>) -> Result<Superbloc
 /// The journal's own facts, as the superblock states them: whether the
 /// volume carries one, and whether an unclean unmount left it dirty.
 ///
-/// The dirty check is the format's own convention — v4's clean-unmount
-/// flag in `features_log` bit 0, v5's log incompat bit — read rather than
+/// The dirty check is the format's own convention, v4's clean-unmount
+/// flag in `features_log` bit 0, v5's log incompat bit, read rather than
 /// guessed, because replaying a clean journal would be recovery the
 /// volume never asked for.
 pub(super) fn check_journal(sb: &Superblock) -> JournalInfo {
@@ -87,7 +87,7 @@ pub(super) fn check_journal(sb: &Superblock) -> JournalInfo {
     }
 }
 
-// ── inode addressing and reading ─────────────────────────────────────────
+// inode addressing and reading
 
 /// The byte offset of an inode on disk: the allocation group from the
 /// number's upper bits, the position within the group from the lower.
@@ -122,7 +122,7 @@ pub(super) fn read_inode_buf(
     Ok((core, buf))
 }
 
-// ── directories ──────────────────────────────────────────────────────────
+// directories
 
 /// Read a directory's entries from its inode, dispatching on the data
 /// fork's format: shortform inline, extent-mapped blocks, or a B+tree.
@@ -158,7 +158,7 @@ pub(super) fn read_directory(
 }
 
 /// Look up one name in a directory by the hash index where the format
-/// carries one — leaf and node formats binary-search; shortform and
+/// carries one, leaf and node formats binary-search; shortform and
 /// block-format directories fall back to the linear scan, which is equally
 /// fast for the sizes those formats exist at.
 ///
@@ -274,7 +274,7 @@ fn read_block_dir_entries(
     Ok(entries)
 }
 
-// ── file reading ─────────────────────────────────────────────────────────
+// file reading
 
 /// A file inode's extent list, by its data fork's format.
 pub(super) fn get_extents(
@@ -331,7 +331,7 @@ pub(super) fn read_file(
     Ok(total)
 }
 
-/// Read an inline file's bytes — the data rides in the inode itself, after
+/// Read an inline file's bytes, the data rides in the inode itself, after
 /// the core.
 pub(super) fn read_inline_file(
     core: &InodeCore,
@@ -365,7 +365,7 @@ pub(super) fn read_inline_file(
     Ok(n)
 }
 
-// ── extended attributes ──────────────────────────────────────────────────
+// extended attributes
 
 /// List an inode's extended attributes, dispatching on the attribute
 /// fork's format: shortform inline, extent-mapped leaf blocks, or the

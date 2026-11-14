@@ -163,7 +163,7 @@ pub trait Transport: Send + Sync {
     /// it is the answer a driver needs before it programs a second queue.
     /// `queue_select` naming a queue the device does not have is a write whose
     /// meaning the device does not define, and a driver that went on to enable
-    /// that queue would hold a receive ring nothing ever fills — a card that
+    /// that queue would hold a receive ring nothing ever fills, a card that
     /// looks up and never receives.
     fn queue_count(&self) -> u16;
 
@@ -191,7 +191,7 @@ pub trait Transport: Send + Sync {
     /// `configure_queue` last selected, and that works only for a device with
     /// one queue.  A network card has a receive queue and a transmit queue, and
     /// a driver that configured one and then programmed the other's addresses
-    /// would write them into the first — with every register reading back
+    /// would write them into the first, with every register reading back
     /// exactly what it wrote.  Making the queue explicit is what the device's
     /// own registers mean: `queue_select` names the queue every other
     /// `queue_*` register applies to, so the selection belongs inside each
@@ -219,8 +219,8 @@ pub trait Transport: Send + Sync {
     /// MAC address and a GPU's resolution are all somewhere in that region, and
     /// where is each device crate's business.
     ///
-    /// Two methods used to sit here — `capacity_sectors` and
-    /// `read_device_config_byte` — and both were the block device's.  The first
+    /// Two methods used to sit here, `capacity_sectors` and
+    /// `read_device_config_byte`, and both were the block device's.  The first
     /// named the block layout (`0x00` is its `le64 capacity`) in a crate that
     /// is not the block crate, and the second had no caller at all: a method on
     /// a trait every implementor must write, for a byte no driver read.  One
@@ -232,8 +232,8 @@ pub trait Transport: Send + Sync {
     ///
     /// Section 4.1.4.3.2: the driver writes `queue_msix_vector` and reads it
     /// back; the device latches the mapping **asynchronously**, so an answer
-    /// that does not equal what was written is a mapping the device refused —
-    /// usually no vector left — and a driver that believed the write would wait
+    /// that does not equal what was written is a mapping the device refused
+    /// usually no vector left, and a driver that believed the write would wait
     /// for an interrupt that never comes.
     ///
     /// `false` is the answer for a transport with no MSI-X at all, which is the
@@ -317,7 +317,7 @@ mod tests {
     /// methods that program a queue used to act on whichever queue
     /// `configure_queue` last selected, so a driver that configured queue 0,
     /// then configured queue 1, then programmed queue 0's addresses wrote them
-    /// into queue 1 — and every register read back what was written.  The
+    /// into queue 1, and every register read back what was written.  The
     /// index is a parameter now, and this pins that it is the one used.
     ///
     /// The check is on the trait's contract rather than on one implementation:

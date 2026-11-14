@@ -334,7 +334,7 @@ pub enum SyscallNumber {
     /// has an `NetworkStatus` record, and that call's record is frozen: its
     /// fourteen address bytes are IPv4's and a sixteen-byte address does not
     /// fit where a four-byte one goes.  This is the additive answer the
-    /// numbering rules allow — a new number, its own record, and
+    /// numbering rules allow, a new number, its own record, and
     /// `NetworkStatus` unchanged for the programs already built against it.
     /// wait_process_of, wait for **one named** process to end, answering its
     /// exit status (#196).
@@ -355,7 +355,7 @@ pub enum SyscallNumber {
     /// has an `NetworkStatus` record, and that call's record is frozen: its
     /// fourteen address bytes are IPv4's and a sixteen-byte address does not
     /// fit where a four-byte one goes.  This is the additive answer the
-    /// numbering rules allow — a new number, its own record, and
+    /// numbering rules allow, a new number, its own record, and
     /// `NetworkStatus` unchanged for the programs already built against it.
     Ipv6Status = 197,
 }

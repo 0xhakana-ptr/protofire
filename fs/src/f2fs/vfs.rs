@@ -45,7 +45,7 @@ impl F2fsVolume {
     }
 
     /// Write a fresh volume onto a device, then open it: the layout the
-    /// mount reads is the formatter's own product — a superblock, two
+    /// mount reads is the formatter's own product, a superblock, two
     /// checkpoints with the newer one winning, SIT, NAT, SSA, and a root
     /// directory with its dot entries.
     pub fn make(device: Arc<dyn QueuedBlockDevice>) -> Result<Arc<Self>> {
@@ -129,7 +129,7 @@ impl crate::filesystem::FileSystem for F2fsVolume {
         let (new_parent_path, new_name) = split_path(new_path)?;
         let (new_parent_nid, _) = self.fs.walk_path(&new_parent_path)?;
 
-        // A rename over an existing name drops it first — a directory with
+        // A rename over an existing name drops it first, a directory with
         // children is refused, the same refusal a removal makes.
         if let Ok((existing_nid, existing_inode)) = self.fs.walk_path(new_path) {
             if existing_nid == old_nid {
@@ -269,7 +269,7 @@ impl crate::filesystem::FileSystem for F2fsVolume {
         let mut sym_inode = empty_inode(F2FS_S_IFLNK | 0o777);
         sym_inode.i_size = target_bytes.len() as u64;
 
-        // SAFETY: as the read side — the same `u32` array, viewed mutably
+        // SAFETY: as the read side, the same `u32` array, viewed mutably
         // for the length it actually has.
         let addr_bytes: &mut [u8] = unsafe {
             core::slice::from_raw_parts_mut(
@@ -470,7 +470,7 @@ impl VNode for F2VNode {
     }
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────
+// helpers
 
 /// A fresh inode, `i_addr` all holes.
 fn empty_inode(mode: u16) -> F2fsInode {

@@ -139,6 +139,14 @@ run_p0() {
 
     # Documents before code: a citation that does not resolve is cheaper to find
     # than to follow, and the check costs a fraction of a build.
+    # The punctuation `docs/fmts/comments.md` names as not used: an em dash,
+    # and a rule line of box-drawing characters.  The rule is prose and stayed
+    # prose until the tree held 1,600 lines that broke it, which is the case
+    # `AGENTS.md`'s "a rule that can be a gate belongs in a gate" describes.
+    step "scripts/check-comment-punctuation.sh"
+    sh scripts/check-comment-punctuation.sh \
+        || fail "a comment or a document uses punctuation the style refuses"
+
     step "scripts/check-docs.sh"
     sh scripts/check-docs.sh || fail "a document cites a file the tree does not have"
 

@@ -72,8 +72,8 @@ are already shipped on the demo disk.
 - **Never insert** in the middle of the range to keep a group tidy. The file is
   ordered by number because numbering is historical, not thematic.
 - New syscalls take the **next unused number** at the end of the defined range,
-  and `PUBLIC_SYSCALL_COUNT` — derived from the last variant in
-  [`abi/src/number.rs`](../../abi/src/number.rs) — moves with it in the same
+  and `PUBLIC_SYSCALL_COUNT`, derived from the last variant in
+  [`abi/src/number.rs`](../../abi/src/number.rs), moves with it in the same
   edit.
 
 ### 3.2 Stability classes
@@ -190,8 +190,8 @@ Rules the shape encodes:
 
 A pointer from ring 3 is a number, and this section is the rule for it.
 
-The registry's own handlers still take borrows — `Arguments::path` and
-`Arguments::buffer`, built by the kernel code that owns the buffer — and a
+The registry's own handlers still take borrows, `Arguments::path` and
+`Arguments::buffer`, built by the kernel code that owns the buffer, and a
 borrow needs no validation.  The boundary exists where programs call:
 `Read` and `Write` to a pipe take a ring-3 buffer, and the handler validates
 the range with `is_user_range` before it touches a byte, because an address
@@ -201,110 +201,110 @@ The calls a ring-3 program can make today, and the slots each carries:
 
 The calls a ring-3 program can make today, and the slots each carries.
 
-- **`Open`** — `a0` the path, a NUL-terminated string in the caller's memory;
+- **`Open`**, `a0` the path, a NUL-terminated string in the caller's memory;
   `a1` the flags; `a2`-`a3` reserved zero.
-- **`Read`** — `a0` the descriptor; `a1` the offset, or `READ_OFFSET_CURRENT`;
+- **`Read`**, `a0` the descriptor; `a1` the offset, or `READ_OFFSET_CURRENT`;
   `a2` the buffer; `a3` its length; `a4`-`a5` reserved zero.
-- **`Close`** — `a0` the descriptor; `a1`-`a5` reserved zero.
-- **`ExecProcess`** — `a0` the path, a NUL-terminated string in the caller's
+- **`Close`**, `a0` the descriptor; `a1`-`a5` reserved zero.
+- **`ExecProcess`**, `a0` the path, a NUL-terminated string in the caller's
   memory naming the file the process becomes; `a1`-`a5` reserved zero.
-- **`Mmap`** — `a0` an address hint, or zero for "anywhere"; `a1` the length in
+- **`Mmap`**, `a0` an address hint, or zero for "anywhere"; `a1` the length in
   bytes; `a2` a `PROT_*` set; `a3` a `MAP_*` set that has to name anonymous
   private memory; `a4`-`a5` reserved zero.  Answers the base address, which is
   page-aligned and inside the caller's window.
-- **`Munmap`** — `a0` the address; `a1` the length in bytes; `a2`-`a5` reserved
+- **`Munmap`**, `a0` the address; `a1` the length in bytes; `a2`-`a5` reserved
   zero.  Both are rounded to pages, and the answer is how many were taken away.
-- **`Brk`** — `a0` the new break, or zero to ask what it is; `a1`-`a5` reserved
+- **`Brk`**, `a0` the new break, or zero to ask what it is; `a1`-`a5` reserved
   zero.  Answers the break the kernel now holds, so a caller that asked for more
   than it can have learns what it actually got.
-- **`ReclaimPages`** — `a0` how many pages the caller would like back, or zero
+- **`ReclaimPages`**, `a0` how many pages the caller would like back, or zero
   for as many as will go; `a1`-`a5` reserved zero.  Answers how many came back.
-- **`Write`** — `a0` the descriptor; `a1` the buffer; `a2` its length;
+- **`Write`**, `a0` the descriptor; `a1` the buffer; `a2` its length;
   `a3`-`a5` reserved zero.  Answers the bytes accepted, starting at the
   descriptor's own position, which moves by them.  A `Write` whose `a2` is
   zero names no bytes and is the announcement, not a write.
-- **`Stat`** — `a0` the path, a NUL-terminated string; `a1` the record;
+- **`Stat`**, `a0` the path, a NUL-terminated string; `a1` the record;
   `a2` its length, at least `FILE_STAT_SIZE`; `a3`-`a5` reserved zero.
   Answers zero, with the record filled.
-- **`ReadDir`** — `a0` the path; `a1` the index; `a2` the buffer; `a3` its
+- **`ReadDir`**, `a0` the path; `a1` the index; `a2` the buffer; `a3` its
   length; `a4`-`a5` reserved zero.  Answers the bytes written: the ABI's
   `DirectoryEntryRecord` header with the name's UTF-8 bytes packed after it.
   An index past the end answers `NotFound`.
-- **`CreateDir`** — `a0` the path; `a1`-`a5` reserved zero.  Answers zero.
-- **`RemovePath`** — `a0` the path; `a1`-`a5` reserved zero.  Answers zero.
-- **`Rename`** — `a0` the old path; `a1` the new path; `a2`-`a5` reserved
+- **`CreateDir`**, `a0` the path; `a1`-`a5` reserved zero.  Answers zero.
+- **`RemovePath`**, `a0` the path; `a1`-`a5` reserved zero.  Answers zero.
+- **`Rename`**, `a0` the old path; `a1` the new path; `a2`-`a5` reserved
   zero.  Answers zero.  Both names must resolve to one filesystem.
-- **`OpenAt`** — `a0` the descriptor the path is relative to, or `AT_FDCWD`;
+- **`OpenAt`**, `a0` the descriptor the path is relative to, or `AT_FDCWD`;
   `a1` the path; `a2` the flags; `a3`-`a5` reserved zero.  Answers a
   descriptor, like `Open`.
-- **`StatAt`** — `a0` the descriptor; `a1` the path; `a2` the record; `a3`
+- **`StatAt`**, `a0` the descriptor; `a1` the path; `a2` the record; `a3`
   its length; `a4`-`a5` reserved zero.  Answers zero, like `Stat`.
-- **`RenameAt`** — `a0` the old descriptor; `a1` the old path; `a2` the new
+- **`RenameAt`**, `a0` the old descriptor; `a1` the old path; `a2` the new
   descriptor; `a3` the new path; `a4`-`a5` reserved zero.  Answers zero.
-- **`CreateDirAt`** — `a0` the descriptor; `a1` the path; `a2`-`a5` reserved
+- **`CreateDirAt`**, `a0` the descriptor; `a1` the path; `a2`-`a5` reserved
   zero.  Answers zero.
-- **`RemovePathAt`** — `a0` the descriptor; `a1` the path; `a2`-`a5` reserved
+- **`RemovePathAt`**, `a0` the descriptor; `a1` the path; `a2`-`a5` reserved
   zero.  Answers zero.
-- **`SpawnProcess`** — `a0` the path of the program to run, NUL-terminated;
+- **`SpawnProcess`**, `a0` the path of the program to run, NUL-terminated;
   `a1`-`a5` reserved zero.  Answers the child's pid; the caller is the
   parent, and the child inherits nothing.
-- **`SendSignal`** — `a0` the target pid; `a1` the signal, `1..=31`; `a2` the
+- **`SendSignal`**, `a0` the target pid; `a1` the signal, `1..=31`; `a2` the
   payload; `a3` the flags; `a4`-`a5` reserved zero.  Answers zero, or
   `NotFound` for a pid no task carries and `Busy` for a full ring.
-- **`WaitSignal`** — `a0` the record; `a1` its length, at least 24 bytes;
+- **`WaitSignal`**, `a0` the record; `a1` its length, at least 24 bytes;
   `a2`-`a5` reserved zero.  Blocks until a signal the mask does not block
-  answers, and fills the record — signal, sender, payload — little-endian.
-- **`SetSignalMask`** — `a0` the mask, one bit per signal; `a1` the flags;
+  answers, and fills the record, signal, sender, payload, little-endian.
+- **`SetSignalMask`**, `a0` the mask, one bit per signal; `a1` the flags;
   `a2`-`a5` reserved zero.  Answers the mask the caller had.
-- **`SigSuspend`** — `a0` the mask; `a1` the flags; `a2` the record; `a3` its
+- **`SigSuspend`**, `a0` the mask; `a1` the flags; `a2` the record; `a3` its
   length; `a4`-`a5` reserved zero.  Blocks under the mask until an unblocked
   signal answers, fills the record, and puts the caller's own mask back.
-- **`SetSignalHandler`** — `a0` the signal; `a1` the action (`1` install,
+- **`SetSignalHandler`**, `a0` the signal; `a1` the action (`1` install,
   `0` withdraw); `a2` the handler's address; `a3`-`a5` reserved zero.
   Answers zero.
-- **`SigReturn`** — `a0` the resume; `a1`-`a5` reserved zero.  The delivered
+- **`SigReturn`**, `a0` the resume; `a1`-`a5` reserved zero.  The delivered
   handler's only exit: the kernel puts the interrupted context back and the
   interrupted flow resumes at `a0`.  Control does not come back.
-- **`GetTimeOfDay`** — `a0` the clock, `0` for `CLOCK_MONOTONIC` and `1` for
+- **`GetTimeOfDay`**, `a0` the clock, `0` for `CLOCK_MONOTONIC` and `1` for
   `CLOCK_REALTIME`; `a1` the record; `a2` its length, at least
   `TIME_RECORD_SIZE`; `a3`-`a5` reserved zero.  Answers zero, with the record
-  filled — seconds then nanoseconds.  A clock this ABI does not define is
+  filled, seconds then nanoseconds.  A clock this ABI does not define is
   `InvalidArgument`; a clock it defines and this build cannot read is
   `Unsupported`, which is what `CLOCK_REALTIME` gets until a real-time clock
   driver exists.
-- **`GetRandom`** — `a0` the buffer; `a1` its length; `a2`-`a5` reserved zero.
+- **`GetRandom`**, `a0` the buffer; `a1` its length; `a2`-`a5` reserved zero.
   Answers the bytes written, which is the length asked for.  A zero length
   answers zero and writes nothing.
-- **`SystemInfo`** — `a0` the selector, `0` for the scheduler; `a1` the
+- **`SystemInfo`**, `a0` the selector, `0` for the scheduler; `a1` the
   record; `a2` its length, at least `SYSTEM_INFO_SIZE`; `a3`-`a5` reserved
   zero.  Answers zero, with the record filled.  A selector this build does not
   serve is `InvalidArgument` rather than a record of zeros, which would read
   as an idle machine.
-- **`AbiInfo`** — `a0` the record; `a1` its length, at least `ABI_INFO_SIZE`;
+- **`AbiInfo`**, `a0` the record; `a1` its length, at least `ABI_INFO_SIZE`;
   `a2`-`a5` reserved zero.  Answers zero, with the version, the slot count and
   the frozen boundary filled.  This is the one call a program can make before
   it trusts any other, and every field is a constant of the build.
-- **`NetworkStatus`** — `a0` the record; `a1` its length, at least
+- **`NetworkStatus`**, `a0` the record; `a1` its length, at least
   `NETWORK_STATUS_SIZE`; `a2`-`a5` reserved zero.  Answers zero, with the
-  record filled — a state word, then the card's hardware address, its
+  record filled, a state word, then the card's hardware address, its
   protocol address and the gateway, packed as the wire carries them.  A
   machine with no card answers `NotFound` rather than a record: a record
   implies addresses, and a machine with no card has none.
-- **`BindUdp`** — `a0` the port; `a1`-`a5` reserved zero.  Answers the
+- **`BindUdp`**, `a0` the port; `a1`-`a5` reserved zero.  Answers the
   descriptor the datagram calls carry back.  Port zero is refused: it is the
   wire's "any port", and this kernel has no port allocator to answer it
-  with.  A port another socket holds answers `AlreadyExists` — a bound port
+  with.  A port another socket holds answers `AlreadyExists`, a bound port
   has one owner.  The socket is routable for exactly as long as some
   descriptor holds it, which is what a fork's copy extends and a process's
   exit ends.
-- **`SendToUdp`** — `a0` the descriptor; `a1` the destination's address,
+- **`SendToUdp`**, `a0` the descriptor; `a1` the destination's address,
   packed by `pack_address` (`10.0.2.2` is `0x0A000202`); `a2` the buffer;
   `a3` its length; `a4` the destination's port; `a5` the flags word, zero or
   [`NETWORK_FLAG_IPV6`](../../abi/src/network.rs).  Answers the bytes
   accepted, which is all a datagram send ever promises.  A datagram addressed
-  to this machine is delivered through the kernel's own demux — that is what
-  loopback is — and one for another machine leaves through the gateway.
-- **`ConnectTcp`** — `a0` the destination's address, packed by
+  to this machine is delivered through the kernel's own demux, that is what
+  loopback is, and one for another machine leaves through the gateway.
+- **`ConnectTcp`**, `a0` the destination's address, packed by
   `pack_address`; `a1` the destination's port; `a2` the flags word, zero or
   [`NETWORK_FLAG_IPV6`](../../abi/src/network.rs); `a3`-`a5` reserved zero.
   Answers the descriptor the stream is read and written through.  The
@@ -312,24 +312,24 @@ The calls a ring-3 program can make today, and the slots each carries.
   opening; a destination that is not this machine answers `Unsupported`,
   because a handshake that waits on the wire is a wait this build does not
   make a call do.
-- **`ListenTcp`** — `a0` the port; `a1`-`a5` reserved zero.  Answers the
+- **`ListenTcp`**, `a0` the port; `a1`-`a5` reserved zero.  Answers the
   descriptor an accept is called on.  Port zero is refused, and a port
-  another listener holds answers `AlreadyExists` — a listening port has one
+  another listener holds answers `AlreadyExists`, a listening port has one
   owner, whatever number of processes hold its descriptor.
-- **`AcceptTcp`** — `a0` the listener descriptor; `a1`-`a5` reserved zero.
+- **`AcceptTcp`**, `a0` the listener descriptor; `a1`-`a5` reserved zero.
   **Blocks** until a client's handshake opens a stream, and like
   `RecvFromUdp` it has no registry handler: the trap path serves it, parks
   the caller on the listener's pending list, and the connect's wake retries
-  the call.  Answers the new stream's descriptor, whose data — if the
-  client wrote before the accept ran — is already in the stream's inbox.
-- **`RecvFromUdp`** — `a0` the descriptor; `a1` the buffer; `a2` its length;
+  the call.  Answers the new stream's descriptor, whose data, if the
+  client wrote before the accept ran, is already in the stream's inbox.
+- **`RecvFromUdp`**, `a0` the descriptor; `a1` the buffer; `a2` its length;
   `a3` the sender record; `a4` its length, at least the record's size; `a5`
   the flags word, zero or [`NETWORK_FLAG_IPV6`](../../abi/src/network.rs).
   **Blocks** until a datagram answers, and this is why it has no registry
   handler: a handler that cannot park does not hold a number whose caller may
   have to wait, so the trap path serves it, parks the caller on the socket's
   queue, and the delivery's wake retries the call.  The sender record is two
-  words — the address packed as `SendToUdp` carries it, then the port.  A
+  words, the address packed as `SendToUdp` carries it, then the port.  A
   datagram longer than the buffer is refused with the datagram kept, because
   a take that discarded the bytes would make the loss permanent.
 
@@ -348,8 +348,8 @@ With [`NETWORK_FLAG_IPV6`](../../abi/src/network.rs) set:
   against the user window before it is read, and the address is read before
   any frame exists.
 - **`ConnectTcp`'s `a0`** is the same: a pointer to sixteen bytes.
-- **`RecvFromUdp`'s record** is `UDP_SENDER6_RECORD_SIZE` bytes — the sixteen
-  address bytes at `UDP_SENDER6_ADDRESS_OFFSET`, then the port — and `a4`
+- **`RecvFromUdp`'s record** is `UDP_SENDER6_RECORD_SIZE` bytes, the sixteen
+  address bytes at `UDP_SENDER6_ADDRESS_OFFSET`, then the port, and `a4`
   must be at least that, which the call checks before it writes.  A caller
   that set the flag and passed the two-word record is refused with
   `InvalidArgument` rather than having sixteen bytes written past the end of
@@ -368,8 +368,8 @@ family is the client's, which the connection already knows.
 
 A handled, unmasked signal is **delivered** rather than queued: the target's
 context is redirected to the handler at its next install, with the record in
-the argument registers — signal, sender, payload, and the interrupted resume
-as the fourth — and the whole displaced context kept by the kernel for the
+the argument registers, signal, sender, payload, and the interrupted resume
+as the fourth, and the whole displaced context kept by the kernel for the
 handler's `SigReturn`.  The delivery is transparent or it is a corruption;
 the whole context is the difference.
 
@@ -383,11 +383,11 @@ the path is looked at.
 
 **Streams carry data through `Read` and `Write`.**  A connected stream
 descriptor is readable and writable through the same two calls a file and a
-pipe are, with the slots a file read takes — `a1` the offset, `a2` the
+pipe are, with the slots a file read takes, `a1` the offset, `a2` the
 buffer, `a3` its length.  A stream has no position to seek, so the offset
 slot is refused unless it is `READ_OFFSET_CURRENT`; a write goes out as one
 segment and answers the bytes it carried; a read parks on an empty stream
-the way a pipe's reader parks, and answers zero — end of file — once the
+the way a pipe's reader parks, and answers zero, end of file, once the
 stream's connection is gone, which an orderly close's last acknowledgement
 is what leaves behind.
 
@@ -399,7 +399,7 @@ The four information calls all write a record into the caller's memory, and
 their slots are not uniform: `GetTimeOfDay` and `SystemInfo` put a selector or
 a clock in `a0` and so carry the record and its length in `a1`/`a2`, while
 `GetRandom` and `AbiInfo` have no selector and carry them in `a0`/`a1`.  That
-difference is exactly the mistake the first ring-3 boot of these found — the
+difference is exactly the mistake the first ring-3 boot of these found, the
 entry path read `a1`/`a2` for all four, validated the length word as an
 address, and refused a call whose handler worked.
 

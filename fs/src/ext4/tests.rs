@@ -2,7 +2,7 @@
 //!
 //! The ext4 tests, all on a host: a volume this module's own formatter
 //! makes on an in-memory device, mounted, written, flushed, and **reopened
-//! from the raw bytes** — which is the round trip a boot actually runs, and
+//! from the raw bytes**, which is the round trip a boot actually runs, and
 //! the one a parser that agreed with its own writer could never catch.
 //!
 //! The device is `block`'s [`MemoryBlockDevice`], and every volume here is
@@ -42,7 +42,7 @@ fn mounted(device: &Arc<MemoryBlockDevice>) -> Arc<Ext4Volume> {
 
 /// A volume, mounted from the bytes the device now holds: the image is read
 /// back **off the device** through its own interface and opened as a new
-/// volume, which is what a boot does when it finds a disk — nothing
+/// volume, which is what a boot does when it finds a disk, nothing
 /// survives by staying in memory the first volume holds.
 fn remounted(device: &Arc<MemoryBlockDevice>) -> Arc<Ext4Volume> {
     const SECTORS: usize = TEST_BLOCKS as usize * 1024 / 512;
@@ -156,7 +156,7 @@ fn a_write_in_the_middle_keeps_the_bytes_around_it() {
     let mut jsb = [0_u8; 512];
     block::BlockDevice::read_blocks(device.as_ref(), 42, &mut jsb).expect("a raw read");
     // The data block holds the overwritten bytes, and the journal
-    // superblock's errno is zero — the commit's own word for "clean" —
+    // superblock's errno is zero, the commit's own word for "clean"
     // with its start wherever the cursor landed, which is the journal's
     // business and not the test's.
     assert_eq!(&raw[..9], &b"AAAxyBCCC"[..], "the overwrite is on the disk");
@@ -174,7 +174,7 @@ fn a_write_in_the_middle_keeps_the_bytes_around_it() {
 }
 
 /// Directories: created, listed, a file made inside one, and the listing
-/// answers with the names the volume holds — after a remount.
+/// answers with the names the volume holds, after a remount.
 #[test]
 fn a_directory_holds_what_was_made_in_it() {
     let device = formatted();
@@ -313,7 +313,7 @@ fn a_formatted_volume_carries_a_journal_and_checks_clean() {
     assert_eq!(report.issues_detected, 0, "a fresh volume has no issues");
 }
 
-/// A file grown to a named length reads its extension as zeros — the one
+/// A file grown to a named length reads its extension as zeros, the one
 /// direction of `set_len` this driver takes.
 #[test]
 fn an_extended_file_reads_its_extension_as_zeros() {
@@ -342,8 +342,8 @@ fn an_extended_file_reads_its_extension_as_zeros() {
 /// A dirty journal replays at open, and the volume it leaves is readable.
 ///
 /// The crash this test simulates is the one the journal exists for: the
-/// superblock's dirty flag set — as a crash between a transaction's first
-/// write and its commit leaves it — and the mount that follows walks the
+/// superblock's dirty flag set, as a crash between a transaction's first
+/// write and its commit leaves it, and the mount that follows walks the
 /// journal, marks it clean, and answers from the volume.  A replay that
 /// refused the volume, or one that left the flag set for the next mount to
 /// trip over again, fails here.
@@ -382,7 +382,7 @@ fn a_dirty_journal_replays_and_the_volume_reads() {
 }
 
 /// Many small files: the allocator hands out distinct blocks and inodes,
-/// and every file reads back its own bytes — the collision the bitmap
+/// and every file reads back its own bytes, the collision the bitmap
 /// arithmetic exists to prevent.
 #[test]
 fn many_files_read_back_their_own_bytes() {

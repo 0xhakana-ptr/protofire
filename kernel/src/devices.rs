@@ -198,7 +198,7 @@ pub struct FoundVirtio {
     pub transport: Arc<virtio_core::PciTransport>,
     pub device: Device,
     /// The bus's configuration space, for a caller that has to ask the
-    /// function a question after the driver has taken the transport — the
+    /// function a question after the driver has taken the transport, the
     /// message wiring's MSI-X capability walk is one.
     pub config: Arc<dyn ConfigSpace>,
 }
@@ -287,7 +287,7 @@ pub const NETWORK_MESSAGE: MessagePlan = MessagePlan {
 /// The line it prints is the evidence, and every fact on it was read back from
 /// the device: the table entry's address and word, the MSI-X enable, the queue
 /// vector, and the IMSIC file's enable.  A machine whose tree names no IMSIC
-/// answers `false` and gains nothing — the driver completes through its polling
+/// answers `false` and gains nothing, the driver completes through its polling
 /// as every other machine's does, so this is an extra, not a dependency.
 pub fn wire_device_message(found: &FoundVirtio, plan: MessagePlan, handler: irq::Handler) -> bool {
     wire_device_message_inner(found, plan, handler)
@@ -422,7 +422,7 @@ pub fn note_block_message_interrupt(_identity: usize) -> bool {
 /// Count one message from the network card's receive queue, and wake a waiter.
 ///
 /// The frame itself is taken from the used ring by the driver's own drain, so
-/// the message is a notification — but unlike the block device's it is the
+/// the message is a notification, but unlike the block device's it is the
 /// **only** thing that ends a wait.  The block device is read and written by a
 /// caller that already knows it asked for something; a received frame arrives
 /// when nobody asked, which is the case a poll cannot answer cheaply and the
@@ -729,8 +729,8 @@ pub fn exercise_network() -> bool {
 
     // The card becomes the interface the kernel keeps, and the exchanges
     // below fill its state: the ARP cache the wire's answers go into, the
-    // addresses the network calls read back.  Installing here — before the
-    // exchanges, not after — is what makes the exercise prove the same state
+    // addresses the network calls read back.  Installing here, before the
+    // exchanges, not after, is what makes the exercise prove the same state
     // a program's calls will read.
     crate::net::install(crate::net::Interface::new(
         card.clone(),
@@ -773,7 +773,7 @@ pub fn exercise_network() -> bool {
 
     // The ping: an echo request to the gateway, and the reply parsed.  A reply
     // that matches the request's identifier, sequence and data is a packet
-    // another machine built — the round trip IPv4 can carry, on a wire that
+    // another machine built, the round trip IPv4 can carry, on a wire that
     // answers without being configured.
     if !ping_gateway(&card, mac) {
         return false;
@@ -806,14 +806,14 @@ pub fn exercise_network() -> bool {
     }
 
     // The datagram: one UDP send to a port nothing owns, and the refusal
-    // that comes back — the peer's proof that a datagram this stack built
+    // that comes back, the peer's proof that a datagram this stack built
     // arrived with its header intact.
     if !send_udp_probe(&card, mac) {
         return false;
     }
 
     // The stream: a listener, a client, an echo, and the close that ends
-    // both ends — the whole of a TCP exchange, on loopback.
+    // both ends, the whole of a TCP exchange, on loopback.
     crate::net::tcp_probe()
 }
 
@@ -829,7 +829,7 @@ fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
     // **Submitted, not completed.**  The request goes out and this boot does
     // not wait for the transmit queue to retire it, because the reply is what
     // it wants and the two travel independently: waiting for the send first
-    // hides the receive wait entirely — measured, the reply was already in the
+    // hides the receive wait entirely, measured, the reply was already in the
     // ring by the time the send finished, so the receive loop took zero turns
     // and could not tell a working message from a poll that never needed one.
     let mut questions_asked = 0;
@@ -883,7 +883,7 @@ fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
                 write_ipv4(arp.target_protocol);
                 arch::serial::write_str("\n");
                 // The answer goes in the table, and the table is read back
-                // for the same question — the second resolve answers from the
+                // for the same question, the second resolve answers from the
                 // cache, which is the whole reason the answer was kept.  The
                 // wire was asked once, and stays asked once for the rest of
                 // the boot: the ping and the datagram that follow resolve
@@ -933,7 +933,7 @@ fn arp_exchange(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
 ///
 /// The exchange proves the IPv4 layer on a machine, which no host test can:
 /// the request is built through `net`'s own writers, and the reply that comes
-/// back was built by QEMU's user-mode network — a checksum it verified, an
+/// back was built by QEMU's user-mode network, a checksum it verified, an
 /// identifier and sequence it carried back, and the data it echoed.  A reply
 /// that does not match all three is somebody else's packet, and the boot says
 /// so instead of claiming the round trip.
@@ -962,7 +962,7 @@ fn ping_gateway(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
     let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + icmp_len;
 
     // The request: an Ethernet header to the gateway, an IPv4 header to its
-    // address, and the echo message in the payload — each layer written at
+    // address, and the echo message in the payload, each layer written at
     // the offset the one before it ended at, which is the wire's own order.
     let mut frame = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
     net::ethernet::write_header(
@@ -1078,7 +1078,7 @@ fn ping_gateway(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
 ///
 /// A port nothing listens on is the one datagram a peer is guaranteed to
 /// answer, and the answer is ICMP's port unreachable carrying the original
-/// datagram's first bytes — which is how the line proves a peer received a
+/// datagram's first bytes, which is how the line proves a peer received a
 /// datagram this stack built, parsed its header, and named the port it came
 /// from.  The exchange is a real one: the refusal was built by QEMU's
 /// user-mode network, and the port it names on the line came out of the
@@ -1097,7 +1097,7 @@ fn send_udp_probe(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
     let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
 
     // The datagram: Ethernet to the gateway, IPv4 to its address, and the
-    // datagram in the payload — the same three layers the ping wrote, with
+    // datagram in the payload, the same three layers the ping wrote, with
     // UDP's pseudo-header checksum in the place ICMP's message checksum was.
     let mut frame = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
     net::ethernet::write_header(
@@ -1220,10 +1220,10 @@ fn send_udp_probe(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
 /// The first version of the ARP exchange counted turns and stopped after a
 /// `WAIT_LIMIT` of them, which is not a bound at all: `wait_for_a_wakeup`
 /// does not return until an interrupt arrives, so a card that never sent one
-/// left the count at 1 and the boot in the wait for ever — measured, the
+/// left the count at 1 and the boot in the wait for ever, measured, the
 /// checker's own timeout was what ended that boot.  So the bound is the
 /// machine's timer: each turn arms it for a slice, and the interrupt that
-/// ends the wait is either the card's — which is the one that matters — or
+/// ends the wait is either the card's, which is the one that matters, or
 /// the timer's, which is a turn spent and nothing more.  The loop re-checks
 /// the ring after every wake, so a wake from the timer or an IPI costs a
 /// turn and nothing else.
@@ -1282,7 +1282,7 @@ pub fn physical_address(virtual_address: u64) -> usize {
 
 // The devices' identities are clear of every other user of the file, and these
 // are compile-time assertions because an identity that collides is not a case a
-// test catches at run time — it is a constant the next editor can break, and
+// test catches at run time, it is a constant the next editor can break, and
 // the break has to fail the build rather than a boot.
 //
 // An IMSIC file holds one pending bit per identity, so two users sharing one is

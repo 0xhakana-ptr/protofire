@@ -13,7 +13,7 @@ use super::types::F2fsNatEntry;
 
 impl F2fsFs {
     /// Allocate a NID, reserving it with `NEW_ADDR` until its inode block is
-    /// actually written — a reservation a crash leaves behind is a NID the
+    /// actually written, a reservation a crash leaves behind is a NID the
     /// next scan finds and reuses, which is what the sentinel is for.
     pub(super) fn nat_alloc_nid(&self) -> Result<u32> {
         let mut next = self.next_nid.lock();

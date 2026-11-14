@@ -15,7 +15,7 @@ what a reader needs that no rule and no gate says.
 | What does the kernel do today, per machine? | `docs/status.md` |
 | What is missing, and in what order does it depend? | `docs/roadmap.md` |
 | Why is the tree shaped this way? | `docs/architecture.md`, `scripts/layering.txt` |
-| What is the next thing to build? | `docs/roadmap.md` — Level 5, step 5.1 |
+| What is the next thing to build? | `docs/roadmap.md`, Level 5, step 5.1 |
 
 The census, re-taken at the end of this session:
 
@@ -53,7 +53,7 @@ The road from here.  Levels 6 onward are a **rewrite**, not a migration: the two
 trees do not share an architecture, so nothing is carried across unchanged.
 `docs/roadmap.md` carries each level.
 
-Levels 5 and 6 do **not** depend on each other — `net` names no crate and
+Levels 5 and 6 do **not** depend on each other, `net` names no crate and
 nothing in `fs/src/` mentions it.  The network is first because it is smaller
 and because its first four layers are proved on the host without a syscall, not
 because a filesystem would be wrong to come first.
@@ -67,13 +67,13 @@ because a filesystem would be wrong to come first.
 | **9** | the programs | a shell a person can use, and `service_manager` with a body |
 | **10** | the device model | last, because it decides what a descriptor *is* |
 
-- **Level 5, step 5.1** — the IPv4 header, its checksum, and a round-trip test
+- **Level 5, step 5.1**, the IPv4 header, its checksum, and a round-trip test
   over hand-built bytes.  No device, no syscall: `net/src/lib.rs` is 6 lines and
   grows its first module.
 - **The number that sizes everything after it.**  The previous kernel served
   **194 of 195** syscall numbers; this one serves **43**.  Its nine module trees
   were 301,718 lines against this tree's 145,603.
-- **`SetLength` (20), `StatFd` (30), `ReadDirFd` (31)** — three numbers the
+- **`SetLength` (20), `StatFd` (30), `ReadDirFd` (31)**, three numbers the
   filesystem already implements and the ABI has not been given.  They are the
   first item of Level 8 and the cheapest row on the whole road.
 
@@ -82,7 +82,7 @@ because a filesystem would be wrong to come first.
 The intended direction is "everything is a service" with a distributed layer
 above it, where the kernel supplies mechanism and user space supplies policy.
 Measured against the previous kernel, here is what that direction actually has
-behind it today — the distinction matters, because a plan built on a guess about
+behind it today, the distinction matters, because a plan built on a guess about
 what exists is the way this tree has gone wrong before.
 
 **What exists and is real:**
@@ -91,15 +91,15 @@ what exists is the way this tree has gone wrong before.
   numbering and the `#[repr(C)]` records, `ipc` holds a ring, and the pipe
   already parks a reader and wakes it.  A remote call would go through the same
   shape.
-- `async_io` — a request/completion model with a `Service` trait, a bounded
+- `async_io`, a request/completion model with a `Service` trait, a bounded
   queue, and one real implementor (`kernel/src/service/clock.rs`).  It has never
   had a device behind it, so its *pending* half has never run.
-- the service table (`kernel/src/service/table.rs`) — installed at boot, frozen
+- the service table (`kernel/src/service/table.rs`), installed at boot, frozen
   before anything looks one up.  It has one entry (the clock) and no syscall
   reaches it.
-- `rights` — two constants and no consumer.  It sits at layer 0 for exactly the
+- `rights`, two constants and no consumer.  It sits at layer 0 for exactly the
   case where a handle carries rights.
-- `Descriptor` — a handle table that already distinguishes copy from transfer
+- `Descriptor`, a handle table that already distinguishes copy from transfer
   (`Descriptor::for_owner`), which is the arithmetic a capability passing would
   need.
 
@@ -107,13 +107,13 @@ what exists is the way this tree has gone wrong before.
 
 - **No distributed bus, no device virtualisation, no task migration, no remote
   discovery.**  None of it is in this tree and none of it was in the previous
-  one either — `git ls-tree 16b5ef8` finds no module for any of it.  So this is
+  one either, `git ls-tree 16b5ef8` finds no module for any of it.  So this is
   not "migrated and lost"; it is a direction nobody has built yet.
-- **The kernel does not need much code for it — that part of the reading is
+- **The kernel does not need much code for it, that part of the reading is
   right.**  `abi` would grow wire records and a numbering for a handle transfer,
   `kernel` would grow the transfer itself and nothing about what is transferred,
-  and that is tens of lines rather than thousands.  Everything above it — what a
-  service is, how it is found, what a restart policy is — is user space, and is
+  and that is tens of lines rather than thousands.  Everything above it, what a
+  service is, how it is found, what a restart policy is, is user space, and is
   the part that would make two distributions able to talk or not.
 - **But "the kernel needs little code" is not the same as "this is nearly
   done".**  Two things have to be true before a handle transfer is worth
@@ -128,7 +128,7 @@ what exists is the way this tree has gone wrong before.
 
 So the reading of the DeepSeek conversation that survives contact with this tree
 is: **the architecture it describes is the one this tree is already shaped
-for, and the work it implies is small — but it is the last step, not the next
+for, and the work it implies is small, but it is the last step, not the next
 one.**  Building it now would decide a descriptor's third variant against one
 service and no device.
 
@@ -144,7 +144,7 @@ before.
   until two samples five seconds apart showed a frozen count on a core that was
   executing ring 3.
 - **Name the disk you booted.**  A boot against the kernel's own built-in image
-  carries no init program, so `ExecProcess` fails and the program spins — which
+  carries no init program, so `ExecProcess` fails and the program spins, which
   looks exactly like the defect being chased.
 
 ## The history

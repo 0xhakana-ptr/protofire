@@ -240,7 +240,7 @@ pub unsafe extern "C" fn aarch64_secondary_main(slot: usize) -> ! {
     // This core's own timer, through the same `ticks_for_microseconds` the boot
     // core's arming uses.
     //
-    // It used to divide the frequency here — `frequency / 1_000_000 * slice` —
+    // It used to divide the frequency here, `frequency / 1_000_000 * slice`
     // which is the same arithmetic written twice, and the two copies agreed
     // only while the frequency was a whole multiple of a megahertz.  One
     // conversion, one place: a slice is microseconds, and how many ticks that
@@ -374,7 +374,7 @@ mod tests {
     /// `entry.S` gives a started core `sp = base + (index + 2) * bytes`, for an
     /// `index` running from zero to `MAX_SECONDARY_HARTS - 1`.  The highest
     /// stack top any core is given is therefore
-    /// `base + (MAX_SECONDARY_HARTS + 1) * bytes` — the top of the last slice —
+    /// `base + (MAX_SECONDARY_HARTS + 1) * bytes`, the top of the last slice
     /// and a core's first push lands below that top, so the reservation has to
     /// reach one slice further than the last top it hands out.
     ///
@@ -382,7 +382,7 @@ mod tests {
     /// `index + 1` where it meant `index + 2`, which gave the **first** started
     /// core the boot core's slice.  Two cores on one stack overwrote each
     /// other's trap frames, and the symptom was an instruction abort at an
-    /// address inside `kernel_stacks` — invisible on the gate's two-core
+    /// address inside `kernel_stacks`, invisible on the gate's two-core
     /// machine whenever the timer did not fire on the started core, which on
     /// this machine was always.
     #[test]

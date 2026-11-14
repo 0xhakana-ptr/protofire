@@ -53,7 +53,7 @@ pub fn open(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
 ///
 /// Arguments: the descriptor, the path, the flags, then three reserved slots
 /// that must be zero.  A relative path resolves against the directory the
-/// descriptor was opened from — `resolve_at` holds the three readings, and
+/// descriptor was opened from, `resolve_at` holds the three readings, and
 /// the absolute and `AT_FDCWD` cases among them.
 pub fn open_at(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let dirfd = arguments.context.arg(0);
@@ -68,7 +68,7 @@ pub fn open_at(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resul
 
 /// The whole of an open, on a path that is already resolved.
 ///
-/// Every open — plain and `*At` — ends here, which is what keeps the policy
+/// Every open, plain and `*At`, ends here, which is what keeps the policy
 /// ask, the create-on-miss reading and the descriptor's recorded fields one
 /// flow rather than two.  The flags decide the permission and the rights
 /// exactly as they did when this was `open`'s own body; the resolved path is
@@ -107,8 +107,8 @@ fn open_resolved(
         Ok(node) => node,
         // A create that names an existing path is the open that was asked for,
         // so the miss is only a creation when the lookup is the one failure a
-        // creation cures.  Every other answer — a volume that refused, a path
-        // the table could not resolve — is the lookup's own, and creating on
+        // creation cures.  Every other answer, a volume that refused, a path
+        // the table could not resolve, is the lookup's own, and creating on
         // top of it would report a success the filesystem never granted.
         Err(Error::NotFound) if flags & fs_abi::OPEN_FLAG_CREATE != 0 => {
             let (filesystem, relative) = namespace.resolve(resolved)?;
@@ -120,7 +120,7 @@ fn open_resolved(
 
     // The opener is the owner: the process that asked, as the kernel recorded
     // it, so its exit can release the slot.  A caller the kernel made itself
-    // has no pid, and `0` is the boot's own process — the only one whose
+    // has no pid, and `0` is the boot's own process, the only one whose
     // descriptor outlives every program by design.
     let owner = context.caller_pid.unwrap_or(crate::programs::BOOT_PROCESS);
     let descriptor = table.insert(Descriptor::File {
@@ -141,7 +141,7 @@ fn open_resolved(
 /// reserved slots that must be zero.  The offset is the descriptor's own when
 /// the caller passes [`crate::syscall::READ_OFFSET_CURRENT`].  The buffer and
 /// its length travel in slots because a ring-3 caller has no borrow to hand
-/// over — the borrow is built where the call arrives, from the two words —
+/// over, the borrow is built where the call arrives, from the two words
 /// and the kernel's own callers leave both zero, which is why the reserved
 /// check starts past them rather than at them.
 ///
@@ -174,7 +174,7 @@ pub fn read(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
 ///
 /// Arguments: the descriptor, the buffer, its length, then three reserved
 /// slots that must be zero.  The write starts at the descriptor's own
-/// position, which moves by the bytes accepted — the same position `read`
+/// position, which moves by the bytes accepted, the same position `read`
 /// moves, which is why a program that opens a file, writes it, and reads it
 /// back through the same descriptor finds its own bytes.
 ///
@@ -195,8 +195,8 @@ pub fn write(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
 /// Arguments: the path, the record, its length, then three reserved slots
 /// that must be zero.  The record is the ABI's [`fs_abi::FileStat`], sixteen
 /// bytes: the kind and the size.  A buffer shorter than the record is refused
-/// rather than partly filled — a caller handed a truncated answer would read
-/// a size that was never there — and a longer one gets the record's own
+/// rather than partly filled, a caller handed a truncated answer would read
+/// a size that was never there, and a longer one gets the record's own
 /// sixteen, because the record is the wire format and a caller that asked for
 /// more asked for room, not fields.
 ///
@@ -240,7 +240,7 @@ fn stat_resolved(
     resolved: &str,
     buffer: Option<&mut [u8]>,
 ) -> Result<Dispatch> {
-    // Who is asking, before what they asked for is resolved — the same order
+    // Who is asking, before what they asked for is resolved, the same order
     // `open` keeps, and for the same reason: a denial and a "not found" are
     // different answers, and the one that leaks less does not distinguish
     // them.  A stat is a read of the file's face, and the read permission is
@@ -270,8 +270,8 @@ fn stat_resolved(
 
 /// The ABI's kind word for a node's kind.
 ///
-/// The two enums live on opposite sides of the boundary — the filesystem's is
-/// the tree's own, the ABI's is the wire — and the mapping is total, which is
+/// The two enums live on opposite sides of the boundary, the filesystem's is
+/// the tree's own, the ABI's is the wire, and the mapping is total, which is
 /// why it is a function a test pins rather than a cast a reader trusts.
 fn file_kind(kind: fs::NodeKind) -> usize {
     match kind {
@@ -286,14 +286,14 @@ fn file_kind(kind: fs::NodeKind) -> usize {
 //
 // Three calls that change the namespace rather than a file's bytes: make a
 // name for a directory, take a name away, move one name to another.  They
-// share everything but the operation — a path, the policy asked first, the
-// namespace resolving the path to the filesystem that answers for it — which
+// share everything but the operation, a path, the policy asked first, the
+// namespace resolving the path to the filesystem that answers for it, which
 // is why the three handlers are three one-liners over one shape rather than
 // three copies of it.
 //
 // A rename names two paths, and they can resolve to two different
 // filesystems; no filesystem sees both, so the call is refused rather than
-// approximated with a copy and a delete, which would not be a rename — a
+// approximated with a copy and a delete, which would not be a rename, a
 // crash between its halves would leave the file in neither place.
 
 /// Create a directory at a path.
@@ -377,7 +377,7 @@ fn remove_path_resolved(
 /// Move a name to another path, replacing what the destination names.
 ///
 /// Arguments: the old path, the new path, then four reserved slots that must
-/// be zero.  Answers zero.  Both names must belong to the same filesystem —
+/// be zero.  Answers zero.  Both names must belong to the same filesystem
 /// the two resolve to two mounts, and a filesystem cannot rename what it
 /// does not hold.
 pub fn rename(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
@@ -422,7 +422,7 @@ fn rename_resolved(
     if !alloc::sync::Arc::ptr_eq(&old_filesystem, &new_filesystem) {
         // A rename that crossed volumes would have to be a copy and a
         // delete, and a copy that failed midway leaves the file in neither
-        // place — the one outcome a rename exists to make impossible.
+        // place, the one outcome a rename exists to make impossible.
         return Err(Error::Unsupported);
     }
     old_filesystem.rename(&old_relative, &new_relative)?;
@@ -444,7 +444,7 @@ fn mac_write_checked(context: &SyscallContext, path: &str) -> Result<()> {
 ///
 /// Arguments: the path, the index, the buffer, its length, then two reserved
 /// slots that must be zero.  The record is the ABI's
-/// [`fs_abi::DirectoryEntryRecord`] — kind, size, and where the name starts —
+/// [`fs_abi::DirectoryEntryRecord`], kind, size, and where the name starts
 /// with the name's UTF-8 bytes packed directly after it, which is why the
 /// answer is how many bytes were written rather than a status: the caller
 /// sized the buffer, and the answer says how much of it now means something.
@@ -453,7 +453,7 @@ fn mac_write_checked(context: &SyscallContext, path: &str) -> Result<()> {
 /// rather than partly written.  The record declares the name's length, so a
 /// truncated name would be a record that lies about itself, and a caller
 /// that sized its buffer from the last entry it read has a number it can
-/// grow — the error tells it to, instead of handing it half a name.
+/// grow, the error tells it to, instead of handing it half a name.
 ///
 /// An index past the directory's end answers `NotFound`, the same word a
 /// missing path answers: "there is no such entry" is true of both, and a
@@ -622,7 +622,7 @@ pub fn mac_add_rule(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) ->
 /// `Mmap(addr_hint, length, protection, flags)`: the hint is where the caller
 /// would like the mapping, `length` is in bytes and rounded up, the protection
 /// is a `PROT_*` set, and the flags are a `MAP_*` set that has to name
-/// anonymous private memory — this kernel has no file-backed mapping and no
+/// anonymous private memory, this kernel has no file-backed mapping and no
 /// shared one.
 ///
 /// A hint of zero means "somewhere", which is the ordinary call.  A hint that
@@ -683,7 +683,7 @@ pub fn mmap(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
 ///
 /// `Munmap(addr, length)`: both are byte values, the address is rounded down
 /// and the length up, and a range with nothing mapped in it is a success of
-/// zero rather than an error — asking to remove what is not there has two true
+/// zero rather than an error, asking to remove what is not there has two true
 /// answers and the quiet one is the honest one.
 pub fn munmap(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let address = arguments.context.arg(0);
@@ -723,7 +723,7 @@ pub fn munmap(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resul
 ///
 /// `Brk(new_break)`: zero is a query, anything else is a request to grow to
 /// that address.  The answer is the break the kernel now holds, so a caller
-/// that asked for more than it can have learns what it actually got — which is
+/// that asked for more than it can have learns what it actually got, which is
 /// the whole reason the call answers with a value rather than with success.
 pub fn brk(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let requested = arguments.context.arg(0);
@@ -746,7 +746,7 @@ pub fn brk(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
 ///
 /// `ReclaimPages(target)`: `target` is how many pages the caller would like
 /// returned and zero means "as many as will go".  This tree's answer is the
-/// first that is honest — it walks the space's own records and gives back the
+/// first that is honest, it walks the space's own records and gives back the
 /// ones no page table names any more, which is the only set the kernel can
 /// identify without a scan of every program.
 ///
@@ -808,7 +808,7 @@ pub fn get_time_of_day(
 /// generator always has more.
 ///
 /// A zero length answers zero and writes nothing, which is a caller asking for
-/// nothing rather than an error — the same reading `read` takes of a
+/// nothing rather than an error, the same reading `read` takes of a
 /// zero-length request.
 pub fn get_random(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let length = arguments.context.arg(1);
@@ -885,7 +885,7 @@ pub fn system_info(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> 
 ///
 /// The three numbers are compiled in, not asked of the runtime: a version, the
 /// number of slots the table has, and where the frozen range ends.  That makes
-/// this the one call a program can make before it trusts any other — it names
+/// this the one call a program can make before it trusts any other, it names
 /// what the build promises, and every promise is a constant.
 pub fn abi_info(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     validate_zeroed_args(arguments.context, 2)?;
@@ -925,7 +925,7 @@ pub(crate) const FROZEN_SYSCALL_COUNT: usize = 121;
 /// Arguments: the port, then five reserved slots that must be zero.  Answers
 /// the descriptor, which the datagram calls carry back.  Port zero is
 /// refused: it is the wire's "any port", and this stack has no port
-/// allocator to answer it with — a caller that wants a port names one.  A
+/// allocator to answer it with, a caller that wants a port names one.  A
 /// port another socket holds answers `AlreadyExists`, which is the wire's
 /// own rule that a bound port has one owner.
 pub fn bind_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
@@ -948,7 +948,7 @@ pub fn bind_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resu
 /// Arguments: the descriptor; the destination's address, packed by the
 /// ABI's own [`abi::network::pack_address`]; the buffer; its length; the
 /// destination's port; one reserved slot that must be zero.  Answers the
-/// bytes accepted — which is all a datagram send ever promises.  A datagram
+/// bytes accepted, which is all a datagram send ever promises.  A datagram
 /// for this machine is delivered through the demux rather than the card,
 /// which is what loopback is.
 ///
@@ -998,7 +998,7 @@ pub fn send_to_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> R
 /// it is one, and the two cases are one branch apart.
 ///
 /// A pointer outside the user window, or a length the window cannot hold, is
-/// [`Error::InvalidArgument`] — the ABI's own refusal, and not a fault.
+/// [`Error::InvalidArgument`], the ABI's own refusal, and not a fault.
 fn read_user_address6(pointer: usize) -> Result<[u8; 16]> {
     if !crate::address_space::is_user_range(pointer, 16) {
         return Err(Error::InvalidArgument);
@@ -1016,7 +1016,7 @@ fn read_user_address6(pointer: usize) -> Result<[u8; 16]> {
 ///
 /// Arguments: the port, then five reserved slots that must be zero.  Port
 /// zero is refused, for the reason a datagram bind refuses it, and a port
-/// another listener holds answers `AlreadyExists` — a listening port has
+/// another listener holds answers `AlreadyExists`, a listening port has
 /// one owner, whatever number of processes hold its descriptor.
 pub fn listen_tcp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
     let port = arguments.context.arg(0);
@@ -1038,9 +1038,9 @@ pub fn listen_tcp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Re
 ///
 /// Arguments: the destination's address, packed by the ABI's own
 /// [`abi::network::pack_address`]; the destination's port; then four
-/// reserved slots that must be zero.  The handshake runs inside the call —
+/// reserved slots that must be zero.  The handshake runs inside the call
 /// a connect that answered before the stream was open would be a stream
-/// whose first write raced its own handshake — and a destination that is
+/// whose first write raced its own handshake, and a destination that is
 /// not this machine answers `Unsupported`, because a handshake that waits
 /// on the wire is a wait this build does not make a call do.
 pub fn connect_tcp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
@@ -1076,7 +1076,7 @@ pub fn connect_tcp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> R
 ///
 /// The record is filled from the interface the boot installed, not from
 /// constants: a boot whose card never came up installed nothing, and that is
-/// the one case this call answers `NotFound` for — a record implies
+/// the one case this call answers `NotFound` for, a record implies
 /// addresses, and a machine with no card has none.  One interface, one
 /// address, one gateway is the whole of what this build answers, which is
 /// the whole of the routing its wire has.
@@ -1101,7 +1101,7 @@ pub fn network_status(
 
 /// Report the interface's IPv6 side.
 ///
-/// Arguments: the buffer, then two reserved slots that must be zero — the
+/// Arguments: the buffer, then two reserved slots that must be zero, the
 /// same shape `NetworkStatus` takes, because a program reads the two the same
 /// way.  The record is [`abi::network::Ipv6StatusRecord`]'s and the offsets
 /// are that crate's, written field by field: the struct is `repr(C)` and a

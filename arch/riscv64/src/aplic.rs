@@ -10,7 +10,7 @@
 //! described with only an APLIC (`-machine virt,aia=aplic`), with both
 //! (`aia=aplic-imsic`), or with the older PLIC (`-machine virt`, this tree's
 //! default).  The three are different controllers, and a boot that read only
-//! the PLIC node on an AIA machine found none — `no external interrupt
+//! the PLIC node on an AIA machine found none, `no external interrupt
 //! controller`, which is the gap this file closes.
 //!
 //! ## The two delivery modes
@@ -48,8 +48,8 @@
 //!
 //! The offsets and the volatile accesses mean nothing on a host: there is no
 //! window, and no test can read one.  What a host *can* check is the arithmetic
-//! — which register a source uses, where a hart's delivery block is, which bits
-//! a direct-mode domain needs — so that stays outside the gate and the tests
+//!, which register a source uses, where a hart's delivery block is, which bits
+//! a direct-mode domain needs, so that stays outside the gate and the tests
 //! exercise it.
 
 /// `domaincfg`: bit 8 enables the domain's interrupt delivery.
@@ -62,7 +62,7 @@ pub const DOMAIN_MSI_MODE: u32 = 1 << 2;
 pub const SOURCE_CONFIG_BASE: usize = 0x0004;
 /// The source-configuration word's low three bits: the SM field.
 pub const SOURCE_SM_MASK: u32 = 0x7;
-/// SM value for a level, active-high source — a 16550's transmitter line.
+/// SM value for a level, active-high source, a 16550's transmitter line.
 ///
 /// The APLIC's SM field is richer than the GIC's two-bit trigger: it names the
 /// edge direction or the level polarity.  `6` is level-high; `4` and `5` are
@@ -79,7 +79,7 @@ pub const SOURCE_DELEGATED: u32 = 1 << 10;
 /// A target word carries the destination hart's index in bits 18.., the guest
 /// index in bits 12.., and the source's priority in bits 0..8.  A source whose
 /// target is zero delivers to hart index zero at priority zero, and priority
-/// zero is what the APLIC treats as "never deliver" — which is why the priority
+/// zero is what the APLIC treats as "never deliver", which is why the priority
 /// is written and not left to reset.
 pub const TARGET_BASE: usize = 0x3004;
 pub const TARGET_HART_SHIFT: u32 = 18;
@@ -103,7 +103,7 @@ pub const IDC_STRIDE: usize = 32;
 /// source number: the identity sits in bits 16.. and the priority in bits 0..8,
 /// which is why a claim of source 10 reads back as `0x000A_0001` rather than
 /// `10`.  The same packing is on `stopei` in an IMSIC file, and it is the
-/// layout a driver that read the word as a number gets wrong — this one was
+/// layout a driver that read the word as a number gets wrong, this one was
 /// written that way first and the boot printed `unhandled external interrupt
 /// 655361` for every one.
 pub const IDC_DELIVERY: usize = 0x00;
@@ -170,8 +170,8 @@ impl Aplic {
 
     /// The `domaincfg` value a direct-mode, enabled domain has.
     ///
-    /// **Direct** because this kernel's external path is a claim — cause,
-    /// claim, complete — and **enabled** because a domain that is configured
+    /// **Direct** because this kernel's external path is a claim, cause,
+    /// claim, complete, and **enabled** because a domain that is configured
     /// and off delivers nothing.
     pub const fn direct_domain_config() -> u32 {
         DOMAIN_ENABLE
@@ -180,9 +180,9 @@ impl Aplic {
     /// The word source `source`'s target register needs: this hart, and the
     /// **identity the source's message carries**.
     ///
-    /// The low eleven bits of a target word mean different things by mode —
+    /// The low eleven bits of a target word mean different things by mode
     /// the delivery priority in direct mode, the message's **EIID** in MSI
-    /// mode — and this writes the **source's own number** there for both.  In
+    /// mode, and this writes the **source's own number** there for both.  In
     /// direct mode a priority of zero is "never deliver", so a source number
     /// (which starts at one) is a priority that delivers; in MSI mode it makes
     /// the identity a device's message carries **the same number the trap
@@ -191,7 +191,7 @@ impl Aplic {
     ///
     /// That second property is not cosmetic, it is what ended a storm: the
     /// first version wrote a constant here, so **every** wired source's
-    /// message landed on identity 1 — the console's and anything else's alike —
+    /// message landed on identity 1, the console's and anything else's alike
     /// and a trap that claimed identity 1 could not tell the console's wire
     /// from anything else, so it never acknowledged the 16550, whose level
     /// wire stayed high, and the APLIC re-sent the message forever.  Measured:
@@ -228,11 +228,11 @@ impl Aplic {
     /// `sourcecfg` and `target` are arrays **of sources**, and sources are
     /// numbered from one: source `N`'s word is at the array's base plus
     /// `(N - 1) * 4`.  The first version of this used `N * 4`, so every
-    /// write landed one source too high — and the defect is invisible from
+    /// write landed one source too high, and the defect is invisible from
     /// every register the driver reads back, because the driver reads its own
     /// (wrong) offsets.  What it produced, measured with QEMU's
     /// `memory_region_ops_write` trace: the console's source 10 carried the
-    /// **target written for source 9** — identity 9 — so the APLIC delivered
+    /// **target written for source 9**, identity 9, so the APLIC delivered
     /// every console message to identity 9 while the kernel had enabled and
     /// was waiting on identity 10.  The message was sent, claimed, and never
     /// recognised: `console interrupt(s) taken = 0` with the whole path sound.
@@ -313,7 +313,7 @@ mod registers {
                 for source in 1..self.sources().min(MAX_SOURCES) {
                     self.write(Aplic::source_offset(source), Aplic::source_config());
                     // The target is what makes a source deliver at all: a
-                    // source with no target — or one whose identity is zero —
+                    // source with no target, or one whose identity is zero
                     // is enabled and never delivered.  And the identity being
                     // the source's own number is what lets the trap path name
                     // the device, see [`Aplic::target_word`].
@@ -404,7 +404,7 @@ mod registers {
             // **does** read back the bits that are set: the monitor dump after
             // an enable of source 10 showed `0xd001e00` holding `0x400`.  So
             // the read is of the same register the write went to, and there is
-            // no separate enable-state window — the `0x2000` this first asked
+            // no separate enable-state window, the `0x2000` this first asked
             // was zero on every boot, which read as "not enabled" for a source
             // the dump showed enabled.
             unsafe { self.read(Aplic::enable_offset(number)) & (1 << bit) != 0 }
@@ -425,7 +425,7 @@ mod registers {
             let word = unsafe { self.read(self.claim_offset()) };
             // The identity is in bits 16.. and the priority in the low byte; a
             // claim of zero means there was nothing to take.  A `claimi` word
-            // is **not** a source number — reading it as one produced
+            // is **not** a source number, reading it as one produced
             // `unhandled external interrupt 655361` (0xA0001, source 10 with
             // priority 1) on the first boot this driver ran.
             let number = (word >> super::CLAIM_IDENTITY_SHIFT) & super::CLAIM_IDENTITY_MASK;
@@ -442,8 +442,8 @@ mod registers {
         /// controller line and take zero console interrupts, which looks like a
         /// source that was never enabled.
         ///
-        /// Measured: that machine's `domaincfg` reads `0x80000104` — bit 2 set,
-        /// locked — while `-machine virt,aia=aplic` accepts direct mode and
+        /// Measured: that machine's `domaincfg` reads `0x80000104`, bit 2 set,
+        /// locked, while `-machine virt,aia=aplic` accepts direct mode and
         /// delivers the console's source twice a boot.
         ///
         /// # Safety
@@ -536,7 +536,7 @@ mod tests {
     ///
     /// The 16550's transmitter line stays asserted until the device is
     /// serviced, so an edge setting would drop the assertion that was already
-    /// high when the source was enabled — the defect this tree measured on the
+    /// high when the source was enabled, the defect this tree measured on the
     /// GIC's private timer line.  `SOURCE_LEVEL_HIGH` is the AIA's value 6, and
     /// it is not zero: a source left at zero is **inactive** and delivers
     /// nothing.
@@ -555,7 +555,7 @@ mod tests {
     /// A source's target names the hart and **its own number**.
     ///
     /// The low eleven bits are the delivery priority in direct mode and the
-    /// message's identity in MSI mode; a source's own number works for both —
+    /// message's identity in MSI mode; a source's own number works for both
     /// nonzero, so a direct-mode priority always delivers, and distinct per
     /// source, so a claimed identity names the device.  The storm a constant
     /// here produced is the measurement in [`Aplic::target_word`]'s own

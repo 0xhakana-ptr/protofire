@@ -20,8 +20,8 @@
 //! Ethernet frame, ARP and its cache, IPv4, ICMP, UDP and TCP on the one side;
 //! IPv6, its extension-header chain, ICMPv6, neighbour discovery and the
 //! solicitation and advertisement a router answers on the other.  Each is a
-//! pure reader and writer — bytes in, a value out, no allocation in the
-//! parsers and no lock anywhere — which is what lets every one of them be a
+//! pure reader and writer, bytes in, a value out, no allocation in the
+//! parsers and no lock anywhere, which is what lets every one of them be a
 //! host test without a card.
 //!
 //! Two modules hold state rather than reading a byte slice, and both hold it
@@ -29,13 +29,13 @@
 //! which streams exist, the port a listener reserved, the queue a finished
 //! handshake waits in, and the counters that name them; [`udp_socket`] is one
 //! bound port's queue, its bound, and the rule that a too-small receive is
-//! refused with the datagram kept.  Neither takes a lock — how a value is
-//! shared is the caller's decision about its own concurrency — which is why
+//! refused with the datagram kept.  Neither takes a lock, how a value is
+//! shared is the caller's decision about its own concurrency, which is why
 //! their arithmetic is a host test too.
 //!
 //! [`reply`] is the other direction from the parsers: it **writes** the two
-//! frames a host sends on its own — an echo reply and a neighbour
-//! advertisement — plus the request and solicitation a boot's probe sends to
+//! frames a host sends on its own, an echo reply and a neighbour
+//! advertisement, plus the request and solicitation a boot's probe sends to
 //! exercise them.  It is here because a reply is three headers stacked, and a
 //! kernel composing one would be a kernel that knew where an ICMPv6 header
 //! begins inside a frame.  Its checksums are verified in its own tests against
@@ -57,7 +57,7 @@
 //!
 //! [`reassembly`] is the other place a peer's word costs memory: the pieces
 //! of a fragmented datagram, held until the last one arrives, bounded in every
-//! direction a sender controls — a fixed payload budget, a fixed entry count,
+//! direction a sender controls, a fixed payload budget, a fixed entry count,
 //! an expiry on the caller's clock, and [RFC 5722]'s rule that an overlapping
 //! piece takes the whole datagram with it.  A piece that is *the same bytes*
 //! again is a retransmission and changes nothing, which is the distinction

@@ -41,9 +41,9 @@ const TMPFS_BYTES: usize = 1024 * 1024;
 
 /// The sector the driver's probe writes and reads back.
 ///
-/// The disk's **far end** — the boot's volume is built at block 0 and a
+/// The disk's **far end**, the boot's volume is built at block 0 and a
 /// loaded image plus the filesystem's own tables reach only a few hundred
-/// blocks — so the probe writes on bytes no filesystem structure uses, at a
+/// blocks, so the probe writes on bytes no filesystem structure uses, at a
 /// distance no growth of the volume reaches.  It used to sit at block 63,
 /// "past the superblock" being the whole of the argument, and a volume that
 /// grew a real program into it would have taken the probe's bytes as its
@@ -146,7 +146,7 @@ fn attach_device(
             // forgetting every queue's interrupt state.  Wired before it, the
             // table entry and the queue vector are both discarded and the
             // device's completions are dropped at the transport with nothing
-            // printed anywhere — measured, 0 of 4 boots, against 8 of 8 with
+            // printed anywhere, measured, 0 of 4 boots, against 8 of 8 with
             // the wiring here.
             //
             // The result is not checked because there is nothing a boot could

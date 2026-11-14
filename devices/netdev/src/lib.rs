@@ -5,8 +5,8 @@
 //! ## Why this crate exists
 //!
 //! A protocol stack has to send a frame and receive a frame, and it must not
-//! know which card did it.  Without a trait, the stack either names a driver —
-//! and then a second card is a second stack — or the driver names the stack,
+//! know which card did it.  Without a trait, the stack either names a driver
+//! and then a second card is a second stack, or the driver names the stack,
 //! and then the driver has to know what an ARP is.  Both shapes were in this
 //! tree before this crate: `virtio_net` carried `arp_request` and `parse_arp`,
 //! which are the protocol's, not the device's.
@@ -21,7 +21,7 @@
 //! ## What a frame is, and what it is not
 //!
 //! A frame here is the bytes a card puts on the wire: an Ethernet header and
-//! whatever follows it.  This crate says nothing about the Ethernet layout —
+//! whatever follows it.  This crate says nothing about the Ethernet layout
 //! that is a format, and it lives in `net` beside the protocols that read it.
 //!
 //! The header length is not part of the contract either, and deliberately:
@@ -59,7 +59,7 @@ pub trait LinkDevice: Send + Sync {
 
     /// Take the next frame the device has received, if any.
     ///
-    /// `Ok(None)` is "nothing arrived, ask again" — not an error, and not the
+    /// `Ok(None)` is "nothing arrived, ask again", not an error, and not the
     /// same as a frame of zero length.  The frame is written at the start of
     /// `into` and its length is answered; a buffer too short for the frame is
     /// [`abi::Error::InvalidArgument`] rather than a truncated frame, because a

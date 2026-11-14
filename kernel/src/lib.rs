@@ -147,8 +147,8 @@ pub fn note_console_interrupt() {
 
 /// How many completion messages the block device has delivered.
 ///
-/// A message is not what makes a completion happen — the driver's next drain
-/// takes it from the used ring whether or not one arrived — so this count is
+/// A message is not what makes a completion happen, the driver's next drain
+/// takes it from the used ring whether or not one arrived, so this count is
 /// the only record that the device's MSI reached this kernel instead of being
 /// held in the IMSIC file or dropped at the transport.  It is zero on a machine
 /// whose tree names no IMSIC, which is every machine whose device is polled.

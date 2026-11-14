@@ -80,9 +80,9 @@ the wrong way round.
 **`feat:`** is new user-visible behaviour or capability.  **`fix:`** is a defect
 fix, a change that makes something broken work.  **`refactor:`** is
 restructuring with no intended change in behaviour.  **`chore:`** is build,
-tooling, dependencies, housekeeping — no behaviour change.  **`docs:`** is
+tooling, dependencies, housekeeping, no behaviour change.  **`docs:`** is
 documentation only.  **`test:`** is tests only.  **`style:`** is formatting and
-whitespace only — no semantic change.
+whitespace only, no semantic change.
 
 **Choose by what the change does, not by which file it touches.** A new test
 that also fixes the bug it was written for is a `fix:`; a `Cargo.toml` edit that
@@ -99,8 +99,8 @@ docs(fmts): Describe the trailer exemption in the body-wrap check
 
 Use the module or subsystem name, the same vocabulary as
 the crate the change is in. Scope is permitted but not required, and the
-history uses it where the change is one part of a crate — `fix(scripts)`,
-`refactor(kernel)`, `feat(x86_64)` — rather than everywhere; introduce it
+history uses it where the change is one part of a crate, `fix(scripts)`,
+`refactor(kernel)`, `feat(x86_64)`, rather than everywhere; introduce it
 deliberately rather than by habit.
 
 ### Release markers
@@ -153,20 +153,20 @@ the editor template).
 
 The hook checks, in order:
 
-1. A subject line exists — otherwise `empty subject line`.
-2. No leading or trailing whitespace on the subject — otherwise `subject must
+1. A subject line exists, otherwise `empty subject line`.
+2. No leading or trailing whitespace on the subject, otherwise `subject must
    not have leading/trailing whitespace`.
 3. A `Merge …` or `Revert …` subject exits **0 here**, skipping every check
    below.
-4. The subject does not end in `.` — otherwise `subject must not end with a
+4. The subject does not end in `.`, otherwise `subject must not end with a
    period`.
-5. The subject is not a bare generic word — otherwise `subject '<word>' carries
+5. The subject is not a bare generic word, otherwise `subject '<word>' carries
    no information`.
-6. The subject is at most 72 **bytes**, only if it is pure ASCII — otherwise
+6. The subject is at most 72 **bytes**, only if it is pure ASCII, otherwise
    `subject too long (N > 72 chars)`.
-7. Every body line is at most 72 characters — otherwise `body has lines over 72
+7. Every body line is at most 72 characters, otherwise `body has lines over 72
    chars`.
-8. `Signed-off-by:` appears somewhere in the message — otherwise `missing
+8. `Signed-off-by:` appears somewhere in the message, otherwise `missing
    Signed-off-by trailer`.
 
 ### The traps

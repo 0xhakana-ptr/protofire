@@ -406,7 +406,7 @@ pub(crate) fn leaf_for(root: &PageTable, address: usize) -> Option<&'static Page
 ///
 /// The root is an argument rather than read from the register, because the
 /// fault handler runs on whatever CPU took the fault and its own register is
-/// the one that matters — not the boot CPU's.
+/// the one that matters, not the boot CPU's.
 #[cfg(target_os = "none")]
 pub(crate) fn permissions_of(root: usize, address: usize) -> Option<Option<Permissions>> {
     // SAFETY: the caller passes a root table this kernel installed.

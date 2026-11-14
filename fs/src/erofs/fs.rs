@@ -22,7 +22,7 @@ use block::BLOCK_SIZE as DEV_BLOCK_SIZE;
 pub(crate) struct EroFs {
     pub cache: BlockCache,
     pub sb: ErofsSuperblock,
-    /// Reusable filesystem-block-sized buffer — avoids repeated
+    /// Reusable filesystem-block-sized buffer, avoids repeated
     /// allocations in read-inode and read-directory hot paths.
     block_buf: sync::Mutex<Vec<u8>>,
 }
@@ -260,7 +260,7 @@ impl EroFs {
         Ok(total_read)
     }
 
-    /// Read symlink target from an inode (fast symlink — inline in i_u).
+    /// Read symlink target from an inode (fast symlink, inline in i_u).
     pub fn read_symlink_target(&self, sym_nid: u32) -> Result<Vec<u8>> {
         let inode = self.read_inode(sym_nid)?;
         if erofs_mode_to_kind(inode.mode()) != NodeKind::Symlink {
@@ -298,7 +298,7 @@ mod tests {
     ///   Byte 1536-2047:   sector 3
     ///   Byte 2048-2559:   sector 4
     ///   ...
-    ///   Block 64 (byte 262144): metadata — compact inodes
+    ///   Block 64 (byte 262144): metadata, compact inodes
     ///     NID 1 (offset 0):    root dir
     ///     NID 2 (offset 32):   regular file
     ///   Block 65 (byte 266240): root dir data
@@ -346,7 +346,7 @@ mod tests {
         // Block 65: root directory data
         // EROFS directory entries: 12-byte headers at the start of the
         // block, names packed at the tail growing backwards.  Names MUST
-        // NOT overlap — each name starts immediately before the previous
+        // NOT overlap, each name starts immediately before the previous
         // name (or at the end of the block for the first name).
         let dir_data_off = 65 * block_size;
 

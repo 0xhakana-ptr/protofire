@@ -11,23 +11,23 @@ healthy `AGENTS.md` gets shorter as the gates get stronger.
 
 ## Where the truth lives
 
-- **Why is the tree shaped this way, and which crate may name which?** —
+- **Why is the tree shaped this way, and which crate may name which?**
   [`docs/architecture.md`](docs/architecture.md) and
   [`scripts/layering.txt`](scripts/layering.txt).
-- **What is each directory, grouped by what it is for?** —
+- **What is each directory, grouped by what it is for?**
   [`docs/tree.md`](docs/tree.md).
-- **What is here, and why does it have the shape it has?** —
+- **What is here, and why does it have the shape it has?**
   [`docs/migration.md`](docs/migration.md).
-- **What exists, and what is missing, on each machine?** —
+- **What exists, and what is missing, on each machine?**
   [`docs/status.md`](docs/status.md).
-- **What is missing overall, and which gap blocks which?** —
+- **What is missing overall, and which gap blocks which?**
   [`docs/roadmap.md`](docs/roadmap.md).  It carries the counts and the command
   that re-takes them, so the answer is measured rather than remembered.
-- **What does a change have to satisfy?** — [`CONTRIBUTING.md`](CONTRIBUTING.md).
-- **How does a subsystem work?** — the crate's own `//!` header.
-- **What may a contributor rely on?** — this file, and the gate's own header
+- **What does a change have to satisfy?**, [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **How does a subsystem work?**, the crate's own `//!` header.
+- **What may a contributor rely on?**, this file, and the gate's own header
   comment.
-- **What does the kernel enforce, and what does it not?** —
+- **What does the kernel enforce, and what does it not?**
   [`SECURITY.md`](SECURITY.md).
 
 The tree is the authority: where a document and the code disagree, the code is
@@ -42,16 +42,16 @@ sh scripts/verify.sh p3
 
 The tiers accumulate: each one runs everything below it and adds its own.
 
-- **`p0`** — formatting, every crate's tests, the three kernels.
-- **`p1`** — the boot: `cargo xtask check --machine <each machine with an
+- **`p0`**, formatting, every crate's tests, the three kernels.
+- **`p1`**, the boot: `cargo xtask check --machine <each machine with an
   image>`.  A machine is a hardware description as well as an architecture: the
   riscv64 image boots twice, once on a tree that names a PLIC and once
   (`riscv64-aia`) on one that names an APLIC and an IMSIC.  A controller a boot
   never found is a controller no gate has exercised, which is why the AIA nodes
   live in the gate rather than in a measurement made by hand.
-- **`p2`** — the three censuses, architecture fan-out, layering, per-crate test
+- **`p2`**, the three censuses, architecture fan-out, layering, per-crate test
   counts.
-- **`p3`** — clippy in every configuration the tree builds.
+- **`p3`**, clippy in every configuration the tree builds.
 
 The gate requires the boot for a reason no other tier can cover: every runtime
 defect this tree has had would have passed a gate that never ran an image.  It
@@ -71,13 +71,17 @@ longer describes the tree.  Meeting one by recording a new number is a change
 that argues for it in the baseline's own prose, which is why
 `scripts/layering.txt` is longer than the list of crates it describes.
 
-- **`scripts/check-layering.sh`** — every dependency points downward.
-- **`scripts/check-arch-fanout.sh`** — nothing outside `arch/` names a machine.
-- **`scripts/check-crate-tests.sh`** — every crate with code has tests, and
+- **`scripts/check-layering.sh`**, every dependency points downward.
+- **`scripts/check-arch-fanout.sh`**, nothing outside `arch/` names a machine.
+- **`scripts/check-crate-tests.sh`**, every crate with code has tests, and
   none lost any.
-- **`scripts/check-repo-integrity.sh`** — nothing ignored is tracked, and no
+- **`scripts/check-repo-integrity.sh`**, nothing ignored is tracked, and no
   build product is.
-- **`scripts/check-docs.sh`** — every path a document cites exists.
+- **`scripts/check-docs.sh`**, every path a document cites exists.
+- **`scripts/check-comment-punctuation.sh`**, no em dash and no rule line:
+  `docs/fmts/comments.md` §4 and §6 in the form a commit cannot pass by
+  accident.  The rule was prose and the tree held 1,600 lines that broke it,
+  which is this section's own argument for existing.
 
 The architecture census is at **zero** and stays there.  Its one historical row
 was `bootloader/src/main.rs`, and the row was wrong in a way worth remembering:

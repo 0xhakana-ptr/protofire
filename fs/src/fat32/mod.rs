@@ -9,8 +9,8 @@
 //!
 //! A filesystem backend in the [`crate::filesystem::FileSystem`] shape:
 //! [`FatVolume::open`] mounts a volume a device holds, and everything
-//! between — lookup, listing, creation, rename, removal, reading, writing,
-//! truncation — is the format's own arithmetic through the block cache.
+//! between, lookup, listing, creation, rename, removal, reading, writing,
+//! truncation, is the format's own arithmetic through the block cache.
 //! The FAT family's writes are in-place: a cluster's content is overwritten,
 //! unlike f2fs's appended, and the chain is the only allocation.
 //!
