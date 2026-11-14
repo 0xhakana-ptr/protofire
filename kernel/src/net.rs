@@ -1948,7 +1948,7 @@ fn tcp_exchange(
                         sequence: outgoing.sequence,
                         acknowledgement: outgoing.acknowledgement,
                         flags: outgoing.flags,
-                        window: net::tcp::WINDOW,
+                        window: outgoing.window,
                         payload_len: outgoing.payload.len(),
                     },
                     (local, sender_port),
@@ -1974,7 +1974,10 @@ fn tcp_exchange(
                 sequence: outgoing.sequence,
                 acknowledgement: outgoing.acknowledgement,
                 flags: outgoing.flags,
-                window: net::tcp::WINDOW,
+                // The window the segment advertises, read from the segment
+                // rather than restated: it is what the sender's own buffers
+                // had room for at the moment it was built.
+                window: outgoing.window,
                 payload_len: outgoing.payload.len(),
             };
             let connection = table
@@ -2040,6 +2043,7 @@ fn tcp_send_on_wire(
                 outgoing.sequence,
                 outgoing.acknowledgement,
                 outgoing.flags,
+                outgoing.window,
                 &outgoing.payload,
             );
             interface.card.submit_frame(&frame)
@@ -2074,6 +2078,7 @@ fn tcp_send_on_wire(
                 outgoing.sequence,
                 outgoing.acknowledgement,
                 outgoing.flags,
+                outgoing.window,
                 &outgoing.payload,
             );
             interface.card.submit_frame(&frame)
@@ -3388,6 +3393,96 @@ pub fn path_mtu6_probe() -> bool {
         ", MISMATCH\n"
     });
     shrank
+}
+
+/// Prove that the window a stream advertises is the room it has.
+///
+/// Every exchange this gate runs carries a few bytes, so none of them can tell
+/// a window that shrinks from one that is a constant: a connection holding nine
+/// bytes advertises the same number either way.  This probe fills a stream's
+/// buffer and reads the number the peer would be told.
+///
+/// The line's two numbers are the window before and after an unread segment the
+/// size of the whole buffer.  A stack that enforced nothing would print the
+/// same number twice.
+#[cfg(target_os = "none")]
+pub fn window_probe() -> bool {
+    let listener = match tcp_listen(9105) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let protocol = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9105) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+    let source_port = match TCP.lock().local_port_of(client) {
+        Some(port) => port,
+        None => return false,
+    };
+
+    let (before, full, held) = {
+        let mut table = TCP.lock();
+        let Some(peer) = table.connection_mut(accepted) else {
+            return false;
+        };
+        let before = peer.advertised_window();
+        // The position the peer expects, read through the API that answers it:
+        // a connection's fields are its own, and a probe that reached into them
+        // would be a second reader of state the crate keeps private.
+        let base = peer.expected_position();
+
+        // One segment the size of the whole window, delivered to the peer and
+        // never read.  The connection now holds every byte it advertised room
+        // for.
+        let filling = net::tcp::Segment {
+            source_port,
+            destination_port: 9105,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+            window: net::tcp::WINDOW,
+            payload_len: before as usize,
+        };
+        let _ = peer.receive(&filling, &alloc::vec![0x5A_u8; before as usize]);
+        let full = peer.advertised_window();
+
+        // One byte more, at the position past everything held: there is
+        // nowhere for it, so the buffer must not grow.
+        let extra = net::tcp::Segment {
+            source_port,
+            destination_port: 9105,
+            sequence: base + before as u32,
+            acknowledgement: 5001,
+            flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+            window: net::tcp::WINDOW,
+            payload_len: 1,
+        };
+        let _ = peer.receive(&extra, b"x");
+        (before, full, peer.held())
+    };
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    let bounded = full == 0 && held == before as usize;
+    arch::serial::write_str("protofire: window ");
+    arch::serial::write_u32(before as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(full as u32);
+    arch::serial::write_str(if bounded {
+        ", and a byte past it was refused\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    bounded
 }
 
 /// Prove that a segment which arrives early is held and then delivered.

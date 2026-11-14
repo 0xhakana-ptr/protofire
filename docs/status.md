@@ -459,6 +459,25 @@ length reads past what it was given.
 [RFC 8200]: https://www.rfc-editor.org/rfc/rfc8200
 [RFC 8201]: https://www.rfc-editor.org/rfc/rfc8201
 
+**The window is a fact about the buffers, not a constant.**  `WINDOW` was
+carried in every segment and enforced nowhere: this stack told each peer it had
+eight kilobytes of room however full its inbox was, so a peer that filled it was
+entitled to send more and what stopped it was the connection's memory growing.
+The number a segment advertises is now the room the connection has left, the
+inbox and the runs held ahead of a gap both counted, and bytes past it are
+dropped rather than grown into.  A reader taking bytes reopens it, which is the
+half that matters: a window that only ever shrank would close the stream for
+good.
+
+```
+protofire: window 8192 -> 0, and a byte past it was refused
+```
+
+That line needed a probe of its own, because every exchange this gate runs
+carries nine bytes or nineteen: a connection holding either advertises the same
+number whether or not anything enforces it.  The probe fills the whole buffer
+with one segment and reads the number back.
+
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and
 `ListenTcp` (56) answer through the registry; `AcceptTcp` (57) is served by
 the trap path, because it parks, and a stream's data rides the same `Read`

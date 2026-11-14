@@ -887,7 +887,14 @@ pub fn exercise_network() -> bool {
 
     // The IPv6 half of the same question, and a separate exchange because the
     // message's MTU word moves the quotation eight bytes in rather than four.
-    crate::net::path_mtu6_probe()
+    if !crate::net::path_mtu6_probe() {
+        return false;
+    }
+
+    // The window: a stream's buffer filled and read back, because no exchange
+    // this gate runs carries enough bytes for a shrinking window to differ
+    // from a constant one.
+    crate::net::window_probe()
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the

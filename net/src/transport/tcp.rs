@@ -225,6 +225,7 @@ pub fn write_segment(
     sequence: u32,
     acknowledgement: u32,
     flags: u8,
+    window: u16,
     data: &[u8],
 ) {
     let length = (HEADER_LEN + data.len()) as u16;
@@ -235,7 +236,7 @@ pub fn write_segment(
     // Data offset: five words, the header with no options.
     into[12] = 5 << 4;
     into[13] = flags;
-    put_u16(into, 14, WINDOW);
+    put_u16(into, 14, window);
     put_u16(into, 16, 0);
     put_u16(into, 18, 0);
     into[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
@@ -263,6 +264,7 @@ pub fn write_segment6(
     sequence: u32,
     acknowledgement: u32,
     flags: u8,
+    window: u16,
     data: &[u8],
 ) {
     let length = (HEADER_LEN + data.len()) as u16;
@@ -272,7 +274,7 @@ pub fn write_segment6(
     into[8..12].copy_from_slice(&acknowledgement.to_be_bytes());
     into[12] = 5 << 4;
     into[13] = flags;
-    put_u16(into, 14, WINDOW);
+    put_u16(into, 14, window);
     put_u16(into, 16, 0);
     put_u16(into, 18, 0);
     into[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
@@ -395,22 +397,14 @@ pub struct Outgoing {
     pub sequence: u32,
     pub acknowledgement: u32,
     pub flags: u8,
+    /// The receive window this side advertised in the segment.
+    ///
+    /// Carried rather than restated by the writer, because the number is a
+    /// fact about this connection's buffers at the moment the segment was
+    /// built: a writer that put a constant there would advertise room it may
+    /// not have, and the peer would fill it.
+    pub window: u16,
     pub payload: alloc::vec::Vec<u8>,
-}
-
-/// One outgoing segment, built for the moves that answer with one.
-fn one(
-    sequence: u32,
-    acknowledgement: u32,
-    flags: u8,
-    payload: &[u8],
-) -> alloc::vec::Vec<Outgoing> {
-    alloc::vec![Outgoing {
-        sequence,
-        acknowledgement,
-        flags,
-        payload: alloc::vec::Vec::from(payload),
-    }]
 }
 
 /// One end of a stream: the states, the sequence numbers, and the data the
@@ -685,7 +679,11 @@ impl Connection {
         // `sequence - acknowledgement` wrap to a huge number.
         if !payload.is_empty() && seq_before(self.acknowledgement, segment.sequence) {
             self.hold(segment.sequence, payload);
-            let sent = one(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
+            // Through `take_outgoing` rather than `one`, because the window
+            // this acknowledgement advertises is the room the buffers have,
+            // and only the connection knows it.  A pure ACK is not queued for
+            // retransmission either way.
+            let sent = self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
             return (Ok(Event::None), sent);
         }
 
@@ -740,7 +738,7 @@ impl Connection {
         let sent = if payload.is_empty() {
             alloc::vec::Vec::new()
         } else {
-            one(self.sequence, self.acknowledgement, FLAG_ACK, &[])
+            self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[])
         };
         (Ok(event), sent)
     }
@@ -759,6 +757,24 @@ impl Connection {
     /// caller's `seq_before` test is the guarantee, and this function's
     /// arithmetic depends on it.
     fn accept_payload(&mut self, sequence: u32, payload: &[u8]) -> usize {
+        // A peer may send no more than the window this side advertised.  The
+        // check is on what the connection would **hold** after taking the
+        // bytes, not on the segment's length: a stream that accepted whatever
+        // arrived would let a peer choose this machine's memory use, which is
+        // the whole reason a window exists.
+        //
+        // The bytes past the window are dropped rather than the whole segment:
+        // at the edge the segment's first bytes may be exactly what fits, and
+        // a sender that learns nothing would send the same segment again.
+        let room = self.window_room();
+        let payload = if payload.len() > room {
+            &payload[..room]
+        } else {
+            payload
+        };
+        if payload.is_empty() {
+            return 0;
+        }
         let before = self.inbox.len();
         let seen = self.acknowledgement.wrapping_sub(sequence) as usize;
         let fresh = if seen >= payload.len() {
@@ -786,6 +802,13 @@ impl Connection {
     /// stack more than a stream it intends to finish.
     fn hold(&mut self, sequence: u32, payload: &[u8]) {
         if self.out_of_order.len() >= MAX_OUT_OF_ORDER {
+            return;
+        }
+        // A run held ahead of a gap is memory this side is spending on the
+        // peer's word, so it is bounded by the same room the inbox is: a peer
+        // that opened a hole and then sent past the window would otherwise
+        // hold two buffers' worth.
+        if payload.len() > self.window_room() {
             return;
         }
         if self
@@ -851,6 +874,52 @@ impl Connection {
     /// How many segments are held ahead of a gap.
     pub fn out_of_order(&self) -> usize {
         self.out_of_order.len()
+    }
+
+    /// How many bytes this side has room for.
+    ///
+    /// The window a segment advertises.  It is [`WINDOW`] less everything the
+    /// connection is holding that a reader has not taken: the inbox, and the
+    /// runs held ahead of a gap, because both are bytes the peer has already
+    /// sent and this side is spending memory on.  Counting only the inbox
+    /// would advertise room a reordered stream would fill, which is how a
+    /// window becomes a number that means nothing.
+    ///
+    /// The floor is zero rather than a wrapped subtraction: a peer that sent
+    /// past the window is refused at `accept_payload`, so the arithmetic
+    /// should not reach this, and a window that wrapped would advertise sixty
+    /// kilobytes of room that does not exist.
+    pub fn advertised_window(&self) -> u16 {
+        let held = self.inbox.len().saturating_add(
+            self.out_of_order
+                .iter()
+                .map(|run| run.data.len())
+                .sum::<usize>(),
+        );
+        (WINDOW as usize).saturating_sub(held).min(WINDOW as usize) as u16
+    }
+
+    /// The room this side has left for the peer's bytes.
+    fn window_room(&self) -> usize {
+        (WINDOW as usize).saturating_sub(self.held())
+    }
+
+    /// The position this side expects the peer's next byte at.
+    ///
+    /// The sequence number an acknowledgement of this stream would carry, which
+    /// is what a caller needs to place a segment it is building itself.
+    pub fn expected_position(&self) -> u32 {
+        self.acknowledgement
+    }
+
+    /// How many bytes the peer has sent that a reader has not taken.
+    pub fn held(&self) -> usize {
+        self.inbox.len()
+            + self
+                .out_of_order
+                .iter()
+                .map(|run| run.data.len())
+                .sum::<usize>()
     }
 
     /// Send data on the stream.
@@ -1041,7 +1110,13 @@ impl Connection {
         // [RFC 6298]'s backoff, capped: a stream that answers nothing must
         // not hold a caller for the sum of unbounded doublings.
         self.timeout = self.timeout.saturating_mul(2).min(RTO_MAX_MICROS);
-        let sent = one(sequence, acknowledgement, flags, &payload);
+        let sent = alloc::vec![Outgoing {
+            sequence,
+            acknowledgement,
+            flags,
+            window: self.advertised_window(),
+            payload,
+        }];
         self.unacknowledged[0].sent_at = self.now;
         Retransmission::Again(sent)
     }
@@ -1078,7 +1153,17 @@ impl Connection {
                 sent_at: self.now,
             });
         }
-        one(sequence, acknowledgement, flags, payload)
+        // The window this side advertises is the room its buffers still have,
+        // read **here**, where the connection knows what it is holding.  A
+        // writer that restated a constant would advertise room the inbox has
+        // already filled.
+        alloc::vec![Outgoing {
+            sequence,
+            acknowledgement,
+            flags,
+            window: self.advertised_window(),
+            payload: alloc::vec::Vec::from(payload),
+        }]
     }
 
     /// Retire every segment an acknowledgement covers, and start its clock
@@ -1513,6 +1598,130 @@ mod tests {
         assert_eq!(&buffer, b"firsthalfsecondhalf");
     }
 
+    /// The window a segment advertises is the room this side has left, and
+    /// bytes past it are dropped.
+    ///
+    /// This is the difference between a window that is carried and one that is
+    /// enforced.  Before this change the field was a constant: this stack told
+    /// every peer it had eight kilobytes of room however full its inbox was, so
+    /// a peer that filled it was entitled to send more, and what stopped it was
+    /// the connection's own memory growing without bound.
+    #[test]
+    fn the_window_shrinks_as_the_peer_fills_it() {
+        let (mut client, mut server) = handshake();
+        // The handshake's answers are built before any data, so the first one
+        // advertises the whole buffer.
+        let base = server.acknowledgement;
+        assert_eq!(
+            server.advertised_window(),
+            super::WINDOW,
+            "an empty connection has all of it"
+        );
+
+        // Half the buffer arrives, and the next segment says so.
+        let half = (super::WINDOW as usize) / 2;
+        let full = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: half,
+        };
+        let (answer, replies) = server.receive(&full, &alloc::vec![0x41_u8; half]);
+        assert_eq!(answer, Ok(Event::Data(half)));
+        assert_eq!(
+            server.advertised_window(),
+            super::WINDOW - half as u16,
+            "the acknowledgement says what is left"
+        );
+        assert_eq!(
+            replies[0].window,
+            super::WINDOW - half as u16,
+            "and the segment carrying it says the same"
+        );
+
+        // A reader takes everything, and the window reopens: a window that
+        // only ever shrank would close the stream for good.
+        let mut buffer = alloc::vec![0_u8; half];
+        assert_eq!(server.take(&mut buffer), half);
+        assert_eq!(server.advertised_window(), super::WINDOW, "reopened");
+        let _ = &mut client;
+    }
+
+    /// Bytes past the advertised window are dropped rather than grown into.
+    ///
+    /// The peer chooses how much of this machine's memory to spend only up to
+    /// the window; past it, the answer is "no", and the sender learns by
+    /// retransmitting rather than by this stack's allocation growing.
+    #[test]
+    fn bytes_past_the_window_are_dropped() {
+        let (_client, mut server) = handshake();
+        let base = server.acknowledgement;
+
+        // One segment fills the whole window.
+        let window = super::WINDOW as usize;
+        let filling = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: window,
+        };
+        let (answer, _) = server.receive(&filling, &alloc::vec![0x42_u8; window]);
+        assert_eq!(answer, Ok(Event::Data(window)));
+        assert_eq!(server.advertised_window(), 0, "nothing left");
+        assert_eq!(server.held(), window);
+
+        // One more byte arrives, and there is nowhere for it.
+        let extra = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base + window as u32,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 1,
+        };
+        let (answer, _) = server.receive(&extra, b"x");
+        assert_eq!(answer, Ok(Event::None), "past the window");
+        assert_eq!(server.held(), window, "the buffer did not grow");
+    }
+
+    /// A run held ahead of a gap is bounded by the same window the inbox is.
+    ///
+    /// A peer that opens a hole and then sends past the window would otherwise
+    /// hold two buffers' worth of this machine's memory: the inbox is full and
+    /// the out-of-order cache is a second place the same bytes live.
+    #[test]
+    fn a_held_run_is_bounded_by_the_window() {
+        let (_client, mut server) = handshake();
+        let base = server.acknowledgement;
+
+        // A run more than the whole window, entirely ahead of the gap.
+        let too_much = super::WINDOW as usize + 1;
+        let segment = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base + 4,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: too_much,
+        };
+        let (answer, _) = server.receive(&segment, &alloc::vec![0x43_u8; too_much]);
+        assert_eq!(answer, Ok(Event::None));
+        assert_eq!(
+            server.out_of_order(),
+            0,
+            "a run larger than the window is not held"
+        );
+        assert_eq!(server.held(), 0);
+    }
+
     /// A full out-of-order cache keeps what it has and drops the newest, so a
     /// peer that opens more holes than this stack holds cannot grow it.
     #[test]
@@ -1583,6 +1792,7 @@ mod tests {
             100,
             200,
             FLAG_ACK | FLAG_PSH,
+            super::WINDOW,
             b"hello",
         );
 
@@ -1616,6 +1826,7 @@ mod tests {
             1,
             2,
             FLAG_ACK,
+            super::WINDOW,
             &[],
         );
         assert_eq!(buffer[12] >> 4, 5, "five words of header");
@@ -1637,6 +1848,7 @@ mod tests {
             1,
             0,
             super::FLAG_SYN,
+            super::WINDOW,
             b"",
         );
         assert!(super::parse(&v4, source4, destination4).is_some());
@@ -1653,6 +1865,7 @@ mod tests {
             1,
             0,
             super::FLAG_SYN,
+            super::WINDOW,
             b"",
         );
         assert!(super::parse6(&v6, source6, destination6).is_some());
@@ -1687,6 +1900,7 @@ mod tests {
             0x1122_3344,
             0x5566_7788,
             super::FLAG_ACK,
+            super::WINDOW,
             b"pyrofire!",
         );
         let parsed = super::parse6(&segment, source, destination).expect("a segment");

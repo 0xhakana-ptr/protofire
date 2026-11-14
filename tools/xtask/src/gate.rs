@@ -583,6 +583,14 @@ impl Machine {
                     "protofire: path mtu6 1460 -> 1220, the report reached the stream",
                     true,
                 ),
+                // The window: a stream's buffer filled with one segment and a
+                // byte past it refused.  No exchange this gate runs carries
+                // enough bytes for a shrinking window to differ from a constant
+                // one, which is why this is its own exchange.
+                (
+                    "protofire: window 8192 -> 0, and a byte past it was refused",
+                    true,
+                ),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and
@@ -1202,6 +1210,15 @@ impl Machine {
                         "protofire: path mtu6 1460 -> 1220, the report reached the stream",
                         true,
                     ),
+                    // The window: a stream's buffer filled with one segment and
+                    // a byte past it refused.  No exchange this gate runs
+                    // carries enough bytes for a shrinking window to differ
+                    // from a constant one, which is why this is its own
+                    // exchange.
+                    (
+                        "protofire: window 8192 -> 0, and a byte past it was refused",
+                        true,
+                    ),
                     // The exchange, for the reason the x86_64 list states:
                     // the child's exit status is the echo's first byte.
                     (
@@ -1531,6 +1548,14 @@ impl Machine {
                 // starts eight bytes in.
                 (
                     "protofire: path mtu6 1460 -> 1220, the report reached the stream",
+                    true,
+                ),
+                // The window: a stream's buffer filled with one segment and a
+                // byte past it refused.  No exchange this gate runs carries
+                // enough bytes for a shrinking window to differ from a constant
+                // one, which is why this is its own exchange.
+                (
+                    "protofire: window 8192 -> 0, and a byte past it was refused",
                     true,
                 ),
                 // The stream exchange, from ring 3: the same two programs
