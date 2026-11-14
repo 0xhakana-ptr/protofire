@@ -255,6 +255,61 @@ pub const SOCKADDR_IN_ADDRESS_OFFSET: usize = offset_of!(SockAddrIn, address);
 /// that is not a name.
 pub const HOST_NAME_MAX: usize = 255;
 
+/// The level `SetSockOpt` and `GetSockOpt` name for an option about a socket
+/// rather than about the protocol running over it.
+///
+/// A level is neither an error code nor a syscall number, so it is not frozen
+/// the way the syscall range is: it is a number in a field, and the set this
+/// build serves is stated here rather than assumed.  `IPPROTO_TCP` is the
+/// other level, and is the protocol's own number, where a program did not have
+/// to guess.
+pub const SOL_SOCKET: u32 = 1;
+
+/// The level a TCP option names: the same number the IP header's protocol
+/// field carries, because that is what every caller means by it.
+pub const IPPROTO_TCP: u32 = 6;
+
+/// The longest option value these calls move, in bytes.
+///
+/// Every option this build serves is a word, and a buffer wider than a word
+/// holding fewer bytes than it claims is the caller's; the bound is on the
+/// buffer rather than on a particular option, because a caller that named the
+/// wrong option should be refused for the option and not for its width.
+pub const SOCK_OPT_MAX: usize = 8;
+
+/// `SO_RCVBUF`: how many bytes this socket's receive side advertises room for.
+///
+/// The value is a word, and the effect is the number every segment the socket's
+/// stream sends advertises as its window: a program that names a smaller buffer
+/// asks the peer to send less, which is the only honest meaning a receive
+/// buffer has on a stack that does not grow its inbox.
+pub const SO_RCVBUF: u32 = 5;
+
+/// `SO_SNDBUF`: how many unacknowledged bytes this socket may have in flight.
+///
+/// The value is a word, and the effect is the congestion window: this stack's
+/// window is the bytes a write may put on the wire before an acknowledgement,
+/// so a program that names a smaller one asks for a slower start.
+pub const SO_SNDBUF: u32 = 6;
+
+/// `TCP_NODELAY`: whether a small write may wait for more bytes.
+///
+/// [`TCP_NODELAY_DISABLED`] is a write held until a segment's worth has
+/// accumulated, which is Nagle's rule: a small segment is sent only when there
+/// is nothing in flight, so a stream of small writes becomes one segment per
+/// round trip rather than one per write.  The value is a byte, and setting a
+/// non-zero one sends every write as soon as it is made.
+pub const TCP_NODELAY: u32 = 1;
+
+/// `TCP_NODELAY`'s default here: Nagle's rule **on**, so a small write is held
+/// until the stream has nothing in flight.
+///
+/// The default is stated rather than left to whatever zero means, because a
+/// program that reads the option back before setting it should learn the rule
+/// this stack is actually running, and the alternative, a default of "send at
+/// once", is a different protocol behaviour that would also be defensible.
+pub const TCP_NODELAY_DISABLED: u8 = 0;
+
 #[cfg(test)]
 mod tests {
     use super::NETWORK_ADDRESSES_BYTES;
@@ -359,5 +414,40 @@ mod tests {
         };
         assert_eq!(record.address[0], 0xfe);
         assert_eq!(record.port, 8612);
+    }
+
+    /// The three option numbers are pinned, and the two levels with them.
+    ///
+    /// They are not in the frozen syscall range and nothing renumbers them at
+    /// a boot, so they are pinned here for the same reason the error
+    /// discriminants are: a number a program passes in a field is a wire
+    /// value, and a value that moves silently is a call that sets a different
+    /// option than the caller wrote.
+    ///
+    /// `SOL_SOCKET` is 1 and `IPPROTO_TCP` is 6 because those are what every
+    /// program means by them, and the option numbers are the standard ones so
+    /// that a program written against another stack's headers sets the option
+    /// it names.  `SO_RCVBUF` is 5 and `SO_SNDBUF` is 6 for that reason, and
+    /// `SO_REUSEADDR` and `TCP_NODELAY` are both 1 in their own scopes, which
+    /// is why the level is part of the key and not a decoration.
+    #[test]
+    fn the_option_numbers_and_levels_are_pinned() {
+        assert_eq!(super::SOL_SOCKET, 1);
+        assert_eq!(super::IPPROTO_TCP, 6);
+        assert_eq!(super::SO_RCVBUF, 5);
+        assert_eq!(super::SO_SNDBUF, 6);
+        assert_eq!(super::TCP_NODELAY, 1);
+        assert_eq!(super::TCP_NODELAY_DISABLED, 0);
+
+        // The two levels do not collide, which is the property a table keyed
+        // on the level alone would need and a table keyed on the pair gets:
+        // `TCP_NODELAY` is 1, and a future socket-level option numbered 1
+        // would be the same number twice.
+        assert_ne!(super::SOL_SOCKET, super::IPPROTO_TCP);
+        assert_eq!(
+            super::SOCK_OPT_MAX,
+            core::mem::size_of::<usize>(),
+            "every option this build serves is one word"
+        );
     }
 }

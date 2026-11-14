@@ -330,6 +330,18 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::GetPeerName,
         crate::syscall::get_peer_name,
     );
+    // The options a program may change about a socket.  Two handlers, one per
+    // direction, because a set takes a validated value and a get writes into
+    // one: the registry's argument shape has one buffer per call, and the two
+    // calls differ in which way the bytes move.
+    table.register(
+        ::syscall::SyscallNumber::SetSockOpt,
+        crate::syscall::set_sock_opt,
+    );
+    table.register(
+        ::syscall::SyscallNumber::GetSockOpt,
+        crate::syscall::get_sock_opt,
+    );
     // The lookup runs a socket exchange, so it is a handler that answers as
     // soon as the wire does rather than one that parks: the wait inside it is
     // bounded and the caller's own frame keeps running.

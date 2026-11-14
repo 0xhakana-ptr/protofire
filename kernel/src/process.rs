@@ -1385,6 +1385,57 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // same slot its buffer does not: `a0` is the buffer and `a1` the length,
     // which is the shape the ABI published for it and the shape the handler
     // reads.  The other three take the record and its length in `a1`/`a2` (and
+    // The two socket-option calls.  Both name a descriptor and a value buffer,
+    // and the difference between them is which way the bytes move:
+    // `SetSockOpt` reads the value and `GetSockOpt` writes it, so one branch
+    // validates the range and hands the buffer to whichever handler the number
+    // selects.
+    //
+    // The value is `a3` in both, because both state the descriptor, the level
+    // and the name before it.  The widths differ and that stays the handler's:
+    // a set knows how many bytes its option needs, and a get answers how many
+    // it wrote.
+    if number == SyscallNumber::SetSockOpt as usize || number == SyscallNumber::GetSockOpt as usize
+    {
+        let value = call.arguments[3];
+        let length = call.arguments[4];
+        if length == 0
+            || length > abi::network::SOCK_OPT_MAX
+            || !crate::address_space::is_user_range(value, length)
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The setter reads the
+        // buffer and the getter writes it, each inside the length checked
+        // above.
+        let buffer = unsafe { core::slice::from_raw_parts_mut(value as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(buffer));
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if number == SyscallNumber::SetSockOpt as usize {
+                " set socket option "
+            } else {
+                " read socket option "
+            });
+            arch::serial::write_u32(call.arguments[2] as u32);
+            if refused {
+                arch::serial::write_str(" refused\n");
+            } else {
+                arch::serial::write_str(" answered ");
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return outcome;
+    }
+
     // The calls that name a host take a pointer and a length, so their string
     // is copied the way a path is and their answer is a word rather than a
     // record.

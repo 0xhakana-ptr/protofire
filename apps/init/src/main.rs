@@ -86,6 +86,8 @@ use user_abi::sys_get_random;
 #[cfg(target_os = "none")]
 use user_abi::sys_get_sock_name;
 #[cfg(target_os = "none")]
+use user_abi::sys_get_sock_opt;
+#[cfg(target_os = "none")]
 use user_abi::sys_get_time_of_day;
 #[cfg(target_os = "none")]
 use user_abi::sys_ipv6_status;
@@ -120,6 +122,8 @@ use user_abi::sys_send_to_udp;
 use user_abi::sys_set_host_name;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_signal_mask;
+#[cfg(target_os = "none")]
+use user_abi::sys_set_sock_opt;
 #[cfg(target_os = "none")]
 use user_abi::sys_sigsuspend;
 #[cfg(target_os = "none")]
@@ -633,6 +637,38 @@ pub extern "C" fn _start() -> ! {
         || user_abi::sockaddr_address(&socket) != protocol
     {
         sys_exit(230);
+    }
+
+    // A socket option, set and read back from ring 3.  The number is chosen
+    // so that both directions are exercised: a setter that stored nothing and
+    // a getter that answered a default would disagree, and the option is one
+    // this stack acts on, so a program is changing real behaviour rather than
+    // filling a field.
+    let narrowed = 4000_usize;
+    if insist(sys_set_sock_opt(
+        stream,
+        user_abi::SOL_SOCKET,
+        user_abi::SO_RCVBUF,
+        &narrowed.to_le_bytes(),
+    )) != 0
+    {
+        sys_exit(232);
+    }
+    let mut option = [0u8; core::mem::size_of::<usize>()];
+    let written = insist(sys_get_sock_opt(
+        stream,
+        user_abi::SOL_SOCKET,
+        user_abi::SO_RCVBUF,
+        &mut option,
+    ));
+    if written != core::mem::size_of::<usize>() || usize::from_le_bytes(option) != narrowed {
+        sys_exit(233);
+    }
+    // An option this build does not serve is refused, which is the half that
+    // stops a program believing it set something.  `SO_KEEPALIVE` is a real
+    // option number this stack has no keepalive to act on.
+    if !user_abi::is_error_status(sys_set_sock_opt(stream, user_abi::SOL_SOCKET, 1, &[1])) {
+        sys_exit(234);
     }
 
     let mut buffer = [0u8; 16];

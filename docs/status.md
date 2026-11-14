@@ -530,6 +530,37 @@ socket has no peer: it never connected to one.  A stream over IPv6 answers the
 same, because the ABI's record is fourteen address bytes and a sixteen-byte
 address does not fit it.
 
+**Two more numbers: `SetSockOpt` (79) and `GetSockOpt` (80).**  Three options
+are served, and each one changes what it names: `SO_RCVBUF` is the window every
+outgoing segment advertises, `SO_SNDBUF` is the congestion window a write may
+not exceed, and `TCP_NODELAY` is whether a small write waits for a segment's
+worth.  Every other number is `InvalidArgument`, which is the point of having
+three rather than fourteen: the previous tree's table stored eleven options
+nothing read, and a field nothing reads is a promise to a program that asks,
+not an option.
+
+`SO_REUSEADDR` is deliberately **not** one of the three, and its absence is the
+shape of this ABI's limit rather than an oversight: `BindUdp` names a port and
+nothing else, so the option would have to be set on a socket that does not exist
+yet.  A version that recorded the flag per process and spent it at the next bind
+existed for one afternoon and was removed in this change, because no ring-3
+program could reach it without a bind to name and the state it added was kernel
+memory for a flag nothing observed.
+
+```
+protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern
+protofire: process 1 set socket option 5 answered 0
+protofire: process 1 read socket option 5 answered 8
+protofire: process 1 set socket option 1 refused
+```
+
+The first line is the kernel's probe, and the three that follow are printed from
+ring 3: `init` narrows its stream's receive buffer, reads the same number back
+at the width a size has, and is refused an option this build does not serve.  The
+probe is the one that says the numbers changed the connection, which a set and
+get round trip cannot show, because a field that stored and returned a number and
+was read by nothing would pass it.
+
 [RFC 8200]: https://www.rfc-editor.org/rfc/rfc8200
 [RFC 8201]: https://www.rfc-editor.org/rfc/rfc8201
 

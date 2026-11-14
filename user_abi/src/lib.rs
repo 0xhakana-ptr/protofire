@@ -185,6 +185,14 @@ pub const SYS_SET_HOST_NAME: usize = SyscallNumber::SetHostName as usize;
 pub const SYS_GET_SOCK_NAME: usize = SyscallNumber::GetSockName as usize;
 pub const SYS_GET_PEER_NAME: usize = SyscallNumber::GetPeerName as usize;
 pub const SYS_RESOLVE_HOSTNAME: usize = SyscallNumber::ResolveHostname as usize;
+/// The two option calls, and the level and names this build serves.
+pub const SYS_SET_SOCK_OPT: usize = SyscallNumber::SetSockOpt as usize;
+pub const SYS_GET_SOCK_OPT: usize = SyscallNumber::GetSockOpt as usize;
+pub use abi::network::IPPROTO_TCP;
+pub use abi::network::SO_RCVBUF;
+pub use abi::network::SO_SNDBUF;
+pub use abi::network::SOL_SOCKET;
+pub use abi::network::TCP_NODELAY;
 pub const IPV6_STATUS_BYTES: usize = core::mem::size_of::<abi::network::Ipv6StatusRecord>();
 /// The state word for a card the kernel drives.
 pub use abi::network::NETWORK_STATUS_UP;
@@ -746,6 +754,40 @@ pub fn sys_resolve_hostname(name: &str) -> usize {
         0,
         0,
         0,
+        0,
+    )
+}
+
+/// `set_sock_opt(descriptor, level, name, value)`: zero, or an error status.
+///
+/// The value is a byte for a flag and a word for a size, which is what
+/// [`abi::network`] states for each option; a caller that passes the wrong
+/// width for the option it names gets `InvalidArgument` rather than a value
+/// this stack read out of padding.
+#[cfg(target_os = "none")]
+pub fn sys_set_sock_opt(descriptor: usize, level: u32, name: u32, value: &[u8]) -> usize {
+    syscall6(
+        SYS_SET_SOCK_OPT,
+        descriptor,
+        level as usize,
+        name as usize,
+        value.as_ptr() as usize,
+        value.len(),
+        0,
+    )
+}
+
+/// `get_sock_opt(descriptor, level, name, buffer)`: the bytes written, or an
+/// error status.
+#[cfg(target_os = "none")]
+pub fn sys_get_sock_opt(descriptor: usize, level: u32, name: u32, buffer: &mut [u8]) -> usize {
+    syscall6(
+        SYS_GET_SOCK_OPT,
+        descriptor,
+        level as usize,
+        name as usize,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
         0,
     )
 }

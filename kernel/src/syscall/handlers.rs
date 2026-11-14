@@ -10,6 +10,8 @@
 //! against zero, and a path against the length a filesystem could accept, each
 //! because the caller chose it and none because the kernel did.
 
+use alloc::sync::Arc;
+
 use abi::Error;
 use abi::Result;
 use abi::fs as fs_abi;
@@ -934,11 +936,11 @@ pub fn bind_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resu
     if port == 0 || port > u16::MAX as usize {
         return Err(Error::InvalidArgument);
     }
-    let socket = crate::net::bind_udp(port as u16)?;
     let owner = arguments
         .context
         .caller_pid
         .unwrap_or(crate::programs::BOOT_PROCESS);
+    let socket = crate::net::bind_udp(port as u16)?;
     let descriptor = table.insert_udp_socket(socket, owner)?;
     Ok(Dispatch::complete(descriptor))
 }
@@ -1256,6 +1258,97 @@ pub fn get_peer_name(table: &mut SyscallTable, arguments: &mut Arguments<'_>) ->
 fn write_network_status(buffer: &mut [u8], record: &network_abi::NetworkStatusRecord) {
     buffer[0..8].copy_from_slice(&record.state.to_le_bytes());
     buffer[8..8 + network_abi::NETWORK_ADDRESSES_BYTES].copy_from_slice(&record.addresses);
+}
+
+/// The socket a descriptor names, whichever kind it is, as the thing that
+/// holds options.
+///
+/// Both kinds carry a [`net::options::Options`], and the calls that read and
+/// write one do not care which kind they reached: `SO_RCVBUF` on a datagram
+/// socket is a number it keeps and this stack does not act on, and the same
+/// number on a stream is the window it advertises.  The refusal for an option
+/// the stack does not serve is the options' own, so a socket of either kind
+/// answers it the same way.
+enum OptionHolder {
+    /// A datagram socket, which holds its options behind its own lock.
+    Datagram(Arc<crate::net::UdpSocket>),
+    /// A stream, whose options are the connection's.
+    Stream(usize),
+}
+
+/// Set one option on the socket a descriptor names.
+///
+/// Arguments: the descriptor, the level, the option's name, the value and its
+/// length, then one reserved slot that must be zero.  Answers zero: a setter
+/// has nothing to report but success, and the width is the caller's to have
+/// stated, not a number it needs back.
+///
+/// The value is validated before the socket is looked up, so a call with a bad
+/// pointer costs no table walk.  A value wider than
+/// [`network_abi::SOCK_OPT_MAX`] is refused for the same reason: every option
+/// this stack serves is one word, and a caller passing a struct is a caller
+/// expecting an option this build does not have.
+pub fn set_sock_opt(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 5)?;
+    let descriptor = arguments.context.arg(0);
+    let level = arguments.context.arg(1) as u32;
+    let name = arguments.context.arg(2) as u32;
+    let value = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if value.is_empty() || value.len() > network_abi::SOCK_OPT_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let caller = arguments.context.caller_pid;
+    match holder(table, descriptor, caller)? {
+        OptionHolder::Datagram(socket) => socket.set_option(level, name, value)?,
+        OptionHolder::Stream(id) => crate::net::set_stream_option(id, level, name, value)?,
+    }
+    Ok(Dispatch::complete(0))
+}
+
+/// Read one option from the socket a descriptor names.
+///
+/// Arguments: the descriptor, the level, the option's name, the buffer and its
+/// length, then one reserved slot that must be zero.  Answers the bytes
+/// written, which is one for a flag and a word for a size.
+pub fn get_sock_opt(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 5)?;
+    let descriptor = arguments.context.arg(0);
+    let level = arguments.context.arg(1) as u32;
+    let name = arguments.context.arg(2) as u32;
+    let caller = arguments.context.caller_pid;
+    let holder = holder(table, descriptor, caller)?;
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.is_empty() || buffer.len() > network_abi::SOCK_OPT_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let written = match holder {
+        OptionHolder::Datagram(socket) => socket.get_option(level, name, buffer)?,
+        OptionHolder::Stream(id) => crate::net::stream_option(id, level, name, buffer)?,
+    };
+    Ok(Dispatch::complete(written))
+}
+
+/// The socket a descriptor names, or the error that says why there is none.
+///
+/// A descriptor that names a file or a pipe is `InvalidArgument` and not
+/// `Unsupported`: a socket option call on something that is not a socket is a
+/// caller's mistake about the descriptor, and `Unsupported` would say the
+/// machine does not do options, which it does.
+fn holder(
+    table: &mut SyscallTable,
+    descriptor: usize,
+    caller: Option<u32>,
+) -> Result<OptionHolder> {
+    if let Some(id) = table.tcp_stream(descriptor, caller) {
+        return Ok(OptionHolder::Stream(id));
+    }
+    if let Some(socket) = table.udp_socket(descriptor, caller) {
+        return Ok(OptionHolder::Datagram(socket));
+    }
+    Err(Error::InvalidArgument)
 }
 
 /// Write an `AbiInfo` record at the start of a validated buffer.

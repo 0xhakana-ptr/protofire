@@ -424,12 +424,30 @@ pub fn arp_learn(protocol: [u8; 4], hardware: [u8; 6]) {
 pub struct UdpSocket {
     port: u16,
     queue: Mutex<net::udp_socket::Queue>,
+    /// What a program changed about this socket, by `SetSockOpt`.
+    ///
+    /// A datagram socket acts on one of the four: `SO_REUSEADDR`, whose effect
+    /// is at the bind and so is spent by the time the socket exists.  The
+    /// options are kept anyway, because `GetSockOpt` has to answer what the
+    /// program set and a socket that remembered only the one it acted on would
+    /// answer the default for the rest.
+    options: Mutex<net::options::Options>,
 }
 
 impl UdpSocket {
     /// The port the socket is bound to.
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// The options a program may read and change.
+    pub fn set_option(&self, level: u32, name: u32, value: &[u8]) -> Result<()> {
+        self.options.lock().set(level, name, value)
+    }
+
+    /// Read one option into `into`, answering how many bytes were written.
+    pub fn get_option(&self, level: u32, name: u32, into: &mut [u8]) -> Result<usize> {
+        self.options.lock().get(level, name, into)
     }
 
     /// Take the next datagram the queue holds, answering where it came from
@@ -486,6 +504,7 @@ pub fn bind_udp(port: u16) -> Result<Arc<UdpSocket>> {
     let socket = Arc::new(UdpSocket {
         port,
         queue: Mutex::new(net::udp_socket::Queue::new()),
+        options: Mutex::new(net::options::Options::new()),
     });
     sockets.push((port, Arc::downgrade(&socket)));
     Ok(socket)
@@ -2005,6 +2024,25 @@ pub fn stream_ends(id: usize) -> Option<(u16, (net::address::Address, u16))> {
     let table = TCP.lock();
     let connection = table.connection(id)?;
     Some((connection.local_port(), connection.remote()))
+}
+
+/// Set one option on a stream, answering what the connection answered.
+///
+/// The table's lock is taken once and released before the caller returns: a
+/// setter does not send, so nothing here re-enters the demux, and the option's
+/// effect is on the next segment the connection builds rather than on one in
+/// flight.
+pub fn set_stream_option(id: usize, level: u32, name: u32, value: &[u8]) -> Result<()> {
+    let mut table = TCP.lock();
+    let connection = table.connection_mut(id).ok_or(Error::NotFound)?;
+    connection.set_option(level, name, value)
+}
+
+/// Read one option from a stream, answering the bytes written.
+pub fn stream_option(id: usize, level: u32, name: u32, into: &mut [u8]) -> Result<usize> {
+    let table = TCP.lock();
+    let connection = table.connection(id).ok_or(Error::NotFound)?;
+    connection.get_option(level, name, into)
 }
 
 /// Whether a stream has bytes its reader has not taken.
@@ -3867,6 +3905,95 @@ pub fn window_probe() -> bool {
         ", MISMATCH\n"
     });
     bounded
+}
+
+/// Prove that the two size options change the connection rather than a field.
+///
+/// A ring-3 set and get proves the call is wired; it does not prove the number
+/// changed anything, and the options module's whole argument is that a stored
+/// number nothing acts on is a false promise.  So the probe sets each one and
+/// reads the state it governs: `SO_RCVBUF` is the window the connection
+/// advertises next, and `SO_SNDBUF` is the congestion window it will not
+/// exceed.
+///
+/// The four numbers are the argument.  `8192` is the advertised window before,
+/// `1000` is the receive buffer the probe set and the window after, `14600` is
+/// the congestion window before, and `2190` is what it became when the probe
+/// named a send buffer of three segments.
+#[cfg(target_os = "none")]
+pub fn option_effect_probe() -> bool {
+    let listener = match tcp_listen(9108) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let protocol = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9108) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+
+    let narrowed = 1000_usize;
+    let send_buffer = 3 * net::tcp::MSS_DEFAULT;
+    let (before_window, after_window, before_cwnd, after_cwnd) = {
+        let mut table = TCP.lock();
+        let Some(connection) = table.connection_mut(client) else {
+            return false;
+        };
+        let before_window = connection.advertised_window();
+        if connection
+            .set_option(
+                abi::network::SOL_SOCKET,
+                abi::network::SO_RCVBUF,
+                &narrowed.to_le_bytes(),
+            )
+            .is_err()
+        {
+            return false;
+        }
+        let after_window = connection.advertised_window();
+        let before_cwnd = connection.congestion_window();
+        if connection
+            .set_option(
+                abi::network::SOL_SOCKET,
+                abi::network::SO_SNDBUF,
+                &send_buffer.to_le_bytes(),
+            )
+            .is_err()
+        {
+            return false;
+        }
+        let after_cwnd = connection.congestion_window();
+        (before_window, after_window, before_cwnd, after_cwnd)
+    };
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    let correct = before_window == net::tcp::WINDOW
+        && after_window == narrowed as u16
+        && before_cwnd == net::tcp::INITIAL_CWND
+        && after_cwnd == send_buffer;
+    arch::serial::write_str("protofire: options window ");
+    arch::serial::write_u32(before_window as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(after_window as u32);
+    arch::serial::write_str(", congestion ");
+    arch::serial::write_u32(before_cwnd as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(after_cwnd as u32);
+    arch::serial::write_str(if correct {
+        ", both options moved what they govern\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    correct
 }
 
 /// Prove that the window a peer advertises bounds what this side sends.

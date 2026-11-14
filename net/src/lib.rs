@@ -122,6 +122,11 @@
 //! that window, and the unacknowledged queue's room, so a peer whose buffer is
 //! full stops this side rather than being sent past what it said it would
 //! take.
+//!
+//! What a program **may change** about a socket is [`options`]: three numbers,
+//! each of which moves the thing it names.  The module is short because an
+//! option nothing acts on is a field, and this crate would rather refuse one
+//! than keep it.
 
 #![no_std]
 
@@ -152,6 +157,7 @@ pub use internet::reply;
 
 pub use link::ethernet;
 
+pub use transport::options;
 pub use transport::tcp;
 pub use transport::tcp_table;
 pub use transport::udp;

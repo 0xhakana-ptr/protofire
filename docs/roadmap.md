@@ -680,9 +680,9 @@ each unblocks rather than by size.
 10. **io_uring**, `IoUringSetup`, `IoUringEnter`.  Last because it is a second
     way to do what every call above already does, and nothing needs it.
 11. **The rest of the network**, `ResolveHostname` beyond a hosts table, the
-    local-domain calls, the raw socket calls, `GetSockName`/`GetPeerName`,
-    `SetSockOpt`/`GetSockOpt`, `TlsConnect`, `Ipsec*`, `Mrt*`, `Filter*`,
-    `Dccp*`.
+    local-domain calls, the raw socket calls, `TlsConnect`, `Ipsec*`, `Mrt*`,
+    `Filter*`, `Dccp*`.  `GetSockName`/`GetPeerName` and
+    `SetSockOpt`/`GetSockOpt` were on this row and have moved off it.
 
 What this level does not promise: **the GPU calls**.  `GpuCtxCreate` and its
 eight siblings describe a VIRGL context, which is a device this tree does not

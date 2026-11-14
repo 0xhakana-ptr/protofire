@@ -906,6 +906,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The options: a receive buffer and a send buffer set through the same
+    // call a program uses, and the two numbers each one governs read back
+    // afterwards.  A ring-3 set and get proves the call is wired; this proves
+    // the number changed the connection.
+    if !crate::net::option_effect_probe() {
+        return false;
+    }
+
     // The congestion window: grown by acknowledgements and collapsed by a
     // timeout, on an exchange long enough to see both.  Every other boot
     // exchange finishes before the window matters.

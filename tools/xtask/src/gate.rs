@@ -619,6 +619,21 @@ impl Machine {
                     "protofire: peer window 8192 -> 0 -> 9, the peer's window bounded the write",
                     true,
                 ),
+                // The socket options, from ring 3: a number set, the same
+                // number read back at its own width, and an option this
+                // stack does not serve refused.  The width is the word a size
+                // is, and the refusal is what stops a program believing it
+                // set something the kernel has no implementation of.
+                ("protofire: process 1 set socket option 5 answered 0", true),
+                ("protofire: process 1 read socket option 5 answered 8", true),
+                ("protofire: process 1 set socket option 1 refused", true),
+                // The same two options, read back where they act: a receive
+                // buffer is the window the connection advertises next, and a
+                // send buffer is the congestion window it will not exceed.
+                (
+                    "protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern",
+                    true,
+                ),
                 // The congestion window, on an exchange long enough to see it
                 // move: ten acknowledgements grow it and a timeout collapses
                 // it.  Every other boot exchange finishes before the window
@@ -1287,6 +1302,22 @@ impl Machine {
                         "protofire: peer window 8192 -> 0 -> 9, the peer's window bounded the write",
                         true,
                     ),
+                    // The socket options, from ring 3.
+                    ("protofire: process 1 set socket option 5 answered 0", true),
+                    ("protofire: process 1 read socket option 5 answered 8", true),
+                    ("protofire: process 1 set socket option 1 refused", true),
+                    (
+                        "protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern",
+                        true,
+                    ),
+                    // The same two options, read back where they act: a receive
+                    // buffer is the window the connection advertises next, and
+                    // a send buffer is the congestion window it will not
+                    // exceed.
+                    (
+                        "protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern",
+                        true,
+                    ),
                     // The congestion window, on an exchange long enough to see
                     // it move: ten acknowledgements grow it and a timeout
                     // collapses it.  Every other boot exchange finishes before
@@ -1665,6 +1696,21 @@ impl Machine {
                 // number three times.
                 (
                     "protofire: peer window 8192 -> 0 -> 9, the peer's window bounded the write",
+                    true,
+                ),
+                // The socket options, from ring 3: a number set, the same
+                // number read back at its own width, and an option this
+                // stack does not serve refused.  The width is the word a size
+                // is, and the refusal is what stops a program believing it
+                // set something the kernel has no implementation of.
+                ("protofire: process 1 set socket option 5 answered 0", true),
+                ("protofire: process 1 read socket option 5 answered 8", true),
+                ("protofire: process 1 set socket option 1 refused", true),
+                // The same two options, read back where they act: a receive
+                // buffer is the window the connection advertises next, and a
+                // send buffer is the congestion window it will not exceed.
+                (
+                    "protofire: options window 8192 -> 1000, congestion 14600 -> 4380, both options moved what they govern",
                     true,
                 ),
                 // The congestion window, on an exchange long enough to see it

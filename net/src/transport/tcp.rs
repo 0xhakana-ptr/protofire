@@ -526,6 +526,16 @@ pub struct Connection {
     /// never read in, and a sender that ignores this one sends past what the
     /// peer said it would take.
     peer_window: usize,
+    /// What a program changed about this socket, by `SetSockOpt`.
+    ///
+    /// Two of the four options act on a stream and two on a bind; the two that
+    /// act here are [`crate::options::Options::receive_buffer`], which is the
+    /// window every segment advertises, and
+    /// [`crate::options::Options::send_buffer`], which is the congestion
+    /// window a write starts with.  Held on the connection and not on the
+    /// table because a socket is one connection: two streams to two peers may
+    /// be told different buffer sizes by the same program.
+    options: crate::options::Options,
 }
 
 /// One segment waiting for its acknowledgement.
@@ -589,7 +599,14 @@ impl Connection {
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
             peer_window: WINDOW as usize,
+            // The congestion window a write starts with, which `SO_SNDBUF`
+            // may have changed: the option's value is a ceiling and this is
+            // the start, so the smaller of the two is what slow start begins
+            // at.  A program that named a larger send buffer than
+            // `INITIAL_CWND` keeps the RFC 6928 initial window, because slow
+            // start is a rule about the path and not about the buffer.
             cwnd: INITIAL_CWND,
+            options: crate::options::Options::new(),
             ssthresh: MAX_CWND,
             duplicates: 0,
         };
@@ -626,7 +643,14 @@ impl Connection {
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
             peer_window: WINDOW as usize,
+            // The congestion window a write starts with, which `SO_SNDBUF`
+            // may have changed: the option's value is a ceiling and this is
+            // the start, so the smaller of the two is what slow start begins
+            // at.  A program that named a larger send buffer than
+            // `INITIAL_CWND` keeps the RFC 6928 initial window, because slow
+            // start is a rule about the path and not about the buffer.
             cwnd: INITIAL_CWND,
+            options: crate::options::Options::new(),
             ssthresh: MAX_CWND,
             duplicates: 0,
         };
@@ -987,14 +1011,45 @@ impl Connection {
     /// past the window is refused at `accept_payload`, so the arithmetic
     /// should not reach this, and a window that wrapped would advertise sixty
     /// kilobytes of room that does not exist.
+    ///
+    /// The total is `SO_RCVBUF`'s, which is [`WINDOW`] until a program sets
+    /// it: a program that asked for a smaller receive buffer asks the peer to
+    /// send less, and the number it read back from `GetSockOpt` is the number
+    /// its peer is looking at.
     pub fn advertised_window(&self) -> u16 {
-        let held = self.inbox.len().saturating_add(
-            self.out_of_order
-                .iter()
-                .map(|run| run.data.len())
-                .sum::<usize>(),
-        );
-        (WINDOW as usize).saturating_sub(held).min(WINDOW as usize) as u16
+        let held = self.held();
+        let total = self.options.receive_buffer().min(u16::MAX as usize);
+        (total.saturating_sub(held)).min(total) as u16
+    }
+
+    /// The options a program may read and change.
+    pub fn options(&self) -> crate::options::Options {
+        self.options
+    }
+
+    /// Set one option, answering the value's width.
+    ///
+    /// The value goes through [`crate::options::Options::set`], which is where
+    /// the four options and their widths live; what this adds is the one thing
+    /// only the connection can do, which is to apply a size to the state it
+    /// governs.  `SO_RCVBUF` needs nothing applied, because
+    /// [`Connection::advertised_window`] reads it every time a segment is
+    /// built; `SO_SNDBUF` is applied here, and it shrinks the congestion
+    /// window when it names something smaller than what slow start has already
+    /// grown to.
+    pub fn set_option(&mut self, level: u32, name: u32, value: &[u8]) -> abi::Result<()> {
+        self.options.set(level, name, value)?;
+        // A send buffer smaller than the window already open is a ceiling the
+        // sender has already passed: the acknowledgement that grew it is
+        // history, and the next write must respect the new number rather than
+        // the one that was in force when it was sent.
+        self.cwnd = self.cwnd.min(self.options.send_buffer());
+        Ok(())
+    }
+
+    /// Read one option into `into`, answering how many bytes were written.
+    pub fn get_option(&self, level: u32, name: u32, into: &mut [u8]) -> abi::Result<usize> {
+        self.options.get(level, name, into)
     }
 
     /// How many bytes this side has sent and the peer has not acknowledged.
@@ -1196,8 +1251,15 @@ impl Connection {
     }
 
     /// The room this side has left for the peer's bytes.
+    ///
+    /// The total is `SO_RCVBUF`'s, the same number
+    /// [`Connection::advertised_window`] states to the peer.  The two agreeing
+    /// is the property that makes the option real: a window a connection
+    /// advertises and a room it enforces that came from two different numbers
+    /// would let a peer send exactly what it was told it could and have it
+    /// refused.
     fn window_room(&self) -> usize {
-        (WINDOW as usize).saturating_sub(self.held())
+        self.options.receive_buffer().saturating_sub(self.held())
     }
 
     /// The position this side expects the peer's next byte at.
@@ -2500,6 +2562,144 @@ mod tests {
     }
 
     /// A stream starts with ten segments of window, whatever the handshake
+    /// A receive buffer a program set is the window its peer sees, and the
+    /// room it enforces.
+    ///
+    /// The option is only real if both halves move together: a connection that
+    /// advertised the smaller window and enforced the old room would accept
+    /// more than it said it would, and one that enforced the smaller room and
+    /// advertised the old one would drop bytes a peer was told to send.  The
+    /// test asserts both numbers, which is what distinguishes an option that
+    /// works from a field that is stored and read by one path.
+    #[test]
+    fn a_receive_buffer_option_moves_the_window_and_the_room() {
+        let (mut client, _server) = established_on_the_loopback();
+        assert_eq!(
+            client.advertised_window(),
+            super::WINDOW,
+            "the default before anything is set"
+        );
+
+        let narrowed = 1000_usize;
+        client
+            .set_option(
+                abi::network::SOL_SOCKET,
+                abi::network::SO_RCVBUF,
+                &narrowed.to_le_bytes(),
+            )
+            .expect("a receive buffer");
+        assert_eq!(
+            client.advertised_window(),
+            narrowed as u16,
+            "the peer sees it"
+        );
+
+        // The peer sends exactly the advertised number and it fits; one byte
+        // more does not.  The second segment starts past the gap the first
+        // filled, so it is refused by the window and not by the sequence.
+        let base = client.expected_position();
+        let filling = super::Segment {
+            source_port: THEIR_PORT,
+            destination_port: OUR_PORT,
+            sequence: base,
+            acknowledgement: client.send_position(),
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: narrowed,
+        };
+        let (_, replies) = client.receive(&filling, &alloc::vec![0x41_u8; narrowed]);
+        assert!(!replies.is_empty(), "the segment is acknowledged");
+        assert_eq!(client.held(), narrowed, "all of it is held");
+        assert_eq!(client.advertised_window(), 0, "and the window is closed");
+
+        // A byte past the window, at the position the peer would send it.
+        let extra = super::Segment {
+            source_port: THEIR_PORT,
+            destination_port: OUR_PORT,
+            sequence: base + narrowed as u32,
+            acknowledgement: client.send_position(),
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 1,
+        };
+        let _ = client.receive(&extra, b"x");
+        assert_eq!(
+            client.held(),
+            narrowed,
+            "the byte past the window was refused, and by the option's number"
+        );
+    }
+
+    /// A send buffer a program set caps the congestion window.
+    ///
+    /// `SO_SNDBUF` is the ceiling this side may have in flight, and slow
+    /// start's growth stops at it.  The test sets a buffer smaller than the
+    /// window slow start had already reached: the ceiling has to apply to what
+    /// is already open, not only to what a fresh connection would start with,
+    /// because an acknowledgement that grew the window is history and the next
+    /// write has to respect the number the program set after it.
+    #[test]
+    fn a_send_buffer_option_caps_the_congestion_window() {
+        let (mut client, _server) = established_on_the_loopback();
+        assert_eq!(client.congestion_window(), super::INITIAL_CWND);
+        let ceiling = 3 * super::MSS_DEFAULT;
+        assert!(
+            ceiling < super::INITIAL_CWND,
+            "the test needs a tighter cap"
+        );
+
+        client
+            .set_option(
+                abi::network::SOL_SOCKET,
+                abi::network::SO_SNDBUF,
+                &ceiling.to_le_bytes(),
+            )
+            .expect("a send buffer");
+        assert_eq!(
+            client.congestion_window(),
+            ceiling,
+            "the window already open is capped, not only a fresh one"
+        );
+        // And the budget follows it, which is what a write reads.
+        assert_eq!(client.send_budget(), ceiling);
+
+        // Reading it back answers the number that was set.
+        let mut buffer = [0_u8; 8];
+        let written = client
+            .get_option(
+                abi::network::SOL_SOCKET,
+                abi::network::SO_SNDBUF,
+                &mut buffer,
+            )
+            .expect("a send buffer");
+        assert_eq!(written, core::mem::size_of::<usize>());
+        assert_eq!(
+            usize::from_le_bytes(buffer[..written].try_into().unwrap()),
+            ceiling
+        );
+    }
+
+    /// A stream's option calls refuse a number nothing in this stack serves.
+    ///
+    /// The refusal reaches through the connection, so a program's `SetSockOpt`
+    /// on a stream is refused by the same `match` a datagram socket's is, and
+    /// the stream's own state is unchanged by the attempt.
+    #[test]
+    fn a_stream_refuses_an_option_it_does_not_serve() {
+        let (mut client, _server) = established_on_the_loopback();
+        let before = client.options();
+        assert_eq!(
+            client.set_option(abi::network::SOL_SOCKET, 1, &[1]),
+            Err(abi::Error::InvalidArgument)
+        );
+        assert_eq!(client.options(), before, "a refusal changes nothing");
+        let mut buffer = [0_u8; 8];
+        assert_eq!(
+            client.get_option(abi::network::IPPROTO_TCP, 9, &mut buffer),
+            Err(abi::Error::InvalidArgument)
+        );
+    }
+
     /// occupied, and its first acknowledgements double it.
     ///
     /// Slow start's rule is that an acknowledged byte adds a byte of window, so
