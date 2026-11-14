@@ -565,6 +565,16 @@ impl Machine {
                     "protofire: tcp reordered 1 held, 19 byte(s), in order",
                     true,
                 ),
+                // The path's size: a fragmentation-needed report the probe
+                // builds, because no wire this gate boots sends one, handed to
+                // the demux a received frame goes through.  The two numbers are
+                // the stream's segment size before and after, so a stack that
+                // read the report and did nothing with it prints the same
+                // number twice.
+                (
+                    "protofire: path mtu 1460 -> 536, the report reached the stream",
+                    true,
+                ),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and
@@ -1166,6 +1176,16 @@ impl Machine {
                         "protofire: tcp reordered 1 held, 19 byte(s), in order",
                         true,
                     ),
+                    // The path's size: a fragmentation-needed report the probe
+                    // builds, because no wire this gate boots sends one, handed
+                    // to the demux a received frame goes through.  The two
+                    // numbers are the stream's segment size before and after,
+                    // so a stack that read the report and did nothing with it
+                    // prints the same number twice.
+                    (
+                        "protofire: path mtu 1460 -> 536, the report reached the stream",
+                        true,
+                    ),
                     // The exchange, for the reason the x86_64 list states:
                     // the child's exit status is the echo's first byte.
                     (
@@ -1477,6 +1497,16 @@ impl Machine {
                 // is the peer's own inbox once the gap closed.
                 (
                     "protofire: tcp reordered 1 held, 19 byte(s), in order",
+                    true,
+                ),
+                // The path's size: a fragmentation-needed report the probe
+                // builds, because no wire this gate boots sends one, handed to
+                // the demux a received frame goes through.  The two numbers are
+                // the stream's segment size before and after, so a stack that
+                // read the report and did nothing with it prints the same
+                // number twice.
+                (
+                    "protofire: path mtu 1460 -> 536, the report reached the stream",
                     true,
                 ),
                 // The stream exchange, from ring 3: the same two programs

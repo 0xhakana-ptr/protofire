@@ -96,16 +96,21 @@
 //!
 //! ## What is not here yet
 //!
-//! Path-MTU discovery and ICMP errors beyond the one a closed port produces.
-//! Each is a documented refusal in the module it belongs to.
-//!
 //! Congestion control is the one refusal that has no module: a stream
-//! retransmits, with [`tcp::RTO_INITIAL_MICROS`]'s backoff, and receives out
-//! of order, but what it does not do is slow down before a loss tells it to.
-//! A receiver's window is carried and never enforced either, so the only bound
-//! on what a peer may send is the sequence check.  Both are decisions a stack
-//! needs a path with a round trip on it to make, and this one's exchanges are a
-//! loopback and a user-mode network.
+//! retransmits, with [`tcp::RTO_INITIAL_MICROS`]'s backoff, receives out of
+//! order, and shrinks its segments to what a path reports, but what it does
+//! not do is slow down before a loss tells it to.  A receiver's window is
+//! carried and never enforced either, so the only bound on what a peer may
+//! send is the sequence check.  Both are decisions a stack needs a path with a
+//! round trip on it to make, and this one's exchanges are a loopback and a
+//! user-mode network.
+//!
+//! [`ipv6`] has no path-MTU discovery of its own: [RFC 8201]'s packet-too-big
+//! arrives as an ICMPv6 error, and this stack's IPv6 receive path drops ICMPv6
+//! errors unread, which is the same gap the IPv4 side had before it grew a
+//! branch for them.
+//!
+//! [RFC 8201]: https://www.rfc-editor.org/rfc/rfc8201
 
 #![no_std]
 

@@ -400,6 +400,51 @@ whose clock now matches the one `duty` reads.
 
 [RFC 2131]: https://www.rfc-editor.org/rfc/rfc2131
 
+**A path that shrinks now tells the stream.**  Two gaps were the same gap: a
+write went out as **one** segment, so a write larger than a frame built a frame
+the card could not carry; and `demux` had no branch for ICMP at all, so a
+router's report about this machine's packet was dropped unread.  Together they
+made the failure this tree could not have explained: a sender whose packets are
+too large gets silence, retransmits into the same silence five times, and
+abandons the stream half a minute later.
+
+A write is now a run of segments no larger than the path's payload, and a
+fragmentation-needed report shrinks every stream the four-tuple it quotes
+names, so one lost oversized segment fixes every later write.  Measured on
+x86_64:
+
+```
+protofire: path mtu 1460 -> 536, the report reached the stream
+```
+
+The probe builds the report, because no wire this gate boots sends one: the
+loopback is one machine and QEMU's user-mode network is a proxy with no router
+on the path.  It hands the frame to **the same `demux` a received frame goes
+through**, and the two numbers are the stream's segment size before and after.
+
+The probe found three of this change's own defects, and all three were about
+which end of a quotation is whose.  The reported MTU was applied with the two
+ports swapped, so a loopback exchange shrank the peer's end and the probe read
+the sender's unchanged size; the check for "was this packet ours" compared the
+quoted packet's **destination**, which is right for a packet sent *to* us and
+wrong for the one an error quotes; and the probe itself wrote this machine's
+address in both fields, which no real report does and which let the wrong check
+pass its own test.  The first two are host tests now, and the third is why the
+probe writes the shape a router does.
+
+An ICMP port or host unreachable mid-stream ends the stream it names, because a
+party on the path has said the path does not exist; a report about a packet
+that did not leave from this machine is refused, because a four-tuple match
+alone would let a stranger end a connection by guessing a port.
+
+**Not here yet, on this side.**  ICMPv6 errors are still dropped unread, so
+[RFC 8201]'s packet-too-big has no consumer and an IPv6 stream does not learn a
+path's size.  The IPv4 path is where the shape was worked out; the IPv6 one is
+a separate change because the message and its MTU field are laid out
+differently.
+
+[RFC 8201]: https://www.rfc-editor.org/rfc/rfc8201
+
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and
 `ListenTcp` (56) answer through the registry; `AcceptTcp` (57) is served by
 the trap path, because it parks, and a stream's data rides the same `Read`

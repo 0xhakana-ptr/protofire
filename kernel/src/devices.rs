@@ -873,7 +873,15 @@ pub fn exercise_network() -> bool {
     // The reordering: a stream's two halves delivered the wrong way round,
     // which no wire this gate boots does on its own.  A stack that dropped
     // the early half leaves the peer's inbox short by exactly it.
-    crate::net::out_of_order_probe()
+    if !crate::net::out_of_order_probe() {
+        return false;
+    }
+
+    // The path's size: a fragmentation-needed report, built here because no
+    // wire this gate boots sends one, handed to the demux a received frame
+    // goes through.  A stream that read the report has a smaller segment size
+    // afterwards, which is the number on the line.
+    crate::net::path_mtu_probe()
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the

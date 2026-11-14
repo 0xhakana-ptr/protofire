@@ -277,6 +277,49 @@ impl Table {
         self.connection(id).is_none()
     }
 
+    /// Shrink every stream the peer named to what the path carries.
+    ///
+    /// The answer to a fragmentation-needed report.  The report names a
+    /// four-tuple by quoting the packet it could not forward, and every stream
+    /// whose own addresses match it takes the smaller segment size: the path
+    /// that reported is the one this four-tuple's packets cross, and a
+    /// connection that kept sending the size that was dropped would have every
+    /// later packet dropped in silence too.
+    ///
+    /// A report that matches nothing is not an error: a router may quote a
+    /// packet whose stream has since closed, and acting on a stale report is a
+    /// stream that shrank for a reason that is gone.
+    pub fn limit_path(&mut self, remote: (Address, u16), local_port: u16, payload: usize) -> bool {
+        let Some(id) = self.connection_for(local_port, remote.0, remote.1) else {
+            return false;
+        };
+        match self.connection_mut(id) {
+            Some(connection) => {
+                connection.limit_segment(payload);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// End the stream a report names, answering whether one was found.
+    ///
+    /// This is an ICMP error's other half: a port or host the wire says does
+    /// not exist.  A report that names no stream is not an error, for the same
+    /// reason a stale path report is not.
+    pub fn abort_path(&mut self, remote: (Address, u16), local_port: u16) -> bool {
+        let Some(id) = self.connection_for(local_port, remote.0, remote.1) else {
+            return false;
+        };
+        match self.connection_mut(id) {
+            Some(connection) => {
+                connection.abort();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Drop every connection whose close finished: its id is nobody's, and
     /// the descriptors that named it are closed or closing.
     pub fn prune(&mut self) {
@@ -616,6 +659,83 @@ mod tests {
         assert_eq!(*id, client, "the id the descriptor names");
         assert_ne!(*id, accepted, "not the other end's");
         assert_eq!(segment.payload, b"due");
+    }
+
+    /// A path report shrinks the stream it names, and a report that names no
+    /// stream changes nothing.
+    ///
+    /// This is the table's half of path-MTU discovery: the report quotes a
+    /// four-tuple, the table finds the stream, and every later write uses the
+    /// smaller payload.  The negative case is the one a stranger's report
+    /// relies on: a quotation that names nothing must not create or change a
+    /// connection.
+    #[test]
+    fn a_path_report_shrinks_the_stream_it_names() {
+        let (mut table, client, accepted, client_port) = an_established_stream();
+        let remote = table.remote_of(client).expect("the client's peer");
+
+        assert_eq!(
+            table
+                .connection(client)
+                .expect("the client")
+                .segment_limit(),
+            crate::tcp::MSS_DEFAULT
+        );
+
+        // The report names the client's own four-tuple.
+        assert!(
+            table.limit_path(remote, client_port, 536),
+            "the stream the report names"
+        );
+        assert_eq!(
+            table
+                .connection(client)
+                .expect("the client")
+                .segment_limit(),
+            536,
+            "and every later write uses what the path carries"
+        );
+        // The accepted end is a different four-tuple, so the report about the
+        // client's path left it alone.
+        assert_eq!(
+            table
+                .connection(accepted)
+                .expect("the accepted end")
+                .segment_limit(),
+            crate::tcp::MSS_DEFAULT,
+            "the other end's path is its own"
+        );
+
+        // A quotation nothing matches is not an error and changes nothing.
+        let unknown = (Address::V4([10, 9, 9, 9]), 1234);
+        assert!(!table.limit_path(unknown, 65000, 100));
+        assert_eq!(table.len(), 2, "and creates nothing");
+    }
+
+    /// A report that the path does not exist ends the stream it names.
+    #[test]
+    fn a_path_report_aborts_the_stream_it_names() {
+        let (mut table, client, accepted, client_port) = an_established_stream();
+        let remote = table.remote_of(client).expect("the client's peer");
+
+        assert!(
+            table.abort_path(remote, client_port),
+            "the stream the report names"
+        );
+        assert_eq!(
+            table.connection(client).expect("still there").state(),
+            crate::tcp::State::Closed,
+            "and it is over"
+        );
+        assert_eq!(
+            table.connection(accepted).expect("the other end").state(),
+            crate::tcp::State::Established,
+            "a report about one path is not a report about the other"
+        );
+
+        // A quotation nothing matches answers false rather than creating one.
+        assert!(!table.abort_path((Address::V4([10, 9, 9, 9]), 1234), 65000));
+        assert_eq!(table.len(), 2);
     }
 
     /// Two ends of an open stream, made the way the kernel makes one: a

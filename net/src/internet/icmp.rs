@@ -63,6 +63,35 @@ pub const DESTINATION_UNREACHABLE: u8 = 3;
 /// it.
 pub const PORT_UNREACHABLE: u8 = 3;
 
+/// `code` value 1 under [`DESTINATION_UNREACHABLE`]: the host does not answer.
+///
+/// A router says this when it has no route to the host, and a host says it
+/// when it cannot reach one.  For a stream it is the same news as a closed
+/// port: the path this four-tuple names does not exist, and a stack that kept
+/// retransmitting into it would be retransmitting for thirty-one seconds to
+/// learn what the report already said.
+pub const HOST_UNREACHABLE: u8 = 1;
+
+/// `code` value 4 under [`DESTINATION_UNREACHABLE`]: fragmentation is needed
+/// and the packet said not to fragment it.
+///
+/// This is path-MTU discovery's whole signal on IPv4.  A router on a link
+/// narrower than the packet drops it and says so, and the message carries the
+/// next hop's MTU in its header's unused word, which is what tells a sender
+/// what to shrink to.  Without it a sender whose packets are too large learns
+/// nothing: every packet is dropped in silence and the only evidence is that
+/// nothing ever answers.
+pub const FRAGMENTATION_NEEDED: u8 = 4;
+
+/// Where a fragmentation-needed message holds the next hop's MTU.
+///
+/// The four bytes every ICMP error leaves unused hold the MTU in that one
+/// code, which is [RFC 1191]'s layout and the only place a sender can learn a
+/// path's size on IPv4.
+///
+/// [RFC 1191]: https://www.rfc-editor.org/rfc/rfc1191
+pub const NEXT_HOP_MTU_AT: usize = 4;
+
 /// Where an error message holds the original datagram it is about: after the
 /// eight bytes every ICMP message begins with, four of which an error leaves
 /// unused.
@@ -120,6 +149,27 @@ pub fn write_destination_unreachable(
     original_header: &[u8],
     original_payload: &[u8],
 ) {
+    write_unreachable_with_mtu(into, code, 0, original_header, original_payload);
+}
+
+/// Write a destination-unreachable message, with the next hop's MTU when the
+/// code is the one that carries it.
+///
+/// The four-byte word after the checksum is unused in every error but
+/// [`FRAGMENTATION_NEEDED`], and zero in all of them, because [RFC 792] says
+/// an unused field is zero and a buffer is not.  The one code that gives it a
+/// meaning is [RFC 1191]'s: the MTU of the next hop, which is the only way a
+/// sender whose packets are too large can learn what to shrink to.
+///
+/// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+/// [RFC 1191]: https://www.rfc-editor.org/rfc/rfc1191
+pub fn write_unreachable_with_mtu(
+    into: &mut [u8],
+    code: u8,
+    next_hop_mtu: u16,
+    original_header: &[u8],
+    original_payload: &[u8],
+) {
     let quoted_payload = original_payload.len().min(QUOTED_PAYLOAD);
     let total = error_len(original_header.len(), quoted_payload);
     if into.len() < total {
@@ -128,8 +178,9 @@ pub fn write_destination_unreachable(
     into[0] = DESTINATION_UNREACHABLE;
     into[1] = code;
     put_u16(into, 2, 0);
-    // The unused word: zero, because the RFC says so and a buffer is not.
-    put_u16(into, 4, 0);
+    // The word after the checksum: the MTU in the one code that gives it a
+    // meaning, and zero everywhere else, which is what an unused field is.
+    put_u16(into, NEXT_HOP_MTU_AT, next_hop_mtu);
     put_u16(into, 6, 0);
     into[HEADER_LEN..HEADER_LEN + original_header.len()].copy_from_slice(original_header);
     let payload_at = HEADER_LEN + original_header.len();
@@ -144,8 +195,15 @@ pub struct Error {
     /// The message's `type`: [`DESTINATION_UNREACHABLE`] for the one this
     /// stack acts on.
     pub kind: u8,
-    /// The `code` that says why, such as [`PORT_UNREACHABLE`].
+    /// The `code` that says why, such as [`PORT_UNREACHABLE`] or
+    /// [`FRAGMENTATION_NEEDED`].
     pub code: u8,
+    /// The next hop's MTU, when this message is the one that states it.
+    ///
+    /// `None` for every code but [`FRAGMENTATION_NEEDED`], because the four
+    /// bytes that hold it are unused in every other error and a value read
+    /// from them would be whatever the sender left there.
+    pub next_hop_mtu: Option<u16>,
     /// Where the quoted original packet begins.
     pub quoted_at: usize,
     /// How many bytes of the original this message carries.
@@ -165,9 +223,19 @@ pub fn parse_error(message: &[u8]) -> Option<Error> {
     if checksum(message) != 0 {
         return None;
     }
+    // The MTU is read only from the one code that states one: the four bytes
+    // are unused in every other error, and a value read from an unused field
+    // is the sender's leftovers, not a measurement.
+    let next_hop_mtu =
+        if message[0] == DESTINATION_UNREACHABLE && message[1] == FRAGMENTATION_NEEDED {
+            Some(get_u16(message, NEXT_HOP_MTU_AT))
+        } else {
+            None
+        };
     Some(Error {
         kind: message[0],
         code: message[1],
+        next_hop_mtu,
         quoted_at: ORIGINAL_DATAGRAM_AT,
         quoted_len: message.len() - ORIGINAL_DATAGRAM_AT,
     })
@@ -411,6 +479,73 @@ mod tests {
         assert_eq!(total, 8 + 20 + 8);
         let parsed = super::parse_error(&message[..total]).expect("an error");
         assert_eq!(parsed.quoted_len, 28);
+    }
+
+    /// A fragmentation-needed message states the next hop's MTU, and no other
+    /// code's message does.
+    ///
+    /// The MTU is path-MTU discovery's whole signal: a sender whose packets
+    /// are too large learns nothing else, because the router's only other
+    /// evidence is silence.  The test reads it back out of the bytes the
+    /// sender wrote, and then asserts the negative case, which is what keeps
+    /// a value from being read out of a field every other code leaves unused.
+    #[test]
+    fn a_fragmentation_needed_message_states_the_next_hops_mtu() {
+        let header = [0x45_u8; 20];
+        let payload = [0x02_u8; 8];
+        let total = super::error_len(header.len(), 8);
+        let mut message = [0_u8; 64];
+
+        super::write_unreachable_with_mtu(
+            &mut message,
+            super::FRAGMENTATION_NEEDED,
+            1_400,
+            &header,
+            &payload,
+        );
+        assert_eq!(
+            crate::ipv4::checksum(&message[..total]),
+            0,
+            "the checksum covers the MTU field"
+        );
+        let parsed = super::parse_error(&message[..total]).expect("an error");
+        assert_eq!(parsed.kind, super::DESTINATION_UNREACHABLE);
+        assert_eq!(parsed.code, super::FRAGMENTATION_NEEDED);
+        assert_eq!(parsed.next_hop_mtu, Some(1_400));
+
+        // The same message under a code that has no meaning for those four
+        // bytes reports none, whatever the sender wrote there.
+        let mut other = [0_u8; 64];
+        super::write_unreachable_with_mtu(
+            &mut other,
+            super::PORT_UNREACHABLE,
+            1_400,
+            &header,
+            &payload,
+        );
+        let parsed = super::parse_error(&other[..total]).expect("an error");
+        assert_eq!(
+            parsed.next_hop_mtu, None,
+            "an unused field is not a measurement"
+        );
+
+        // And the plain writer leaves those bytes zero, which is what the RFC
+        // says an unused field is.
+        let mut plain = [0_u8; 64];
+        super::write_destination_unreachable(
+            &mut plain,
+            super::FRAGMENTATION_NEEDED,
+            &header,
+            &payload,
+        );
+        assert_eq!(
+            u16::from_be_bytes([
+                plain[super::NEXT_HOP_MTU_AT],
+                plain[super::NEXT_HOP_MTU_AT + 1]
+            ]),
+            0,
+            "the writer that states no MTU writes none"
+        );
     }
 
     /// A corrupted error message is refused: a stack that acted on one would

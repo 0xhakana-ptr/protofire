@@ -793,6 +793,153 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
         #[cfg(not(target_os = "none"))]
         let _ = woken;
     }
+    if packet.header.protocol == net::ipv4::PROTOCOL_ICMP {
+        handle_icmp(&packet, payload);
+    }
+}
+
+/// What one received ICMP message means to this stack.
+///
+/// Two codes change anything, and both are about a stream this machine holds.
+/// A **fragmentation-needed** report is the path's size, and every stream the
+/// quoted four-tuple names shrinks to it: without that, a sender whose packets
+/// are too large has no evidence at all, because the router's only other
+/// answer is silence and the sender's own retransmissions produce the same
+/// silence every time.  A **port** or **host unreachable** report ends the
+/// stream it names, because a third party on the path has said the path does
+/// not exist.
+///
+/// Every other message is dropped, and the silence is deliberate: this stack
+/// sends no echo request it is waiting on outside the boot's own probe, and
+/// acting on a report about a packet it did not send would let a stranger end
+/// a connection by quoting it.
+fn handle_icmp(packet: &net::ipv4::Packet, payload: &[u8]) {
+    let Some(error) = net::icmp::parse_error(payload) else {
+        return;
+    };
+    if error.kind != net::icmp::DESTINATION_UNREACHABLE {
+        return;
+    }
+    // The quoted original packet: its header, then the transport's first
+    // eight bytes, which is what a report must carry.  Nothing is acted on
+    // unless the original was **this machine's**, a report about a packet
+    // that was not ours is a stranger's claim, and a four-tuple match without
+    // the address check would let one end a connection by guessing a port.
+    let Some(report) = quoted_report(packet.header.source, &error, payload) else {
+        return;
+    };
+    match error.code {
+        net::icmp::FRAGMENTATION_NEEDED => {
+            // The MTU is the next hop's, and the payload one segment can carry
+            // is it less this stack's own headers.  A report with no MTU (a
+            // sender that left the field zero, which [RFC 1191] says to read as
+            // "no number") is acted on with the protocol's own floor instead,
+            // so the stream does not keep sending a size that was just refused.
+            //
+            // [RFC 1191]: https://www.rfc-editor.org/rfc/rfc1191
+            let mtu = error
+                .next_hop_mtu
+                .filter(|mtu| *mtu as usize >= net::ipv4::HEADER_LEN + net::tcp::HEADER_LEN)
+                .map(usize::from)
+                .unwrap_or(net::ipv4::HEADER_LEN + net::tcp::MIN_MSS);
+            let _ = report;
+            let _ = TCP
+                .lock()
+                .limit_path(report.remote, report.local_port, payload_for(mtu));
+        }
+        net::icmp::PORT_UNREACHABLE | net::icmp::HOST_UNREACHABLE => {
+            let aborted = TCP.lock().abort_path(report.remote, report.local_port);
+            if aborted {
+                arch::serial::write_str("protofire: an icmp error ended a stream\n");
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The payload one segment carries when the path's MTU is `mtu`.
+///
+/// The path's size less both headers this stack puts in front of a segment.
+/// `saturating_sub` because an MTU a peer states wrongly is the peer's number
+/// and a subtraction that wrapped would be a limit of nearly four gigabytes.
+fn payload_for(mtu: usize) -> usize {
+    mtu.saturating_sub(net::ipv4::HEADER_LEN)
+        .saturating_sub(net::tcp::HEADER_LEN)
+}
+
+/// What a report says about one of this machine's streams.
+///
+/// The four-tuple a report names, read out of the packet it quotes.  The
+/// quoted packet is one **this machine sent**, so the port it names first is
+/// ours and the one it names second is the peer's: the two are returned in
+/// the order the table is keyed on, and swapping them finds the peer's own end
+/// of a loopback exchange and shrinks the wrong stream.  That swap was a real
+/// defect, and the boot's probe is what found it.
+///
+/// `None` for every report that names nothing this machine can act on: one
+/// about somebody else's packet, one whose quotation does not parse, and one
+/// whose protocol has no ports.
+///
+/// `our_address` is checked against the quoted packet's **source**, not its
+/// destination.  A report is about a packet that was not delivered, and the
+/// quoted packet is one this machine *sent*: its destination is the peer whose
+/// path was too narrow, and its source is the address it left from.  The check
+/// this stack first had compared destinations, which is the answer for a
+/// report about a packet sent *to* us, and that is not what an error quotes.
+fn quoted_report(our_address: [u8; 4], error: &net::icmp::Error, payload: &[u8]) -> Option<Report> {
+    let quoted = payload.get(error.quoted_at..error.quoted_at + error.quoted_len)?;
+    let original = net::ipv4::parse(quoted)?;
+    // The quoted packet must have left from this machine: a report about a
+    // packet that was not ours is a stranger's claim, and a four-tuple match
+    // without this check would let one end a connection by guessing a port.
+    if original.header.source != our_address {
+        return None;
+    }
+    let transport = quoted.get(original.payload_at..)?;
+    let ports = quoted_segment(original.header.protocol, transport)?;
+    Some(Report {
+        remote: (
+            net::address::Address::V4(original.header.destination),
+            ports.destination_port,
+        ),
+        local_port: ports.source_port,
+    })
+}
+
+/// One of this machine's streams, as a report names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Report {
+    /// The peer's address and port.
+    remote: (net::address::Address, u16),
+    /// This machine's own port.
+    local_port: u16,
+}
+
+/// The ports a report's quoted transport header names.
+///
+/// A report must quote the original's header and the first eight bytes of its
+/// payload, and for both transports those eight bytes begin with the two
+/// ports, which is what makes a four-tuple readable from a quotation.  The
+/// ports are read here rather than through `udp::parse` or `tcp::parse`
+/// because the quote has no checksum to verify: it is a fragment of a packet
+/// by construction, and a parser that demanded one would refuse every report.
+fn quoted_segment(protocol: u8, transport: &[u8]) -> Option<Ports> {
+    if transport.len() < 4 {
+        return None;
+    }
+    if protocol != net::ipv4::PROTOCOL_TCP && protocol != net::ipv4::PROTOCOL_UDP {
+        return None;
+    }
+    Some(Ports {
+        source_port: u16::from_be_bytes([transport[0], transport[1]]),
+        destination_port: u16::from_be_bytes([transport[2], transport[3]]),
+    })
+}
+
+/// The two ports a quotation names.
+struct Ports {
+    source_port: u16,
+    destination_port: u16,
 }
 
 /// Tell a sender that the port its datagram named has nothing bound.
@@ -2793,7 +2940,10 @@ pub fn retransmission_probe() -> bool {
     };
     let accepted = match tcp_accept(listener) {
         Ok(Some(id)) => id,
-        _ => return false,
+        _ => {
+            arch::serial::write_str("protofire: PMTU step accept\n");
+            return false;
+        }
     };
 
     // The segment this probe will lose.  It is written with the loopback's
@@ -2859,6 +3009,150 @@ pub fn retransmission_probe() -> bool {
     intact
 }
 
+/// Prove that a path report reaches the stream it names, and that the report
+/// is the one the wire would have delivered.
+///
+/// A wire this gate boots never sends a fragmentation-needed report: the
+/// loopback is one machine and QEMU's user-mode network is a proxy that
+/// forwards small datagrams without a router on the path.  So the probe builds
+/// the report itself, quoting a packet whose four-tuple is a stream it just
+/// opened, and hands the whole frame to **the same `demux` a received frame
+/// goes through**.
+///
+/// The line's two numbers are the stream's segment size before and after.  A
+/// stack that parsed the report and did nothing with it prints the same number
+/// twice, which is exactly the state this change found: `demux` had no ICMP
+/// branch at all, so every report about this machine was dropped unread.
+#[cfg(target_os = "none")]
+pub fn path_mtu_probe() -> bool {
+    let listener = match tcp_listen(9103) {
+        Ok(id) => id,
+        Err(_) => {
+            arch::serial::write_str("protofire: PMTU step listen\n");
+            return false;
+        }
+    };
+    let (protocol, hardware, gateway_hardware) = {
+        let mut interface = INTERFACE.lock();
+        let Some(interface) = interface.as_mut() else {
+            arch::serial::write_str("protofire: PMTU step interface\n");
+            return false;
+        };
+        let gateway = interface.gateway;
+        let hardware = interface.hardware;
+        let protocol = interface.protocol;
+        let gateway_hardware = interface.arp.hardware_for(gateway).unwrap_or_default();
+        (protocol, hardware, gateway_hardware)
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9103) {
+        Ok(id) => id,
+        Err(_) => {
+            arch::serial::write_str("protofire: PMTU step connect\n");
+            return false;
+        }
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => {
+            arch::serial::write_str("protofire: PMTU step accept\n");
+            return false;
+        }
+    };
+
+    let before = match TCP.lock().connection(client) {
+        Some(connection) => connection.segment_limit(),
+        None => return false,
+    };
+    let client_port = match TCP.lock().local_port_of(client) {
+        Some(port) => port,
+        None => return false,
+    };
+
+    // The report quotes a TCP segment this machine would have sent: the
+    // client's own four-tuple, both ports and neither of the headers
+    // pretending to be longer than they are.
+    // Written with the header writer rather than field by field: `ipv4::parse`
+    // verifies the checksum, and a quoted header whose sum was never computed
+    // is one the reader refuses, which is how the first version of this probe
+    // reported no change at all.
+    let mut quoted_header = [0_u8; net::ipv4::HEADER_LEN];
+    net::ipv4::write_header(
+        &mut quoted_header,
+        protocol,
+        protocol,
+        net::ipv4::PROTOCOL_TCP,
+        // Eight bytes of transport, which is what a report quotes: the
+        // original's total length field says so, and a reader that took the
+        // sender's word for a larger payload would read past the quotation.
+        net::icmp::QUOTED_PAYLOAD,
+    );
+    let mut quoted_payload = [0_u8; 8];
+    quoted_payload[0..2].copy_from_slice(&client_port.to_be_bytes());
+    quoted_payload[2..4].copy_from_slice(&9103u16.to_be_bytes());
+
+    // The report: destination unreachable, fragmentation needed, and the
+    // next hop's MTU.  The MTU is chosen so the payload it implies is a round
+    // number a reader can check against the line: 576 less both headers is
+    // 536, which is the classic minimum every IPv4 host must accept.
+    const NEXT_HOP_MTU: u16 = 576;
+    let mut message = [0_u8; 64];
+    net::icmp::write_unreachable_with_mtu(
+        &mut message,
+        net::icmp::FRAGMENTATION_NEEDED,
+        NEXT_HOP_MTU,
+        &quoted_header,
+        &quoted_payload,
+    );
+    let message_len = net::icmp::error_len(quoted_header.len(), quoted_payload.len());
+
+    // The frame the wire would have carried, handed to the demux a received
+    // one goes through.  Its source is the gateway, because a report comes
+    // from the party that could not forward the packet.
+    let mut frame =
+        alloc::vec![0_u8; netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + message_len];
+    net::ethernet::write_header(
+        &mut frame,
+        hardware,
+        gateway_hardware,
+        net::ethernet::ETHERTYPE_IPV4,
+    );
+    net::ipv4::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        protocol,
+        protocol,
+        net::ipv4::PROTOCOL_ICMP,
+        message_len,
+    );
+    frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..][..message_len]
+        .copy_from_slice(&message[..message_len]);
+    demux(&frame, protocol);
+
+    let after = match TCP.lock().connection(client) {
+        Some(connection) => connection.segment_limit(),
+        None => {
+            arch::serial::write_str("protofire: path mtu probe lost its stream\n");
+            return false;
+        }
+    };
+
+    let expected = NEXT_HOP_MTU as usize - net::ipv4::HEADER_LEN - net::tcp::HEADER_LEN;
+    let shrank = before == net::tcp::MSS_DEFAULT && after == expected;
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    arch::serial::write_str("protofire: path mtu ");
+    arch::serial::write_u32(before as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(after as u32);
+    arch::serial::write_str(if shrank {
+        ", the report reached the stream\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    shrank
+}
+
 /// Prove that a segment which arrives early is held and then delivered.
 ///
 /// No wire this gate boots reorders, so the probe makes the reordering: it
@@ -2881,7 +3175,10 @@ pub fn out_of_order_probe() -> bool {
     };
     let accepted = match tcp_accept(listener) {
         Ok(Some(id)) => id,
-        _ => return false,
+        _ => {
+            arch::serial::write_str("protofire: PMTU step accept\n");
+            return false;
+        }
     };
 
     // The whole stream, in two halves, sent from the client and never
@@ -3609,5 +3906,109 @@ mod tests {
             super::micros_of_ticks(36) == 3_600,
             "which is thirty-six timer interrupts, not an hour"
         );
+    }
+
+    /// A report about this machine's own packet names the stream by this
+    /// machine's port first and the peer's second.
+    ///
+    /// The port order is the whole test.  The quoted packet is one this
+    /// machine sent, so its source port is ours; a reader that handed the
+    /// table the pair the other way round found the peer's own end of a
+    /// loopback exchange and shrank the wrong stream, which is the defect the
+    /// boot's probe found after this test's subject was already written.
+    #[test]
+    fn a_report_names_our_port_first_and_the_peers_second() {
+        const OURS: u16 = 49152;
+        const THEIRS: u16 = 9000;
+        let us = [10, 0, 2, 15];
+
+        // The report: the bytes a router sends about a segment this machine
+        // sent to a peer, which is why the original's source is this machine's
+        // address and its destination is the peer's.
+        let mut quoted_header = [0_u8; 20];
+        net::ipv4::write_header(
+            &mut quoted_header,
+            us,
+            [10, 0, 2, 2],
+            net::ipv4::PROTOCOL_TCP,
+            net::icmp::QUOTED_PAYLOAD,
+        );
+        let mut quoted_payload = [0_u8; 8];
+        quoted_payload[0..2].copy_from_slice(&THEIRS.to_be_bytes());
+        quoted_payload[2..4].copy_from_slice(&OURS.to_be_bytes());
+
+        let mut message = [0_u8; 64];
+        net::icmp::write_unreachable_with_mtu(
+            &mut message,
+            net::icmp::FRAGMENTATION_NEEDED,
+            1_400,
+            &quoted_header,
+            &quoted_payload,
+        );
+        let length = net::icmp::error_len(quoted_header.len(), quoted_payload.len());
+        let error = net::icmp::parse_error(&message[..length]).expect("an error");
+
+        let report = super::quoted_report(us, &error, &message[..length]).expect("a report");
+        assert_eq!(
+            report.local_port, THEIRS,
+            "the port the quoted packet named first is ours"
+        );
+        assert_eq!(
+            report.remote.1, OURS,
+            "and the second is the peer it went to"
+        );
+        assert_eq!(report.remote.0, net::address::Address::V4([10, 0, 2, 2]));
+    }
+
+    /// A report about a packet that was not this machine's is refused.
+    ///
+    /// The quoted packet is one whose destination is somebody else, so no
+    /// stream of ours could be the subject: acting on it would let a stranger
+    /// shrink or end a connection by guessing a port.
+    #[test]
+    fn a_report_about_someone_elses_packet_is_refused() {
+        let us = [10, 0, 2, 15];
+        let mut quoted_header = [0_u8; 20];
+        net::ipv4::write_header(
+            &mut quoted_header,
+            [10, 0, 2, 9],
+            [10, 0, 2, 2],
+            net::ipv4::PROTOCOL_TCP,
+            net::icmp::QUOTED_PAYLOAD,
+        );
+        let mut quoted_payload = [0_u8; 8];
+        quoted_payload[0..2].copy_from_slice(&9000u16.to_be_bytes());
+        quoted_payload[2..4].copy_from_slice(&49152u16.to_be_bytes());
+
+        let mut message = [0_u8; 64];
+        net::icmp::write_unreachable_with_mtu(
+            &mut message,
+            net::icmp::FRAGMENTATION_NEEDED,
+            1_400,
+            &quoted_header,
+            &quoted_payload,
+        );
+        let length = net::icmp::error_len(quoted_header.len(), quoted_payload.len());
+        let error = net::icmp::parse_error(&message[..length]).expect("an error");
+
+        assert_eq!(
+            super::quoted_report(us, &error, &message[..length]),
+            None,
+            "the quoted packet was not addressed to this machine"
+        );
+    }
+
+    /// The payload a path's MTU leaves is the MTU less both headers, and a
+    /// wrongly small one is not a wrapped number.
+    #[test]
+    fn a_paths_mtu_leaves_room_for_the_headers() {
+        assert_eq!(
+            super::payload_for(1_500),
+            1_500 - net::ipv4::HEADER_LEN - net::tcp::HEADER_LEN
+        );
+        // A path that claims less than the headers is a peer's mistake, and
+        // the subtraction must not wrap into four gigabytes.
+        assert_eq!(super::payload_for(10), 0);
+        assert_eq!(super::payload_for(0), 0);
     }
 }

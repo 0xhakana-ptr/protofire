@@ -151,6 +151,28 @@ pub const MAX_OUT_OF_ORDER: usize = 64;
 /// against the buffer it advertises for.
 pub const WINDOW: u16 = 8192;
 
+/// The default largest payload one segment carries.
+///
+/// A segment is not a frame, and a stream is not a datagram: what a write
+/// bytes becomes is a run of segments whose payloads fit the path, and this is
+/// the payload that fits a fifteen-hundred-byte Ethernet frame with both
+/// headers and no options, `1500 - 20 - 20`.  A sender that wrote a segment
+/// longer than this produced a frame the card could not carry, which is the
+/// defect this constant exists for: the first version sent every write as
+/// **one** segment, so a hundred-kilobyte write built a hundred-kilobyte frame
+/// and the driver's ring refused it with no stream-level answer at all.
+pub const MSS_DEFAULT: usize = 1460;
+
+/// The smallest segment this stack will build.
+///
+/// Below this the headers dominate and a stream of tiny segments is a stream
+/// paying a header per few bytes.  A path that claims to carry less than this
+/// is a path a peer stated wrongly, and [RFC 1122] says a host may refuse to
+/// shrink past it rather than fragment into uselessness.
+///
+/// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+pub const MIN_MSS: usize = 128;
+
 /// The states a connection moves through, in the order a stream does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -439,6 +461,13 @@ pub struct Connection {
     /// touches the inbox into it, so the inbox stays a prefix of the peer's
     /// stream and a reader never learns that anything was reordered.
     out_of_order: alloc::vec::Vec<Held>,
+    /// The largest payload the path is known to carry, in bytes.
+    ///
+    /// Path-MTU discovery's answer, and [`MSS_DEFAULT`] until something says
+    /// otherwise.  It lives on the connection rather than on the table
+    /// because a path is a property of one four-tuple: a stream to one peer
+    /// may cross a link a stream to another does not.
+    path_mss: usize,
 }
 
 /// One segment waiting for its acknowledgement.
@@ -500,6 +529,7 @@ impl Connection {
             timeout: RTO_INITIAL_MICROS,
             attempts: 0,
             out_of_order: alloc::vec::Vec::new(),
+            path_mss: MSS_DEFAULT,
         };
         let sent = connection.take_outgoing(connection.sequence, 0, FLAG_SYN, &[]);
         connection.sequence += 1;
@@ -532,6 +562,7 @@ impl Connection {
             timeout: RTO_INITIAL_MICROS,
             attempts: 0,
             out_of_order: alloc::vec::Vec::new(),
+            path_mss: MSS_DEFAULT,
         };
         let sent = connection.take_outgoing(
             connection.sequence,
@@ -840,17 +871,86 @@ impl Connection {
         if !open {
             return (0, alloc::vec::Vec::new());
         }
-        if self.unacknowledged.len() >= MAX_UNACKNOWLEDGED {
-            return (0, alloc::vec::Vec::new());
+
+        // A write becomes a run of segments, each no larger than the path's
+        // payload, and as many of them as the queue has room for.  A write
+        // that cannot be split into what fits is a partial write: the count
+        // answers how much was carried, which is the same answer a pipe gives
+        // when its buffer fills, and the caller writes the rest.
+        //
+        // The loop stops on the queue's bound for the reason that bound
+        // exists: what is queued is bytes nobody has acknowledged, and a peer
+        // that stopped acknowledging must not be able to make one write cost
+        // unbounded memory.
+        let mss = self.mss();
+        let mut carried = 0;
+        let mut segments = alloc::vec::Vec::new();
+        while carried < bytes.len() && self.unacknowledged.len() < MAX_UNACKNOWLEDGED {
+            let end = (carried + mss).min(bytes.len());
+            let chunk = &bytes[carried..end];
+            segments.extend(self.take_outgoing(
+                self.sequence,
+                self.acknowledgement,
+                FLAG_ACK | FLAG_PSH,
+                chunk,
+            ));
+            self.sequence = self.sequence.wrapping_add(chunk.len() as u32);
+            carried = end;
         }
-        let sent = self.take_outgoing(
-            self.sequence,
-            self.acknowledgement,
-            FLAG_ACK | FLAG_PSH,
-            bytes,
-        );
-        self.sequence += bytes.len() as u32;
-        (bytes.len(), sent)
+        (carried, segments)
+    }
+
+    /// The largest payload one segment may carry on this connection.
+    ///
+    /// The path's own limit when discovery has found one, and [`MSS_DEFAULT`]
+    /// otherwise.  A connection that learns the path is smaller never sends a
+    /// larger segment again, which is what makes one lost oversized segment
+    /// enough to fix every later write.
+    ///
+    /// The floor is [`MIN_MSS`]: a report claiming less than that is a path a
+    /// peer stated wrongly, and a stream that shrank to a handful of bytes per
+    /// segment would be a header per handful.
+    fn mss(&self) -> usize {
+        self.path_mss.clamp(MIN_MSS, MSS_DEFAULT)
+    }
+
+    /// Tell this connection the largest payload the path carries.
+    ///
+    /// The caller learns it from a packet-too-big report or from its own
+    /// interface, and the number is a payload rather than an MTU so the
+    /// headers do not have to be subtracted twice.  It only ever shrinks: a
+    /// path that was found small does not become large again because a later
+    /// measurement says so, and a connection that grew its segment size would
+    /// repeat the loss that taught it.
+    pub fn limit_segment(&mut self, payload: usize) {
+        self.path_mss = self.path_mss.min(payload);
+    }
+
+    /// The largest payload this connection may put in one segment.
+    pub fn segment_limit(&self) -> usize {
+        self.mss()
+    }
+
+    /// End the stream because the wire said it is over.
+    ///
+    /// This is what an ICMP error acts on, and it is not a close: a close is
+    /// two ends agreeing, and this is a third party reporting that the path
+    /// does not exist.  The state goes straight to [`State::Closed`] with no
+    /// segment sent, because sending a FIN to a peer a router could not reach
+    /// is a segment asking for the same error again.
+    ///
+    /// The two states an error may end are the handshake and an open stream.
+    /// [RFC 1122] says a host must not abort a connection whose segments are
+    /// merely being lost, and an error is different: it is a report about
+    /// this four-tuple, from a party on the path, and the only two things a
+    /// stack can do with it are abort or ignore.  This aborts.
+    ///
+    /// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+    pub fn abort(&mut self) {
+        self.state = State::Closed;
+        self.finished = true;
+        self.unacknowledged.clear();
+        self.out_of_order.clear();
     }
 
     /// Say this side is done sending: one FIN, and the state that waits for
@@ -1607,6 +1707,103 @@ mod tests {
         client.advance(0);
         server.advance(0);
         (client, server)
+    }
+
+    /// A write larger than one segment becomes a run of segments, each no
+    /// larger than the path's payload.
+    ///
+    /// This is the defect a stream this stack could not have carried: every
+    /// write went out as **one** segment, so a write larger than a frame built
+    /// a frame the card could not carry.  The assertion is the segment sizes
+    /// and the byte count, because a stack that split the write but lost a
+    /// byte would satisfy neither.
+    #[test]
+    fn a_large_write_becomes_a_run_of_segments() {
+        let (mut client, _server) = established_on_the_loopback();
+        let mut bytes = alloc::vec![0_u8; 5000];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = (index % 251) as u8;
+        }
+
+        let (carried, outgoing) = client.send_data(&bytes);
+        assert_eq!(carried, 5000, "the whole write was carried");
+        assert!(outgoing.len() > 1, "and in more than one segment");
+        assert_eq!(
+            client.segment_limit(),
+            super::MSS_DEFAULT,
+            "the default path payload"
+        );
+
+        let mut total = 0;
+        for segment in &outgoing {
+            assert!(
+                segment.payload.len() <= super::MSS_DEFAULT,
+                "a segment of {} bytes is larger than the path carries",
+                segment.payload.len()
+            );
+            assert!(!segment.payload.is_empty(), "no empty segments");
+            total += segment.payload.len();
+        }
+        assert_eq!(total, 5000, "and every byte once");
+
+        // Concatenated back together, the segments are the write.
+        let rebuilt: alloc::vec::Vec<u8> = outgoing
+            .iter()
+            .flat_map(|segment| segment.payload.iter().copied())
+            .collect();
+        assert_eq!(rebuilt, bytes, "the bytes, in order");
+    }
+
+    /// A path that says it carries less makes the next write use less.
+    #[test]
+    fn a_smaller_path_shrinks_every_later_segment() {
+        let (mut client, _server) = established_on_the_loopback();
+        assert_eq!(client.segment_limit(), super::MSS_DEFAULT);
+
+        client.limit_segment(512);
+        assert_eq!(client.segment_limit(), 512, "the path's own payload");
+
+        let (carried, outgoing) = client.send_data(&alloc::vec![0xAB_u8; 1500]);
+        assert_eq!(carried, 1500);
+        for segment in &outgoing {
+            assert!(
+                segment.payload.len() <= 512,
+                "a segment of {} bytes after the path shrank",
+                segment.payload.len()
+            );
+        }
+
+        // A later report that claims more does not grow it back: a path that
+        // was found small does not become large because a later measurement
+        // says so, and growing would repeat the loss that taught it.
+        client.limit_segment(9000);
+        assert_eq!(client.segment_limit(), 512, "it only ever shrinks");
+
+        // And a report below the floor is the floor, because a stream of
+        // handfuls is a header per handful.
+        client.limit_segment(1);
+        assert_eq!(client.segment_limit(), super::MIN_MSS);
+    }
+
+    /// A write the queue has no room for is partly carried, and the count
+    /// says how much.
+    ///
+    /// The count is what a caller writes again from, so a write that answered
+    /// the whole length and queued part of it would lose the rest silently.
+    #[test]
+    fn a_write_stops_where_the_queue_is_full() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        assert_eq!(client.unacknowledged(), 0);
+
+        // Enough segments to fill the queue and then some.
+        let bytes = alloc::vec![0x5A_u8; super::MSS_DEFAULT * (super::MAX_UNACKNOWLEDGED + 4)];
+        let (carried, outgoing) = client.send_data(&bytes);
+
+        assert_eq!(carried, super::MSS_DEFAULT * super::MAX_UNACKNOWLEDGED);
+        assert_eq!(outgoing.len(), super::MAX_UNACKNOWLEDGED);
+        assert_eq!(client.unacknowledged(), super::MAX_UNACKNOWLEDGED);
+        assert!(carried < bytes.len(), "the rest is the caller's to write");
     }
 
     /// A sent segment is kept until the peer acknowledges it.
