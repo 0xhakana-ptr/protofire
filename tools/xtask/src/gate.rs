@@ -665,6 +665,13 @@ impl Machine {
                     "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                     true,
                 ),
+                // The timeout, measured: two exchanges, the second later than
+                // the first, and an estimate that moved.  The numbers are the
+                // machine's clock and change every boot, so the line is
+                // required by its **second** line, which is the verdict and
+                // not a number.
+                ("protofire: round trip ", false),
+                ("protofire: the estimate moved with the measurement", true),
                 // And the same exchange between two ring-3 processes, which is
                 // the claim a probe cannot make: a bind, a connect, an accept,
                 // and a read and a write each way.
@@ -1383,6 +1390,8 @@ impl Machine {
                         "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                         true,
                     ),
+                    ("protofire: round trip ", false),
+                    ("protofire: the estimate moved with the measurement", true),
                     (
                         "protofire: process 1 bound the local name, descriptor ",
                         false,
@@ -1415,6 +1424,8 @@ impl Machine {
                         "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                         true,
                     ),
+                    ("protofire: round trip ", false),
+                    ("protofire: the estimate moved with the measurement", true),
                     (
                         "protofire: process 1 bound the local name, descriptor ",
                         false,
@@ -1850,6 +1861,13 @@ impl Machine {
                     "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                     true,
                 ),
+                // The timeout, measured: two exchanges, the second later than
+                // the first, and an estimate that moved.  The numbers are the
+                // machine's clock and change every boot, so the line is
+                // required by its **second** line, which is the verdict and
+                // not a number.
+                ("protofire: round trip ", false),
+                ("protofire: the estimate moved with the measurement", true),
                 // And the same exchange between two ring-3 processes, which is
                 // the claim a probe cannot make: a bind, a connect, an accept,
                 // and a read and a write each way.

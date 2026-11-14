@@ -94,13 +94,7 @@
 //! are the caller's, which is what lets a reply with a bad cookie or a
 //! compression pointer that loops be a host test rather than a boot.
 //!
-//! ## What is not here yet
-//!
-//! What is not here is a **route table**: [`ipv6`] has one default router,
-//! learned from an advertisement, and [`ipv4`] has one gateway, configured.  A
-//! second route, a prefix routed somewhere other than its link, or a metric
-//! that chooses between two are all absent, and a stack with one of each needs
-//! none of them: this tree boots one interface.
+//! ## What the stream does, and what it does not
 //!
 //! A stream's close is [RFC 793]'s, all of it: `FinWait`, `FinWait2`,
 //! `Closing` and `TimeWait` are four states because the close is four
@@ -117,14 +111,24 @@
 //!
 //! [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
 //!
-//! What a stream does not do is **measure**: its timeout is
-//! [`tcp::RTO_INITIAL_MICROS`]'s constant rather than a smoothed round trip,
-//! because one exchange per boot is not a sample and an estimate from a single
-//! measurement looks measured and is not.  Congestion control is here and is
-//! [RFC 5681]'s two halves, slow start and congestion avoidance, with fast
-//! retransmit on three duplicate acknowledgements.
+//! What a stream **does** is measure: its timeout is [RFC 6298]'s estimate,
+//! `SRTT + 4 * RTTVAR` over the acknowledgements that carried no
+//! retransmission, rather than a constant.  The first measurement is the
+//! estimate and each later one moves it an eighth of the way, which is what
+//! makes a path that changed visible within a few round trips and a path that
+//! did not unbothered.  Congestion control is [RFC 5681]'s two halves, slow
+//! start and congestion avoidance, with fast retransmit on three duplicate
+//! acknowledgements.
+//!
+//! [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
 //!
 //! [RFC 5681]: https://www.rfc-editor.org/rfc/rfc5681
+//!
+//! What a stream **respects** is the window its peer advertises:
+//! [`tcp::Connection::send_budget`] is the smallest of the congestion window,
+//! that window, and the unacknowledged queue's room, so a peer whose buffer is
+//! full stops this side rather than being sent past what it said it would
+//! take.
 //!
 //! Path-MTU discovery is both families': [`icmp::FRAGMENTATION_NEEDED`] states
 //! a path's size on IPv4 and [`icmpv6::PACKET_TOO_BIG`] on IPv6, and
@@ -132,12 +136,18 @@
 //! separate functions because the messages differ in where the quotation
 //! starts: IPv6's MTU word takes the four bytes an IPv4 error leaves unused.
 //!
-//! What a stream **does** respect is the window its peer advertises:
-//! [`tcp::Connection::send_budget`] is the smallest of the congestion window,
-//! that window, and the unacknowledged queue's room, so a peer whose buffer is
-//! full stops this side rather than being sent past what it said it would
-//! take.
+//! ## What is not here yet
 //!
+//! A **route table**.  [`ipv6`] has one default router, learned from an
+//! advertisement, and [`ipv4`] has one gateway, configured.  A second route, a
+//! prefix routed somewhere other than its link, or a metric that chooses
+//! between two are all absent, and a stack with one of each needs none of them:
+//! this tree boots one interface.
+//!
+//! What is also absent is every protocol this crate does not name: DCCP,
+//! IPsec, TLS, the packet filter, multicast routing.  Those are numbers above
+//! the frozen range and each is its own stack, which is why `docs/roadmap.md`
+//! lists them as work rather than as gaps in this one.
 //! What a program **may change** about a socket is [`options`]: three numbers,
 //! each of which moves the thing it names.  The module is short because an
 //! option nothing acts on is a field, and this crate would rather refuse one

@@ -107,6 +107,16 @@ pub const FLAG_ACK: u8 = 0x10;
 /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
 pub const RTO_INITIAL_MICROS: u64 = 1_000_000;
 
+/// The floor a measured round trip may set the timeout to, in microseconds.
+///
+/// [RFC 6298] section 2.4's: a measured round trip is at least a millisecond,
+/// because a smaller number is a measurement of the clock rather than of the
+/// path and would make the timeout so short that every segment is
+/// retransmitted before its acknowledgement could arrive.
+///
+/// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+pub const RTO_FLOOR_MICROS: u64 = 1_000;
+
 /// The longest a retransmission may wait, in microseconds.
 ///
 /// The same section's ceiling, sixty seconds.  Without it, five doublings
@@ -741,6 +751,22 @@ pub struct Connection {
     /// The timeout the next retransmission waits, which doubles with each
     /// attempt at the same position.
     timeout: u64,
+    /// The smoothed round trip, in microseconds.
+    ///
+    /// [RFC 6298] section 2's `SRTT`: an exponential moving average whose
+    /// weight is seven eighths, so one slow round trip moves the estimate a
+    /// little and a path that changed moves it within a few.  `None` until a
+    /// measurement exists, because the first one is the estimate rather than a
+    /// sample to average.
+    ///
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    srtt: Option<u64>,
+    /// The smoothed round trip's variance, in microseconds.
+    ///
+    /// Section 2's `RTTVAR`, the mean deviation.  The timeout is `SRTT + 4 *
+    /// RTTVAR` with a floor, which is what makes it track a path that got
+    /// noisier rather than only one that got slower.
+    rttvar: u64,
     /// How many times the oldest unacknowledged segment has been sent.
     attempts: u8,
     /// When the [`State::TimeWait`] hold began, in the caller's clock.
@@ -824,6 +850,15 @@ struct Unacknowledged {
     payload: alloc::vec::Vec<u8>,
     /// The time this copy was sent, in microseconds of the caller's clock.
     sent_at: u64,
+    /// Whether this copy has been sent more than once.
+    ///
+    /// [RFC 6298] section 3's Karn rule: an acknowledgement of a segment that
+    /// was retransmitted cannot say **which** copy it acknowledges, so the
+    /// round trip it appears to measure may be one that never happened.  Such
+    /// a segment contributes no sample, and the timeout keeps its backoff.
+    ///
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    retransmitted: bool,
 }
 
 /// One segment held ahead of the gap.
@@ -869,6 +904,8 @@ impl Connection {
             now: 0,
             timeout: RTO_INITIAL_MICROS,
             attempts: 0,
+            srtt: None,
+            rttvar: 0,
             time_wait_since: None,
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
@@ -914,6 +951,8 @@ impl Connection {
             now: 0,
             timeout: RTO_INITIAL_MICROS,
             attempts: 0,
+            srtt: None,
+            rttvar: 0,
             time_wait_since: None,
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
@@ -1913,6 +1952,9 @@ impl Connection {
             payload,
         }];
         self.unacknowledged[0].sent_at = self.now;
+        // Karn's rule: this copy cannot measure a round trip, so any
+        // acknowledgement that retires it contributes no sample.
+        self.unacknowledged[0].retransmitted = true;
         Retransmission::Again(sent)
     }
 
@@ -1946,6 +1988,7 @@ impl Connection {
                 flags,
                 payload: alloc::vec::Vec::from(payload),
                 sent_at: self.now,
+                retransmitted: false,
             });
         }
         // The window this side advertises is the room its buffers still have,
@@ -2020,13 +2063,106 @@ impl Connection {
             // segment at the gap.
             return self.note_duplicate();
         }
+        // The round trip this acknowledgement measures, if it can measure
+        // one.  The newest segment it retires is the one whose send time is
+        // the sample's: an acknowledgement covering several segments says the
+        // peer received all of them, and the one that was sent last is the
+        // round trip that just ended.  A segment that was retransmitted is
+        // skipped, because its acknowledgement cannot say which copy it means
+        // and a sample from the wrong copy is a measurement of the timeout
+        // rather than of the path.
+        let sample = self
+            .unacknowledged
+            .iter()
+            .filter(|segment| acknowledges(acknowledgement, segment.end) && !segment.retransmitted)
+            .max_by_key(|segment| segment.sent_at)
+            .map(|segment| self.now.saturating_sub(segment.sent_at));
+
         self.unacknowledged
             .retain(|segment| !acknowledges(acknowledgement, segment.end));
         self.attempts = 0;
-        self.timeout = RTO_INITIAL_MICROS;
         self.duplicates = 0;
+        match sample {
+            // A measurement replaces the backoff: the path has just answered,
+            // and the timeout it earned by answering is the one the next
+            // segment waits, not the doubled one a silence produced.
+            Some(measured) => {
+                self.measure(measured);
+                self.timeout = self.rto();
+            }
+            // Nothing measured, so the backoff survives: an acknowledgement of
+            // a retransmitted segment says the peer is alive and says nothing
+            // about how long the path takes.
+            None => {
+                if self.attempts == 0 {
+                    self.timeout = self.rto();
+                }
+            }
+        }
         self.open_window(covered);
         None
+    }
+
+    /// Fold one round-trip measurement into the estimate.
+    ///
+    /// [RFC 6298]'s section on the estimator, and its two cases.  The
+    /// **first** measurement is the estimate itself: `SRTT = R` and `RTTVAR =
+    /// R / 2`.  That case exists because there is nothing to average a first
+    /// sample against, and a formula that assumed a zero estimate would spend
+    /// several round trips recovering from it.
+    ///
+    /// After that the deviation moves a quarter of the way toward how far the
+    /// sample was from the estimate, and then the estimate moves an eighth of
+    /// the way toward the sample.  The order is the standard's and it matters:
+    /// the deviation is measured against the estimate **before** this sample
+    /// moved it, which makes it a measure of how far the sample was from what
+    /// was expected rather than of how far the estimate had already moved.
+    ///
+    /// The shifts are exact because the weights are powers of two: a division
+    /// would round a small change to nothing on a path whose round trip is
+    /// tens of microseconds.
+    ///
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    fn measure(&mut self, round_trip: u64) {
+        match self.srtt {
+            None => {
+                self.srtt = Some(round_trip);
+                self.rttvar = round_trip / 2;
+            }
+            Some(srtt) => {
+                let difference = srtt.abs_diff(round_trip);
+                self.rttvar = (self.rttvar * 3 + difference) / 4;
+                self.srtt = Some((srtt * 7 + round_trip) / 8);
+            }
+        }
+    }
+
+    /// The timeout the estimate calls for, in microseconds.
+    ///
+    /// [RFC 6298] section 2.3's `SRTT + 4 * RTTVAR`, floored and capped.
+    /// Before any measurement it is [`RTO_INITIAL_MICROS`], which is what the
+    /// stack used for every stream until this existed.
+    ///
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    pub fn rto(&self) -> u64 {
+        match self.srtt {
+            None => RTO_INITIAL_MICROS,
+            Some(srtt) => (srtt + 4 * self.rttvar).clamp(RTO_FLOOR_MICROS, RTO_MAX_MICROS),
+        }
+    }
+
+    /// The smoothed round trip, if anything has been measured.
+    ///
+    /// `None` is a stream that has not had an acknowledgement worth
+    /// measuring, which is a real state and not a zero: a zero would be a
+    /// measurement of no time at all.
+    pub fn smoothed_round_trip(&self) -> Option<u64> {
+        self.srtt
+    }
+
+    /// The smoothed round trip's variance, in microseconds.
+    pub fn round_trip_variance(&self) -> u64 {
+        self.rttvar
     }
 }
 
@@ -3691,12 +3827,18 @@ mod tests {
         let original = outgoing[0].clone();
         assert_eq!(client.unacknowledged(), 1);
 
+        // The interval is the estimate's, which the handshake measured, and
+        // reading it here is what keeps this a test of the **timeout** rather
+        // than of the estimator: a stream that never measured anything waits
+        // the initial second, and one that has waits what it measured.
+        let timeout = client.rto();
+
         // Before the timeout, nothing is due.
-        client.advance(super::RTO_INITIAL_MICROS - 1);
+        client.advance(timeout - 1);
         assert_eq!(client.retransmit(), super::Retransmission::Idle);
 
         // At it, the same segment is handed back.
-        client.advance(super::RTO_INITIAL_MICROS);
+        client.advance(timeout);
         match client.retransmit() {
             super::Retransmission::Again(sent) => {
                 assert_eq!(sent.len(), 1, "one segment again");
@@ -3707,6 +3849,130 @@ mod tests {
             other => panic!("expected a retransmission, got {other:?}"),
         }
         assert_eq!(client.unacknowledged(), 1, "still waiting for the one ACK");
+    }
+
+    /// The first measurement is the estimate, and the second averages into it.
+    ///
+    /// [RFC 6298]'s two cases, and the numbers are the section's own: the first
+    /// sample **is** the estimate and its variance is half of it, and each
+    /// later sample moves the estimate an eighth of the way toward itself and
+    /// the variance a quarter.  A stack that skipped the first case and
+    /// averaged against a zero estimate would spend several round trips
+    /// recovering from a path that was right the whole time.
+    ///
+    /// The estimator's arithmetic is driven directly, because what is under
+    /// test is the formula and not what a loopback happens to measure: a
+    /// loopback's round trip is zero and every sample after it is zero too,
+    /// which would pass for any formula that returned zero.
+    ///
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    #[test]
+    fn the_estimate_starts_at_the_first_sample_and_moves_slowly() {
+        let (mut client, _server) = established_on_the_loopback();
+
+        // A hundred milliseconds, which is the first sample.
+        client.srtt = None;
+        client.rttvar = 0;
+        client.measure(100_000);
+        assert_eq!(
+            client.smoothed_round_trip(),
+            Some(100_000),
+            "the first sample is the estimate"
+        );
+        assert_eq!(
+            client.round_trip_variance(),
+            50_000,
+            "and its variance is half of it"
+        );
+        assert_eq!(
+            client.rto(),
+            100_000 + 4 * 50_000,
+            "so the timeout is the estimate plus four deviations"
+        );
+
+        // A second sample, ten milliseconds later.
+        client.measure(110_000);
+        assert_eq!(
+            client.smoothed_round_trip(),
+            Some((100_000 * 7 + 110_000) / 8),
+            "seven eighths of the old estimate and one eighth of the sample"
+        );
+        assert_eq!(
+            client.round_trip_variance(),
+            (50_000 * 3 + 10_000) / 4,
+            "three quarters of the old variance and a quarter of the distance"
+        );
+    }
+
+    /// A retransmitted segment's acknowledgement measures nothing.
+    ///
+    /// [RFC 6298] section 3's Karn rule.  The acknowledgement names a
+    /// position, and after a retransmission two copies have that position, so
+    /// the round trip it appears to measure may be a measurement of the
+    /// timeout rather than of the path.  A stream that took it would think its
+    /// path had become a second slow.
+    ///
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    #[test]
+    fn a_retransmitted_segment_contributes_no_sample() {
+        let (mut client, _server) = established_on_the_loopback();
+        let before = client.smoothed_round_trip();
+        let before_rto = client.rto();
+
+        client.advance(0);
+        client.send_data(b"lost");
+        // The timeout fires and the segment goes again.
+        client.advance(client.rto());
+        assert!(matches!(
+            client.retransmit(),
+            super::Retransmission::Again(_)
+        ));
+
+        // The acknowledgement arrives a long time after the *original* was
+        // sent, which would measure a huge round trip if it were taken.
+        client.advance(client.rto() + 5_000_000);
+        let (_, _) = client.receive(
+            &super::Segment::new(
+                THEIR_PORT,
+                OUR_PORT,
+                client.expected_position(),
+                client.send_position(),
+                FLAG_ACK,
+                super::WINDOW,
+                0,
+            ),
+            b"",
+        );
+        assert_eq!(
+            client.smoothed_round_trip(),
+            before,
+            "the retransmitted segment's acknowledgement is not a sample"
+        );
+        assert!(
+            client.rto() >= before_rto,
+            "and the timeout did not shrink on the strength of it"
+        );
+    }
+
+    /// A measured round trip below a millisecond is the clock's floor.
+    ///
+    /// [RFC 6298] section 2.4: a smaller measurement is a measurement of the
+    /// clock rather than of the path, and a timeout that short would
+    /// retransmit every segment before its acknowledgement could arrive.  A
+    /// loopback measures zero, which is the case this exists for.
+    ///
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    #[test]
+    fn a_round_trip_below_a_millisecond_is_floored() {
+        let (mut client, _server) = handshake();
+        client.advance(0);
+        // The handshake measured zero: a loopback has no time to divide.
+        assert_eq!(client.smoothed_round_trip(), Some(0));
+        assert_eq!(
+            client.rto(),
+            super::RTO_FLOOR_MICROS,
+            "and the timeout is the floor, not zero"
+        );
     }
 
     /// The timeout doubles with each attempt, which is [RFC 6298]'s backoff.
@@ -3722,19 +3988,30 @@ mod tests {
         client.advance(0);
         client.send_data(b"backoff");
 
-        // The first attempt waits the initial timeout, and the next waits
-        // twice it: a clock that advanced one microsecond before the doubled
-        // interval is due must still be idle.
-        client.advance(super::RTO_INITIAL_MICROS);
+        // The interval the first attempt waits is the estimate's, which the
+        // handshake's acknowledgement measured: a loopback round trip is as
+        // short as the clock can see, so this is `RTO_FLOOR_MICROS` and not the
+        // initial second.  Reading it from the connection rather than
+        // assuming it is what makes the test about the **backoff** and not
+        // about the estimate: a stream that has measured nothing waits the
+        // initial second, and one that has waits what it measured.
+        let first = client.rto();
+        assert_eq!(
+            client.smoothed_round_trip(),
+            Some(0),
+            "the handshake measured a round trip the clock could not divide"
+        );
+
+        client.advance(first);
         assert!(matches!(
             client.retransmit(),
             super::Retransmission::Again(_)
         ));
 
-        let doubled = super::RTO_INITIAL_MICROS * 2;
-        client.advance(super::RTO_INITIAL_MICROS + doubled - 1);
+        let doubled = first * 2;
+        client.advance(first + doubled - 1);
         assert_eq!(client.retransmit(), super::Retransmission::Idle);
-        client.advance(super::RTO_INITIAL_MICROS + doubled);
+        client.advance(first + doubled);
         assert!(matches!(
             client.retransmit(),
             super::Retransmission::Again(_)

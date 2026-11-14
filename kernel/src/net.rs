@@ -3607,6 +3607,126 @@ pub fn ipv6_transport_probe() -> bool {
     round_trip
 }
 
+/// Prove that the timeout is measured rather than assumed.
+///
+/// The constant it replaced was a second for every stream on every path, which
+/// is right for no path: a machine on a fast wire retransmits a segment that
+/// was merely in flight, and one on a slow one gives up on a segment that was
+/// still coming.  The two numbers on the line are the estimate's two halves,
+/// and what makes them evidence is that the second response is deliberately
+/// **later** than the first: a stack that measured one round trip and reused it
+/// would print the same number twice.
+#[cfg(target_os = "none")]
+pub fn round_trip_probe() -> bool {
+    let listener = match tcp_listen(9110) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let protocol = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9110) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+    let source_port = match TCP.lock().local_port_of(client) {
+        Some(port) => port,
+        None => return false,
+    };
+
+    // Two exchanges, the second slower than the first, and the estimate read
+    // after each.  The time is the kernel's own clock advanced by the probe,
+    // because the value under test is what a **peer's** answer does to the
+    // estimate and not what the boot's traffic happens to be.
+    let mut estimates = alloc::vec::Vec::new();
+    for delay in [4_000_u64, 40_000] {
+        let (sequence, acknowledgement, payload) = {
+            let mut table = TCP.lock();
+            let Some(connection) = table.connection_mut(client) else {
+                return false;
+            };
+            let (sent, outgoing) = connection.send_data(b"probe");
+            if sent != 5 {
+                return false;
+            }
+            let Some(segment) = outgoing.into_iter().next() else {
+                return false;
+            };
+            (segment.sequence, segment.acknowledgement, segment.payload)
+        };
+        // The peer's own state machine, reached the way a wire reaches it: a
+        // segment built from what this side sent.
+        let replies = {
+            let mut table = TCP.lock();
+            let Some(peer) = table.connection_mut(accepted) else {
+                return false;
+            };
+            let segment = net::tcp::Segment::new(
+                source_port,
+                9110,
+                sequence,
+                acknowledgement,
+                net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+                net::tcp::WINDOW,
+                payload.len(),
+            );
+            peer.receive(&segment, &payload).1
+        };
+        let mut table = TCP.lock();
+        let Some(connection) = table.connection_mut(client) else {
+            return false;
+        };
+        connection.advance(crate::net::micros_since_boot() + delay);
+        for reply in replies {
+            let segment = net::tcp::Segment::new(
+                9110,
+                source_port,
+                connection.expected_position(),
+                reply.acknowledgement,
+                reply.flags,
+                reply.window,
+                reply.payload.len(),
+            );
+            let _ = connection.receive(&segment, &reply.payload);
+        }
+        match connection.smoothed_round_trip() {
+            Some(estimate) => estimates.push(estimate),
+            None => return false,
+        }
+    }
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    // The second estimate is above the first and below it plus the second
+    // sample: an eighth of a delay moves the average, so a stack that took the
+    // new sample as the estimate would land at the delay and a stack that
+    // ignored it would not move at all.
+    let first = estimates[0];
+    let second = estimates[1];
+    let correct = second > first && second < first + 40_000;
+    // Two lines rather than one: the numbers are the clock's and change every
+    // boot, and the gate can require a prefix but not a suffix.  So the numbers
+    // are their own line, read by a human, and the verdict is the line the gate
+    // requires.
+    arch::serial::write_str("protofire: round trip ");
+    arch::serial::write_u32(first as u32);
+    arch::serial::write_str(" then ");
+    arch::serial::write_u32(second as u32);
+    arch::serial::write_str(" microseconds\n");
+    arch::serial::write_str(if correct {
+        "protofire: the estimate moved with the measurement\n"
+    } else {
+        "protofire: round trip MISMATCH\n"
+    });
+    correct
+}
+
 /// Prove that a stream fed from a frame carries the frame's **data**.
 ///
 /// Every exchange above runs on the loopback, and a loopback hands a

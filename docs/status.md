@@ -583,6 +583,32 @@ carries nine bytes or nineteen: a connection holding either advertises the same
 number whether or not anything enforces it.  The probe fills the whole buffer
 with one segment and reads the number back.
 
+**The timeout is measured now, not assumed.**  `RTO_INITIAL_MICROS` was the
+timeout for every stream on every path, and one second is right for no path: a
+machine on a fast wire retransmits a segment that was merely in flight, and one
+on a slow path gives up on a segment still coming.  [RFC 6298]'s estimator is
+here: the first acknowledgement that measures a round trip **is** the estimate,
+each later one moves it an eighth of the way and the variance a quarter, and the
+timeout is `SRTT + 4 * RTTVAR`, floored at a millisecond and capped at sixty.
+
+Two rules make it a measurement rather than a number that moves.  A segment that
+was retransmitted contributes **no sample** (Karn's rule): its acknowledgement
+cannot say which copy it means, so the round trip it appears to measure may be a
+measurement of the timeout.  And a measurement replaces the backoff, because a
+path that just answered has said how long it takes.
+
+```
+protofire: round trip 7312 then 10910 microseconds
+protofire: the estimate moved with the measurement
+```
+
+Two lines because the numbers are the machine's clock and change every boot:
+the gate can require a prefix and not a suffix, so the verdict is its own line
+and the numbers are read by a person.  The mutation is the estimate's: make it
+never move and the second line disappears.
+
+[RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+
 **The close has its own states now, and three of them it did not have.**  The
 state machine had seven, and a close used two: this side's finish was `FinWait`
 and the peer's acknowledgement of it went straight to `Closed`.  That is one

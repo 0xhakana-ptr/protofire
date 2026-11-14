@@ -906,6 +906,13 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The timeout: measured from a peer's answers rather than assumed, with
+    // the second answer deliberately later than the first so the estimate has
+    // to move.
+    if !crate::net::round_trip_probe() {
+        return false;
+    }
+
     // The frame path's data offset: two TCP segments through the demux, one
     // with an option and one without, and a stream's inbox that holds their
     // data and neither header.  Every other exchange runs on the loopback,
