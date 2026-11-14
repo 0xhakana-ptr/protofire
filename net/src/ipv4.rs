@@ -159,6 +159,38 @@ pub struct Packet {
 }
 
 impl Packet {
+    /// The header's own bytes, as the sender wrote them, from the frame this
+    /// packet was parsed out of.
+    ///
+    /// The fields `parse` keeps are the ones every caller reads; the bytes are
+    /// what an ICMP error has to quote back, and [RFC 792] requires the quote
+    /// to be the *sender's* header rather than a header rebuilt from fields.
+    /// The difference is every field `parse` does not keep: the time-to-live,
+    /// the type of service, the don't-fragment bit, and the header's options
+    /// when it has any.
+    ///
+    /// `None` when `frame` is not the slice this packet was parsed from, which
+    /// a caller detects by the length check rather than by a tag: the header
+    /// must start at zero and end where `payload_at` says.
+    ///
+    /// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+    pub fn header_bytes<'a>(&self, frame: &'a [u8]) -> Option<&'a [u8]> {
+        frame.get(..self.payload_at)
+    }
+
+    /// The first bytes of the payload, which an error quotes after the header.
+    ///
+    /// [RFC 792] asks for the original datagram's internet header plus the
+    /// first sixty-four bits of its payload; a caller that wants those bytes
+    /// rather than a rebuilt header asks here.
+    ///
+    /// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+    pub fn payload_bytes<'a>(&self, frame: &'a [u8]) -> Option<&'a [u8]> {
+        let start = self.payload_at;
+        let end = start.checked_add(self.payload_len)?;
+        frame.get(start..end)
+    }
+
     /// Whether this packet is one piece of a larger one.
     ///
     /// The two fields that decide it are the fragment header's: a packet with
@@ -477,5 +509,36 @@ mod tests {
         write_header(&mut packet, GATEWAY, [10, 0, 2, 3], PROTOCOL_ICMP, 0);
         let parsed: Packet = parse(&packet).expect("a packet");
         assert!(!is_for(&parsed, US), "another machine's conversation");
+    }
+
+    /// The header an error quotes is the sender's own bytes, which is the
+    /// difference between a quote and a rebuild: every field `parse` does not
+    /// keep comes back exactly as it arrived.
+    #[test]
+    fn a_packet_can_quote_its_own_header() {
+        // A header with a time-to-live and a type of service this stack never
+        // sends, so a rebuilt one would differ.
+        let mut wire = [0_u8; 28];
+        wire[0] = 0x45;
+        wire[1] = 0xB8;
+        wire[2..4].copy_from_slice(&28u16.to_be_bytes());
+        wire[6..8].copy_from_slice(&crate::ipv4::FLAGS_DONT_FRAGMENT.to_be_bytes());
+        wire[8] = 3;
+        wire[9] = crate::ipv4::PROTOCOL_UDP;
+        wire[12..16].copy_from_slice(&[10, 0, 2, 2]);
+        wire[16..20].copy_from_slice(&[10, 0, 2, 15]);
+        let sum = crate::ipv4::checksum(&wire[..20]);
+        wire[10..12].copy_from_slice(&sum.to_be_bytes());
+        for (index, byte) in wire.iter_mut().enumerate().skip(20) {
+            *byte = index as u8;
+        }
+
+        let packet = crate::ipv4::parse(&wire).expect("a packet");
+        let header = packet.header_bytes(&wire).expect("its own header");
+        assert_eq!(header, &wire[..20], "byte for byte, not a rebuild");
+        assert_eq!(header[8], 3, "the ttl the sender chose");
+        assert_eq!(header[1], 0xB8, "the type of service");
+        let payload = packet.payload_bytes(&wire).expect("its own payload");
+        assert_eq!(payload, &wire[20..28]);
     }
 }

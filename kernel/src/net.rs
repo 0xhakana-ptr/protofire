@@ -617,7 +617,17 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
         // be sure a sender can act on: the report says which port and quotes
         // the datagram, and the sender's own call is what failed.
         if matches!(delivered, Ok(Delivery::Unbound)) {
-            answer_port_unreachable(&packet, &payload[data_at..]);
+            // The header the report quotes is the sender's own bytes, not a
+            // header rebuilt from the fields `parse` keeps: [RFC 792] says
+            // the original internet header, and every field this stack does
+            // not read (the ttl, the type of service, the options) is part of
+            // what came back.
+            //
+            // [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
+            let original_header = packet
+                .header_bytes(&frame[netdev::ETHERNET_HEADER_LEN..])
+                .unwrap_or_default();
+            answer_port_unreachable(&packet, original_header, &payload[data_at..]);
         }
     }
     if packet.header.protocol == net::ipv4::PROTOCOL_TCP && demux_tcp(packet, payload) {
@@ -652,7 +662,7 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
 ///
 /// [RFC 792]: https://www.rfc-editor.org/rfc/rfc792
 /// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
-fn answer_port_unreachable(packet: &net::ipv4::Packet, payload: &[u8]) {
+fn answer_port_unreachable(packet: &net::ipv4::Packet, original_header: &[u8], payload: &[u8]) {
     let destination = packet.header.destination;
     // A group or broadcast destination is not a socket's, so a report about
     // one would go to everyone who could answer it.
@@ -677,8 +687,14 @@ fn answer_port_unreachable(packet: &net::ipv4::Packet, payload: &[u8]) {
         )
     };
 
-    let frame =
-        port_unreachable_frame(packet, payload, our_protocol, our_hardware, sender_hardware);
+    let frame = port_unreachable_frame(
+        original_header,
+        packet,
+        payload,
+        our_protocol,
+        our_hardware,
+        sender_hardware,
+    );
     let _ = card.submit_frame(&frame);
 }
 
@@ -689,23 +705,20 @@ fn answer_port_unreachable(packet: &net::ipv4::Packet, payload: &[u8]) {
 /// quote a sender cannot match is a report that changed nothing, and the only
 /// way to check the quote is to compare it against the datagram it is about.
 fn port_unreachable_frame(
+    original_header: &[u8],
     packet: &net::ipv4::Packet,
     payload: &[u8],
     our_protocol: [u8; 4],
     our_hardware: [u8; 6],
     sender_hardware: [u8; 6],
 ) -> Vec<u8> {
-    let mut original_header = [0_u8; net::ipv4::HEADER_LEN];
-    original_header[0] = 0x45;
-    original_header[9] = packet.header.protocol;
-    original_header[12..16].copy_from_slice(&packet.header.source);
-    original_header[16..20].copy_from_slice(&packet.header.destination);
-    let message_len = net::icmp::HEADER_LEN + net::ipv4::HEADER_LEN + net::icmp::QUOTED_PAYLOAD;
+    let quoted_payload = payload.len().min(net::icmp::QUOTED_PAYLOAD);
+    let message_len = net::icmp::HEADER_LEN + original_header.len() + quoted_payload;
     let mut message = alloc::vec![0_u8; message_len];
     net::icmp::write_destination_unreachable(
         &mut message,
         net::icmp::PORT_UNREACHABLE,
-        &original_header,
+        original_header,
         payload,
     );
 
@@ -2398,10 +2411,15 @@ mod tests {
             PAYLOAD,
         );
 
+        // The header carries a type of service and a time-to-live this stack
+        // never sends, so a quote rebuilt from the fields `parse` keeps would
+        // differ from the bytes: the assertions below tell a quote from a
+        // rebuild.
         let mut header = [0_u8; net::ipv4::HEADER_LEN];
         header[0] = 0x45;
+        header[1] = 0xB8;
         header[2..4].copy_from_slice(&((net::ipv4::HEADER_LEN + udp_len) as u16).to_be_bytes());
-        header[8] = 64;
+        header[8] = 3;
         header[9] = net::ipv4::PROTOCOL_UDP;
         header[12..16].copy_from_slice(&PEER_PROTOCOL);
         header[16..20].copy_from_slice(&OUR_PROTOCOL);
@@ -2413,9 +2431,16 @@ mod tests {
         wire[..net::ipv4::HEADER_LEN].copy_from_slice(&header);
         wire[net::ipv4::HEADER_LEN..].copy_from_slice(&datagram);
         let packet = net::ipv4::parse(&wire).expect("the packet a peer wrote");
+        let original_header = packet.header_bytes(&wire).expect("its own header");
 
-        let frame =
-            super::port_unreachable_frame(&packet, &datagram, OUR_PROTOCOL, [0x02; 6], [0x54; 6]);
+        let frame = super::port_unreachable_frame(
+            original_header,
+            &packet,
+            &datagram,
+            OUR_PROTOCOL,
+            [0x02; 6],
+            [0x54; 6],
+        );
 
         // The frame is addressed to the sender, from this machine.
         assert_eq!(&frame[0..6], &[0x54; 6], "to the sender's own address");
@@ -2435,6 +2460,16 @@ mod tests {
         assert_eq!(error.code, net::icmp::PORT_UNREACHABLE);
         let quote = &message[error.quoted_at..error.quoted_at + error.quoted_len];
         assert_eq!(quote[0] >> 4, 4, "the quoted packet is IPv4");
+        // The quote is the sender's own bytes, not a header rebuilt from the
+        // fields this stack reads: the ttl and the type of service are the
+        // ones the test wrote and this stack never sends.
+        assert_eq!(
+            &quote[..20],
+            &header[..],
+            "the sender's header, byte for byte"
+        );
+        assert_eq!(quote[8], 3, "the ttl the sender chose");
+        assert_eq!(quote[1], 0xB8, "the type of service the sender chose");
         assert_eq!(quote[9], net::ipv4::PROTOCOL_UDP);
         assert_eq!(
             &quote[12..16],
