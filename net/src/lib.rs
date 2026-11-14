@@ -35,9 +35,11 @@
 //! | [`internet`] | what a packet means before a transport reads it, the control messages about it, and the neighbour state a host keeps |
 //! | [`transport`] | the two ways a program's bytes cross, and the table or queue each one needs |
 //!
-//! [`address`], [`dhcp`] and [`dns`] stay at the root because they are not a
-//! layer: an address is what every layer names, and the other two configure a
-//! machine rather than carry its traffic.
+//! [`address`], [`dhcp`], [`dns`] and [`route`] stay at the root because they
+//! are not a layer: an address is what every layer names, the other two
+//! configure a machine rather than carry its traffic, and a route is the
+//! question of which link a destination is on, asked before any layer reads a
+//! byte.
 //!
 //! The directories are the reader's; the paths are not.  Every module below is
 //! re-exported at the crate root, so a caller spells `net::ipv4::parse` and
@@ -138,11 +140,12 @@
 //!
 //! ## What is not here yet
 //!
-//! A **route table**.  [`ipv6`] has one default router, learned from an
-//! advertisement, and [`ipv4`] has one gateway, configured.  A second route, a
-//! prefix routed somewhere other than its link, or a metric that chooses
-//! between two are all absent, and a stack with one of each needs none of them:
-//! this tree boots one interface.
+//! A **metric**.  [`route`] holds a table and the longest match decides, but
+//! two routes to one prefix replace rather than compete: this machine has one
+//! interface and one address per family, and a cost that chooses between routes
+//! a single interface cannot have would be a field nothing reads.  The day
+//! there are two interfaces, the route gains one field and the lookup one
+//! comparison.
 //!
 //! What is also absent is every protocol this crate does not name: DCCP,
 //! IPsec, TLS, the packet filter, multicast routing.  Those are numbers above
@@ -173,6 +176,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod internet;
 pub mod link;
+pub mod route;
 pub mod transport;
 
 /// The internet layer's modules, at the crate root so a caller names the

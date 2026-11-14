@@ -906,6 +906,13 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The route table: a prefix more specific than the default route, and the
+    // frame following it.  A stack with one gateway passes this by accident
+    // only if it never looks at the destination, which is the defect.
+    if !crate::net::route_probe() {
+        return false;
+    }
+
     // The timeout: measured from a peer's answers rather than assumed, with
     // the second answer deliberately later than the first so the estimate has
     // to move.

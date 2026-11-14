@@ -93,6 +93,15 @@ pub struct Interface {
     hardware: [u8; 6],
     protocol: [u8; 4],
     gateway: [u8; 4],
+    /// The routes this machine knows, of both families.
+    ///
+    /// `gateway` above is the one route DHCP names, kept because the boot's
+    /// lines report it and because a lease's renewal compares it; the table is
+    /// what a **send** asks.  Two facts rather than one because they answer
+    /// different questions: the gateway is what a lease said, and the table is
+    /// what this machine will do, and a route added by another advertisement
+    /// or by a program does not change the lease.
+    routes: net::route::Table,
     arp: net::arp::Cache,
     /// The link-local IPv6 address this interface derives from its own MAC.
     ///
@@ -160,11 +169,24 @@ impl Interface {
             net::ipv6::ALL_ROUTERS_MULTICAST,
             net::ipv6::solicited_node(ipv6),
         ];
+        // The one route a boot has: everything goes to the gateway.  A
+        // **connected** subnet is deliberately not seeded from the address's
+        // class, which the first version of this did: classful addressing is
+        // not what any network this stack meets uses, and a `/8` guessed from
+        // `10.x` would make every host in a private cloud "on the link" and
+        // send frames to addresses no neighbour answers for.  What adds a
+        // connected route is a lease that carries a subnet mask, or an
+        // advertisement that carries a prefix, and both state the length
+        // rather than guessing it.
+        let mut routes = net::route::Table::new();
+        routes.add(net::route::default_via(net::address::Address::V4(gateway)));
+
         Self {
             card,
             hardware,
             protocol,
             gateway,
+            routes,
             arp: net::arp::Cache::new(),
             ipv6,
             ipv6_groups,
@@ -665,9 +687,7 @@ pub fn send_raw_packet(
         let card = interface.card.clone();
         match destination {
             net::address::Address::V4(destination) => {
-                let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
-                    return Err(Error::NotFound);
-                };
+                let gateway_hardware = hardware_for_v4(interface, destination)?;
                 let packet_len =
                     netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + payload.len();
                 let mut frame = alloc::vec![0; packet_len];
@@ -696,6 +716,37 @@ pub fn send_raw_packet(
             net::address::Address::V6(_) => Err(Error::Unsupported),
         }
     }
+}
+
+/// The hardware address a frame for `destination` goes to, IPv4.
+///
+/// The route table decides, and the answer has three shapes a caller must not
+/// confuse:
+///
+/// * a route with a gateway, whose hardware address the ARP cache holds, is
+///   "send it to the router";
+/// * a route with **no** gateway is a destination on this link, and the frame
+///   goes to the destination's own hardware address;
+/// * no route at all is a destination this machine cannot reach, which is
+///   `NotFound` and not a guess.
+///
+/// The version before this asked the ARP cache for the interface's one
+/// gateway and nothing else, which is the same answer for every destination
+/// and wrong for every one on the link.
+fn hardware_for_v4(interface: &Interface, destination: [u8; 4]) -> Result<[u8; 6]> {
+    let next_hop = interface
+        .routes
+        .next_hop(net::address::Address::V4(destination))
+        .ok_or(Error::NotFound)?;
+    // A gateway the machine has not resolved yet is a frame with nowhere to
+    // go, which is the same answer as a destination with no route: the caller
+    // retries, and the ARP exchange the send itself starts fills the cache.
+    let target = match next_hop {
+        Some(net::address::Address::V4(gateway)) => gateway,
+        Some(net::address::Address::V6(_)) => return Err(Error::Unsupported),
+        None => destination,
+    };
+    interface.arp.hardware_for(target).ok_or(Error::NotFound)
 }
 
 /// Whether an IPv4 `destination` names this machine, and the packet is
@@ -840,9 +891,7 @@ pub fn send_datagram(
     let udp_len = net::udp::datagram_len(bytes.len());
     match destination {
         net::address::Address::V4(destination) => {
-            let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
-                return Err(Error::NotFound);
-            };
+            let gateway_hardware = hardware_for_v4(interface, destination)?;
             let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
             let mut frame = alloc::vec![0; packet_len];
             net::ethernet::write_header(
@@ -2484,9 +2533,7 @@ fn tcp_send_on_wire(
         net::address::Address::V4(destination) => {
             // The gateway's hardware address is this build's whole routing
             // decision for IPv4: one interface, one gateway.
-            let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
-                return Err(Error::NotFound);
-            };
+            let gateway_hardware = hardware_for_v4(interface, destination)?;
             let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + tcp_len;
             let mut frame = alloc::vec![0; packet_len];
             net::ethernet::write_header(
@@ -3869,6 +3916,88 @@ pub fn frame_data_probe() -> bool {
     } else {
         " held, MISMATCH\n"
     });
+    correct
+}
+
+/// Prove that the longest match decides where a frame goes.
+///
+/// The stack had one gateway and every off-link frame went to it, which is a
+/// table with one entry.  A table is only worth having if a **second** entry
+/// wins where it should, so the probe adds a route to a prefix that contains a
+/// destination the default route also covers, and reads which hardware address
+/// the frame is addressed to.
+///
+/// The two hardware addresses are both in the ARP cache and both are fake: the
+/// cache is this stack's own table, and what is under test is which entry a
+/// lookup picks, not whether a wire answers.
+///
+/// The line names how many routes exist and which address the frame went to,
+/// and the second number is the assertion: the specific route's hardware
+/// address and not the default's.
+#[cfg(target_os = "none")]
+pub fn route_probe() -> bool {
+    // A destination the default route covers and the specific one does not
+    // have to win for.
+    const DESTINATION: [u8; 4] = [203, 0, 113, 7];
+    const DEFAULT_HARDWARE: [u8; 6] = [0x02, 0, 0, 0, 0, 0x01];
+    const SPECIFIC_HARDWARE: [u8; 6] = [0x02, 0, 0, 0, 0, 0x02];
+    const SPECIFIC_GATEWAY: [u8; 4] = [192, 0, 2, 1];
+
+    let before = {
+        let mut interface = INTERFACE.lock();
+        let Some(interface) = interface.as_mut() else {
+            return false;
+        };
+        // The default route's gateway, resolved to a hardware address the
+        // probe made up: what a send to DESTINATION would look like without
+        // the specific route.
+        let gateway = interface.gateway;
+        let count = interface.routes.len();
+        interface.arp.learn(gateway, DEFAULT_HARDWARE);
+        // The specific route, and the gateway it names.
+        interface.routes.add(net::route::Route {
+            prefix: net::address::Address::V4([203, 0, 113, 0]),
+            length: 24,
+            gateway: Some(net::address::Address::V4(SPECIFIC_GATEWAY)),
+        });
+        interface.arp.learn(SPECIFIC_GATEWAY, SPECIFIC_HARDWARE);
+        (count, interface.routes.len())
+    };
+
+    let chosen = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        hardware_for_v4(interface, DESTINATION)
+    };
+
+    // Put the table back the way the boot found it, so the rest of the boot's
+    // exchanges route as they did before this probe ran.
+    let restored = {
+        let mut interface = INTERFACE.lock();
+        let Some(interface) = interface.as_mut() else {
+            return false;
+        };
+        interface
+            .routes
+            .remove(net::address::Address::V4([203, 0, 113, 0]), 24)
+            && interface.routes.len() == before.0
+    };
+
+    let correct = chosen == Ok(SPECIFIC_HARDWARE) && restored && before.1 == before.0 + 1;
+    arch::serial::write_str("protofire: routes ");
+    arch::serial::write_u32(before.0 as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(before.1 as u32);
+    arch::serial::write_str(", and the longer prefix chose ");
+    match chosen {
+        Ok(hardware) => {
+            arch::serial::write_u32(hardware[5] as u32);
+        }
+        Err(_) => arch::serial::write_str("nothing"),
+    }
+    arch::serial::write_str(if correct { "\n" } else { ", MISMATCH\n" });
     correct
 }
 

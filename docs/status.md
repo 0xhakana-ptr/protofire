@@ -583,6 +583,34 @@ carries nine bytes or nineteen: a connection holding either advertises the same
 number whether or not anything enforces it.  The probe fills the whole buffer
 with one segment and reads the number back.
 
+**A route table, and the longest match decides.**  The stack had one IPv4
+gateway and one IPv6 default router, both fields on the interface: a table with
+one entry, which is enough for a machine on one link with one way out and
+stops being enough the moment there are two.  `net::route::Table` is the same
+arithmetic at every size: a route is a prefix, a length and an optional next
+hop, a destination goes to the longest match, and no match is `NotFound`
+rather than a guess.
+
+A route with **no** gateway is a destination on the link, which is a case a
+single gateway could not express: the frame goes to the destination's own
+hardware address instead of a router's.  A `/0` route is a default and needs no
+special case, because it loses to every other match by being the shortest.
+
+```
+protofire: routes 1 -> 2, and the longer prefix chose 2
+```
+
+The probe adds a route to a prefix the default also covers and reads which
+hardware address the frame is addressed to.  Searching for the **first** match
+instead of the longest prints `chose 1, MISMATCH`, which is the defect the probe
+exists for: a stack that never looked at the destination.
+
+A connected subnet is deliberately **not** seeded from the address's class.
+The first version did that, and a `/8` guessed from `10.x` made every host in a
+private cloud "on the link" and sent frames to addresses no neighbour answers
+for.  What adds a connected route is a lease carrying a subnet mask or an
+advertisement carrying a prefix, and both state the length rather than guessing.
+
 **The timeout is measured now, not assumed.**  `RTO_INITIAL_MICROS` was the
 timeout for every stream on every path, and one second is right for no path: a
 machine on a fast wire retransmits a segment that was merely in flight, and one

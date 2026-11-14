@@ -670,6 +670,12 @@ impl Machine {
                 // machine's clock and change every boot, so the line is
                 // required by its **second** line, which is the verdict and
                 // not a number.
+                // The route table: a second, more specific route, and the
+                // frame following it rather than the default gateway.
+                (
+                    "protofire: routes 1 -> 2, and the longer prefix chose 2",
+                    true,
+                ),
                 ("protofire: round trip ", false),
                 ("protofire: the estimate moved with the measurement", true),
                 // And the same exchange between two ring-3 processes, which is
@@ -1388,6 +1394,10 @@ impl Machine {
                     ),
                     (
                         "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
+                        true,
+                    ),
+                    (
+                        "protofire: routes 1 -> 2, and the longer prefix chose 2",
                         true,
                     ),
                     ("protofire: round trip ", false),
