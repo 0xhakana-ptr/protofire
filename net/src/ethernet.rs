@@ -30,6 +30,9 @@ pub const ETHERTYPE_ARP: u16 = 0x0806;
 /// `0x0800`: IPv4.
 pub const ETHERTYPE_IPV4: u16 = 0x0800;
 
+/// `0x86DD`: IPv6.
+pub const ETHERTYPE_IPV6: u16 = 0x86DD;
+
 /// The broadcast address, which is who a question with no known answer is sent
 /// to.
 pub const BROADCAST: [u8; 6] = [0xFF; 6];

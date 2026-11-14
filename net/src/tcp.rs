@@ -142,6 +142,80 @@ pub fn write_segment(
     put_u16(into, 16, sum);
 }
 
+/// Write a segment over IPv6, with its checksum over the forty-byte
+/// pseudo-header.
+///
+/// Every field but the checksum is the same as [`write_segment`]'s; the sum
+/// is a different one because IPv6's pseudo-header is forty bytes where
+/// IPv4's is twelve, and a segment written with the wrong one has a checksum
+/// every peer on its wire discards.
+#[allow(clippy::too_many_arguments)]
+pub fn write_segment6(
+    into: &mut [u8],
+    source: crate::ipv6::Addr,
+    destination: crate::ipv6::Addr,
+    source_port: u16,
+    destination_port: u16,
+    sequence: u32,
+    acknowledgement: u32,
+    flags: u8,
+    data: &[u8],
+) {
+    let length = (HEADER_LEN + data.len()) as u16;
+    put_u16(into, 0, source_port);
+    put_u16(into, 2, destination_port);
+    into[4..8].copy_from_slice(&sequence.to_be_bytes());
+    into[8..12].copy_from_slice(&acknowledgement.to_be_bytes());
+    into[12] = 5 << 4;
+    into[13] = flags;
+    put_u16(into, 14, WINDOW);
+    put_u16(into, 16, 0);
+    put_u16(into, 18, 0);
+    into[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
+    let sum = crate::ipv6::checksum_with_pseudo(
+        source,
+        destination,
+        crate::ipv6::NEXT_TCP,
+        &into[..length as usize],
+    );
+    put_u16(into, 16, sum);
+}
+
+/// Read the segment at the start of an IPv6 packet's payload.
+///
+/// The checksum is verified over IPv6's pseudo-header, and like
+/// [`write_segment6`] this is a second function rather than the IPv4 one with
+/// a flag: the bytes the two sums cover differ in length and content, and a
+/// reader that guessed which to use would accept a segment no peer sent.
+pub fn parse6(
+    packet: &[u8],
+    source: crate::ipv6::Addr,
+    destination: crate::ipv6::Addr,
+) -> Option<Segment> {
+    if packet.len() < HEADER_LEN {
+        return None;
+    }
+    let data_offset = (packet[12] >> 4) as usize * 4;
+    if data_offset < HEADER_LEN || data_offset > packet.len() {
+        return None;
+    }
+    // Over IPv6 the packet is exactly the segment: the header's payload
+    // length says so, and nothing pads it the way Ethernet pads a short
+    // frame, which is why the whole slice is what the sum covers.
+    if crate::ipv6::checksum_with_pseudo(source, destination, crate::ipv6::NEXT_TCP, packet) != 0 {
+        return None;
+    }
+    Some(Segment {
+        source_port: get_u16(packet, 0),
+        destination_port: get_u16(packet, 2),
+        sequence: u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]),
+        acknowledgement: u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]),
+        flags: packet[13],
+        window: get_u16(packet, 14),
+        payload_len: packet.len() - data_offset,
+    })
+}
+
 /// The twelve bytes the checksum sums before the segment: both addresses, a
 /// zero byte, the protocol, and the segment's length.
 fn pseudo_header(source: [u8; 4], destination: [u8; 4], length: u16) -> [u8; 12] {
@@ -748,5 +822,82 @@ mod tests {
             &[],
         );
         assert_eq!(buffer[12] >> 4, 5, "five words of header");
+    }
+    /// A segment written for IPv6 verifies over IPv6's pseudo-header, and a
+    /// segment written for IPv4 does not: the two sums cover forty bytes and
+    /// twelve.
+    #[test]
+    fn the_two_pseudo_headers_are_not_interchangeable() {
+        let source4 = [10, 0, 2, 15];
+        let destination4 = [10, 0, 2, 2];
+        let mut v4 = [0_u8; super::HEADER_LEN];
+        super::write_segment(
+            &mut v4,
+            source4,
+            destination4,
+            1234,
+            5678,
+            1,
+            0,
+            super::FLAG_SYN,
+            b"",
+        );
+        assert!(super::parse(&v4, source4, destination4).is_some());
+
+        let source6 = crate::ipv6::link_local_from_mac([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+        let destination6 = crate::ipv6::link_local_from_mac([0x52, 0x55, 0, 0x12, 0x34, 0x57]);
+        let mut v6 = [0_u8; super::HEADER_LEN];
+        super::write_segment6(
+            &mut v6,
+            source6,
+            destination6,
+            1234,
+            5678,
+            1,
+            0,
+            super::FLAG_SYN,
+            b"",
+        );
+        assert!(super::parse6(&v6, source6, destination6).is_some());
+
+        // The IPv6 segment read as IPv4 — or the other way round — does not
+        // verify, which is the whole reason these are two functions.
+        assert!(
+            super::parse(&v4, [0; 4], [0; 4]).is_none(),
+            "an IPv4 segment does not verify against other addresses"
+        );
+        let mut v4_as_v6 = [0_u8; super::HEADER_LEN];
+        v4_as_v6.copy_from_slice(&v4);
+        assert!(
+            super::parse6(&v4_as_v6, source6, destination6).is_none(),
+            "an IPv4 checksum is not an IPv6 one"
+        );
+    }
+
+    /// A segment with data verifies too, and its payload length is the bytes
+    /// past the header.
+    #[test]
+    fn a_segment_with_data_round_trips_over_ipv6() {
+        let source = crate::ipv6::link_local_from_mac([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+        let destination = crate::ipv6::link_local_from_mac([0x52, 0x55, 0, 0x12, 0x34, 0x57]);
+        let mut segment = [0_u8; super::HEADER_LEN + 9];
+        super::write_segment6(
+            &mut segment,
+            source,
+            destination,
+            1234,
+            5678,
+            0x1122_3344,
+            0x5566_7788,
+            super::FLAG_ACK,
+            b"pyrofire!",
+        );
+        let parsed = super::parse6(&segment, source, destination).expect("a segment");
+        assert_eq!(parsed.source_port, 1234);
+        assert_eq!(parsed.destination_port, 5678);
+        assert_eq!(parsed.sequence, 0x1122_3344);
+        assert_eq!(parsed.acknowledgement, 0x5566_7788);
+        assert_eq!(parsed.flags, super::FLAG_ACK);
+        assert_eq!(parsed.payload_len, 9);
     }
 }

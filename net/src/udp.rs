@@ -103,6 +103,80 @@ fn pseudo_header(source: [u8; 4], destination: [u8; 4], length: u16) -> [u8; 12]
     header
 }
 
+/// Write a datagram over IPv6: the same header, and a checksum over the
+/// **forty-byte** pseudo-header instead of twelve.
+///
+/// The difference is the whole point of a second writer: a UDP checksum is
+/// mandatory over IPv6 — there is no zero that means "not computed" — and the
+/// bytes it sums are the source and destination addresses in full, the length
+/// and the next-header value.  A datagram written with the IPv4 pseudo-header
+/// over IPv6 would have a checksum no peer accepts, which is why this is a
+/// separate call rather than a flag.
+pub fn write_datagram6(
+    into: &mut [u8],
+    source: crate::ipv6::Addr,
+    destination: crate::ipv6::Addr,
+    source_port: u16,
+    destination_port: u16,
+    data: &[u8],
+) {
+    let length = datagram_len(data.len()) as u16;
+    put_u16(into, 0, source_port);
+    put_u16(into, 2, destination_port);
+    put_u16(into, 4, length);
+    put_u16(into, 6, 0);
+    into[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
+    // Over IPv6 a computed zero would be indistinguishable from an
+    // unchecksummed datagram — a thing IPv6 does not have — so a zero sum is
+    // sent as all ones, exactly as IPv4's writer does.
+    let sum = crate::ipv6::checksum_with_pseudo(
+        source,
+        destination,
+        crate::ipv6::NEXT_UDP,
+        &into[..length as usize],
+    );
+    put_u16(into, 6, if sum == 0 { 0xFFFF } else { sum });
+}
+
+/// Read a datagram at the start of an IPv6 packet's payload.
+///
+/// Unlike [`parse`], a zero checksum is **refused**: IPv6 has no
+/// "unchecksummed" datagram, so a sender that left the field zero wrote
+/// something this stack must not accept — and a peer that computed a genuine
+/// zero would have sent all ones, which is why the two cases are
+/// distinguishable.
+pub fn parse6(
+    packet: &[u8],
+    source: crate::ipv6::Addr,
+    destination: crate::ipv6::Addr,
+) -> Option<Datagram> {
+    if packet.len() < HEADER_LEN {
+        return None;
+    }
+    let length = get_u16(packet, 4) as usize;
+    if length < HEADER_LEN || length > packet.len() {
+        return None;
+    }
+    if get_u16(packet, 6) == 0 {
+        return None;
+    }
+    if crate::ipv6::checksum_with_pseudo(
+        source,
+        destination,
+        crate::ipv6::NEXT_UDP,
+        &packet[..length],
+    ) != 0
+    {
+        return None;
+    }
+    Some(Datagram {
+        source_port: get_u16(packet, 0),
+        destination_port: get_u16(packet, 2),
+        payload_len: length - HEADER_LEN,
+        checksummed: true,
+    })
+}
+
 /// Read the datagram at the start of an IPv4 packet's payload, or `None`
 /// when it is not one this stack can interpret.
 ///
@@ -273,5 +347,49 @@ mod tests {
         packet[..DATAGRAM.len()].copy_from_slice(&DATAGRAM);
         let parsed = parse(&packet, US, GATEWAY).expect("a datagram");
         assert_eq!(parsed.payload_len, 9, "the sender's claim, not the packet");
+    }
+    /// A datagram written for IPv6 verifies with IPv6's pseudo-header, and
+    /// one written for IPv4 does not — the two sums cover different bytes.
+    #[test]
+    fn the_two_pseudo_headers_are_not_interchangeable() {
+        let source4 = [10, 0, 2, 15];
+        let destination4 = [10, 0, 2, 2];
+        let mut v4 = [0_u8; super::datagram_len(4)];
+        super::write_datagram(&mut v4, source4, destination4, 8612, 8613, b"data");
+
+        let source6 = crate::ipv6::link_local_from_mac([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+        let destination6 = crate::ipv6::link_local_from_mac([0x52, 0x55, 0, 0x12, 0x34, 0x57]);
+        let mut v6 = [0_u8; super::datagram_len(4)];
+        super::write_datagram6(&mut v6, source6, destination6, 8612, 8613, b"data");
+
+        assert!(super::parse6(&v6, source6, destination6).is_some());
+
+        // Swapping the two addresses does **not** break the checksum: a sum
+        // of words is commutative, so `src + dst` and `dst + src` are the
+        // same number.  What tells a receiver the datagram was addressed to
+        // it is the IPv6 header's destination field, which the transport
+        // never sees — the checksum proves the *pair* of addresses, not the
+        // direction.  This assertion is here so a later change that "fixes"
+        // the pseudo-header by reordering it fails a test that says why.
+        assert!(
+            super::parse6(&v6, destination6, source6).is_some(),
+            "a word sum is commutative; direction is the header's business"
+        );
+        // The IPv4 datagram read as IPv6 does not verify.
+        let mut stretched = [0_u8; super::datagram_len(4)];
+        stretched[..v4.len()].copy_from_slice(&v4);
+        assert!(super::parse6(&stretched, source6, destination6).is_none());
+    }
+
+    /// A zero checksum is refused over IPv6, where it is not a datagram this
+    /// stack may accept — the zero field is IPv4's rule, not IPv6's.
+    #[test]
+    fn a_zero_checksum_is_refused_over_ipv6() {
+        let source = crate::ipv6::link_local_from_mac([0x52, 0x54, 0, 0x12, 0x34, 0x56]);
+        let destination = crate::ipv6::link_local_from_mac([0x52, 0x55, 0, 0x12, 0x34, 0x57]);
+        let mut datagram = [0_u8; super::datagram_len(0)];
+        super::write_datagram6(&mut datagram, source, destination, 1, 2, b"");
+        super::put_u16(&mut datagram, 6, 0);
+        assert!(super::parse6(&datagram, source, destination).is_none());
     }
 }
