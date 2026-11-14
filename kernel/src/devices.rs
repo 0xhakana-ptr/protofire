@@ -937,6 +937,16 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // Multicast forwarding: a frame through the demux, an entry that names
+    // it, and what the card was actually told.  Three things at once, because
+    // a forwarding path can be broken three ways and each looks right through
+    // a different window: a table nothing reads sends nothing, a forwarder
+    // that does not spend a hop loops, and a copy that rebuilt its payload
+    // forwards bytes nobody sent.
+    if !crate::net::multicast_probe() {
+        return false;
+    }
+
     // The raw socket: a protocol number instead of a port, a packet this
     // machine sends itself, and the demux handing it back.  The source address
     // on the packet it receives is the stack's, which is what says the header

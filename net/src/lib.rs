@@ -152,6 +152,14 @@
 //! and each is its own stack, which is why `docs/roadmap.md` lists them as
 //! work rather than as gaps in this one.
 //!
+//! [`multicast`] is the other, and its shape is different from a protocol's:
+//! two tables, one from virtual interface to what it does with a frame and one
+//! from a `(source, group)` to where it goes, plus the one function that reads
+//! both to answer where a packet leaves.  What makes it a **forwarder** rather
+//! than a receiver is that a decision can name an interface that sends, and the
+//! kernel's demux acts on it: the entry's group is what the receive test
+//! accepts, and the copy leaves with the hop count spent.
+//!
 //! [`filter`] is here and is one of them no longer: an ordered rule list, the
 //! first match deciding, prefixes and port ranges in both families, and the
 //! flow table a stateful rule fills so a reply finds what its request was
@@ -186,6 +194,7 @@ pub mod dns;
 pub mod filter;
 pub mod internet;
 pub mod link;
+pub mod multicast;
 pub mod route;
 pub mod transport;
 
@@ -211,6 +220,11 @@ pub use filter::Action;
 pub use filter::Filter;
 pub use filter::Packet;
 pub use filter::Rule;
+
+pub use multicast::Cache;
+pub use multicast::Forwarding;
+pub use multicast::Interfaces;
+pub use multicast::Vif;
 
 pub use transport::local;
 pub use transport::options;

@@ -1620,6 +1620,145 @@ fn write_filter_stats(
     buffer[at + 8..at + 16].copy_from_slice(&dropped.to_le_bytes());
 }
 
+/// Enable multicast routing.
+///
+/// Arguments: zero, then five reserved slots.  There is no flags word to
+/// validate because the call has none: `MrtInit`'s argument is reserved, and a
+/// caller that put something there is a caller against a newer ABI.
+///
+/// The local interface and one link interface arrive with this call, because
+/// there is one card and no other way for a program to name it: an `MrtAddVif`
+/// cannot install the link without a number, and the number is what `MrtInit`
+/// reserves.
+pub fn mrt_init(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 0)?;
+    crate::net::multicast_init()?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Disable multicast routing and forget both tables.
+///
+/// Arguments: zero, then five reserved slots.  Answers `NotFound` when routing
+/// was not on, which is the difference between "it is off" and "you turned off
+/// something that was".
+pub fn mrt_done(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 0)?;
+    crate::net::multicast_done()?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Add a virtual interface, and answer the index it was given.
+///
+/// Arguments: the record, its length, then four reserved slots.  A
+/// `vif_index` of zero asks for automatic numbering, which is the reading
+/// [`abi::network::MrtVifDef`] states: the record's own comment could be read
+/// as saying zero is the local interface, and one value cannot be both.  The
+/// local interface is what `MrtInit` installs.
+pub fn mrt_add_vif(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 3)?;
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if buffer.len() != network_abi::MRT_VIF_DEF_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+    let record = read_mrt_vif(buffer)?;
+    let index = crate::net::multicast_add_vif(&record)?;
+    Ok(Dispatch::complete(index as usize))
+}
+
+/// Remove a virtual interface by index.
+///
+/// Arguments: the index, then five reserved slots.  The local interface cannot
+/// be removed, and the answer for it is `InvalidArgument`: it is not a
+/// forwarder a caller installed.
+pub fn mrt_del_vif(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let index = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if index > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    crate::net::multicast_del_vif(index as u32)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Add a forwarding-cache entry.
+///
+/// Arguments: the record, its length, then four reserved slots.  Answers zero,
+/// and whether an entry for the same `(source, group)` was replaced is not
+/// reported: the ABI's answer word is the call's status, and a caller that
+/// wanted to know would have to have asked before it added.
+pub fn mrt_add_mfc(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 3)?;
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if buffer.len() != network_abi::MRT_MFC_DEF_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+    let record = read_mrt_mfc(buffer)?;
+    crate::net::multicast_add_mfc(&record)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Remove the forwarding-cache entry for `(source, group)`.
+///
+/// Arguments: the source, packed by the ABI's own `pack_address`; the group,
+/// the same way; then four reserved slots.  Answers zero, or `NotFound` when no
+/// entry named that stream.
+pub fn mrt_del_mfc(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let source = arguments.context.arg(0);
+    let group = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+    if source > u32::MAX as usize || group > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    crate::net::multicast_del_mfc(
+        network_abi::unpack_address(source),
+        network_abi::unpack_address(group),
+    )?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Read an [`abi::network::MrtVifDef`] out of a caller's bytes.
+fn read_mrt_vif(buffer: &[u8]) -> Result<network_abi::MrtVifDef> {
+    let word = |at: usize| -> Result<u32> {
+        let bytes = buffer.get(at..at + 4).ok_or(Error::InvalidArgument)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    Ok(network_abi::MrtVifDef {
+        flags: word(0)?,
+        vif_index: word(4)?,
+        threshold: word(8)?,
+        rate_limit: word(12)?,
+        reserved0: word(16)?,
+        reserved1: word(20)?,
+    })
+}
+
+/// Read an [`abi::network::MrtMfcDef`] out of a caller's bytes.
+fn read_mrt_mfc(buffer: &[u8]) -> Result<network_abi::MrtMfcDef> {
+    let word = |at: usize| -> Result<u32> {
+        let bytes = buffer.get(at..at + 4).ok_or(Error::InvalidArgument)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let mut source = [0_u8; 4];
+    source.copy_from_slice(buffer.get(0..4).ok_or(Error::InvalidArgument)?);
+    let mut group = [0_u8; 4];
+    group.copy_from_slice(buffer.get(4..8).ok_or(Error::InvalidArgument)?);
+    let mut out_vifs = [network_abi::MrtOutVif { vif: 0, ttl: 0 }; 4];
+    for (index, slot) in out_vifs.iter_mut().enumerate() {
+        let at = 16 + index * 8;
+        *slot = network_abi::MrtOutVif {
+            vif: word(at)?,
+            ttl: word(at + 4)?,
+        };
+    }
+    Ok(network_abi::MrtMfcDef {
+        source,
+        group,
+        in_vif: word(8)?,
+        num_out_vifs: word(12)?,
+        out_vifs,
+    })
+}
+
 /// The socket a descriptor names, or the error that says why there is none.
 ///
 /// A descriptor that names a file or a pipe is `InvalidArgument` and not

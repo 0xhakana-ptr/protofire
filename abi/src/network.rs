@@ -459,6 +459,79 @@ pub const FILTER_STATS_SIZE: usize = size_of::<FilterStats>();
 /// it.
 pub const FILTER_STATS_ALLOWED_OFFSET: usize = offset_of!(FilterStats, packets_allowed);
 
+/// A virtual interface's flag: this one is the host's own delivery.
+///
+/// The number the previous tree published, kept because it is a value a
+/// program's own record carries.
+pub const MRT_VIF_FLAG_LOCAL: u32 = 1;
+
+/// A virtual interface's flag: this one sends out of the card.
+pub const MRT_VIF_FLAG_LINK: u32 = 2;
+
+/// One virtual interface, as `MrtAddVif` takes it.
+///
+/// Six words, the previous tree's shape.  `vif_index` of zero asks for
+/// automatic numbering: the field is documented on `MrtAddVif` and the reading
+/// is stated there, because the record's own comment and the flag word could be
+/// read as saying zero means the local interface, and one value cannot be both.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MrtVifDef {
+    /// [`MRT_VIF_FLAG_LOCAL`] or [`MRT_VIF_FLAG_LINK`].
+    pub flags: u32,
+    /// The index to use, or zero to be given one.
+    pub vif_index: u32,
+    /// The smallest time-to-live a packet needs to leave by this interface.
+    pub threshold: u32,
+    /// The rate a caller asks for, in packets per second, zero for none.
+    ///
+    /// Stored and read back, and **nothing enforces it**: a rate needs a clock
+    /// and a bucket, and a drop from either is silent.  The field is here
+    /// because a program reading its own interface back should learn what it
+    /// set, and pretending otherwise would be a promise nothing keeps.
+    pub rate_limit: u32,
+    /// Reserved, and must be zero.
+    pub reserved0: u32,
+    /// Reserved, and must be zero.
+    pub reserved1: u32,
+}
+
+pub const MRT_VIF_DEF_SIZE: usize = size_of::<MrtVifDef>();
+
+/// One outgoing interface of a forwarding-cache entry.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MrtOutVif {
+    /// The interface to send by.
+    pub vif: u32,
+    /// The smallest time-to-live a packet needs to leave by it.
+    pub ttl: u32,
+}
+
+/// A multicast forwarding-cache entry, as `MrtAddMfc` takes it.
+///
+/// `(source, group)`, the interface it must arrive on, and up to four outgoing
+/// interfaces.  All four are carried in the record and `num_out_vifs` says how
+/// many are meaningful, which is the shape the previous tree published: a
+/// caller that set two and left the rest zero is a caller whose record this
+/// reads the first two of.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MrtMfcDef {
+    /// The sender the entry is for.
+    pub source: [u8; 4],
+    /// The group it is going to.
+    pub group: [u8; 4],
+    /// The interface it must arrive on.
+    pub in_vif: u32,
+    /// How many of `out_vifs` are meaningful.
+    pub num_out_vifs: u32,
+    /// Where it goes.
+    pub out_vifs: [MrtOutVif; 4],
+}
+
+pub const MRT_MFC_DEF_SIZE: usize = size_of::<MrtMfcDef>();
+
 #[cfg(test)]
 mod tests {
     use super::NETWORK_ADDRESSES_BYTES;
@@ -612,6 +685,24 @@ mod tests {
         assert_eq!(super::FILTER_FAMILY_ANY, 0);
         assert_eq!(super::FILTER_FAMILY_IPV4, 4);
         assert_eq!(super::FILTER_FAMILY_IPV6, 6);
+    }
+
+    /// The multicast records are the previous tree's shapes, and their sizes
+    /// are pinned because a program's own record is written against them.
+    #[test]
+    fn the_multicast_records_keep_their_shape() {
+        assert_eq!(
+            super::MRT_VIF_DEF_SIZE,
+            6 * core::mem::size_of::<u32>(),
+            "six words"
+        );
+        assert_eq!(
+            super::MRT_MFC_DEF_SIZE,
+            2 * 4 + 2 * core::mem::size_of::<u32>() + 4 * 2 * core::mem::size_of::<u32>(),
+            "two addresses, two words, four outgoing interfaces"
+        );
+        assert_eq!(super::MRT_VIF_FLAG_LOCAL, 1);
+        assert_eq!(super::MRT_VIF_FLAG_LINK, 2);
     }
 
     /// The three option numbers are pinned, and the two levels with them.

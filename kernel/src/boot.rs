@@ -286,6 +286,27 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::FilterGetStats,
         crate::syscall::filter_get_stats,
     );
+    // Multicast routing's six numbers.  `MrtInit` and `MrtDone` are the switch
+    // and take no record; `MrtAddVif` and `MrtAddMfc` take one, so their
+    // buffers are borrowed in the trap path; the two removals name words.
+    table.register(::syscall::SyscallNumber::MrtInit, crate::syscall::mrt_init);
+    table.register(::syscall::SyscallNumber::MrtDone, crate::syscall::mrt_done);
+    table.register(
+        ::syscall::SyscallNumber::MrtAddVif,
+        crate::syscall::mrt_add_vif,
+    );
+    table.register(
+        ::syscall::SyscallNumber::MrtDelVif,
+        crate::syscall::mrt_del_vif,
+    );
+    table.register(
+        ::syscall::SyscallNumber::MrtAddMfc,
+        crate::syscall::mrt_add_mfc,
+    );
+    table.register(
+        ::syscall::SyscallNumber::MrtDelMfc,
+        crate::syscall::mrt_del_mfc,
+    );
     table.register(
         ::syscall::SyscallNumber::MacSetMode,
         crate::syscall::mac_set_mode,

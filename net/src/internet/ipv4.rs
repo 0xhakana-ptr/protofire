@@ -135,6 +135,15 @@ pub struct Header {
     /// The protocol the payload speaks: [`PROTOCOL_ICMP`], [`PROTOCOL_TCP`],
     /// [`PROTOCOL_UDP`].
     pub protocol: u8,
+    /// How many hops the packet may still cross.
+    ///
+    /// Kept because a **forwarder** reads it and a receiver does not: this
+    /// stack sent every packet with `TIME_TO_LIVE` and never looked at an
+    /// arriving one's, which is right for a host and wrong for the one place a
+    /// packet is passed on.  A forwarder decrements this and drops the packet
+    /// at zero rather than sending it with the count it arrived with, which is
+    /// what stops a routing loop from being a loop of frames.
+    pub time_to_live: u8,
 }
 
 /// A parsed packet: the header's fields, and where the payload starts.
@@ -282,6 +291,7 @@ pub fn parse(frame: &[u8]) -> Option<Packet> {
             source,
             destination,
             protocol: frame[9],
+            time_to_live: frame[8],
         },
         payload_at: header_len,
         payload_len: total_len - header_len,
@@ -291,16 +301,50 @@ pub fn parse(frame: &[u8]) -> Option<Packet> {
     })
 }
 
-/// Whether the packet was sent to `address`, or to everyone on the wire.
+/// Whether the packet was sent to `address`, to everyone on the wire, or to a
+/// group this machine joined.
 ///
 /// The two broadcast forms are both accepted because both are real: the
 /// limited broadcast (`255.255.255.255`) is what a sender uses before it knows
 /// its own network, and the directed form (`10.0.2.255`) names this one.  A
 /// packet addressed to another machine is another machine's conversation.
-pub fn is_for(packet: &Packet, address: [u8; 4]) -> bool {
-    packet.header.destination == address
+///
+/// A **group** is accepted only when it is in `joined`, which is the same rule
+/// [`crate::ipv6::is_for`] applies and for the same reason: a multicast address
+/// names every member of a group, and a host that read every group's traffic
+/// would be a host that had joined all of them.  The list is the caller's,
+/// because which groups this machine is in is a fact about its boot.
+pub fn is_for(packet: &Packet, address: [u8; 4], joined: &[[u8; 4]]) -> bool {
+    if packet.header.destination == address
         || packet.header.destination == [255, 255, 255, 255]
         || packet.header.destination == [address[0], address[1], address[2], 255]
+    {
+        return true;
+    }
+    joined.contains(&packet.header.destination)
+}
+
+/// Whether `address` names a group: `224.0.0.0/4`.
+///
+/// The range is the four high bits, which eight addresses short of half of the
+/// space: `224.0.0.0` through `239.255.255.255`, and everything from `240`
+/// up is reserved for a future use this stack does not have.
+pub fn is_multicast(address: [u8; 4]) -> bool {
+    address[0] & 0xF0 == 0xE0
+}
+
+/// The Ethernet address a multicast IPv4 address maps to ([RFC 1112] §6.4).
+///
+/// `01:00:5e`, then the group's low twenty-three bits.  The mapping is
+/// **lossy on purpose**: thirty-two group addresses share each hardware
+/// address, because the frame's address field has twenty-three bits to spend
+/// and the group has twenty-eight.  That is the standard's choice and not an
+/// error to correct here, which is why the group is still checked in software
+/// after the frame's address matches.
+///
+/// [RFC 1112]: https://www.rfc-editor.org/rfc/rfc1112
+pub fn multicast_mac(address: [u8; 4]) -> [u8; 6] {
+    [0x01, 0x00, 0x5E, address[1] & 0x7F, address[2], address[3]]
 }
 
 #[cfg(test)]
@@ -312,6 +356,8 @@ mod tests {
     use super::checksum;
     use super::checksum_of;
     use super::is_for;
+    use super::is_multicast;
+    use super::multicast_mac;
     use super::parse;
     use super::write_header;
 
@@ -497,18 +543,64 @@ mod tests {
     fn a_packet_is_for_this_stack_when_addressed_to_it_or_to_everyone() {
         let mut packet = [0_u8; HEADER_LEN];
         write_header(&mut packet, GATEWAY, US, PROTOCOL_ICMP, 0);
-        assert!(is_for(&parse(&packet).expect("a packet"), US));
+        assert!(is_for(&parse(&packet).expect("a packet"), US, &[]));
 
         // The limited broadcast, and the directed broadcast for this network.
         for broadcast in [[255, 255, 255, 255], [10, 0, 2, 255]] {
             write_header(&mut packet, GATEWAY, broadcast, PROTOCOL_ICMP, 0);
             let parsed = parse(&packet).expect("a packet");
-            assert!(is_for(&parsed, US), "broadcast is for everyone");
+            assert!(is_for(&parsed, US, &[]), "broadcast is for everyone");
         }
 
         write_header(&mut packet, GATEWAY, [10, 0, 2, 3], PROTOCOL_ICMP, 0);
         let parsed: Packet = parse(&packet).expect("a packet");
-        assert!(!is_for(&parsed, US), "another machine's conversation");
+        assert!(!is_for(&parsed, US, &[]), "another machine's conversation");
+
+        // A group this machine joined is for it, and one it did not is not.
+        // The distinction is the whole difference between a host and a
+        // promiscuous listener: `224.0.0.1` is every host on the link, and a
+        // group nobody joined is another machine's conversation.
+        let mut packet = [0_u8; 20 + 8];
+        write_header(&mut packet, US, [224, 0, 0, 1], PROTOCOL_UDP, 8);
+        let group = parse(&packet).expect("a packet");
+        assert!(!is_for(&group, US, &[]), "not joined, so not ours");
+        assert!(is_for(&group, US, &[[224, 0, 0, 1]]), "joined, so ours");
+        assert!(
+            !is_for(&group, US, &[[239, 255, 255, 250]]),
+            "another group's packet"
+        );
+    }
+
+    /// The multicast range is the high four bits, and its MAC mapping keeps
+    /// twenty-three of the group's twenty-eight.
+    ///
+    /// The mapping is lossy and the test says so by naming two groups that
+    /// share an address: `224.0.1.1` and `224.128.1.1` both map to
+    /// `01:00:5e:00:01:01`, because the group's fourth byte has its high bit
+    /// cleared and the second byte's low seven are all that survive.  That is
+    /// [RFC 1112]'s rule, and a test that asserted a one-to-one mapping would
+    /// be asserting something the standard does not promise.
+    #[test]
+    fn the_multicast_range_and_its_mac_mapping() {
+        assert!(is_multicast([224, 0, 0, 1]));
+        assert!(is_multicast([239, 255, 255, 255]));
+        assert!(!is_multicast([223, 255, 255, 255]), "just below");
+        assert!(!is_multicast([240, 0, 0, 1]), "just above");
+
+        assert_eq!(
+            multicast_mac([224, 0, 1, 1]),
+            [0x01, 0x00, 0x5E, 0x00, 0x01, 0x01]
+        );
+        assert_eq!(
+            multicast_mac([239, 255, 255, 255]),
+            [0x01, 0x00, 0x5E, 0x7F, 0xFF, 0xFF],
+            "the second byte keeps its low seven bits"
+        );
+        assert_eq!(
+            multicast_mac([224, 128, 1, 1]),
+            multicast_mac([224, 0, 1, 1]),
+            "thirty-two groups share one hardware address"
+        );
     }
 
     /// The header an error quotes is the sender's own bytes, which is the

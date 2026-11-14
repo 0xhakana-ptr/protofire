@@ -1120,11 +1120,40 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
     let Some(packet) = net::ipv4::parse(&frame[netdev::ETHERNET_HEADER_LEN..]) else {
         return;
     };
-    if !net::ipv4::is_for(&packet, protocol) {
+    // A group this machine forwards for is a group it receives, and one it
+    // neither addresses nor forwards is another machine's conversation.  The
+    // joined set is read from the multicast tables rather than a fixed array:
+    // an interface's groups are what a forwarding entry added, which is why
+    // this is a question the tables answer and not a constant.
+    let joined = forwarded_groups();
+    if !net::ipv4::is_for(&packet, protocol, &joined) {
         return;
     }
     let at = netdev::ETHERNET_HEADER_LEN + packet.payload_at;
     let payload = &frame[at..at + packet.payload_len];
+
+    // Multicast forwarding, which is the one thing this stack does with a
+    // packet that is not its own.  The rule is the RFC 1112 one and it is
+    // ordered: a packet bound for a group is **received** if a forwarding entry
+    // names it, and then forwarded to the interfaces that entry names, with a
+    // copy never going back out of the interface it arrived on.
+    //
+    // The arriving interface is the local one: this machine has one card, so a
+    // packet that reached the demux arrived on the link interface and is being
+    // read by the host, which is `VIF_LOCAL`'s own traffic.  A cache entry
+    // installed for the host's own stream therefore names `VIF_LOCAL` as its
+    // input, and the copy leaves by the link.
+    if net::ipv4::is_multicast(packet.header.destination)
+        && let Some(forwarding) = multicast_forward(
+            packet.header.source,
+            packet.header.destination,
+            net::multicast::VIF_LOCAL,
+            packet.header.time_to_live,
+            payload.len(),
+        )
+    {
+        forward_multicast(&packet, payload, &forwarding);
+    }
 
     // The filter's opinion, before any transport reads a byte.  Before, and
     // not after: a packet a rule drops has not reached the stream table, so a
@@ -2271,6 +2300,280 @@ fn fragment_now() -> u64 {
 }
 
 static TCP: Mutex<net::tcp_table::Table> = Mutex::new(net::tcp_table::Table::new());
+
+/// Multicast routing's two tables, and the one machine-wide switch that says
+/// whether forwarding happens at all.
+///
+/// The arithmetic is [`net::multicast`]'s and the locks are here, the same
+/// arrangement the filter and the fragment cache use: `net` computes a decision
+/// over values, and this file decides when the decision is asked.
+///
+/// The three are one `Mutex` and not three, because no read of one is useful
+/// without the others: a forwarding decision reads the cache, then every
+/// interface the entry names.  Two locks would be two chances to take them in
+/// opposite orders on two CPUs, which is the defect this tree already paid for
+/// once.
+struct Multicast {
+    /// Whether `MrtInit` ran and `MrtDone` has not, which is what makes a
+    /// forwarding decision happen at all.
+    routing: bool,
+    interfaces: net::multicast::Interfaces,
+    cache: net::multicast::Cache,
+}
+
+impl Multicast {
+    const fn new() -> Self {
+        Self {
+            routing: false,
+            interfaces: net::multicast::Interfaces::new(),
+            cache: net::multicast::Cache::new(),
+        }
+    }
+}
+
+static MULTICAST: Mutex<Multicast> = Mutex::new(Multicast::new());
+
+/// Enable multicast routing: the local interface, a link interface, and the
+/// switch.
+///
+/// The link interface is installed here rather than by the caller, because
+/// there is exactly one card and `MrtAddVif` cannot install it without naming a
+/// number: a caller that had to add it would be a caller whose routing works
+/// only if it also knew which index `MrtInit` reserved.  A second `MrtInit` is
+/// a no-op rather than an error, which is what makes a restart cheap.
+pub fn multicast_init() -> Result<()> {
+    let mut state = MULTICAST.lock();
+    if state.routing {
+        return Ok(());
+    }
+    if !state.interfaces.is_empty() {
+        // An init over tables a previous session left is an init over state
+        // nothing vetted: `done` clears both, so a table here means a caller
+        // installed entries between a done and this init, which is the state
+        // that makes the switch unsafe to turn on.
+        return Err(Error::Busy);
+    }
+    state.interfaces.install_local();
+    state.interfaces.add(0, net::multicast::Vif::Link, 1, 0)?;
+    state.routing = true;
+    Ok(())
+}
+
+/// Disable multicast routing and forget both tables.
+///
+/// Answered as `NotFound` when routing was not on, which is the difference
+/// between "it is off" and "you turned off something that was on": a program
+/// that disables twice should learn the second call did nothing.
+pub fn multicast_done() -> Result<()> {
+    let mut state = MULTICAST.lock();
+    if !state.routing {
+        return Err(Error::NotFound);
+    }
+    state.routing = false;
+    state.interfaces = net::multicast::Interfaces::new();
+    state.cache.clear();
+    Ok(())
+}
+
+/// Add a virtual interface, answering the index it was given.
+pub fn multicast_add_vif(record: &abi::network::MrtVifDef) -> Result<u32> {
+    let vif = match record.flags
+        & !(abi::network::MRT_VIF_FLAG_LOCAL | abi::network::MRT_VIF_FLAG_LINK)
+    {
+        abi::network::MRT_VIF_FLAG_LOCAL => net::multicast::Vif::Local,
+        abi::network::MRT_VIF_FLAG_LINK => net::multicast::Vif::Link,
+        _ => return Err(Error::InvalidArgument),
+    };
+    if record.reserved0 != 0 || record.reserved1 != 0 {
+        return Err(Error::InvalidArgument);
+    }
+    MULTICAST
+        .lock()
+        .interfaces
+        .add(record.vif_index, vif, record.threshold, record.rate_limit)
+}
+
+/// Remove a virtual interface.
+pub fn multicast_del_vif(index: u32) -> Result<()> {
+    let mut state = MULTICAST.lock();
+    if index == net::multicast::VIF_LOCAL {
+        return Err(Error::InvalidArgument);
+    }
+    state.interfaces.remove(index)
+}
+
+/// Add a forwarding-cache entry, answering whether it replaced one.
+pub fn multicast_add_mfc(record: &abi::network::MrtMfcDef) -> Result<bool> {
+    let count = record.num_out_vifs as usize;
+    if count > record.out_vifs.len() {
+        return Err(Error::InvalidArgument);
+    }
+    let outgoing: alloc::vec::Vec<(u32, u32)> = record.out_vifs[..count]
+        .iter()
+        .map(|entry| (entry.vif, entry.ttl))
+        .collect();
+    MULTICAST
+        .lock()
+        .cache
+        .add(record.source, record.group, record.in_vif, &outgoing)
+}
+
+/// Remove a forwarding-cache entry.
+pub fn multicast_del_mfc(source: [u8; 4], group: [u8; 4]) -> Result<()> {
+    if !MULTICAST.lock().cache.remove(source, group) {
+        return Err(Error::NotFound);
+    }
+    Ok(())
+}
+
+/// What one arriving multicast packet does, answering the interfaces it
+/// forwarded by.
+///
+/// Called from the demux, which is the one place a frame from the card is read.
+/// The three refusals are ordered so the cheap ones come first: routing off is
+/// one load, a group nobody forwards is a walk, and only then is the interface
+/// table read.
+///
+/// `None` when nothing was forwarded.  A packet that was **limited** by a
+/// threshold returns `Some` with an empty set, which the caller reports: "a
+/// loop or a low hop count kept it" and "no entry named it" are different
+/// silences and a boot's line should tell them apart.
+fn multicast_forward(
+    source: [u8; 4],
+    group: [u8; 4],
+    arriving: u32,
+    time_to_live: u8,
+    bytes: usize,
+) -> Option<net::multicast::Forwarding> {
+    let mut state = MULTICAST.lock();
+    if !state.routing {
+        return None;
+    }
+    let decision = net::multicast::decide(
+        &state.cache,
+        &state.interfaces,
+        source,
+        group,
+        arriving,
+        time_to_live,
+    )?;
+    if !decision.outgoing.is_empty() {
+        state.cache.note_forwarded(source, group, bytes);
+    }
+    Some(decision)
+}
+
+/// The groups this machine forwards for, as the demux's receive test asks.
+///
+/// A group is "joined" when a forwarding entry names it, which is the whole of
+/// what multicast routing adds to a host's receive set: a router reads a group
+/// because it forwards that group, and a host that installed no entry reads
+/// none.  The list is built here rather than stored, because it is derived from
+/// the cache and a second copy would be a second thing to keep in step.
+///
+/// Four entries at most, which is the ABI's own bound on the outgoing set and
+/// the number of groups a boot's own report says it forwards; a group past the
+/// fourth is one the receive test would miss, so the list is the cap and the
+/// cap is stated rather than silently truncating at a call site.
+fn forwarded_groups() -> [[u8; 4]; 4] {
+    let mut groups = [[0_u8; 4]; 4];
+    let state = MULTICAST.lock();
+    let mut count = 0;
+    for entry in state.cache.entries() {
+        if count == groups.len() {
+            break;
+        }
+        if !groups[..count].contains(&entry.group) {
+            groups[count] = entry.group;
+            count += 1;
+        }
+    }
+    groups
+}
+
+/// Send one copy of a multicast packet out of each interface a forwarding
+/// decision named.
+///
+/// The frame is rebuilt rather than forwarded byte for byte, because one field
+/// must change: the time-to-live drops by one, which is what makes a loop
+/// terminate, and the header's checksum covers it.  The payload is the
+/// sender's, copied exactly, so a forwarded datagram is the datagram that
+/// arrived.
+///
+/// An interface that is not [`net::multicast::Vif::Link`] gets nothing: the
+/// local interface is the delivery this packet already had by being read, and a
+/// copy "to" it would be the host sending itself what it just received.
+fn forward_multicast(
+    packet: &net::ipv4::Packet,
+    payload: &[u8],
+    forwarding: &net::multicast::Forwarding,
+) {
+    if forwarding.outgoing.is_empty() {
+        #[cfg(target_os = "none")]
+        {
+            arch::serial::write_str("protofire: multicast for ");
+            arch::serial::write_u32(abi::network::pack_address(packet.header.destination) as u32);
+            arch::serial::write_str(" was limited by ");
+            arch::serial::write_u32(forwarding.limited.len() as u32);
+            arch::serial::write_str(" interface(s)\n");
+        }
+        return;
+    }
+
+    // The time-to-live a copy leaves with, which is the arriving one minus the
+    // hop it just made.  `decide` already refused a copy whose count did not
+    // clear the interface's threshold, so this cannot underflow into a packet
+    // that leaves with a count it did not have.
+    let time_to_live = packet.header.time_to_live.saturating_sub(1);
+    let interface = INTERFACE.lock();
+    let Some(interface) = interface.as_ref() else {
+        return;
+    };
+    let (hardware, local) = (interface.hardware, interface.protocol);
+    let frame_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + payload.len();
+    for _ in forwarding.outgoing.iter() {
+        let mut frame = alloc::vec![0; frame_len];
+        net::ethernet::write_header(
+            &mut frame,
+            net::ipv4::multicast_mac(packet.header.destination),
+            hardware,
+            net::ethernet::ETHERTYPE_IPV4,
+        );
+        net::ipv4::write_header(
+            &mut frame[netdev::ETHERNET_HEADER_LEN..],
+            packet.header.source,
+            packet.header.destination,
+            packet.header.protocol,
+            payload.len(),
+        );
+        // The header's own field, and then the sum it is covered by: a writer
+        // puts `TIME_TO_LIVE` in and this is the one send whose count is not
+        // that constant.
+        frame[netdev::ETHERNET_HEADER_LEN + 8] = time_to_live;
+        let header_end = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN;
+        frame[netdev::ETHERNET_HEADER_LEN + 10..netdev::ETHERNET_HEADER_LEN + 12]
+            .copy_from_slice(&[0, 0]);
+        let sum = net::ipv4::checksum(&frame[netdev::ETHERNET_HEADER_LEN..header_end]);
+        frame[netdev::ETHERNET_HEADER_LEN + 10..netdev::ETHERNET_HEADER_LEN + 12]
+            .copy_from_slice(&sum.to_be_bytes());
+        frame[header_end..].copy_from_slice(payload);
+        let _ = interface.card.submit_frame(&frame);
+    }
+    let _ = local;
+
+    #[cfg(target_os = "none")]
+    {
+        arch::serial::write_str("protofire: forwarded multicast from ");
+        arch::serial::write_u32(abi::network::pack_address(packet.header.source) as u32);
+        arch::serial::write_str(" to ");
+        arch::serial::write_u32(abi::network::pack_address(packet.header.destination) as u32);
+        arch::serial::write_str(" with ttl ");
+        arch::serial::write_u32(time_to_live as u32);
+        arch::serial::write_str(", ");
+        arch::serial::write_u32(forwarding.outgoing.len() as u32);
+        arch::serial::write_str(" interface(s)\n");
+    }
+}
 
 /// The packet filter: the rules a program installed, the flows they remember,
 /// and the action for a packet no rule matches.
@@ -4186,6 +4489,51 @@ pub fn route_probe() -> bool {
     correct
 }
 
+/// A card that records the frames it was given, for the forwarding probe.
+///
+/// The question is not "did the call report a forward" but "what did the card
+/// receive": a forwarding path that composed a frame and then lost it would
+/// look like a forward from every counter the tables keep, and a frame with the
+/// wrong hop count looks like a forward from a count alone.  So the probe reads
+/// the bytes.
+#[cfg(target_os = "none")]
+struct RecordingCard {
+    frames: Mutex<Vec<Vec<u8>>>,
+}
+
+#[cfg(target_os = "none")]
+impl RecordingCard {
+    fn new() -> Self {
+        Self {
+            frames: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn frames(&self) -> Vec<Vec<u8>> {
+        self.frames.lock().clone()
+    }
+}
+
+#[cfg(target_os = "none")]
+impl LinkDevice for RecordingCard {
+    fn hardware_address(&self) -> [u8; 6] {
+        [0x02; 6]
+    }
+
+    fn submit_frame(&self, frame: &[u8]) -> Result<()> {
+        self.frames.lock().push(Vec::from(frame));
+        Ok(())
+    }
+
+    fn receive_frame(&self, _into: &mut [u8]) -> Result<Option<usize>> {
+        Ok(None)
+    }
+
+    fn maximum_frame_len(&self) -> usize {
+        1514
+    }
+}
+
 /// A card that records how many frames reached it, for the filter's outbound
 /// half.
 ///
@@ -4231,6 +4579,164 @@ impl LinkDevice for CountingCard {
     fn maximum_frame_len(&self) -> usize {
         1514
     }
+}
+
+/// Prove that a multicast packet is forwarded, with its hop count spent.
+///
+/// The claim multicast routing has to earn is not "the entry was stored": it is
+/// "a packet the entry names was sent on".  The previous tree's forwarding
+/// cache had no caller in the data path at all, so every entry it accepted
+/// described a stream nothing read, which is the same shape the packet filter's
+/// `enabled` flag had.
+///
+/// The exchange is a frame this machine hands the demux, carrying a multicast
+/// destination and an entry that forwards it, and the assertion is what the
+/// **card** was told: QEMU's user-mode network is not what this is about, so
+/// the frame's TTL and its destination are read from the outgoing frame the
+/// interface recorded rather than from a counter.
+///
+/// Three things are measured, and each fails a different broken forwarding:
+/// the packet was forwarded at all (a table nothing reads sends nothing), the
+/// copy left with one hop fewer (a forwarder that did not decrement would loop
+/// forever), and its payload is the sender's (a copy that rebuilt the payload
+/// would forward bytes nobody sent).
+#[cfg(target_os = "none")]
+pub fn multicast_probe() -> bool {
+    const GROUP: [u8; 4] = [239, 1, 2, 3];
+    const SENDER: [u8; 4] = [10, 0, 2, 2];
+    const ARRIVING_TTL: u8 = 5;
+
+    let local = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+
+    // Routing on, which installs the local interface and one link.
+    if multicast_init().is_err() {
+        return false;
+    }
+    let found = {
+        let state = MULTICAST.lock();
+        state
+            .interfaces
+            .entries()
+            .iter()
+            .find(|(_, entry)| entry.vif == net::multicast::Vif::Link)
+            .map(|(index, _)| *index)
+    };
+    let Some(link) = found else {
+        return false;
+    };
+    if multicast_add_mfc(&abi::network::MrtMfcDef {
+        source: SENDER,
+        group: GROUP,
+        in_vif: net::multicast::VIF_LOCAL,
+        num_out_vifs: 1,
+        out_vifs: [
+            abi::network::MrtOutVif { vif: link, ttl: 1 },
+            abi::network::MrtOutVif { vif: 0, ttl: 0 },
+            abi::network::MrtOutVif { vif: 0, ttl: 0 },
+            abi::network::MrtOutVif { vif: 0, ttl: 0 },
+        ],
+    })
+    .is_err()
+    {
+        let _ = multicast_done();
+        return false;
+    }
+
+    // The frame, built the way a sender would: UDP to the group, with a TTL
+    // this machine never sends, so the copy's count can only be the arriving
+    // one minus a hop.
+    let payload = b"multicast";
+    let udp_len = net::udp::datagram_len(payload.len());
+    let frame_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
+    let mut frame = alloc::vec![0; frame_len];
+    net::ethernet::write_header(
+        &mut frame,
+        net::ipv4::multicast_mac(GROUP),
+        [0x02; 6],
+        net::ethernet::ETHERTYPE_IPV4,
+    );
+    net::ipv4::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        SENDER,
+        GROUP,
+        net::ipv4::PROTOCOL_UDP,
+        udp_len,
+    );
+    // The arriving hop count, and the sum the change invalidates.  A frame
+    // from a router is one this stack parses, and `parse` refuses a header
+    // whose checksum does not verify, so the sum is recomputed here.
+    frame[netdev::ETHERNET_HEADER_LEN + 8] = ARRIVING_TTL;
+    net::udp::write_datagram(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+        SENDER,
+        GROUP,
+        4_000,
+        9_107,
+        payload,
+    );
+    let header_end = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN;
+    frame[netdev::ETHERNET_HEADER_LEN + 10..netdev::ETHERNET_HEADER_LEN + 12]
+        .copy_from_slice(&[0, 0]);
+    let sum = net::ipv4::checksum(&frame[netdev::ETHERNET_HEADER_LEN..header_end]);
+    frame[netdev::ETHERNET_HEADER_LEN + 10..netdev::ETHERNET_HEADER_LEN + 12]
+        .copy_from_slice(&sum.to_be_bytes());
+
+    // The card is swapped for one that records, so what the forwarding path
+    // hands a device is what the probe reads.  The interface's own card is put
+    // back before the probe returns.
+    let recorded = Arc::new(RecordingCard::new());
+    let original = {
+        let mut interface = INTERFACE.lock();
+        let Some(interface) = interface.as_mut() else {
+            let _ = multicast_done();
+            return false;
+        };
+        let original = interface.card.clone();
+        interface.card = recorded.clone();
+        original
+    };
+
+    demux(&frame, local);
+
+    // And back, before anything else sends.
+    {
+        let mut interface = INTERFACE.lock();
+        if let Some(interface) = interface.as_mut() {
+            interface.card = original;
+        }
+    }
+
+    let sent = recorded.frames();
+    let forwarded = !sent.is_empty();
+    let ttl = sent
+        .first()
+        .map(|frame| frame[netdev::ETHERNET_HEADER_LEN + 8])
+        .unwrap_or(0);
+    let carried = sent
+        .first()
+        .map(|frame| frame[frame.len() - payload.len()..].to_vec())
+        .unwrap_or_default();
+
+    let _ = multicast_done();
+
+    let correct = forwarded && ttl == ARRIVING_TTL - 1 && carried == payload;
+    arch::serial::write_str("protofire: multicast forwarded ");
+    arch::serial::write_u32(sent.len() as u32);
+    arch::serial::write_str(" frame(s), ttl ");
+    arch::serial::write_u32(ARRIVING_TTL as u32);
+    arch::serial::write_str(" -> ");
+    arch::serial::write_u32(ttl as u32);
+    arch::serial::write_str(", payload ");
+    arch::serial::write_str(if carried == payload {
+        "intact"
+    } else {
+        "ALTERED"
+    });
+    arch::serial::write_str(if correct { "\n" } else { ", MISMATCH\n" });
+    correct
 }
 
 /// Prove that a rule changes what the demux does with a packet.

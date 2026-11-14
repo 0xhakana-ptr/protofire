@@ -1644,6 +1644,72 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // The multicast routing records.  `MrtAddVif` and `MrtAddMfc` name a
+    // record and its length in `a0`/`a1`, and both are read: every field is a
+    // number the caller chose.
+    if number == SyscallNumber::MrtAddVif as usize || number == SyscallNumber::MrtAddMfc as usize {
+        let (record, length) = (call.arguments[0], call.arguments[1]);
+        if length == 0
+            || length > abi::network::MRT_VIF_DEF_SIZE.max(abi::network::MRT_MFC_DEF_SIZE)
+            || !crate::address_space::is_user_range(record, length)
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handler reads a
+        // record of the length it was given, against the size it states.
+        let buffer = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(buffer));
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if number == SyscallNumber::MrtAddVif as usize {
+                " added a multicast interface, index "
+            } else {
+                " added a multicast route, "
+            });
+            if refused {
+                arch::serial::write_str("refused\n");
+            } else {
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return outcome;
+    }
+
+    // The four multicast calls that name words: the switch's two, and the two
+    // removals.  Nothing here turns a word into a borrow, so the registry is
+    // reached with no buffer.
+    if number == SyscallNumber::MrtInit as usize
+        || number == SyscallNumber::MrtDone as usize
+        || number == SyscallNumber::MrtDelVif as usize
+        || number == SyscallNumber::MrtDelMfc as usize
+    {
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(match number {
+                n if n == SyscallNumber::MrtInit as usize => " enabled multicast routing",
+                n if n == SyscallNumber::MrtDone as usize => " disabled multicast routing",
+                n if n == SyscallNumber::MrtDelVif as usize => " removed a multicast interface",
+                _ => " removed a multicast route",
+            });
+            arch::serial::write_str(if refused { ", refused\n" } else { "\n" });
+        }
+        return outcome;
+    }
+
     // The filter's two calls that name no buffer: a rule by id, and the
     // default action.  Their arguments are words, so nothing here has to turn
     // one into a borrow.

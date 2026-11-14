@@ -391,6 +391,54 @@ the way a pipe's reader parks, and answers zero, end of file, once the
 stream's connection is gone, which an orderly close's last acknowledgement
 is what leaves behind.
 
+The multicast routing calls, six numbers above the frozen boundary, are a
+manager's interface: they install the tables a forwarding decision reads, and
+they do not speak a membership protocol.  IGMP and MLD are how a link tells a
+router which groups it wants, and neither is here.
+
+- **`MrtInit`**, `a0`-`a5` reserved zero.  Answers zero.  It installs the local
+  interface and one link interface, and turns forwarding on; a second call is a
+  no-op rather than an error, which is what makes a restart cheap.  The link
+  interface is installed **here** and not by `MrtAddVif`, because there is one
+  card: a caller that had to add it would be a caller whose routing works only
+  if it also knew which index this call reserved.
+- **`MrtDone`**, `a0`-`a5` reserved zero.  Answers zero, or `NotFound` when
+  routing was not on.  Both tables are cleared, so a later `MrtInit` starts from
+  the local interface and nothing else.
+- **`MrtAddVif`**, `a0` the record; `a1` its length, exactly `MRT_VIF_DEF_SIZE`;
+  `a2`-`a5` reserved zero.  Answers the index.  A `vif_index` of zero asks for
+  automatic numbering, which is the one reading this build chose: the record's
+  comment could be read as saying zero is the local interface, and one value
+  cannot be both.  The local interface is `MrtInit`'s.  A second link interface
+  is `AlreadyExists`: one card, so a second name for it would be a distinction
+  with no behaviour behind it.
+- **`MrtDelVif`**, `a0` the index; `a1`-`a5` reserved zero.  Answers zero.  The
+  local interface is `InvalidArgument`, and an index nothing holds is
+  `NotFound`.
+- **`MrtAddMfc`**, `a0` the record; `a1` its length, exactly `MRT_MFC_DEF_SIZE`;
+  `a2`-`a5` reserved zero.  Answers zero.  A second entry for one
+  `(source, group)` **replaces** the first, unlike an interface: a forwarding
+  entry is a route, and a route's second statement is a manager changing its
+  mind.  An outgoing set that is empty, larger than the record's four, or
+  repeats an interface is `InvalidArgument`.
+- **`MrtDelMfc`**, `a0` the source, packed by `pack_address`; `a1` the group,
+  the same way; `a2`-`a5` reserved zero.  Answers zero, or `NotFound`.
+
+**What forwarding does, precisely.**  A packet whose destination is a group is
+**received** when a forwarding entry names that group: the entry's group is the
+group this machine forwards for, and receiving it is what lets the demux see it
+at all.  The packet is then forwarded to the interfaces its entry names, with
+the time-to-live decremented by one, and a copy is never sent back out of the
+interface it arrived on.  A packet whose remaining hops do not clear an
+interface's threshold gets no copy on that interface, and the boot's log says
+so rather than dropping it silently.
+
+**A rate limit is stored and not enforced.**  `MrtVifDef::rate_limit` is here
+because the record carries it and a program reading its own interface back
+should learn what it set.  Nothing enforces it: a rate needs a clock and a
+bucket, and a drop from either is silent.  The field's own documentation says
+this rather than implying otherwise.
+
 The packet filter's four calls, which are above the frozen boundary and so
 may still change, are the one policy a program installs that changes what the
 demux does with a packet:

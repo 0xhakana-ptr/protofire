@@ -664,6 +664,16 @@ impl Machine {
                     "protofire: filter dropped the datagram under a rule: yes, delivered it once removed: yes, and an outbound rule kept a frame off the card: yes",
                     true,
                 ),
+                // Multicast forwarding, in the kernel's own exchange: a frame
+                // through the demux, an entry naming it, and what the card was
+                // told.  The three numbers are the arriving hop count, what
+                // the copy left with, and whether the payload is the
+                // sender's, because a forwarding path is broken three ways and
+                // each looks right through a different window.
+                (
+                    "protofire: multicast forwarded 1 frame(s), ttl 5 -> 4, payload intact",
+                    true,
+                ),
                 // The frame path's data offset: two TCP segments through the
                 // demux, one carrying an option and one not, and a stream
                 // holding their data and neither header.  Every other exchange
@@ -1412,6 +1422,10 @@ impl Machine {
                         true,
                     ),
                     (
+                        "protofire: multicast forwarded 1 frame(s), ttl 5 -> 4, payload intact",
+                        true,
+                    ),
+                    (
                         "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                         true,
                     ),
@@ -1452,6 +1466,10 @@ impl Machine {
                     ),
                     (
                         "protofire: filter dropped the datagram under a rule: yes, delivered it once removed: yes, and an outbound rule kept a frame off the card: yes",
+                        true,
+                    ),
+                    (
+                        "protofire: multicast forwarded 1 frame(s), ttl 5 -> 4, payload intact",
                         true,
                     ),
                     (
@@ -1893,6 +1911,16 @@ impl Machine {
                 // four calls reported success.
                 (
                     "protofire: filter dropped the datagram under a rule: yes, delivered it once removed: yes, and an outbound rule kept a frame off the card: yes",
+                    true,
+                ),
+                // Multicast forwarding, in the kernel's own exchange: a frame
+                // through the demux, an entry naming it, and what the card was
+                // told.  The three numbers are the arriving hop count, what
+                // the copy left with, and whether the payload is the
+                // sender's, because a forwarding path is broken three ways and
+                // each looks right through a different window.
+                (
+                    "protofire: multicast forwarded 1 frame(s), ttl 5 -> 4, payload intact",
                     true,
                 ),
                 // The frame path's data offset: two TCP segments through the

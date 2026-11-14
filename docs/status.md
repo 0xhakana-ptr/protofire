@@ -699,6 +699,55 @@ each protocol's own lifetime, the sweep's rate limit, the two bounds refusing
 rather than growing, the counters following the verdicts, and the record
 validation that refuses a rule no packet could match.
 
+**Multicast routing, and the forwarding it does.**  `MrtInit`, `MrtDone`,
+`MrtAddVif`, `MrtDelVif`, `MrtAddMfc` and `MrtDelMfc` (169-174) were named in
+the ABI and served by nothing.  All six are served now, and the part worth
+saying is not the tables: it is that this stack **forwards**.  A multicast
+packet is read because a cache entry names its group, and it leaves by each
+interface its entry names with the hop count spent.
+
+The previous tree had those tables too, and nothing in its data path read them:
+the cache was written by the syscalls and read by a `tick` that aged entries
+out, so every entry described a stream nothing forwarded.  That is the same
+shape as the packet filter's `enabled` flag, and the probe is built to fail on
+it.
+
+```
+protofire: forwarded multicast from 167772674 to 4009820675 with ttl 4, 1 interface(s)
+protofire: multicast forwarded 1 frame(s), ttl 5 -> 4, payload intact
+```
+
+Three facts on the required line, because a forwarding path breaks three ways
+and each looks right through a different window.  **One frame reached the
+card**: a table nothing reads sends nothing.  **The hop count fell from five to
+four**: a forwarder that copied the arriving count would loop until something
+else stopped it.  **The payload is the sender's**: a copy that rebuilt the frame
+around its own bytes would forward a datagram nobody sent.  The probe swaps the
+interface's card for one that records, hands the demux a frame a sender would
+have built, and reads the frame the card was given, so all three are measured
+on the bytes and not on a counter.
+
+The two tables are `net::multicast`'s and the locks are the kernel's, the
+arrangement the packet filter uses.  Three pieces of the stack had to grow for
+the forwarding to be real, and each has its own test:
+
+- `ipv4::parse` keeps the **time-to-live**, which every receiver ignored and a
+  forwarder reads.
+- `ipv4::is_for` takes the **groups this machine joined**.  A host that read
+  every group's traffic would be a host that had joined all of them, which is
+  the mistake the parameter prevents.
+- `ipv4::multicast_mac` is [RFC 1112]'s mapping, `01:00:5e` and twenty-three
+  bits of the group.  It is lossy on purpose, thirty-two groups to one hardware
+  address, and the test asserts two groups that collide rather than pretending
+  the mapping is one-to-one.
+
+A **rate limit** is stored and not enforced, and `MrtVifDef::rate_limit` says
+so in its own documentation.  A rate needs a clock and a bucket, a drop from
+either is silent, and a field that claimed to act would be the `enabled` flag
+again under another name.
+
+[RFC 1112]: https://www.rfc-editor.org/rfc/rfc1112
+
 **The timeout is measured now, not assumed.**  `RTO_INITIAL_MICROS` was the
 timeout for every stream on every path, and one second is right for no path: a
 machine on a fast wire retransmits a segment that was merely in flight, and one
