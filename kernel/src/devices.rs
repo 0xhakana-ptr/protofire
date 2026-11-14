@@ -947,6 +947,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // TLS 1.3's protocol half: both sides of a handshake against each other,
+    // a real X25519 exchange, and each verifying the other's Finished.  There
+    // is no TLS peer on this machine and the probe says so where it is; what it
+    // proves is the schedule, the transcript and the record layer.
+    if !crate::net::tls_probe() {
+        return false;
+    }
+
     // DCCP: a whole connection on this machine through the real demux, which
     // is the one path that exercises the state machine without a peer.  A
     // stack that stored headers and had no states passes nothing here.

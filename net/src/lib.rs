@@ -147,7 +147,10 @@
 //! there are two interfaces, the route gains one field and the lookup one
 //! comparison.
 //!
-//! What is also absent is the one protocol this crate does not name: TLS.
+//! What is absent from [`tls`] is stated there: no X.509 parser, no PSK and no
+//! 0-RTT.  The record layer, the key schedule and the handshake messages are
+//! here, and a caller that needs a chain examined needs a parser this crate
+//! does not pretend to have.
 //! Those are numbers above the frozen range and each is its own stack, which is
 //! why `docs/roadmap.md` lists them as work rather than as gaps in this one.
 //!
@@ -197,6 +200,7 @@ pub mod ipsec;
 pub mod link;
 pub mod multicast;
 pub mod route;
+pub mod tls;
 pub mod transport;
 
 /// The internet layer's modules, at the crate root so a caller names the
@@ -235,6 +239,10 @@ pub use ipsec::Tables;
 pub use dccp::PacketType;
 pub use dccp::Segment;
 pub use dccp::Table as DccpTable;
+
+pub use tls::Keys as TlsKeys;
+pub use tls::Schedule as TlsSchedule;
+pub use tls::Transcript;
 
 pub use transport::local;
 pub use transport::options;

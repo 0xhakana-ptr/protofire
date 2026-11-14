@@ -362,6 +362,15 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::DccpClose,
         crate::syscall::dccp_close,
     );
+    // The one TLS call, above the frozen boundary like the rest.  It is
+    // registered because a number the ABI names should answer something a
+    // program can act on, and `Unsupported` after a hello is built and sent is
+    // a different answer from `NotImplemented`: the first says the machine
+    // understood the call and has no peer, the second says it has no call.
+    table.register(
+        ::syscall::SyscallNumber::TlsConnect,
+        crate::syscall::tls_connect,
+    );
     table.register(
         ::syscall::SyscallNumber::MacSetMode,
         crate::syscall::mac_set_mode,

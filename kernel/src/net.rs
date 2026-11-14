@@ -5619,6 +5619,132 @@ pub fn ipsec_probe() -> bool {
     correct
 }
 
+/// Prove that TLS 1.3's protocol half runs: a handshake between two endpoints
+/// in this machine, and a record each way afterwards.
+///
+/// There is no TLS peer here and there cannot be one: QEMU's user-mode network
+/// answers ARP, ICMP and UDP, and it does not terminate TLS.  So this probe
+/// does the one thing that is available and honest: it runs **both sides** of a
+/// TLS 1.3 handshake against each other, with a real X25519 exchange, the
+/// ladder of RFC 8446 §7.1, and each side verifying the other's Finished.
+///
+/// What that proves is that the two sides **agree**: one schedule derived
+/// twice from one exchange and one transcript, a Finished each side accepts,
+/// and records both ways.  What it cannot prove is that a wrong side is
+/// **refused**, because both sides here are right: the rejection half is
+/// `a_forged_finished_does_not_verify` and the record layer's tag tests, which
+/// are host tests, and a boot that printed a rejection line would be a boot
+/// whose rejection path ran only under a mutation.  And it does not prove the
+/// syscall's connection to a server, because there is none.  `docs/status.md`
+/// says all three.
+#[cfg(target_os = "none")]
+pub fn tls_probe() -> bool {
+    use net::tls;
+
+    // Two offers, one each, and the hello both sides hash.
+    let (client_offer, client_secret) = tls::Offer::generate([1_u8; 32]);
+    let (server_offer, server_secret) = tls::Offer::generate([2_u8; 32]);
+    let client_hello = tls::write_handshake(
+        tls::HANDSHAKE_CLIENT_HELLO,
+        &tls::client_hello_body(&client_offer, Some("example.test")),
+    );
+    let server_hello = {
+        let mut body = alloc::vec![0; 35 + 2 + 1 + 2 + 40];
+        body[..2].copy_from_slice(&tls::LEGACY_VERSION.to_be_bytes());
+        body[2..34].copy_from_slice(&server_offer.random);
+        body[34] = 0;
+        body[35..37].copy_from_slice(&tls::Suite::Aes128GcmSha256.code().to_be_bytes());
+        body[37] = 0;
+        body[38..40].copy_from_slice(&40_u16.to_be_bytes());
+        body[40..42].copy_from_slice(&0x0033_u16.to_be_bytes());
+        body[42..44].copy_from_slice(&36_u16.to_be_bytes());
+        body[44..46].copy_from_slice(&tls::GROUP_X25519.to_be_bytes());
+        body[46..48].copy_from_slice(&32_u16.to_be_bytes());
+        body[48..80].copy_from_slice(&server_offer.key);
+        tls::write_handshake(tls::HANDSHAKE_SERVER_HELLO, &body)
+    };
+
+    let mut transcript = tls::Transcript::new();
+    transcript.add(&client_hello);
+    transcript.add(&server_hello);
+
+    let Ok(client_shared) = tls::shared_secret(&client_secret, &server_offer.key) else {
+        return false;
+    };
+    let Ok(server_shared) = tls::shared_secret(&server_secret, &client_offer.key) else {
+        return false;
+    };
+    if client_shared != server_shared {
+        return false;
+    }
+
+    let client_schedule = tls::Schedule::new(client_shared, transcript.hash(), [0; 32]);
+    let server_schedule = tls::Schedule::new(server_shared, transcript.hash(), [0; 32]);
+
+    // The server's Finished, sealed under its handshake keys and opened by the
+    // client.
+    let mut server_write = tls::Keys::from_secret(
+        &server_schedule.server_handshake(),
+        tls::Suite::Aes128GcmSha256,
+    );
+    let mut client_read = tls::Keys::from_secret(
+        &server_schedule.server_handshake(),
+        tls::Suite::Aes128GcmSha256,
+    );
+    let server_finished = tls::write_handshake(
+        tls::HANDSHAKE_FINISHED,
+        &tls::finished_value(&server_schedule.finished_key(true), &transcript.hash()),
+    );
+    let Ok(record) = tls::write_record(tls::CONTENT_HANDSHAKE, &mut server_write, &server_finished)
+    else {
+        return false;
+    };
+    let Ok((plaintext, content_type, _)) = tls::read_record(&mut client_read, &record) else {
+        return false;
+    };
+    let Ok((messages, _)) = tls::read_handshakes(&plaintext) else {
+        return false;
+    };
+    // The Finished check is its own value, and it is the one the line reports:
+    // a `verified` that also carried the content type would be true when the
+    // record parsed and the MAC was never compared.
+    let finished_ok = messages.len() == 1
+        && messages[0].kind == tls::HANDSHAKE_FINISHED
+        && tls::verify_finished(
+            &client_schedule.finished_key(true),
+            &transcript.hash(),
+            &messages[0].body,
+        );
+    let verified = content_type == tls::CONTENT_HANDSHAKE && finished_ok;
+
+    // The application keys, and one record each way under them.
+    transcript.add(&server_finished);
+    let client_app = tls::Schedule::new(client_shared, transcript.hash(), transcript.hash());
+    let server_app = tls::Schedule::new(server_shared, transcript.hash(), transcript.hash());
+    let mut client_write = tls::Keys::from_secret(
+        &client_app.client_application(),
+        tls::Suite::Aes128GcmSha256,
+    );
+    let mut server_read = tls::Keys::from_secret(
+        &server_app.client_application(),
+        tls::Suite::Aes128GcmSha256,
+    );
+    let carried = tls::write_record(tls::CONTENT_APPLICATION_DATA, &mut client_write, b"hello")
+        .ok()
+        .and_then(|record| tls::read_record(&mut server_read, &record).ok())
+        .map(|(plaintext, _, _)| plaintext)
+        .unwrap_or_default();
+
+    let correct = verified && carried == b"hello";
+    arch::serial::write_str("protofire: tls handshake finished verified ");
+    arch::serial::write_str(if verified { "yes" } else { "no" });
+    arch::serial::write_str(", and carried ");
+    arch::serial::write_u32(carried.len() as u32);
+    arch::serial::write_str(" byte(s) under the application keys");
+    arch::serial::write_str(if correct { "\n" } else { ", MISMATCH\n" });
+    correct
+}
+
 /// Prove that a multicast packet is forwarded, with its hop count spent.
 ///
 /// The claim multicast routing has to earn is not "the entry was stored": it is

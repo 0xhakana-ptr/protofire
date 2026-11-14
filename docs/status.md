@@ -857,6 +857,53 @@ the one above.
 
 [RFC 4340]: https://www.rfc-editor.org/rfc/rfc4340
 
+**TLS 1.3: the protocol, and the call that cannot use it.**  `TlsConnect`
+(121) was the last of the 23 above-frozen-range protocol numbers and the largest.
+`net::tls` now has the record layer, the key schedule and the handshake
+messages, and the call is served as far as this machine allows.
+
+```
+protofire: tls handshake finished verified yes, and carried 5 byte(s) under the application keys
+```
+
+**Three limits, and none of them is a defect to fix later without a peer.**
+
+First, **there is no TLS server on this machine.**  QEMU's user-mode network
+answers ARP, ICMP and UDP, and it does not terminate TLS; `ConnectTcp` refuses a
+peer that is not this machine.  So `TlsConnect` opens the stream, builds a
+ClientHello, sends it, and answers `Unsupported`, and the boot line says how many
+bytes went so the half that ran is visible.  A call that refused without
+building a hello would be a number and nothing more.
+
+Second, **there is no X.509 parser.**  A certificate chain is DER, and reading it
+is a module of its own: tagged values, an algorithm identifier, a validity
+window, an extension list, and the name matching that decides whether a
+certificate is for the host you meant.  The handshake here carries the chain
+opaque and verifies the Finished against a key the caller supplies.  Half a
+parser would be worse than none: one that read a certificate's fields and skipped
+the extension that says "not for this name" would pass a chain a real client
+refuses.
+
+Third, **the boot probe proves agreement and not rejection.**  It runs both sides
+of a handshake against each other, which is the strongest evidence available
+without a peer: a real X25519 exchange, one schedule derived twice from one
+transcript, each side's Finished accepted, and a record in each direction under
+the application keys.  A mutation that removed the Finished comparison from the
+probe did **not** change its line, because both sides here are right.  The
+rejection half is host tests, and the mutation that made `finished_value` a
+constant was caught by `a_forged_finished_does_not_verify`.
+
+`net::tls` is 18 host tests: the record round trip for both suites, the outer
+type being `application_data` whatever the inner one is, the nonce's
+construction asserted byte for byte against [RFC 8446] §5.3 (a round trip cannot
+catch a wrong nonce, because a nonce built wrongly on both sides agrees with
+itself), a failed tag leaving the counter alone, the ClientHello's length fields
+walked the way a server walks them, a ServerHello naming a group nobody offered
+being refused, and an all-zero X25519 output refused as [RFC 7748] §6.1 requires.
+
+[RFC 8446]: https://www.rfc-editor.org/rfc/rfc8446
+[RFC 7748]: https://www.rfc-editor.org/rfc/rfc7748
+
 **The timeout is measured now, not assumed.**  `RTO_INITIAL_MICROS` was the
 timeout for every stream on every path, and one second is right for no path: a
 machine on a fast wire retransmits a segment that was merely in flight, and one

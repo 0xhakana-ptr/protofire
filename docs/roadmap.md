@@ -340,15 +340,18 @@ lands before anything in the kernel depends on it.
 
 #### What Level 5 does not promise
 
-- **Twenty-two of the 23 protocol numbers are now served, and one is not.**
-  `Filter*` (122-125), `Mrt*` (169-174), `Ipsec*` (164-168) and `Dccp*`
-  (157-163) are served, each with a mechanism the boot observes end to end: a
-  rule either keeps a packet out or it does not, a forwarded frame either leaves
-  the card with a spent hop or it does not, an ESP payload either carries no
+- **All 23 protocol numbers are served, and two of them are served with a
+  stated limit.**  `Filter*` (122-125), `Mrt*` (169-174), `Ipsec*` (164-168) and
+  `Dccp*` (157-163) each have a mechanism the boot observes end to end: a rule
+  either keeps a packet out or it does not, a forwarded frame either leaves the
+  card with a spent hop or it does not, an ESP payload either carries no
   plaintext or it does, and a DCCP connection either reaches `Open` or it does
-  not.  `TlsConnect` (121) is the one left, and it is the largest: a handshake,
-  a record layer and a certificate chain, each with state no other call in this
-  range has.
+  not.  `TlsConnect` (121) is served as far as this machine allows and **refuses
+  with `Unsupported`** after sending its hello, because there is no TLS server
+  here to answer it; `net::tls` has the record layer, the key schedule and the
+  handshake, and the boot proves both sides of a handshake agree.  No X.509
+  parser exists, so a chain is carried opaque.  `docs/status.md` records all
+  three limits where the call is.
 - **Routing.**  One interface, one address, one gateway.  A routing table is a
   decision for a tree with two networks.
 - **DNS beyond the literal.**  `ResolveHostname` (93) can answer from a hosts

@@ -1554,6 +1554,28 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // `TlsConnect` names a host with a pointer and a length, so it is copied
+    // the way a path is.  Its answer is a word: a refusal here, because the
+    // hello it builds has no peer in this machine.
+    if number == SyscallNumber::TlsConnect as usize {
+        let mut name_bytes = [0u8; NAME_MAX];
+        let Ok(host) = copy_user_name(call.arguments[0], call.arguments[1], &mut name_bytes) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, Some(host), None, None);
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" asked for a tls connection, ");
+            arch::serial::write_str(if refused { "refused\n" } else { "opened\n" });
+        }
+        return outcome;
+    }
+
     // The calls that name a host take a pointer and a length, so their string
     // is copied the way a path is and their answer is a word rather than a
     // record.

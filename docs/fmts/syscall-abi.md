@@ -391,6 +391,36 @@ the way a pipe's reader parks, and answers zero, end of file, once the
 stream's connection is gone, which an orderly close's last acknowledgement
 is what leaves behind.
 
+**`TlsConnect`** (121) is the one call in this range whose protocol half is
+served and whose **use** cannot be.  It opens a stream to the host a name
+resolves to, builds a TLS 1.3 ClientHello, sends it, and answers `Unsupported`.
+The refusal is the machine's, not the build's: this stack's `ConnectTcp` refuses
+a peer that is not this machine, and there is no TLS server on this machine, so
+there is nothing to finish the handshake with.
+
+The call builds and sends the hello **before** it refuses, and the log line says
+how many bytes went: a call that refused without building one would be a number
+answering `Unsupported` and nothing more.
+
+What `net::tls` serves, and has 18 host tests for, is the protocol: the record
+layer (the five-byte header whose outer type is always `application_data`, the
+sequence-exclusive-ored nonce, and a tag whose failure does not advance the
+counter), the key schedule ([RFC 8446] §7.1's ladder, `Derive-Secret`, and the
+finished keys), and the handshake messages.  One test runs **both sides** of a
+handshake against each other: a real X25519 exchange, one schedule derived twice,
+each side's Finished accepted, and a record in each direction under the
+application keys.
+
+What it does not do, stated here so a reader does not have to infer it: there is
+no **X.509** parser, so a certificate chain is carried opaque and is not
+examined; there is no **PSK** and no **0-RTT**; and the self-handshake proves the
+two sides **agree**, not that a wrong side is **refused**.  The rejection half is
+host tests (`a_forged_finished_does_not_verify`, and the record layer's tag
+tests), and a boot that printed a rejection line would be a boot whose rejection
+path ran only under a mutation.
+
+[RFC 8446]: https://www.rfc-editor.org/rfc/rfc8446
+
 DCCP's seven calls are a second datagram transport: [RFC 4340]'s protocol, whose
 difference from UDP is congestion control and whose difference from TCP is that
 a lost datagram stays lost.  Its port space is its own, so a DCCP port and a

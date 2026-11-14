@@ -687,10 +687,10 @@ impl Machine {
                 // the first datagram arriving on the server.  A state machine
                 // that stored no states passes none of it.
                 ("protofire: dccp client open, carried 4 byte(s)", true),
-                // DCCP's whole connection, driven through the function the
-                // demux calls: a Request, a Response, the client opening, and
-                // the first datagram arriving on the server.
-                ("protofire: dccp client open, carried 4 byte(s)", true),
+                (
+                    "protofire: tls handshake finished verified yes, and carried 5 byte(s) under the application keys",
+                    true,
+                ),
                 // The frame path's data offset: two TCP segments through the
                 // demux, one carrying an option and one not, and a stream
                 // holding their data and neither header.  Every other exchange
@@ -1446,6 +1446,11 @@ impl Machine {
                         "protofire: esp sealed 1, opened 1, the wire carried ciphertext, and the replay 0 byte(s)",
                         true,
                     ),
+                    ("protofire: dccp client open, carried 4 byte(s)", true),
+                    (
+                        "protofire: tls handshake finished verified yes, and carried 5 byte(s) under the application keys",
+                        true,
+                    ),
                     (
                         "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                         true,
@@ -1495,6 +1500,11 @@ impl Machine {
                     ),
                     (
                         "protofire: esp sealed 1, opened 1, the wire carried ciphertext, and the replay 0 byte(s)",
+                        true,
+                    ),
+                    ("protofire: dccp client open, carried 4 byte(s)", true),
+                    (
+                        "protofire: tls handshake finished verified yes, and carried 5 byte(s) under the application keys",
                         true,
                     ),
                     (
@@ -1961,10 +1971,10 @@ impl Machine {
                 // the first datagram arriving on the server.  A state machine
                 // that stored no states passes none of it.
                 ("protofire: dccp client open, carried 4 byte(s)", true),
-                // DCCP's whole connection, driven through the function the
-                // demux calls: a Request, a Response, the client opening, and
-                // the first datagram arriving on the server.
-                ("protofire: dccp client open, carried 4 byte(s)", true),
+                (
+                    "protofire: tls handshake finished verified yes, and carried 5 byte(s) under the application keys",
+                    true,
+                ),
                 // The frame path's data offset: two TCP segments through the
                 // demux, one carrying an option and one not, and a stream
                 // holding their data and neither header.  Every other exchange

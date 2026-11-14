@@ -125,6 +125,7 @@ pub use handlers::set_sock_opt;
 pub use handlers::stat;
 pub use handlers::stat_at;
 pub use handlers::system_info;
+pub use handlers::tls_connect;
 pub use handlers::write;
 pub use table::Arguments;
 pub use table::Dispatch;

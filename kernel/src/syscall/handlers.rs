@@ -2133,6 +2133,83 @@ pub fn dccp_close(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Re
     Ok(Dispatch::complete(0))
 }
 
+/// Open a TLS 1.3 connection to a host.
+///
+/// Arguments: the host name, its length, the port, then three reserved slots
+/// that must be zero.  Answers the descriptor a program reads and writes
+/// through, which is a **plain stream**: what protects its bytes is a record
+/// layer this build has, not a socket it has wrapped.
+///
+/// ## What this call does, and what it refuses
+///
+/// It opens the TCP stream to the peer and sends a ClientHello built by
+/// [`net::tls::client_hello_body`].  Then it **refuses with `Unsupported`**,
+/// because the handshake's next step needs an answer this machine cannot get: a
+/// TLS server.  There is none here.  QEMU's user-mode network answers ARP, ICMP
+/// and UDP, and it does not terminate TLS, and a stack that cannot reach a peer
+/// cannot finish a handshake with one.
+///
+/// The refusal is **after** the hello and not before it, and that is a choice
+/// worth stating: a call that refused immediately would be a call whose
+/// ClientHello had never been built by the kernel, and building it is the half
+/// of this that can be exercised.  The line a boot prints says how many bytes
+/// the hello was, which is the evidence that the half ran.
+///
+/// ## Why the descriptor is not returned
+///
+/// A descriptor over a stream with no keys would be a descriptor whose bytes a
+/// program believes are protected and are not, which is worse than a refusal:
+/// the first is a program that sends plaintext under the impression it is
+/// encrypted.  The call refusing means the program learns, and the stream it
+/// opened is closed.
+pub fn tls_connect(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let port = arguments.context.arg(2);
+    let flags = arguments.context.arg(3);
+    validate_known_flags(flags, 0)?;
+    validate_zeroed_args(arguments.context, 4)?;
+    if port == 0 || port > u16::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let host = arguments.path.ok_or(Error::InvalidArgument)?;
+    if host.is_empty() || host.len() > network_abi::HOST_NAME_MAX {
+        return Err(Error::InvalidArgument);
+    }
+
+    // The hello, built and measured before anything is sent.  Its length is the
+    // evidence a boot prints: a `TlsConnect` that refused without building one
+    // would be a number answering `Unsupported` and nothing more.
+    let (offer, _secret) = net::tls::Offer::generate(read_random()?);
+    let body = net::tls::client_hello_body(&offer, Some(host));
+    let hello = net::tls::write_handshake(net::tls::HANDSHAKE_CLIENT_HELLO, &body);
+
+    // The stream, so the hello has somewhere to go, and the name looked up.  A
+    // host build has no wire and no resolver, and its answer is the same one a
+    // boot reaches: the hello has no peer.
+    #[cfg(target_os = "none")]
+    {
+        let address = crate::net::resolve(host, net::dns::TYPE_A).ok_or(Error::NotFound)?;
+        let stream = crate::net::tcp_connect(address, port as u16)?;
+        let written = crate::net::tcp_write(stream, &hello).unwrap_or(0);
+        let _ = crate::net::tcp_close(stream);
+        arch::serial::write_str("protofire: tls sent a client hello of ");
+        arch::serial::write_u32(written as u32);
+        arch::serial::write_str(" byte(s) and has no peer to answer it\n");
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = hello;
+    }
+    Err(Error::Unsupported)
+}
+
+/// A random draw for a ClientHello's field, or the error a boot without a
+/// seeded generator gives.
+fn read_random() -> Result<[u8; 32]> {
+    let mut random = [0_u8; 32];
+    crate::random::fill(&mut random)?;
+    Ok(random)
+}
+
 /// The socket a descriptor names, or the error that says why there is none.
 ///
 /// A descriptor that names a file or a pipe is `InvalidArgument` and not
