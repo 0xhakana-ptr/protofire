@@ -128,6 +128,11 @@
 //! option nothing acts on is a field, and this crate would rather refuse one
 //! than keep it.
 //!
+//! [`raw`] is the one socket keyed on a protocol number rather than a port, so
+//! a program can implement a protocol this crate does not have.  What it does
+//! not take is a header: the stack composes the one the machine is responsible
+//! for, and the program chooses the protocol and the payload.
+//!
 //! [`local`] is the one transport whose bytes are not on a wire: a name a
 //! listener binds, the connections waiting at it, and the rule that a full
 //! backlog refuses.  The pipes behind a connection are the kernel's, because a
@@ -165,6 +170,7 @@ pub use link::ethernet;
 
 pub use transport::local;
 pub use transport::options;
+pub use transport::raw;
 pub use transport::tcp;
 pub use transport::tcp_table;
 pub use transport::udp;

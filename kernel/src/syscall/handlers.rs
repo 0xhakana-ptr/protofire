@@ -1345,11 +1345,78 @@ pub fn accept_local(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> 
     }
 }
 
-/// Write a `NetworkStatus` record at the start of a validated buffer: the
-/// state word, then the fourteen address bytes the record packed.
-fn write_network_status(buffer: &mut [u8], record: &network_abi::NetworkStatusRecord) {
-    buffer[0..8].copy_from_slice(&record.state.to_le_bytes());
-    buffer[8..8 + network_abi::NETWORK_ADDRESSES_BYTES].copy_from_slice(&record.addresses);
+/// Create a raw socket bound to an IP protocol number, answering its
+/// descriptor.
+///
+/// Arguments: the protocol number, then five reserved slots that must be zero.
+/// Protocol zero is refused: it is the IP header's "no protocol", and a socket
+/// bound to it would receive every packet this machine accepts.  A number past
+/// a byte is refused too, because the field it goes into is one byte.
+///
+/// This is a privileged interface on every system that has one, and nothing
+/// checks what the bytes say: a raw send composes an IP header with this
+/// machine's own source address and the program's payload.  That is the whole
+/// reason the call exists, and the MAC policy is where a boot would gate it.
+/// This boot's policy does not, and `docs/status.md` says so rather than
+/// claiming a check that does not run.
+pub fn create_raw_socket(
+    table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+    let protocol = arguments.context.arg(0);
+    if protocol == 0 || protocol > u8::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    let owner = arguments
+        .context
+        .caller_pid
+        .unwrap_or(crate::programs::BOOT_PROCESS);
+    let socket = crate::net::create_raw_socket(protocol as u8)?;
+    let descriptor = table.insert_raw(socket, owner)?;
+    Ok(Dispatch::complete(descriptor))
+}
+
+/// Send one raw packet: the protocol's payload, with the header written here.
+///
+/// Arguments: the descriptor, the destination address packed by the ABI's own
+/// [`abi::network::pack_address`], the destination's length (four or sixteen),
+/// the payload, its length, and the flags word.  Answers the bytes sent.
+///
+/// `a2` is the destination's length and not a second buffer: the ABI's shape
+/// has the address's width spelled out because a raw send takes either family,
+/// and the flags carry the IPv6 bit the datagram calls already use.  A width
+/// that names neither family is refused rather than guessed.
+pub fn send_raw_packet(
+    table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let destination = arguments.context.arg(1);
+    let destination_len = arguments.context.arg(2);
+    let flags = arguments.context.arg(5);
+    validate_known_flags(flags, network_abi::SEND_TO_UDP_KNOWN_FLAGS)?;
+    let payload = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if payload.is_empty() || payload.len() > crate::net::MAX_DATAGRAM_BYTES {
+        return Err(Error::InvalidArgument);
+    }
+    let socket = table
+        .raw_socket(descriptor, arguments.context.caller_pid)
+        .ok_or(Error::InvalidArgument)?;
+    let destination = match destination_len {
+        4 => {
+            if destination > u32::MAX as usize {
+                return Err(Error::InvalidArgument);
+            }
+            net::address::Address::V4(network_abi::unpack_address(destination))
+        }
+        // A sixteen-byte address arrives as a pointer, the same shape the
+        // datagram and stream calls take for theirs.
+        16 => net::address::Address::V6(read_user_address6(destination)?),
+        _ => return Err(Error::InvalidArgument),
+    };
+    let sent = crate::net::send_raw_packet(socket.protocol(), destination, payload)?;
+    Ok(Dispatch::complete(sent))
 }
 
 /// The socket a descriptor names, whichever kind it is, as the thing that
@@ -1441,6 +1508,13 @@ fn holder(
         return Ok(OptionHolder::Datagram(socket));
     }
     Err(Error::InvalidArgument)
+}
+
+/// Write a `NetworkStatus` record at the start of a validated buffer: the
+/// state word, then the fourteen address bytes the record packed.
+fn write_network_status(buffer: &mut [u8], record: &network_abi::NetworkStatusRecord) {
+    buffer[0..8].copy_from_slice(&record.state.to_le_bytes());
+    buffer[8..8 + network_abi::NETWORK_ADDRESSES_BYTES].copy_from_slice(&record.addresses);
 }
 
 /// Write an `AbiInfo` record at the start of a validated buffer.

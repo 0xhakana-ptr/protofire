@@ -11,6 +11,7 @@
 //! | [`udp_socket`] | one bound port's queue and the bounds on it |
 //! | [`options`] | the three things a program may change about a socket, and the refusal for the rest |
 //! | [`local`] | a name two processes meet at, and the connections waiting there |
+//! | [`raw`] | a socket keyed on a protocol number, and the packets that arrive with it |
 //!
 //! The last file in each pair is the one kind of state this crate holds: a
 //! value a caller owns, with no lock and no `static`, which is what lets the
@@ -22,6 +23,7 @@
 
 pub mod local;
 pub mod options;
+pub mod raw;
 pub mod tcp;
 pub mod tcp_table;
 pub mod udp;

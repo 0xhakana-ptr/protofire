@@ -658,6 +658,48 @@ read of a local end was therefore refused for a range whose "buffer" was the
 read-from-here sentinel `0xffff_ffff_ffff_ffff`, which is what the exit statuses
 `243` and `245` were saying.
 
+**Three more: `CreateRawSocket` (76), `SendRawPacket` (77), `RecvRawPacket`
+(78).**  A socket keyed on an IP **protocol number** rather than a port, which
+is what lets a program implement a protocol this stack does not have.  The
+demux hands it the payload of every packet this machine accepts with that
+number, after the stack's own handling has run: an ICMP error a stream acted on
+is still a message a program watching ICMP may read, and a stack that deflected
+a packet to a raw socket would change its own protocols' meaning when a program
+opened one.
+
+The send does **not** take a header.  A program names a protocol and a payload
+and the stack composes the IP header, because a program that wrote its own would
+also choose its own source address and its own length, and the fields the stack
+answers for would become the program's.  A raw send over IPv6 is `Unsupported`
+rather than an IPv4-shaped packet: this stack's IPv6 sender writes no extension
+chain for its own transports either.
+
+```
+protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine
+protofire: process 1 made a raw socket for protocol 253 as descriptor 6
+protofire: process 1 sent a raw packet of 3 byte(s)
+protofire: process 1 received a raw packet, 3 byte(s)
+```
+
+Protocol 253 is [RFC 3692]'s experimental number, so nothing else on the machine
+sends or receives it and the packet the receive finds is the one the send put
+there.  The kernel's probe sends a frame this machine addresses to itself and
+hands it to the **demux**, not to the queue: a loopback that delivered straight
+to the socket would exercise the queue and nothing else, and the header is the
+part a raw send must get right.
+
+Writing this found two defects, and both made the receive park rather than fail.
+The frame's header claimed twenty bytes more than it carried, because the length
+passed to `ipv4::write_header` is the payload's and the probe passed the total,
+so `parse` refused the packet for a length mismatch.  And `SendRawPacket` shared
+the datagram branch, whose `a2` is the buffer's pointer where a raw send's is
+the destination address's width: the call was served with the datagram handler
+and the log printed the **pointer** as a byte count.  Both are why `init`'s raw
+exchange is a gate line and not only the kernel's probe: the ring-3 path is the
+one whose argument slots differ.
+
+[RFC 3692]: https://www.rfc-editor.org/rfc/rfc3692
+
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and
 `ListenTcp` (56) answer through the registry; `AcceptTcp` (57) is served by
 the trap path, because it parks, and a stream's data rides the same `Read`

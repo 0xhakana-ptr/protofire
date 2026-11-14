@@ -642,6 +642,15 @@ impl Machine {
                     "protofire: local socket 5 byte(s) forward, 6 back, both ways through one name",
                     true,
                 ),
+                // The raw socket, in the kernel's own exchange: a protocol
+                // number instead of a port, and a packet this machine sends
+                // itself, composed by the stack and parsed back out of the
+                // frame it built.  The source address on what it receives is
+                // what says the header was not the caller's.
+                (
+                    "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
+                    true,
+                ),
                 // And the same exchange between two ring-3 processes, which is
                 // the claim a probe cannot make: a bind, a connect, an accept,
                 // and a read and a write each way.
@@ -1353,6 +1362,10 @@ impl Machine {
                         true,
                     ),
                     (
+                        "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
+                        true,
+                    ),
+                    (
                         "protofire: process 1 bound the local name, descriptor ",
                         false,
                     ),
@@ -1374,6 +1387,10 @@ impl Machine {
                     ),
                     (
                         "protofire: local socket 5 byte(s) forward, 6 back, both ways through one name",
+                        true,
+                    ),
+                    (
+                        "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
                         true,
                     ),
                     (
@@ -1789,6 +1806,15 @@ impl Machine {
                 // zero for the other.
                 (
                     "protofire: local socket 5 byte(s) forward, 6 back, both ways through one name",
+                    true,
+                ),
+                // The raw socket, in the kernel's own exchange: a protocol
+                // number instead of a port, and a packet this machine sends
+                // itself, composed by the stack and parsed back out of the
+                // frame it built.  The source address on what it receives is
+                // what says the header was not the caller's.
+                (
+                    "protofire: raw socket sent 10 byte(s) as protocol 253, and received 10 from this machine",
                     true,
                 ),
                 // And the same exchange between two ring-3 processes, which is

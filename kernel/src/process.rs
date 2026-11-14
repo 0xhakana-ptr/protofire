@@ -1719,10 +1719,65 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
     // The datagram calls that answer at once: a bind, and a send.  The
     // receive is the branch below, because it parks, a handler that cannot
     // park does not hold a number whose caller may have to wait.
+    // The raw socket's three calls, in one branch because two of them are
+    // words and the third is the buffer `SendRawPacket` carries.  A raw call
+    // is **not** a datagram call: the descriptor names a protocol rather than
+    // a port, and `SendRawPacket`'s `a2` is the destination address's width
+    // where `SendToUdp`'s is the buffer's pointer.  Sharing the datagram
+    // branch, which the first version of this did, served a raw send with the
+    // datagram handler and printed the payload **pointer** as a byte count.
+    if number == SyscallNumber::CreateRawSocket as usize
+        || number == SyscallNumber::SendRawPacket as usize
+    {
+        let send_buffer = if number == SyscallNumber::SendRawPacket as usize {
+            let buffer = call.arguments[3];
+            let length = call.arguments[4];
+            if !crate::address_space::is_user_range(buffer, length) {
+                return CallOutcome::Return(abi::syscall::encode_error(
+                    abi::Error::InvalidArgument,
+                ));
+            }
+            // SAFETY: the range is inside the user window and not empty,
+            // which `is_user_range` checked, and the pages behind it are the
+            // calling task's own mappings, installed on this CPU.  The handler
+            // reads the bytes.
+            Some(unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) })
+        } else {
+            None
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, send_buffer);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            if number == SyscallNumber::CreateRawSocket as usize {
+                arch::serial::write_str(" made a raw socket for protocol ");
+                arch::serial::write_u32(call.arguments[0] as u32);
+                arch::serial::write_str(" as descriptor ");
+                arch::serial::write_u32(answer as u32);
+            } else {
+                arch::serial::write_str(" sent a raw packet of ");
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str(" byte(s)\n");
+            }
+            arch::serial::write_str("\n");
+        }
+        return outcome;
+    }
+
     if number == SyscallNumber::BindUdp as usize || number == SyscallNumber::SendToUdp as usize {
         // `SendToUdp` carries a buffer: `a2` the bytes, `a3` their length,
         // the same shape a file write is.  `BindUdp` names no address at
         // all, and its slots are the handler's to refuse.
+        //
+        // `SendRawPacket` carries one too, at `a3`/`a4`, because its `a1` and
+        // `a2` are the destination's address and width: a raw send names a
+        // family before it names its bytes.  `CreateRawSocket` takes no buffer
+        // and shares the branch only because its arguments are words.
         let send_buffer = if number == SyscallNumber::SendToUdp as usize {
             let buffer = call.arguments[2];
             let length = call.arguments[3];
@@ -1863,6 +1918,100 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
                     arch::serial::write_str(" port ");
                     arch::serial::write_u32(port as u32);
                     arch::serial::write_str("\n");
+                }
+                CallOutcome::Return(status)
+            }
+        };
+    }
+
+    // A receive from a raw socket: a packet whose protocol number this side
+    // named, or a park until one arrives.  The shape is the datagram
+    // receiver's, and the two differences are the ones the call's arguments
+    // state: there is no port to report, and the sender's record is sixteen
+    // bytes for an IPv6 source and four for IPv4, which the record's own
+    // length tells apart.
+    if number == SyscallNumber::RecvRawPacket as usize {
+        let descriptor = call.arguments[0];
+        let buffer = call.arguments[1];
+        let length = call.arguments[2];
+        let sender_record = call.arguments[3];
+        // `a4` is the record's length and also the width of the source
+        // address a program expects: four for IPv4 and sixteen for IPv6.  The
+        // call has no flags word of its own, so the width is stated rather
+        // than flagged, and a width that names neither family is refused.
+        let sender_len = call.arguments[4];
+        if sender_len != 4 && sender_len != 16 {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        if !crate::address_space::is_user_range(buffer, length)
+            || !crate::address_space::is_user_range(sender_record, sender_len)
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let Some(socket) = crate::syscall::raw_socket_for(descriptor, caller) else {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        };
+        // SAFETY: both ranges are inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind them are the calling
+        // task's own mappings, installed on this CPU.  The receive writes the
+        // buffer and the sender record and nothing past them.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let sender =
+            unsafe { core::slice::from_raw_parts_mut(sender_record as *mut u8, sender_len) };
+
+        // The card's ring is drained before the question is asked, the same
+        // reason the datagram receive drains it: a frame the card is holding
+        // is a packet in a queue rather than a wait that answers nothing.
+        crate::net::pump();
+        let ask = |socket: &alloc::sync::Arc<crate::net::RawSocket>,
+                   destination: &mut [u8],
+                   sender: &mut [u8]|
+         -> Option<usize> {
+            match socket.try_recv(destination) {
+                Err(error) => Some(abi::syscall::encode_error(error)),
+                Ok(None) => None,
+                Ok(Some((source, count))) => {
+                    match source {
+                        net::address::Address::V4(bytes) => {
+                            if sender.len() < 4 {
+                                return Some(abi::syscall::encode_error(
+                                    abi::Error::InvalidArgument,
+                                ));
+                            }
+                            sender[..4].copy_from_slice(&bytes);
+                        }
+                        net::address::Address::V6(bytes) => {
+                            if sender.len() < 16 {
+                                return Some(abi::syscall::encode_error(
+                                    abi::Error::InvalidArgument,
+                                ));
+                            }
+                            sender[..16].copy_from_slice(&bytes);
+                        }
+                    }
+                    Some(count)
+                }
+            }
+        };
+        let mut answer = ask(&socket, destination, sender);
+        if answer.is_none() {
+            answer = crate::scheduler::block_unless(frame, || ask(&socket, destination, sender));
+        }
+        return match answer {
+            None => {
+                arch::serial::write_str("protofire: a program blocks on a raw socket\n");
+                if !crate::scheduler::has_selectable() {
+                    crate::scheduler::idle_until_woken();
+                }
+                crate::scheduler::switch_without_saving(frame)
+            }
+            Some(status) => {
+                if !abi::syscall::is_error_status(status) {
+                    arch::serial::write_str("protofire: process ");
+                    arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                    arch::serial::write_str(" received a raw packet, ");
+                    arch::serial::write_u32(status as u32);
+                    arch::serial::write_str(" byte(s)\n");
                 }
                 CallOutcome::Return(status)
             }

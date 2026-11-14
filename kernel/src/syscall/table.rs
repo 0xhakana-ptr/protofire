@@ -183,6 +183,17 @@ pub(crate) enum Descriptor {
         /// The process that holds it, so its exit can release it.
         owner: u32,
     },
+    /// A raw socket: one IP protocol number's packets, queued for its reader.
+    ///
+    /// Shares the `Arc` with the table in `crate::net`, so a fork's copy reads
+    /// the same queue the way two descriptors on one datagram socket share a
+    /// port.  The socket stops being routable when the last descriptor goes,
+    /// which is what the table's `Weak` reads.
+    Raw {
+        socket: Arc<crate::net::RawSocket>,
+        /// The process that holds it, so its exit can release it.
+        owner: u32,
+    },
     /// A bound name, the thing an accept is called on.
     ///
     /// A listener holds no pipe: the connection's pipes are made by the
@@ -261,6 +272,10 @@ impl Descriptor {
                 halves: halves.clone(),
                 owner,
             },
+            Descriptor::Raw { socket, .. } => Descriptor::Raw {
+                socket: Arc::clone(socket),
+                owner,
+            },
             Descriptor::LocalListener { name, .. } => Descriptor::LocalListener {
                 name: name.clone(),
                 owner,
@@ -327,7 +342,8 @@ impl SyscallTable {
             | Some(Descriptor::TcpListener { owner, .. })
             | Some(Descriptor::TcpStream { owner, .. })
             | Some(Descriptor::Local { owner, .. })
-            | Some(Descriptor::LocalListener { owner, .. }) => Some(*owner),
+            | Some(Descriptor::LocalListener { owner, .. })
+            | Some(Descriptor::Raw { owner, .. }) => Some(*owner),
             None => None,
         }
     }
@@ -501,6 +517,29 @@ impl SyscallTable {
         self.insert(Descriptor::Local { halves, owner })
     }
 
+    /// Register a raw socket and answer its descriptor.
+    pub(crate) fn insert_raw(
+        &mut self,
+        socket: Arc<crate::net::RawSocket>,
+        owner: u32,
+    ) -> Result<usize> {
+        self.insert(Descriptor::Raw { socket, owner })
+    }
+
+    /// The raw socket a descriptor names, cloned, if it names one and the
+    /// caller owns it.
+    pub(crate) fn raw_socket(
+        &self,
+        descriptor: usize,
+        caller: Option<u32>,
+    ) -> Option<Arc<crate::net::RawSocket>> {
+        self.check_owner(descriptor, caller).ok()?;
+        match self.descriptors.get(descriptor)? {
+            Some(Descriptor::Raw { socket, .. }) => Some(Arc::clone(socket)),
+            _ => None,
+        }
+    }
+
     /// Register a bound name and answer the descriptor an accept is called on.
     pub(crate) fn insert_local_listener(
         &mut self,
@@ -633,7 +672,8 @@ impl SyscallTable {
                 | Descriptor::TcpListener { owner, .. }
                 | Descriptor::TcpStream { owner, .. }
                 | Descriptor::Local { owner, .. }
-                | Descriptor::LocalListener { owner, .. } = descriptor
+                | Descriptor::LocalListener { owner, .. }
+                | Descriptor::Raw { owner, .. } = descriptor
                 && *owner == parent
             {
                 inherited.push(descriptor.for_owner(child));
@@ -685,7 +725,8 @@ impl SyscallTable {
                 | Some(Descriptor::TcpListener { owner: held, .. })
                 | Some(Descriptor::TcpStream { owner: held, .. })
                 | Some(Descriptor::Local { owner: held, .. })
-                | Some(Descriptor::LocalListener { owner: held, .. }) => *held == owner,
+                | Some(Descriptor::LocalListener { owner: held, .. })
+                | Some(Descriptor::Raw { owner: held, .. }) => *held == owner,
                 None => false,
             };
             if owned {
@@ -925,6 +966,13 @@ pub fn pipe_end(descriptor: usize) -> Option<pipe::End> {
 /// program sees does not tell it which slots exist.
 pub fn pipe_end_for(descriptor: usize, caller: u32) -> Option<pipe::End> {
     REGISTRY.lock().as_ref()?.pipe_end(descriptor, Some(caller))
+}
+
+pub fn raw_socket_for(
+    descriptor: usize,
+    caller: Option<u32>,
+) -> Option<Arc<crate::net::RawSocket>> {
+    REGISTRY.lock().as_ref()?.raw_socket(descriptor, caller)
 }
 
 /// The two halves of the local end a descriptor names, for a caller that must

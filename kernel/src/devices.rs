@@ -906,6 +906,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // The raw socket: a protocol number instead of a port, a packet this
+    // machine sends itself, and the demux handing it back.  The source address
+    // on the packet it receives is the stack's, which is what says the header
+    // was composed here and not by the caller.
+    if !crate::net::raw_probe() {
+        return false;
+    }
+
     // The options: a receive buffer and a send buffer set through the same
     // call a program uses, and the two numbers each one governs read back
     // afterwards.  A ring-3 set and get proves the call is wired; this proves

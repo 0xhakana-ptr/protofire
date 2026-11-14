@@ -199,6 +199,11 @@ pub const SYS_BIND_LOCAL: usize = SyscallNumber::BindLocal as usize;
 pub const SYS_CONNECT_LOCAL: usize = SyscallNumber::ConnectLocal as usize;
 pub const SYS_ACCEPT_LOCAL: usize = SyscallNumber::AcceptLocal as usize;
 pub use abi::network::HOST_NAME_MAX as LOCAL_NAME_MAX;
+
+/// The three raw-socket calls.
+pub const SYS_CREATE_RAW_SOCKET: usize = SyscallNumber::CreateRawSocket as usize;
+pub const SYS_SEND_RAW_PACKET: usize = SyscallNumber::SendRawPacket as usize;
+pub const SYS_RECV_RAW_PACKET: usize = SyscallNumber::RecvRawPacket as usize;
 pub const IPV6_STATUS_BYTES: usize = core::mem::size_of::<abi::network::Ipv6StatusRecord>();
 /// The state word for a card the kernel drives.
 pub use abi::network::NETWORK_STATUS_UP;
@@ -836,6 +841,53 @@ pub fn sys_connect_local(name: &[u8]) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_accept_local(listener: usize) -> usize {
     syscall6(SYS_ACCEPT_LOCAL, listener, 0, 0, 0, 0, 0)
+}
+
+/// `create_raw_socket(protocol)`: the descriptor, or an error status.
+///
+/// The protocol is the IP header's own number, so a program implementing a
+/// protocol this stack does not have names it the way the wire does.
+#[cfg(target_os = "none")]
+pub fn sys_create_raw_socket(protocol: u8) -> usize {
+    syscall6(SYS_CREATE_RAW_SOCKET, protocol as usize, 0, 0, 0, 0, 0)
+}
+
+/// `send_raw_packet(descriptor, destination, payload)`: the bytes sent, or an
+/// error status.
+///
+/// `destination` is the four-byte address packed by
+/// [`abi::network::pack_address`], and the width the call states is four, which
+/// is the family this build's raw send composes a header for.
+#[cfg(target_os = "none")]
+pub fn sys_send_raw_packet(descriptor: usize, destination: usize, payload: &[u8]) -> usize {
+    syscall6(
+        SYS_SEND_RAW_PACKET,
+        descriptor,
+        destination,
+        4,
+        payload.as_ptr() as usize,
+        payload.len(),
+        0,
+    )
+}
+
+/// `recv_raw_packet(descriptor, buffer, sender)`: the bytes written, or an
+/// error status.
+///
+/// `sender` is four bytes, the width of an IPv4 source this build's receive
+/// reports; the call's length word doubles as that width and is checked
+/// against the width of the address it writes.
+#[cfg(target_os = "none")]
+pub fn sys_recv_raw_packet(descriptor: usize, buffer: &mut [u8], sender: &mut [u8; 4]) -> usize {
+    syscall6(
+        SYS_RECV_RAW_PACKET,
+        descriptor,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        sender.as_mut_ptr() as usize,
+        sender.len(),
+        0,
+    )
 }
 
 /// `ipv6_status(record)`: zero, with the record filled, the interface's

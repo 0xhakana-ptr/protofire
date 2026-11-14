@@ -510,6 +510,194 @@ pub fn bind_udp(port: u16) -> Result<Arc<UdpSocket>> {
     Ok(socket)
 }
 
+/// The raw sockets a machine holds, keyed by the protocol number each names.
+///
+/// A `Weak` per entry, for the reason the datagram table's is: a socket's life
+/// is its descriptors', and a protocol nothing holds a socket for is a protocol
+/// the demux delivers nothing for.  Several sockets may name one protocol,
+/// which is not the rule a bound port has: a raw socket is a **reader** of the
+/// internet layer, and two programs watching ICMP are two readers of one stream
+/// rather than two owners of one port.
+static RAW_SOCKETS: Mutex<Vec<(u8, Weak<RawSocket>)>> = Mutex::new(Vec::new());
+
+/// One raw socket, as a program holds it: its protocol and its queue.
+///
+/// The queue is behind a lock of its own because two contexts reach it, the
+/// demux on one CPU and the program's receive call on another, and the
+/// registry's lock is held only for the length of a lookup.  A per-socket lock
+/// is also what keeps two programs watching one protocol from serialising on
+/// the table: they share the lookup and not the queue.
+pub struct RawSocket {
+    protocol: u8,
+    queue: Mutex<net::raw::Socket>,
+}
+
+impl RawSocket {
+    /// The protocol number this socket answers for.
+    pub fn protocol(&self) -> u8 {
+        self.protocol
+    }
+
+    /// Queue one packet, answering whether it was kept.
+    fn deliver(&self, source: net::address::Address, payload: &[u8]) -> bool {
+        self.queue.lock().deliver(source, payload)
+    }
+
+    /// Take the oldest packet into `into`.
+    pub fn try_recv(&self, into: &mut [u8]) -> Result<Option<(net::address::Address, usize)>> {
+        self.queue.lock().take(into)
+    }
+}
+
+/// Create a raw socket for `protocol`, answering it.
+///
+/// Protocol zero is refused before this is reached, at the handler: it is the
+/// IP header's "no protocol", and a socket bound to it would receive every
+/// packet this machine accepts.
+pub fn create_raw_socket(protocol: u8) -> Result<Arc<RawSocket>> {
+    let mut sockets = RAW_SOCKETS.lock();
+    sockets.retain(|(_, socket)| socket.upgrade().is_some());
+    let socket = Arc::new(RawSocket {
+        protocol,
+        queue: Mutex::new(net::raw::Socket::new(protocol)),
+    });
+    sockets.push((protocol, Arc::downgrade(&socket)));
+    Ok(socket)
+}
+
+/// Hand one packet to every raw socket bound to its protocol.
+///
+/// Answers how many sockets kept it, which is what the demux reports: a packet
+/// whose protocol a program is watching was delivered, and one nothing watches
+/// was not.  A socket whose queue is full drops it and is not counted, because
+/// a delivery count that included a drop would overstate what a program can
+/// read.
+fn deliver_raw(protocol: u8, source: net::address::Address, payload: &[u8]) -> usize {
+    let mut sockets = RAW_SOCKETS.lock();
+    sockets.retain(|(_, socket)| socket.upgrade().is_some());
+    let mut kept = 0;
+    for (bound, socket) in sockets.iter() {
+        if *bound != protocol {
+            continue;
+        }
+        let Some(socket) = socket.upgrade() else {
+            continue;
+        };
+        if socket.deliver(source, payload) {
+            kept += 1;
+        }
+    }
+    kept
+}
+
+/// Send `payload` as `protocol` to `destination`, answering the bytes sent.
+///
+/// The header is written here and not by the caller, which is the decision this
+/// whole mechanism turns on: a program that wrote its own header would choose
+/// its own source address and its own length, and every field the stack is
+/// responsible for would become a program's.  What the program chooses is the
+/// **protocol number** and the payload.
+///
+/// A destination that is this machine is delivered through the demux, the same
+/// loopback a datagram send takes, so a program's raw send and its own raw
+/// receive meet without the card.
+pub fn send_raw_packet(
+    protocol: u8,
+    destination: net::address::Address,
+    payload: &[u8],
+) -> Result<usize> {
+    if is_loopback(destination) {
+        // The frame is built and handed to the **demux**, not to the socket:
+        // a loopback that delivered straight to the queue would exercise
+        // nothing but the queue, and the header this stack composes would be
+        // the one thing a raw send must get right.  Building it and parsing it
+        // back is the same path a frame from the card takes, which is what
+        // makes this a loopback rather than a shortcut.
+        // The two fields are read and the lock released **before** the demux
+        // runs: the demux takes the socket table and the scheduler's lock, and
+        // a raw receive it wakes would otherwise re-enter this one.
+        let (hardware, local) = {
+            let interface = INTERFACE.lock();
+            let Some(interface) = interface.as_ref() else {
+                return Err(Error::NotFound);
+            };
+            (interface.hardware, interface.protocol)
+        };
+        match destination {
+            net::address::Address::V4(destination) => {
+                let packet_len =
+                    netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + payload.len();
+                let mut frame = alloc::vec![0; packet_len];
+                net::ethernet::write_header(
+                    &mut frame,
+                    hardware,
+                    hardware,
+                    net::ethernet::ETHERTYPE_IPV4,
+                );
+                net::ipv4::write_header(
+                    &mut frame[netdev::ETHERNET_HEADER_LEN..],
+                    local,
+                    destination,
+                    protocol,
+                    // The payload **after** the header: the writer adds the
+                    // header's own length to this, and passing the total made
+                    // the packet claim forty bytes it did not have, which
+                    // `parse` refused for a length mismatch and the receive
+                    // saw as a packet that never arrived.
+                    payload.len(),
+                );
+                frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..]
+                    .copy_from_slice(payload);
+                demux(&frame, local);
+                Ok(payload.len())
+            }
+            // A raw send over IPv6 would have to write the extension-header
+            // chain, which this stack's IPv6 sender does not do for any of its
+            // own transports either.
+            net::address::Address::V6(_) => Err(Error::Unsupported),
+        }
+    } else {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return Err(Error::NotFound);
+        };
+        let (hardware, local) = (interface.hardware, interface.protocol);
+        let card = interface.card.clone();
+        match destination {
+            net::address::Address::V4(destination) => {
+                let Some(gateway_hardware) = interface.arp.hardware_for(interface.gateway) else {
+                    return Err(Error::NotFound);
+                };
+                let packet_len =
+                    netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + payload.len();
+                let mut frame = alloc::vec![0; packet_len];
+                net::ethernet::write_header(
+                    &mut frame,
+                    gateway_hardware,
+                    hardware,
+                    net::ethernet::ETHERTYPE_IPV4,
+                );
+                net::ipv4::write_header(
+                    &mut frame[netdev::ETHERNET_HEADER_LEN..],
+                    local,
+                    destination,
+                    protocol,
+                    payload.len(),
+                );
+                frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..]
+                    .copy_from_slice(payload);
+                card.submit_frame(&frame)?;
+                Ok(payload.len())
+            }
+            // A raw socket over IPv6 would have to write the extension-header
+            // chain, which this stack's IPv6 sender does not do for any of its
+            // own transports either.  The refusal is `Unsupported` and not a
+            // silent IPv4-shaped packet.
+            net::address::Address::V6(_) => Err(Error::Unsupported),
+        }
+    }
+}
+
 /// Whether an IPv4 `destination` names this machine, and the packet is
 /// delivered through the demux rather than the card.
 ///
@@ -947,6 +1135,33 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
     }
     if packet.header.protocol == net::ipv4::PROTOCOL_ICMP {
         handle_icmp(&packet, payload);
+    }
+
+    // A raw socket is a **reader of the internet layer** and not a second
+    // transport: it is handed the payload of every packet this machine
+    // accepts, whatever the protocol, after the stack's own handling of it has
+    // run.  After, and not instead: an ICMP error a stream acted on is still a
+    // message a program watching ICMP may want to see, and a stack that
+    // deflected a packet to a raw socket would be a stack whose own protocols
+    // changed meaning when a program opened a socket.
+    let kept = deliver_raw(
+        packet.header.protocol,
+        net::address::Address::V4(packet.header.source),
+        payload,
+    );
+    if kept > 0 {
+        // The same wake a datagram delivery makes: a program parked on a raw
+        // receive is waiting for exactly this.
+        let woken = crate::scheduler::wake_blocked();
+        #[cfg(target_os = "none")]
+        if woken > 0 {
+            // The woken task may be held by another CPU parked in a wait whose
+            // own clock may never move.  SAFETY: the boot's own IPI path,
+            // installed before any program ran.
+            unsafe { arch::send_ipi_to_others() };
+        }
+        #[cfg(not(target_os = "none"))]
+        let _ = woken;
     }
 }
 
@@ -3359,6 +3574,68 @@ pub fn ipv6_transport_probe() -> bool {
         ", MISMATCH\n"
     });
     round_trip
+}
+
+/// Prove that a raw socket hears what the internet layer carries.
+///
+/// The exchange is this machine sending itself a packet on a protocol nothing
+/// else uses, which the demux then hands to the socket that named it.  What
+/// makes it worth its own line is that the header is **the stack's** and not
+/// the caller's: the program named a protocol and a payload, and the source
+/// address on the packet it received is this machine's, which only a header
+/// the stack composed could have put there.
+///
+/// The protocol is 253, [RFC 3692]'s experimental number: nothing in this
+/// stack sends or receives it, so the packet the receive finds is the one the
+/// send put there.
+///
+/// The two numbers are the bytes sent and the bytes received, and they are
+/// equal by construction.  The source check is the part that could fail on its
+/// own: a receive that reported the destination, or one that reported nothing,
+/// would still agree on the length.
+///
+/// [RFC 3692]: https://www.rfc-editor.org/rfc/rfc3692
+#[cfg(target_os = "none")]
+pub fn raw_probe() -> bool {
+    const PROTOCOL: u8 = 253;
+    const PAYLOAD: &[u8] = b"raw packet";
+
+    let socket = match create_raw_socket(PROTOCOL) {
+        Ok(socket) => socket,
+        Err(_) => return false,
+    };
+    let address = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let sent = match send_raw_packet(PROTOCOL, net::address::Address::V4(address), PAYLOAD) {
+        Ok(sent) => sent,
+        Err(_) => return false,
+    };
+    let mut buffer = [0_u8; 32];
+    let received = match socket.try_recv(&mut buffer) {
+        Ok(Some((source, count))) => (source, count),
+        // A send to this machine's own address is delivered through the demux,
+        // which is synchronous: a receive that found nothing is the delivery
+        // having gone somewhere else.
+        _ => return false,
+    };
+
+    let source_ok = matches!(received.0, net::address::Address::V4(bytes) if bytes == address);
+    let payload_ok = received.1 == PAYLOAD.len() && &buffer[..received.1] == PAYLOAD;
+    let correct = sent == PAYLOAD.len() && payload_ok && source_ok;
+    arch::serial::write_str("protofire: raw socket sent ");
+    arch::serial::write_u32(sent as u32);
+    arch::serial::write_str(" byte(s) as protocol ");
+    arch::serial::write_u32(PROTOCOL as u32);
+    arch::serial::write_str(", and received ");
+    arch::serial::write_u32(received.1 as u32);
+    arch::serial::write_str(if correct {
+        " from this machine\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    correct
 }
 
 /// The boot's stream exchange: a listener on this machine, a client to it,

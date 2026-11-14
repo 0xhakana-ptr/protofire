@@ -79,6 +79,8 @@ use user_abi::sys_connect_tcp;
 #[cfg(target_os = "none")]
 use user_abi::sys_create_dir_at;
 #[cfg(target_os = "none")]
+use user_abi::sys_create_raw_socket;
+#[cfg(target_os = "none")]
 use user_abi::sys_exit;
 #[cfg(target_os = "none")]
 use user_abi::sys_fork;
@@ -114,11 +116,15 @@ use user_abi::sys_read_dir;
 #[cfg(target_os = "none")]
 use user_abi::sys_recv_from_udp;
 #[cfg(target_os = "none")]
+use user_abi::sys_recv_raw_packet;
+#[cfg(target_os = "none")]
 use user_abi::sys_remove_path_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_rename_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_resolve_hostname;
+#[cfg(target_os = "none")]
+use user_abi::sys_send_raw_packet;
 #[cfg(target_os = "none")]
 use user_abi::sys_send_signal;
 #[cfg(target_os = "none")]
@@ -729,6 +735,39 @@ pub extern "C" fn _start() -> ! {
     }
     insist(sys_close(connection));
     insist(sys_close(local_listener));
+
+    // A raw socket: a protocol number instead of a port, and a packet this
+    // process sends to itself, which is the one exchange a raw socket can
+    // make without an answer from the wire.  The protocol is 253, which
+    // RFC 3692 reserves for experimentation: nothing else on this machine
+    // sends or receives it, so the packet the receive finds is the packet
+    // this send put there.
+    //
+    // What the exchange proves is the whole path: the descriptor names a
+    // protocol, the send composes an IP header with this machine's own
+    // address, and the demux hands the payload back to the socket that named
+    // the protocol.
+    const RAW_PROTOCOL: u8 = 253;
+    const RAW_PAYLOAD: &[u8] = b"raw";
+    let raw = insist(sys_create_raw_socket(RAW_PROTOCOL));
+    if insist(sys_send_raw_packet(
+        raw,
+        user_abi::pack_address(protocol),
+        RAW_PAYLOAD,
+    )) != RAW_PAYLOAD.len()
+    {
+        sys_exit(239);
+    }
+    let mut raw_buffer = [0u8; 16];
+    let mut raw_sender = [0u8; 4];
+    let raw_count = insist(sys_recv_raw_packet(raw, &mut raw_buffer, &mut raw_sender));
+    if raw_count != RAW_PAYLOAD.len()
+        || &raw_buffer[..raw_count] != RAW_PAYLOAD
+        || raw_sender != protocol
+    {
+        sys_exit(235);
+    }
+    insist(sys_close(raw));
 
     // The lookup a program asks by name.  Its answer is not asserted: the
     // name is resolved by whatever server the wire has, and a machine whose

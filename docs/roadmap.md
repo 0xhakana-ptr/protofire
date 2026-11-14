@@ -679,8 +679,8 @@ each unblocks rather than by size.
    `Mlock`, `Munlock`, `Madvise`.
 10. **io_uring**, `IoUringSetup`, `IoUringEnter`.  Last because it is a second
     way to do what every call above already does, and nothing needs it.
-11. **The rest of the network**, `ResolveHostname` beyond a hosts table, the
-    raw socket calls, `TlsConnect`, `Ipsec*`, `Mrt*`, `Filter*`, `Dccp*`.
+11. **The rest of the network**, `ResolveHostname` beyond a hosts table,
+    `TlsConnect`, `Ipsec*`, `Mrt*`, `Filter*`, `Dccp*`.  The raw socket calls,
     `GetSockName`/`GetPeerName`, `SetSockOpt`/`GetSockOpt` and the three
     local-domain calls were on this row and have moved off it.
 

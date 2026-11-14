@@ -364,6 +364,18 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::AcceptLocal,
         crate::syscall::accept_local,
     );
+    // The raw socket: a protocol number instead of a port, and the internet
+    // layer's own payload.  `RecvRawPacket` parks like the datagram receive,
+    // and its branch is in the trap path; the other two answer through the
+    // registry.
+    table.register(
+        ::syscall::SyscallNumber::CreateRawSocket,
+        crate::syscall::create_raw_socket,
+    );
+    table.register(
+        ::syscall::SyscallNumber::SendRawPacket,
+        crate::syscall::send_raw_packet,
+    );
     table.register(
         ::syscall::SyscallNumber::GetSockOpt,
         crate::syscall::get_sock_opt,
