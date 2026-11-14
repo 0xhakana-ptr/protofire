@@ -53,11 +53,29 @@
 //!
 //! ## What a segment refuses
 //!
-//! The checksum is mandatory, TCP has no zero field that means "not
-//! summed", and the sequence is checked against the connection's own
-//! acknowledgement: a segment that arrives out of order is dropped rather
-//! than held, because holding one asks for the receive-side reassembly that
-//! this module does not have.
+//! The checksum is mandatory, and TCP has no zero field that means "not
+//! summed".
+//!
+//! ## Out of order, and why it is held rather than dropped
+//!
+//! A wire may reorder, and a stack that dropped every segment that arrived
+//! early would ask the peer to send it again and again until the gap filled,
+//! which is a stream whose speed is the round trip's.  So a segment ahead of
+//! the expected position is held in [`Connection::out_of_order`], answered
+//! with the duplicate acknowledgement that names the hole, and the moment the
+//! gap closes, every held segment that now fits is appended in sequence
+//! order.  The inbox is therefore always a prefix of the peer's stream, which
+//! is what lets a reader take bytes without learning that anything was
+//! reordered at all.
+//!
+//! A segment that starts *before* the expected position and runs past it is
+//! trimmed rather than dropped: that is what a peer's retransmission after a
+//! partial loss looks like, and the bytes past the expected position are new.
+//!
+//! The bound is [`MAX_OUT_OF_ORDER`], and a full cache drops the newest
+//! segment rather than growing: what fills it is a peer's word, and a peer
+//! that opened sixty-four holes has already offered this stack more than a
+//! stream it intends to finish.
 
 use crate::address::Address;
 use crate::ethernet::get_u16;
@@ -113,6 +131,16 @@ pub const MAX_ATTEMPTS: u8 = 5;
 /// queue refuses the write with a zero rather than growing, which is the same
 /// "nothing was carried, ask again" a full pipe answers with.
 pub const MAX_UNACKNOWLEDGED: usize = 16;
+
+/// How many segments ahead of the expected position one connection holds.
+///
+/// A peer that opens holes in its own stream is choosing how much of this
+/// machine's memory to spend, so the number is this stack's and not the
+/// peer's.  Sixty-four is far more than any window this stack advertises can
+/// produce on a wire that reorders a little, and a cache that is full drops
+/// the newest segment, which the peer will send again when its own
+/// retransmission timer fires.
+pub const MAX_OUT_OF_ORDER: usize = 64;
 
 /// The window this stack advertises.
 ///
@@ -402,6 +430,15 @@ pub struct Connection {
     timeout: u64,
     /// How many times the oldest unacknowledged segment has been sent.
     attempts: u8,
+    /// The segments the peer sent ahead of the position this side expects,
+    /// held until the gap before them fills.
+    ///
+    /// Sorted by sequence and never overlapping the inbox: an entry here is a
+    /// run of the peer's stream that starts after the gap.  When the gap
+    /// fills, [`Connection::deliver_in_order`] moves every entry that now
+    /// touches the inbox into it, so the inbox stays a prefix of the peer's
+    /// stream and a reader never learns that anything was reordered.
+    out_of_order: alloc::vec::Vec<Held>,
 }
 
 /// One segment waiting for its acknowledgement.
@@ -417,6 +454,14 @@ struct Unacknowledged {
     payload: alloc::vec::Vec<u8>,
     /// The time this copy was sent, in microseconds of the caller's clock.
     sent_at: u64,
+}
+
+/// One segment held ahead of the gap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Held {
+    /// Where this run starts in the peer's stream.
+    sequence: u32,
+    data: alloc::vec::Vec<u8>,
 }
 
 /// What a retransmission check found.
@@ -454,6 +499,7 @@ impl Connection {
             now: 0,
             timeout: RTO_INITIAL_MICROS,
             attempts: 0,
+            out_of_order: alloc::vec::Vec::new(),
         };
         let sent = connection.take_outgoing(connection.sequence, 0, FLAG_SYN, &[]);
         connection.sequence += 1;
@@ -485,6 +531,7 @@ impl Connection {
             now: 0,
             timeout: RTO_INITIAL_MICROS,
             attempts: 0,
+            out_of_order: alloc::vec::Vec::new(),
         };
         let sent = connection.take_outgoing(
             connection.sequence,
@@ -571,13 +618,12 @@ impl Connection {
         }
 
         // Everything after the handshake needs the stream open in this
-        // direction, and needs the peer's sequence to be the one this side
-        // is waiting for.
+        // direction.
         let open = matches!(
             self.state,
             State::Established | State::FinWait | State::CloseWait | State::LastAck
         );
-        if !open || segment.sequence != self.acknowledgement {
+        if !open {
             return (Ok(Event::None), alloc::vec::Vec::new());
         }
 
@@ -588,9 +634,34 @@ impl Connection {
             self.state = State::Closed;
             return (Ok(Event::Settled), alloc::vec::Vec::new());
         }
+
+        // A segment ahead of the position this side expects is held rather
+        // than dropped: a wire may reorder, and a stack that dropped every
+        // early segment would ask the peer to send it again until the gap
+        // filled, which is a stream whose speed is the round trip's.  The
+        // answer is the duplicate acknowledgement that names the hole.
+        //
+        // The test is the segment's **start**, not its end: a segment whose
+        // first byte is past the gap begins a run that cannot be delivered
+        // until the gap closes, whether or not the run is longer than the
+        // gap.  Comparing the gap against the segment's length instead reads
+        // a short run just past the gap as a retransmission of the bytes
+        // before it, which is how a probe's second half became nine bytes of
+        // "already seen" and reached the inbox as the first half.
+        //
+        // The direction is `seq_before`'s and not a subtraction, because a
+        // segment that starts before the expected position makes
+        // `sequence - acknowledgement` wrap to a huge number.
+        if !payload.is_empty() && seq_before(self.acknowledgement, segment.sequence) {
+            self.hold(segment.sequence, payload);
+            let sent = one(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
+            return (Ok(Event::None), sent);
+        }
+
         if self.state == State::FinWait
             && segment.flags & FLAG_ACK != 0
             && segment.flags & FLAG_FIN != 0
+            && segment.sequence == self.acknowledgement
         {
             // The peer's finish, answering this side's own: the last
             // acknowledgement closes both halves at once.
@@ -600,12 +671,29 @@ impl Connection {
             return (Ok(Event::Settled), sent);
         }
 
-        if !payload.is_empty() {
-            self.acknowledgement += payload.len() as u32;
-            self.inbox.extend_from_slice(payload);
-            event = Event::Data(payload.len());
+        if payload.is_empty() && segment.flags & FLAG_FIN == 0 {
+            // An empty segment carries nothing to sequence; its
+            // acknowledgement was acted on above.
+            return (Ok(Event::None), alloc::vec::Vec::new());
         }
-        if segment.flags & FLAG_FIN != 0 {
+        if seq_before(segment.sequence, self.acknowledgement) {
+            // Behind the expected position.  Any bytes past it are new, and
+            // the rest is a retransmission of what is already here: the trim
+            // is `accept_payload`'s, which is also the path an early segment
+            // takes once the gap closes.
+            let seen = self.acknowledgement.wrapping_sub(segment.sequence) as usize;
+            if seen >= payload.len() {
+                return (Ok(Event::None), alloc::vec::Vec::new());
+            }
+        }
+
+        if !payload.is_empty() {
+            let growth = self.accept_payload(segment.sequence, payload);
+            if growth > 0 {
+                event = Event::Data(growth);
+            }
+        }
+        if segment.flags & FLAG_FIN != 0 && segment.sequence == self.acknowledgement {
             self.acknowledgement += 1;
             let sent = self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
             self.state = if self.finished {
@@ -624,6 +712,114 @@ impl Connection {
             one(self.sequence, self.acknowledgement, FLAG_ACK, &[])
         };
         (Ok(event), sent)
+    }
+
+    /// Take one segment's data, answering how many bytes reached the inbox.
+    ///
+    /// The return value is what a caller reports as [`Event::Data`], and it
+    /// counts everything this call put in the inbox: the segment's own bytes
+    /// plus whatever held segments the gap closing released.  A caller that
+    /// was told only the segment's length would take fewer bytes than it was
+    /// promised.
+    ///
+    /// The caller has already refused a segment that is entirely ahead of the
+    /// gap, so the segment here starts at or before the expected position.
+    /// That is what makes `seen` a real count and not a wrapped one: the
+    /// caller's `seq_before` test is the guarantee, and this function's
+    /// arithmetic depends on it.
+    fn accept_payload(&mut self, sequence: u32, payload: &[u8]) -> usize {
+        let before = self.inbox.len();
+        let seen = self.acknowledgement.wrapping_sub(sequence) as usize;
+        let fresh = if seen >= payload.len() {
+            // Everything it carries is already in the inbox.
+            &payload[..0]
+        } else {
+            // The bytes before the expected position are a retransmission of
+            // what is already here; only the rest is new.
+            &payload[seen..]
+        };
+        if fresh.is_empty() {
+            return 0;
+        }
+        self.inbox.extend_from_slice(fresh);
+        self.acknowledgement = self.acknowledgement.wrapping_add(fresh.len() as u32);
+        self.deliver_in_order();
+        self.inbox.len() - before
+    }
+
+    /// Hold a segment that starts after the position this side expects.
+    ///
+    /// A duplicate of something already held is dropped rather than stored
+    /// twice, and a full cache refuses the newest: what fills it is a peer's
+    /// word, and a peer that opened sixty-four holes has already offered this
+    /// stack more than a stream it intends to finish.
+    fn hold(&mut self, sequence: u32, payload: &[u8]) {
+        if self.out_of_order.len() >= MAX_OUT_OF_ORDER {
+            return;
+        }
+        if self
+            .out_of_order
+            .iter()
+            .any(|held| held.sequence == sequence && held.data == payload)
+        {
+            return;
+        }
+        self.out_of_order.push(Held {
+            sequence,
+            data: alloc::vec::Vec::from(payload),
+        });
+    }
+
+    /// Move every held segment that now fits into the inbox, in order.
+    ///
+    /// The loop repeats because each append may make the next held segment
+    /// fit: a cache filled from the far end backwards becomes a whole stream
+    /// the moment the first hole closes.
+    fn deliver_in_order(&mut self) {
+        loop {
+            let Some(index) = self
+                .out_of_order
+                .iter()
+                .position(|held| held.sequence == self.acknowledgement)
+            else {
+                return;
+            };
+            let held = self.out_of_order.remove(index);
+            self.acknowledgement = self.acknowledgement.wrapping_add(held.data.len() as u32);
+            self.inbox.extend_from_slice(&held.data);
+            // A held segment the inbox has caught up with is trimmed or
+            // dropped rather than stored twice, which a peer's retransmission
+            // may produce.
+            self.trim_held();
+        }
+    }
+
+    /// Drop or trim held segments the inbox has caught up with.
+    ///
+    /// The comparison is the sequence's own and not a subtraction cast to
+    /// `usize`: a held segment that starts *after* the inbox makes
+    /// `inbox_end - sequence` wrap to a huge number, and a subtraction would
+    /// read that as "entirely covered" and delete a segment that has not been
+    /// delivered at all.  That defect cost a test four bytes of a sixteen
+    /// byte run, and it is why this is `seq_before` and not arithmetic.
+    fn trim_held(&mut self) {
+        let inbox_end = self.acknowledgement;
+        self.out_of_order.retain_mut(|held| {
+            if seq_before(held.sequence, inbox_end) {
+                let covered = inbox_end.wrapping_sub(held.sequence) as usize;
+                if covered >= held.data.len() {
+                    return false;
+                }
+                held.data.drain(..covered);
+                held.sequence = inbox_end;
+            }
+            true
+        });
+    }
+
+    /// How many segments are held ahead of a gap.
+    pub fn out_of_order(&self) -> usize {
+        self.out_of_order.len()
     }
 
     /// Send data on the stream.
@@ -1012,30 +1208,250 @@ mod tests {
         assert!(outgoing.is_empty(), "and nothing went on the wire");
     }
 
-    /// A segment whose sequence is not the one the connection waits for is
-    /// dropped without changing anything: there is no buffer to hold it in
-    /// and no timer to ask for it again.
+    /// A segment ahead of the expected position is held, and the moment the
+    /// gap fills it reaches the inbox in sequence order.
+    ///
+    /// This used to be a drop test, and what it asserted was the defect: a
+    /// wire may reorder, and a stack that dropped every early segment asked
+    /// the peer to send it again and again until the gap filled, which is a
+    /// stream whose speed is the round trip's.
     #[test]
-    fn an_out_of_order_segment_is_dropped() {
+    fn a_segment_ahead_of_the_gap_is_held_until_it_fills() {
         let (_client, mut server) = handshake();
+        let base = server.acknowledgement;
 
-        // A segment the server is not waiting for: one byte past its
-        // position, with data in it.  The server's next position is one past
-        // the client's ISN, the SYN consumed one, and nothing has been sent
-        // since.
-        let stray = Segment {
+        // Four bytes past the hole.
+        let second = Segment {
             source_port: OUR_PORT,
             destination_port: THEIR_PORT,
-            sequence: 1000 + 2,
+            sequence: base + 4,
             acknowledgement: 5001,
             flags: FLAG_ACK | FLAG_PSH,
             window: super::WINDOW,
             payload_len: 4,
         };
-        let (answer, replies) = server.receive(&stray, b"lost");
-        assert_eq!(answer, Ok(Event::None));
-        assert!(replies.is_empty(), "and nothing went back");
-        assert_eq!(server.inbox_len(), 0, "nothing was taken in");
+        let (answer, replies) = server.receive(&second, b"wxyz");
+        assert_eq!(answer, Ok(Event::None), "nothing reached a reader yet");
+        assert_eq!(replies.len(), 1, "the duplicate ACK that names the hole");
+        assert_eq!(
+            replies[0].acknowledgement, base,
+            "the position the peer should fill, not the one it sent past"
+        );
+        assert_eq!(server.inbox_len(), 0);
+        assert_eq!(server.out_of_order(), 1, "the segment is held");
+
+        // The hole fills, and both runs land in order.
+        let first = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 4,
+        };
+        let (answer, _) = server.receive(&first, b"abcd");
+        assert_eq!(answer, Ok(Event::Data(8)), "both runs reached the inbox");
+        assert_eq!(server.out_of_order(), 0, "the held segment was taken");
+        assert_eq!(server.inbox_len(), 8);
+
+        let mut buffer = [0_u8; 8];
+        assert_eq!(server.take(&mut buffer), 8);
+        assert_eq!(&buffer, b"abcdwxyz", "sequence order, not arrival order");
+    }
+
+    /// The far end of a hole may arrive first, and the walk keeps going: a
+    /// cache filled backwards becomes a whole stream the moment the first
+    /// hole closes.
+    #[test]
+    fn several_held_segments_all_land_when_the_gap_closes() {
+        let (_client, mut server) = handshake();
+        let base = server.acknowledgement;
+
+        for (offset, data) in [(12u32, &b"mnop"[..]), (8, b"ijkl"), (4, b"efgh")] {
+            let segment = Segment {
+                source_port: OUR_PORT,
+                destination_port: THEIR_PORT,
+                sequence: base + offset,
+                acknowledgement: 5001,
+                flags: FLAG_ACK | FLAG_PSH,
+                window: super::WINDOW,
+                payload_len: 4,
+            };
+            let (answer, _) = server.receive(&segment, data);
+            assert_eq!(answer, Ok(Event::None));
+        }
+        assert_eq!(server.out_of_order(), 3);
+
+        let first = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 4,
+        };
+        let (answer, _) = server.receive(&first, b"abcd");
+        assert_eq!(answer, Ok(Event::Data(16)), "every held byte arrived");
+        assert_eq!(server.out_of_order(), 0);
+
+        let mut buffer = [0_u8; 16];
+        assert_eq!(server.take(&mut buffer), 16);
+        assert_eq!(&buffer, b"abcdefghijklmnop");
+    }
+
+    /// A segment that starts before the expected position and runs past it is
+    /// trimmed to the bytes that are new.
+    ///
+    /// This is what a peer's retransmission after a partial loss looks like,
+    /// and a stack that dropped the whole segment would lose the new half.
+    #[test]
+    fn a_straddling_segment_contributes_only_its_new_half() {
+        let (_client, mut server) = handshake();
+        let base = server.acknowledgement;
+
+        let whole = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 4,
+        };
+        let (answer, _) = server.receive(&whole, b"abcd");
+        assert_eq!(answer, Ok(Event::Data(4)));
+
+        // A segment that begins at the position this side has already passed
+        // and runs past it: four bytes that are already in the inbox and four
+        // that are not.  Only the new four count, which is what a peer's
+        // retransmission after a partial loss looks like: a stack that
+        // dropped the whole segment would lose the new half.
+        let straddling = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 8,
+        };
+        let (answer, _) = server.receive(&straddling, b"abcdefgh");
+        assert_eq!(answer, Ok(Event::Data(4)), "only the new half");
+        assert_eq!(server.inbox_len(), 8);
+
+        let mut buffer = [0_u8; 8];
+        assert_eq!(server.take(&mut buffer), 8);
+        assert_eq!(&buffer, b"abcdefgh");
+    }
+
+    /// A duplicate of what the inbox already holds adds nothing.
+    #[test]
+    fn a_repeated_segment_adds_nothing() {
+        let (_client, mut server) = handshake();
+        let base = server.acknowledgement;
+        let segment = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 8,
+        };
+        let (answer, _) = server.receive(&segment, b"abcdefgh");
+        assert_eq!(answer, Ok(Event::Data(8)));
+
+        let (answer, _) = server.receive(&segment, b"abcdefgh");
+        assert_eq!(answer, Ok(Event::None), "a duplicate is not data");
+        assert_eq!(server.inbox_len(), 8, "and does not double the inbox");
+    }
+
+    /// A short run just past the gap is held, not trimmed into the gap.
+    ///
+    /// This is the defect the boot's probe found after the tests were green:
+    /// the hold test compared the *gap* against the segment's length, so a
+    /// run nine bytes past the gap and ten bytes long read as "one byte new,
+    /// nine already seen" and was delivered as the wrong bytes.  The test's
+    /// numbers are the probe's, which is why it is here with them.
+    #[test]
+    fn a_short_run_just_past_the_gap_is_held_not_trimmed() {
+        let (_client, mut server) = handshake();
+        let base = server.acknowledgement;
+
+        // Nine bytes past the gap, ten bytes long: its start is past the
+        // position this side expects, so it is a run to hold.
+        let second = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base + 9,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 10,
+        };
+        let (answer, _) = server.receive(&second, b"secondhalf");
+        assert_eq!(answer, Ok(Event::None), "held, not delivered");
+        assert_eq!(server.out_of_order(), 1, "the run is held");
+        assert_eq!(server.inbox_len(), 0, "and nothing reached the inbox");
+
+        // The first nine bytes, and the whole run lands in order.
+        let first = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base,
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 9,
+        };
+        let (answer, _) = server.receive(&first, b"firsthalf");
+        assert_eq!(answer, Ok(Event::Data(19)), "both runs");
+        let mut buffer = [0_u8; 19];
+        assert_eq!(server.take(&mut buffer), 19);
+        assert_eq!(&buffer, b"firsthalfsecondhalf");
+    }
+
+    /// A full out-of-order cache keeps what it has and drops the newest, so a
+    /// peer that opens more holes than this stack holds cannot grow it.
+    #[test]
+    fn a_full_out_of_order_cache_drops_the_newest() {
+        let (_client, mut server) = handshake();
+        let base = server.acknowledgement;
+
+        // Every held segment starts a hole of its own: one byte, two apart.
+        for index in 0..super::MAX_OUT_OF_ORDER {
+            let segment = Segment {
+                source_port: OUR_PORT,
+                destination_port: THEIR_PORT,
+                sequence: base + 2 + (index as u32 * 2),
+                acknowledgement: 5001,
+                flags: FLAG_ACK | FLAG_PSH,
+                window: super::WINDOW,
+                payload_len: 1,
+            };
+            let (answer, _) = server.receive(&segment, b"x");
+            assert_eq!(answer, Ok(Event::None));
+        }
+        assert_eq!(server.out_of_order(), super::MAX_OUT_OF_ORDER);
+
+        let overflow = Segment {
+            source_port: OUR_PORT,
+            destination_port: THEIR_PORT,
+            sequence: base + 2 + (super::MAX_OUT_OF_ORDER as u32 * 2),
+            acknowledgement: 5001,
+            flags: FLAG_ACK | FLAG_PSH,
+            window: super::WINDOW,
+            payload_len: 1,
+        };
+        let (_, _) = server.receive(&overflow, b"y");
+        assert_eq!(
+            server.out_of_order(),
+            super::MAX_OUT_OF_ORDER,
+            "the cache did not grow"
+        );
+        assert_eq!(server.inbox_len(), 0);
     }
 
     /// A data segment is acknowledged empty: carrying the data back would

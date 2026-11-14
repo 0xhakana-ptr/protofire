@@ -557,6 +557,14 @@ impl Machine {
                     "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
                     true,
                 ),
+                // The reordering: a stream's two halves delivered the wrong way
+                // round, which no wire this gate boots does on its own.  The
+                // held count is the cache taking the early half; the byte count
+                // is the peer's own inbox once the gap closed.
+                (
+                    "protofire: tcp reordered 1 held, 19 byte(s), in order",
+                    true,
+                ),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and
@@ -1150,6 +1158,14 @@ impl Machine {
                         "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
                         true,
                     ),
+                    // The reordering: a stream's two halves delivered the wrong
+                    // way round, which no wire this gate boots does on its own.
+                    // The held count is the cache taking the early half; the
+                    // byte count is the peer's own inbox once the gap closed.
+                    (
+                        "protofire: tcp reordered 1 held, 19 byte(s), in order",
+                        true,
+                    ),
                     // The exchange, for the reason the x86_64 list states:
                     // the child's exit status is the echo's first byte.
                     (
@@ -1453,6 +1469,14 @@ impl Machine {
                 // after the copy that was lost arrived again.
                 (
                     "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
+                    true,
+                ),
+                // The reordering: a stream's two halves delivered the wrong way
+                // round, which no wire this gate boots does on its own.  The
+                // held count is the cache taking the early half; the byte count
+                // is the peer's own inbox once the gap closed.
+                (
+                    "protofire: tcp reordered 1 held, 19 byte(s), in order",
                     true,
                 ),
                 // The stream exchange, from ring 3: the same two programs

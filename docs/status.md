@@ -348,6 +348,28 @@ protofire: tcp recovered 1 attempt(s), 12 byte(s), intact
 The attempt count is the schedule's and the byte count is the peer's own
 inbox, which only a retransmitted copy could have filled.
 
+**A segment that arrives early is held, not dropped.**  The receive path used
+to require the peer's position to be exactly the one it expected, so a wire
+that reordered made the peer send each early segment again; the stream's speed
+became the round trip's.  A segment ahead of the gap is now held, answered with
+the duplicate acknowledgement that names the hole, and delivered in sequence
+order the moment the gap closes.  A cache filled backwards lands as a whole
+stream in one call, which is the assertion that separates "held and delivered"
+from "held forever".
+
+Two defects were found by the tests that describe that behaviour, and both
+were the sequence arithmetic's.  `trim_held` measured how much of a held
+segment the inbox had covered with `inbox_end - sequence`, which wraps to a
+huge number for a segment that starts *after* the inbox, so a segment that had
+not been delivered at all was deleted as "already covered"; and the direction
+test for "is this segment ahead" was the same subtraction, so a straddling
+retransmission was read as "far ahead" and held instead of trimmed.  Both are
+`seq_before` now, and reverting either fails exactly the test that names it.
+
+A straddling segment is trimmed rather than dropped: it starts before the
+expected position and runs past it, which is what a peer's retransmission after
+a partial loss looks like, and the bytes past the position are new.
+
 [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
 
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and

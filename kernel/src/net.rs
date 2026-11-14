@@ -2638,6 +2638,137 @@ pub fn retransmission_probe() -> bool {
     intact
 }
 
+/// Prove that a segment which arrives early is held and then delivered.
+///
+/// No wire this gate boots reorders, so the probe makes the reordering: it
+/// delivers a stream's second half to the peer before its first, and then the
+/// first.  A stack that dropped the early half would leave the peer's inbox
+/// short by exactly that half, which is the number on the line.
+#[cfg(target_os = "none")]
+pub fn out_of_order_probe() -> bool {
+    let listener = match tcp_listen(9101) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let protocol = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9101) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+
+    // The whole stream, in two halves, sent from the client and never
+    // delivered by the exchange: the halves are the probe's to route.
+    //
+    // `firsthalf` is nine bytes and `secondhalf` is ten, so the split is a
+    // named offset and not half the slice's length: a probe that split at the
+    // wrong byte would test a stream the line then described wrongly.
+    const STREAM: &[u8] = b"firsthalfsecondhalf";
+    const SPLIT: usize = 9;
+    let halves = {
+        let mut table = TCP.lock();
+        let Some(connection) = table.connection_mut(client) else {
+            return false;
+        };
+        // One segment carrying the whole stream, split here rather than by
+        // the state machine: the probe's job is to reorder what a wire would
+        // have carried, and a sender that split it would hide the case.
+        let (_, outgoing) = connection.send_data(STREAM);
+        let segment = match outgoing.into_iter().next() {
+            Some(segment) => segment,
+            None => return false,
+        };
+        let base = segment.sequence;
+        let acknowledgement = segment.acknowledgement;
+        (
+            (base, acknowledgement, segment.payload[..SPLIT].to_vec()),
+            (
+                base + SPLIT as u32,
+                acknowledgement,
+                segment.payload[SPLIT..].to_vec(),
+            ),
+        )
+    };
+
+    // The second half first: held, and answered with the hole's position.
+    let source_port = TCP
+        .lock()
+        .local_port_of(client)
+        .expect("the client's own port");
+    {
+        let mut table = TCP.lock();
+        let Some(peer) = table.connection_mut(accepted) else {
+            return false;
+        };
+        let (sequence, acknowledgement, payload) = halves.1.clone();
+        let segment = net::tcp::Segment {
+            source_port,
+            destination_port: 9101,
+            sequence,
+            acknowledgement,
+            flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+            window: net::tcp::WINDOW,
+            payload_len: payload.len(),
+        };
+        // The answer is the duplicate acknowledgement the peer would send;
+        // the probe routes the halves itself, so the return is not acted on.
+        let _ = peer.receive(&segment, &payload);
+    }
+    let held = TCP
+        .lock()
+        .connection(accepted)
+        .map(|connection| connection.out_of_order())
+        .unwrap_or(0);
+
+    // The first half: the gap closes and both halves land, in order.
+    {
+        let mut table = TCP.lock();
+        let Some(peer) = table.connection_mut(accepted) else {
+            return false;
+        };
+        let (sequence, acknowledgement, payload) = halves.0.clone();
+        let segment = net::tcp::Segment {
+            source_port,
+            destination_port: 9101,
+            sequence,
+            acknowledgement,
+            flags: net::tcp::FLAG_ACK | net::tcp::FLAG_PSH,
+            window: net::tcp::WINDOW,
+            payload_len: payload.len(),
+        };
+        let _ = peer.receive(&segment, &payload);
+    }
+
+    let mut buffer = [0_u8; 64];
+    let delivered = TCP
+        .lock()
+        .connection_mut(accepted)
+        .map(|connection| connection.take(&mut buffer))
+        .unwrap_or(0);
+    let in_order = delivered == STREAM.len() && buffer[..delivered] == *STREAM;
+
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    arch::serial::write_str("protofire: tcp reordered ");
+    arch::serial::write_u32(held as u32);
+    arch::serial::write_str(" held, ");
+    arch::serial::write_u32(delivered as u32);
+    arch::serial::write_str(" byte(s)");
+    arch::serial::write_str(if in_order {
+        ", in order\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    in_order
+}
+
 #[cfg(test)]
 mod tests {
     use super::Interface;

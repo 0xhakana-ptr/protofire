@@ -866,7 +866,14 @@ pub fn exercise_network() -> bool {
     // that loses nothing, so none of them can tell a stack that retransmits
     // from one with no queue at all; this makes the loss and reads the
     // recovery.
-    crate::net::retransmission_probe()
+    if !crate::net::retransmission_probe() {
+        return false;
+    }
+
+    // The reordering: a stream's two halves delivered the wrong way round,
+    // which no wire this gate boots does on its own.  A stack that dropped
+    // the early half leaves the peer's inbox short by exactly it.
+    crate::net::out_of_order_probe()
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the

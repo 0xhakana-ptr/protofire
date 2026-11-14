@@ -101,12 +101,12 @@
 //! not written.  Each is a documented refusal in the module it belongs to.
 //!
 //! Congestion control is the one refusal that has no module: a stream
-//! retransmits, with [`tcp::RTO_INITIAL_MICROS`]'s backoff, and what it does
-//! not do is slow down before a loss tells it to.  A receiver's window is
-//! carried and never enforced either, so the only bound on what a peer may
-//! send is the sequence check.  Both are decisions a stack needs a path with
-//! a round trip on it to make, and this one's exchanges are a loopback and a
-//! user-mode network.
+//! retransmits, with [`tcp::RTO_INITIAL_MICROS`]'s backoff, and receives out
+//! of order, but what it does not do is slow down before a loss tells it to.
+//! A receiver's window is carried and never enforced either, so the only bound
+//! on what a peer may send is the sequence check.  Both are decisions a stack
+//! needs a path with a round trip on it to make, and this one's exchanges are a
+//! loopback and a user-mode network.
 
 #![no_std]
 
