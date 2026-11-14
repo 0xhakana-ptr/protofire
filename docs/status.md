@@ -583,6 +583,32 @@ carries nine bytes or nineteen: a connection holding either advertises the same
 number whether or not anything enforces it.  The probe fills the whole buffer
 with one segment and reads the number back.
 
+**The close has its own states now, and three of them it did not have.**  The
+state machine had seven, and a close used two: this side's finish was `FinWait`
+and the peer's acknowledgement of it went straight to `Closed`.  That is one
+state for two jobs, and it lost two facts.  A finish the peer has acknowledged
+is not the same as one it has not, because the first is never retransmitted and
+the second is.  And `Closed` meant the table forgot the four-tuple at once, so a
+peer's retransmitted finish, arriving after the close, found no connection, and
+this stack answers a segment for a port nothing owns with a reset, which is a
+close the peer did not ask for.
+
+`FinWait2` (done sending, listening for the peer's finish), `Closing` (both
+finishes sent and crossed, one acknowledgement still owed) and `TimeWait` (the
+close is over and the four-tuple is held) are the states [RFC 793] names for
+those cases.  `TimeWait` holds for `2 * MSL`, sixty seconds, and a finish
+retransmitted inside it is answered with the same acknowledgement rather than
+reset.
+
+```
+protofire: tcp closed, both ends held in time wait
+```
+
+The mutation is the probe's own: asserting `Closed` prints `both ends
+MISMATCH`, and so does a `prune` that drops `TimeWait` the moment it starts.
+
+[RFC 793]: https://www.rfc-editor.org/rfc/rfc793
+
 **The frame path had a defect the loopback could not show.**  Every TCP
 exchange this tree runs is a loopback, and a loopback hands a connection the
 payload it built: no frame, no header, no data offset.  A frame from a card is

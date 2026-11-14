@@ -553,7 +553,10 @@ impl Machine {
                 // because a round trip that dropped a byte could not say 9.
                 ("protofire: tcp connected, listener ", false),
                 ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
-                ("protofire: tcp closed, both ends done", true),
+                // The close is over and the four-tuple is still held: the
+                // hold is what lets a retransmitted finish be answered
+                // instead of reset, and it is why this is not "gone".
+                ("protofire: tcp closed, both ends held in time wait", true),
                 // The recovery: a segment the probe refuses to deliver, and
                 // the retransmission that puts it back.  No wire this gate
                 // boots loses a frame, so this is the only line that can tell
@@ -1296,7 +1299,7 @@ impl Machine {
                     // is what a dropped byte could not say.
                     ("protofire: tcp connected, listener ", false),
                     ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
-                    ("protofire: tcp closed, both ends done", true),
+                    ("protofire: tcp closed, both ends held in time wait", true),
                     // The recovery: a segment the probe refuses to deliver,
                     // and the retransmission that puts it back.  The same line
                     // the other machines gate on, for the same reason: no wire
@@ -1738,7 +1741,7 @@ impl Machine {
                 // because a round trip that dropped a byte could not say 9.
                 ("protofire: tcp connected, listener ", false),
                 ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
-                ("protofire: tcp closed, both ends done", true),
+                ("protofire: tcp closed, both ends held in time wait", true),
                 // The recovery: a segment the probe refuses to deliver, and
                 // the retransmission that puts it back.  No wire this gate
                 // boots loses a frame, so this is the only line that can tell

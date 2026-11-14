@@ -102,6 +102,13 @@
 //! that chooses between two are all absent, and a stack with one of each needs
 //! none of them: this tree boots one interface.
 //!
+//! A stream's close is [RFC 793]'s, all of it: `FinWait`, `FinWait2`,
+//! `Closing` and `TimeWait` are four states because the close is four
+//! situations, and a closed four-tuple is held for `2 * MSL` so a
+//! retransmitted finish is answered rather than reset.
+//!
+//! [RFC 793]: https://www.rfc-editor.org/rfc/rfc793
+//!
 //! What a stream states is what it can take: a SYN carries the MSS option, and
 //! the peer's answer to it bounds every segment this side builds.  A stream
 //! holds a small write while anything is in flight unless

@@ -203,6 +203,18 @@ pub const MSS_DEFAULT: usize = 1460;
 /// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
 pub const MIN_MSS: usize = 128;
 
+/// How long a closed four-tuple is held, in microseconds.
+///
+/// [RFC 793]'s `2 * MSL`, and this stack's MSL is thirty seconds, which is the
+/// value [RFC 1122] states as the floor a host must assume when it does not
+/// know the path.  The state exists so that a peer's retransmitted finish,
+/// arriving after the close, lands on a stream that answers it instead of on a
+/// port nothing owns, which this stack answers with a reset.
+///
+/// [RFC 793]: https://www.rfc-editor.org/rfc/rfc793
+/// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
+pub const TIME_WAIT_MICROS: u64 = 60_000_000;
+
 /// The states a connection moves through, in the order a stream does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -214,12 +226,43 @@ pub enum State {
     SynReceived,
     /// The stream is open in both directions.
     Established,
-    /// This side is done sending; the peer's finish has not arrived.
+    /// This side sent its finish and the peer has not acknowledged it yet.
+    ///
+    /// The half of the close this stack used to fold into one state: a FIN
+    /// that is still unacknowledged has to be retransmitted, and one the peer
+    /// has acknowledged does not, so the two are different jobs and
+    /// [RFC 793] gives them different names.
     FinWait,
+    /// The peer acknowledged this side's finish, and its own has not arrived.
+    ///
+    /// Nothing is sent from here and nothing is retransmitted: this side is
+    /// done, and what it waits for is the peer saying the same.  A stream in
+    /// this state can wait indefinitely and that is correct, which is why the
+    /// table's ``a stream that never moves again`` reading has to treat it as
+    /// alive.
+    FinWait2,
     /// The peer is done sending; this side's finish has not gone out.
     CloseWait,
-    /// Both sides are done sending; the last acknowledgement has not come.
+    /// Both sides sent a finish, and this side's has not been acknowledged.
+    ///
+    /// The crossing case: the peer's finish arrived before this side's was
+    /// acknowledged, so both are in flight and the stream is not done until
+    /// this side's own is.  [RFC 793] calls it `CLOSING`; a stack without it
+    /// treated the crossing as an ordinary [`State::FinWait`] and lost the
+    /// acknowledgement it was still owed.
+    Closing,
+    /// Both sides are done and this side's finish is the last unacknowledged
+    /// one.
     LastAck,
+    /// The close is over, and the four-tuple is held so a duplicate finish is
+    /// answered rather than refused.
+    ///
+    /// Two times the longest segment lifetime, [RFC 793]'s rule.  A stream
+    /// that went straight to [`State::Closed`] would let the table forget the
+    /// four-tuple, and a peer's retransmitted FIN, arriving afterwards, would
+    /// be a segment for a port nothing owns: this stack answers those with a
+    /// reset, which is a close the peer did not ask for.
+    TimeWait,
 }
 
 /// A TCP segment, as this stack reads one.
@@ -700,6 +743,12 @@ pub struct Connection {
     timeout: u64,
     /// How many times the oldest unacknowledged segment has been sent.
     attempts: u8,
+    /// When the [`State::TimeWait`] hold began, in the caller's clock.
+    ///
+    /// `None` everywhere else, and the one place a connection's deadline is
+    /// about a state rather than about a segment: the close is over, and the
+    /// entry stays so a late finish is answered.
+    time_wait_since: Option<u64>,
     /// The segments the peer sent ahead of the position this side expects,
     /// held until the gap before them fills.
     ///
@@ -820,6 +869,7 @@ impl Connection {
             now: 0,
             timeout: RTO_INITIAL_MICROS,
             attempts: 0,
+            time_wait_since: None,
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
             peer_window: WINDOW as usize,
@@ -864,6 +914,7 @@ impl Connection {
             now: 0,
             timeout: RTO_INITIAL_MICROS,
             attempts: 0,
+            time_wait_since: None,
             out_of_order: alloc::vec::Vec::new(),
             path_mss: MSS_DEFAULT,
             peer_window: WINDOW as usize,
@@ -988,22 +1039,78 @@ impl Connection {
             return (Ok(Event::Settled), alloc::vec::Vec::new());
         }
 
+        // A stream in `TimeWait` answers a retransmitted finish and nothing
+        // else.  This is the whole reason the state exists: the peer sent a
+        // FIN, this side acknowledged it, and the acknowledgement was lost, so
+        // the peer sends the same FIN again.  Answering it again is the
+        // protocol; a `Closed` entry would have been pruned and the segment
+        // would reach a port nothing owns, which this stack answers with a
+        // reset.
+        if self.state == State::TimeWait {
+            if segment.flags & FLAG_FIN != 0
+                && segment.sequence.wrapping_add(1) == self.acknowledgement
+            {
+                let sent = self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
+                return (Ok(Event::None), sent);
+            }
+            // Anything else is a peer that did not hear the close: a segment
+            // after both sides finished is answered with the acknowledgement
+            // that says so, which is what ends the peer's retransmissions.
+            if segment.flags & FLAG_ACK != 0 {
+                return (Ok(Event::None), alloc::vec::Vec::new());
+            }
+            return (Ok(Event::None), alloc::vec::Vec::new());
+        }
+
         // Everything after the handshake needs the stream open in this
         // direction.
+        // Every state from `Established` to `LastAck` accepts segments: a
+        // half-closed stream still reads, and a stream waiting for a finish
+        // still has to acknowledge what arrives.  `TimeWait` is deliberately
+        // **not** here: it answers the peer's finish and nothing else, which
+        // the arm below does.
         let open = matches!(
             self.state,
-            State::Established | State::FinWait | State::CloseWait | State::LastAck
+            State::Established
+                | State::FinWait
+                | State::FinWait2
+                | State::CloseWait
+                | State::Closing
+                | State::LastAck
         );
         if !open {
             return (Ok(Event::None), alloc::vec::Vec::new());
         }
 
         let mut event = Event::None;
-        if segment.flags & FLAG_ACK != 0 && self.state == State::LastAck {
-            // The peer's acknowledgement of this side's finish: the close is
-            // over.
-            self.state = State::Closed;
-            return (Ok(Event::Settled), alloc::vec::Vec::new());
+
+        // The peer's acknowledgement of this side's finish.  What it means
+        // depends on whether the peer has said its own finish:
+        //
+        // * In `FinWait` this side is done and the peer has not said it is, so
+        //   the stream waits, which is `FinWait2`.
+        // * In `Closing` both finishes were sent and crossed, so the
+        //   acknowledgement is the moment both are done, which is `TimeWait`.
+        // * In `LastAck` the peer's finish came first and this side's is the
+        //   last unacknowledged one, so the close is over and the entry enters
+        //   `TimeWait` with the others.
+        //
+        // The three used to be one arm that went straight to `Closed`, which
+        // was right for `LastAck` and wrong for the other two: a stream whose
+        // peer had not finished was forgotten, and the peer's own finish, when
+        // it came, found no connection and was answered with a reset.
+        if segment.flags & FLAG_ACK != 0 {
+            match self.state {
+                State::FinWait => {
+                    self.state = State::FinWait2;
+                    return (Ok(Event::Settled), alloc::vec::Vec::new());
+                }
+                State::Closing | State::LastAck => {
+                    self.enter_time_wait();
+                    return (Ok(Event::Settled), alloc::vec::Vec::new());
+                }
+                _ => {}
+            }
         }
 
         // A segment ahead of the position this side expects is held rather
@@ -1033,16 +1140,16 @@ impl Connection {
             return (Ok(Event::None), sent);
         }
 
-        if self.state == State::FinWait
-            && segment.flags & FLAG_ACK != 0
+        if (self.state == State::FinWait2 || self.state == State::Closing)
             && segment.flags & FLAG_FIN != 0
             && segment.sequence == self.acknowledgement
         {
-            // The peer's finish, answering this side's own: the last
-            // acknowledgement closes both halves at once.
+            // The peer's finish, answering this side's own acknowledging one:
+            // both halves are done, and the entry stays in `TimeWait` so a
+            // retransmitted finish is answered rather than reset.
             self.acknowledgement = segment.sequence.wrapping_add(1);
             let sent = self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
-            self.state = State::Closed;
+            self.enter_time_wait();
             return (Ok(Event::Settled), sent);
         }
 
@@ -1072,7 +1179,18 @@ impl Connection {
             self.acknowledgement += 1;
             let sent = self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
             self.state = if self.finished {
-                State::Closed
+                // This side's finish is out and the peer's has just arrived.
+                // Whether the peer has acknowledged this side's is the
+                // difference between `Closing` (it has not, so an
+                // acknowledgement is still owed) and `TimeWait` (it has, so
+                // only the hold is left).
+                match self.state {
+                    State::FinWait2 => {
+                        self.enter_time_wait();
+                        State::TimeWait
+                    }
+                    _ => State::Closing,
+                }
             } else {
                 State::CloseWait
             };
@@ -1708,6 +1826,32 @@ impl Connection {
         }
     }
 
+    /// Enter [`State::TimeWait`], recording when the hold began.
+    ///
+    /// The one move that takes two fields at once, which is why it is a
+    /// function: a state set without its deadline would be a hold that never
+    /// ends, and a deadline set without the state would be a timer on an open
+    /// stream.
+    fn enter_time_wait(&mut self) {
+        self.state = State::TimeWait;
+        self.time_wait_since = Some(self.now);
+        // Nothing is owed from here: the queue is what a closed stream would
+        // otherwise retransmit at a peer that has already finished.
+        self.unacknowledged.clear();
+    }
+
+    /// Whether the hold has run out at the time this connection was last told.
+    ///
+    /// The caller's clock, the same one `retransmit` reads, and the answer a
+    /// table needs before it drops an entry: a four-tuple is held for
+    /// [`TIME_WAIT_MICROS`] and not for ever.
+    pub fn time_wait_elapsed(&self) -> bool {
+        self.state == State::TimeWait
+            && self
+                .time_wait_since
+                .is_some_and(|since| self.now.wrapping_sub(since) >= TIME_WAIT_MICROS)
+    }
+
     /// Tell the connection what time it is, in microseconds.
     ///
     /// The caller's clock, which is the only clock there is: this module has
@@ -2053,8 +2197,164 @@ mod tests {
         server_out.extend(server.close());
         assert_eq!(server.state(), State::LastAck);
         drain(&mut client_out, &mut server_out, &mut client, &mut server);
-        assert_eq!(client.state(), State::Closed, "the last exchange closed it");
-        assert_eq!(server.state(), State::Closed, "and the other end with it");
+        // Both ends are done, and both **hold the four-tuple**: the close is
+        // over and the entry stays so a retransmitted finish is answered
+        // rather than reset.  `TimeWait` is the state that says both of those
+        // things at once, and it is why this is not `Closed`.
+        assert_eq!(
+            client.state(),
+            State::TimeWait,
+            "the last exchange closed it"
+        );
+        assert_eq!(server.state(), State::TimeWait, "and the other end with it");
+
+        // The hold ends on the caller's clock, and not before: a stream that
+        // left `TimeWait` the moment it entered would be the `Closed` this
+        // replaced.
+        client.advance(super::TIME_WAIT_MICROS - 1);
+        assert!(!client.time_wait_elapsed(), "the hold has not run out");
+        client.advance(super::TIME_WAIT_MICROS);
+        assert!(client.time_wait_elapsed(), "and then it has");
+    }
+
+    /// A stream whose peer has not finished waits in `FinWait2`, not `Closed`.
+    ///
+    /// The defect this pins: this side's FIN acknowledged used to move the
+    /// stream straight to `Closed`, so a peer that had not said its own finish
+    /// yet found no connection when it did, and this stack answered a segment
+    /// for a port nothing owns with a reset, which is a close the peer never
+    /// asked for.  `FinWait2` is the state that is done sending and still
+    /// listening.
+    #[test]
+    fn an_acknowledged_fin_waits_in_fin_wait2_for_the_peers() {
+        let (mut client, mut server) = handshake();
+        let mut client_out = alloc::vec::Vec::new();
+        let mut server_out = alloc::vec::Vec::new();
+
+        client_out.extend(client.close());
+        assert_eq!(client.state(), State::FinWait);
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        assert_eq!(
+            client.state(),
+            State::FinWait2,
+            "the peer acknowledged the finish and has not sent its own"
+        );
+        assert_eq!(server.state(), State::CloseWait, "and the peer read it");
+
+        // Data still flows the other way: a half-closed stream reads.
+        let (sent, outgoing) = server.send_data(b"still here");
+        assert_eq!(sent, 10);
+        server_out.extend(outgoing);
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        assert_eq!(client.inbox_len(), 10, "and the reader got it");
+
+        // The peer's finish is what ends the hold's beginning.
+        server_out.extend(server.close());
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        assert_eq!(client.state(), State::TimeWait, "both finished");
+    }
+
+    /// A finish that crosses this side's lands in `Closing`, and the peer's
+    /// acknowledgement of this side's is what ends it.
+    ///
+    /// The other half of the close, and the state this stack did not have: the
+    /// peer's finish can arrive before this side's own has been acknowledged,
+    /// and the stream is then done in both directions with one
+    /// acknowledgement still owed.  `Closing` is that, and the acknowledgement
+    /// it is waiting for is what moves it to `TimeWait`.
+    #[test]
+    fn a_crossing_finish_lands_in_closing() {
+        let (mut client, mut server) = handshake();
+        // Both sides say finish before either has heard the other's, which is
+        // what a crossing is.
+        let client_fin = client.close();
+        let server_fin = server.close();
+        assert_eq!(client.state(), State::FinWait);
+        assert_eq!(server.state(), State::FinWait);
+
+        // The server's finish reaches the client with **no acknowledgement**
+        // in it: a FIN that also acknowledged this side's would move the
+        // stream to `FinWait2` first, and `FinWait2` is the state where this
+        // side's finish is already acknowledged.  The crossing is a FIN that
+        // says nothing about it.
+        for outgoing in server_fin {
+            let crossing = super::Segment::new(
+                server.local_port(),
+                client.local_port(),
+                outgoing.sequence,
+                outgoing.acknowledgement,
+                FLAG_FIN,
+                super::WINDOW,
+                0,
+            );
+            let (_, _) = client.receive(&crossing, b"");
+            assert_eq!(client.state(), State::Closing, "the crossing");
+        }
+
+        // The client's acknowledgement of the server's finish, and the
+        // server's of the client's, finish both.
+        for outgoing in client_fin {
+            let segment = segment(client.local_port(), server.local_port(), &outgoing);
+            let (_, _) = server.receive(&segment, &outgoing.payload);
+        }
+        let _ = client.receive(
+            &super::Segment::new(
+                server.local_port(),
+                client.local_port(),
+                client.expected_position().wrapping_sub(1),
+                client.send_position(),
+                FLAG_ACK,
+                super::WINDOW,
+                0,
+            ),
+            b"",
+        );
+        assert_eq!(client.state(), State::TimeWait, "both acknowledged");
+    }
+
+    /// A retransmitted finish lands on `TimeWait` and is answered again.
+    ///
+    /// The reason the hold exists.  A peer whose acknowledgement of its own
+    /// FIN was lost sends the FIN again, and the second one reaches a
+    /// four-tuple this side has already closed.  `TimeWait` answers it with
+    /// the same acknowledgement; a stream that had gone to `Closed` would have
+    /// been pruned, and the segment would reach nothing, which this stack
+    /// answers with a reset.
+    #[test]
+    fn a_retransmitted_finish_is_answered_in_time_wait() {
+        let (mut client, mut server) = handshake();
+        let mut client_out = alloc::vec::Vec::new();
+        let mut server_out = alloc::vec::Vec::new();
+
+        client_out.extend(client.close());
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        server_out.extend(server.close());
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        assert_eq!(client.state(), State::TimeWait);
+
+        // The peer's finish again, exactly as it was sent the first time.
+        let repeated = super::Segment::new(
+            server.local_port(),
+            client.local_port(),
+            client.expected_position().wrapping_sub(1),
+            client.send_position(),
+            FLAG_ACK | FLAG_FIN,
+            super::WINDOW,
+            0,
+        );
+        let (event, replies) = client.receive(&repeated, b"");
+        assert_eq!(event, Ok(Event::None), "nothing new happened");
+        assert_eq!(replies.len(), 1, "and the acknowledgement went again");
+        assert_eq!(
+            replies[0].flags, FLAG_ACK,
+            "which is the same bare acknowledgement"
+        );
+        assert_eq!(
+            replies[0].acknowledgement,
+            client.expected_position(),
+            "naming the position it named before"
+        );
+        assert_eq!(client.state(), State::TimeWait, "and the hold continues");
     }
 
     /// A write after a close answers zero, because the send side is

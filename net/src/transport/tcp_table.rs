@@ -324,7 +324,16 @@ impl Table {
     /// the descriptors that named it are closed or closing.
     pub fn prune(&mut self) {
         self.connections
-            .retain(|entry| entry.connection.state() != State::Closed);
+            .retain(|entry| match entry.connection.state() {
+                // A closed stream is done and nothing can arrive for it.
+                State::Closed => false,
+                // A stream in `TimeWait` is done too, and stays until its hold
+                // runs out: the four-tuple is what lets a peer's retransmitted
+                // finish be answered instead of reset.  The answer comes from
+                // the connection's own clock, which is the one `advance` set.
+                State::TimeWait => !entry.connection.time_wait_elapsed(),
+                _ => true,
+            });
     }
 
     /// Tell every stream what time it is, in microseconds.
@@ -619,8 +628,23 @@ mod tests {
             to_peer(&mut table, accepted, outgoing);
         }
         table.prune();
-        assert!(table.is_gone(client), "the client's close finished");
-        assert!(table.is_gone(accepted), "and the accepted end's");
+        // Both ends finished, and both are **held**: the close is over and the
+        // four-tuple stays so a retransmitted finish is answered rather than
+        // reset.  The prune keeps them until the hold runs out.
+        assert!(!table.is_gone(client), "the hold began, it did not end it");
+        assert!(!table.is_gone(accepted), "and the other end's too");
+        assert_eq!(table.len(), 2);
+
+        // The clock is the only thing that removes them, and not before the
+        // hold is over.
+        table.advance(crate::tcp::TIME_WAIT_MICROS - 1);
+        table.prune();
+        assert!(!table.is_gone(client), "one microsecond short");
+
+        table.advance(crate::tcp::TIME_WAIT_MICROS);
+        table.prune();
+        assert!(table.is_gone(client), "the hold ran out");
+        assert!(table.is_gone(accepted), "both of them");
         assert!(table.is_empty());
     }
 

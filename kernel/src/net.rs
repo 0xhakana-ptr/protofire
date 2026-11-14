@@ -2278,7 +2278,15 @@ pub fn tcp_read(id: usize, into: &mut [u8]) -> Result<Option<usize>> {
         return Ok(Some(0));
     };
     if connection.inbox_len() == 0 {
-        return Ok(None);
+        // An empty inbox is "ask again" only while a peer could still fill
+        // it.  A stream whose close is over cannot, so its empty read is
+        // end-of-file: `TimeWait` is the state that made this distinction
+        // necessary, because the entry is still in the table and a reader
+        // parked on it would otherwise wait for a writer that has finished.
+        return Ok(match connection.state() {
+            net::tcp::State::TimeWait | net::tcp::State::Closed => Some(0),
+            _ => None,
+        });
     }
     Ok(Some(connection.take(into)))
 }
@@ -3881,19 +3889,26 @@ pub fn tcp_probe() -> bool {
     });
 
     // The orderly close: both sides finish, and the acknowledgements cross.
+    // Both ends then **linger** in `TimeWait` rather than leaving the table:
+    // the close is over and the four-tuple is held so a retransmitted finish
+    // is answered instead of reset.  The line says which state it found,
+    // because "gone" and "held" are two different claims and a probe that
+    // printed only "done" could not tell a close that finished from one the
+    // table had forgotten.
     let _ = tcp_close(client);
     let _ = tcp_close(accepted);
-    let closed = table_state(client);
+    let state = TCP
+        .lock()
+        .connection(client)
+        .map(|connection| connection.state());
+    let lingering = state == Some(net::tcp::State::TimeWait);
     arch::serial::write_str("protofire: tcp closed, both ends ");
-    arch::serial::write_str(if closed { "done\n" } else { "lingering\n" });
-    round_trip
-}
-
-/// Whether an id's connection is gone from the table, which an orderly
-/// close leaves behind.
-#[cfg(target_os = "none")]
-fn table_state(id: usize) -> bool {
-    TCP.lock().is_gone(id)
+    arch::serial::write_str(if lingering {
+        "held in time wait\n"
+    } else {
+        "MISMATCH\n"
+    });
+    round_trip && lingering
 }
 
 /// Prove that a lost segment is recovered, rather than assuming it would be.
@@ -3977,9 +3992,8 @@ pub fn retransmission_probe() -> bool {
         break;
     }
 
-    // The close is the ordinary one, and it is the second half of the
-    // evidence: an acknowledgement that retires what was sent twice is what
-    // `table_state` reports.
+    // The close is the ordinary one: both ends finish and both linger in
+    // `TimeWait`, which is the state that answers a retransmitted finish.
     let _ = tcp_close(client);
     let _ = tcp_close(accepted);
 
@@ -5187,13 +5201,30 @@ mod tests {
         super::tcp_close(accepted).expect("a close");
         {
             let table = super::TCP.lock();
-            assert!(table.is_gone(client), "the client's end is done");
-            assert!(table.is_gone(accepted), "and the accepted end with it");
+            // Both ends finished, and both **hold** the four-tuple: the close
+            // is over and the entry stays in `TimeWait` so a retransmitted
+            // finish is answered rather than reset.  The read below is the
+            // part that matters to a program, and it is end-of-file either
+            // way: a stream whose inbox is drained and whose peer finished
+            // reads zero.
+            assert_eq!(
+                table.connection(client).map(|c| c.state()),
+                Some(net::tcp::State::TimeWait),
+                "the client's end finished and its four-tuple is held"
+            );
+            assert_eq!(
+                table.connection(accepted).map(|c| c.state()),
+                Some(net::tcp::State::TimeWait),
+                "and the accepted end with it"
+            );
         }
         assert_eq!(
             super::tcp_read(client, &mut stream_buffer),
             Ok(Some(0)),
-            "a stream that is gone reads as end of file"
+            "a stream whose close is over reads as end of file, and not as \
+             `None`: the entry is held in `TimeWait`, so a reader that treated \
+             an empty inbox as `ask again` would wait for a writer that has \
+             finished"
         );
         // The stream never touched the card, and the wire datagram's frame
         // is still the only thing the card carries.
