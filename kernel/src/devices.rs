@@ -901,7 +901,14 @@ pub fn exercise_network() -> bool {
     // The congestion window: grown by acknowledgements and collapsed by a
     // timeout, on an exchange long enough to see both.  Every other boot
     // exchange finishes before the window matters.
-    crate::net::congestion_probe()
+    if !crate::net::congestion_probe() {
+        return false;
+    }
+
+    // The third of the lease's three states: a broadcast request with no
+    // server named, which no boot reaches on its own because a server's
+    // default lease is a day.
+    crate::net::rebind_probe()
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the

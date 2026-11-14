@@ -599,6 +599,11 @@ impl Machine {
                     "protofire: congestion 14600 -> 15240 -> 1460, grew and then collapsed",
                     true,
                 ),
+                // The third of the lease's three states: a broadcast request
+                // with no server named, which a server answers.  A boot never
+                // reaches it on its own because a server's default lease is a
+                // day.
+                ("protofire: rebind sent, the wire answered", true),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and
@@ -1235,6 +1240,11 @@ impl Machine {
                         "protofire: congestion 14600 -> 15240 -> 1460, grew and then collapsed",
                         true,
                     ),
+                    // The third of the lease's three states: a broadcast
+                    // request with no server named, which a server answers.  A
+                    // boot never reaches it on its own because a server's
+                    // default lease is a day.
+                    ("protofire: rebind sent, the wire answered", true),
                     // The exchange, for the reason the x86_64 list states:
                     // the child's exit status is the echo's first byte.
                     (
@@ -1582,6 +1592,11 @@ impl Machine {
                     "protofire: congestion 14600 -> 15240 -> 1460, grew and then collapsed",
                     true,
                 ),
+                // The third of the lease's three states: a broadcast request
+                // with no server named, which a server answers.  A boot never
+                // reaches it on its own because a server's default lease is a
+                // day.
+                ("protofire: rebind sent, the wire answered", true),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and

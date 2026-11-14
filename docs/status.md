@@ -390,13 +390,30 @@ lease line.  Nothing could see it because nothing called `duty`.  The scale is
 than building a `Lease` by hand, because a hand-built one passes whatever scale
 the caller used.
 
-**What this is not yet verified against.**  A renewal is due at half the
-lease's life, and a server's default is a day; QEMU's user-mode DHCP cannot be
-told to grant a short one.  So no boot this gate runs reaches `Renew`, and the
-renewal path is "implemented" rather than "verified".  What *is* verified on a
-machine is everything it shares with the grant the boot already runs: the same
-`write_request`, the same `parse_reply`, the same bounded wait, and a lease
-whose clock now matches the one `duty` reads.
+**The lease's third state is a broadcast, and it is verified.**  A lease moves
+through `Bound`, `Renew` and `Rebind`: a renewal asks the one server that
+granted it, and a rebinding asks every server on the link, because the one that
+granted it has stopped answering.  The difference is one option's absence, so
+`write_request` takes `None` for the server and the frame goes to the broadcast
+address from this machine's own address.  Measured on all four boots:
+
+```
+protofire: dhcp rebound 10.0.2.15 for 86400 second(s) more
+protofire: rebind sent, the wire answered
+```
+
+QEMU's user-mode DHCP answers a rebinding, which is what makes this the one of
+the lease's three states a gate can prove end to end.  The probe runs it once
+after the boot's own grant, and the line reports the server's answer rather
+than the request having left.
+
+**What is still not verified.**  A *renewal* is due at half the lease's life
+and a server's default is a day, so no boot reaches `Renew` and that path is
+"implemented" rather than "verified".  It shares everything it executes with the
+rebinding above and with the grant the boot runs: the same `write_request`, the
+same `parse_reply`, the same bounded wait.  The difference the gate does not see
+is the destination, one address for a renewal and the broadcast for a
+rebinding.
 
 [RFC 2131]: https://www.rfc-editor.org/rfc/rfc2131
 

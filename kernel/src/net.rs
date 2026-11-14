@@ -2537,6 +2537,145 @@ fn renew_lease(lease: &net::dhcp::Lease) -> Option<net::dhcp::Lease> {
     None
 }
 
+/// Ask any server on the link to take over this address.
+///
+/// [RFC 2131]'s rebinding is the third of the three states a lease moves
+/// through: the machine still holds its address, the server that granted it has
+/// stopped answering, and the question goes out as a **broadcast** `REQUEST`
+/// with no server named, which is the shape any server may answer.  The
+/// difference from a renewal is exactly that: a unicast frame to one server
+/// becomes a broadcast to all of them, and the option that names a server is
+/// absent.
+///
+/// The source address is this machine's, because it still holds one: a client
+/// with no address sends from zero, which is the state before the first grant
+/// and not this one.
+///
+/// [RFC 2131]: https://www.rfc-editor.org/rfc/rfc2131
+#[cfg(target_os = "none")]
+fn rebind_lease(lease: &net::dhcp::Lease) -> Option<net::dhcp::Lease> {
+    let (card, hardware, address) = {
+        let interface = INTERFACE.lock();
+        let interface = interface.as_ref()?;
+        (
+            interface.card.clone(),
+            interface.hardware,
+            interface.protocol,
+        )
+    };
+
+    let mut bytes = [0_u8; 2];
+    if crate::random::fill(&mut bytes).is_err() {
+        return None;
+    }
+    let transaction = net::dhcp::Transaction {
+        id: u32::from_be_bytes([bytes[0], bytes[1], bytes[0], bytes[1]]),
+        hardware,
+    };
+
+    let mut message = [0_u8; 512];
+    // No server named: that absence is what makes this a rebinding rather than
+    // a renewal, and any server that holds a record of this machine may answer.
+    let region = net::dhcp::write_request(&mut message, transaction, lease.address, None)?;
+    let payload = region.as_slice();
+    let udp_len = net::udp::datagram_len(payload.len());
+    let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
+    let mut frame = alloc::vec![0_u8; packet_len];
+    net::ethernet::write_header(
+        &mut frame,
+        net::ethernet::BROADCAST,
+        hardware,
+        net::ethernet::ETHERTYPE_IPV4,
+    );
+    net::ipv4::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        address,
+        [255, 255, 255, 255],
+        net::ipv4::PROTOCOL_UDP,
+        udp_len,
+    );
+    net::udp::write_datagram(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+        address,
+        [255, 255, 255, 255],
+        net::dhcp::CLIENT_PORT,
+        net::dhcp::SERVER_PORT,
+        payload,
+    );
+    if card.submit_frame(&frame).is_err() {
+        return None;
+    }
+
+    // The answer, on the same bounded wait a grant uses.
+    let limit = card.maximum_frame_len();
+    let mut reply_frame = alloc::vec![0_u8; limit];
+    let deadline = crate::tick::TIMER_TICKS
+        .load(core::sync::atomic::Ordering::Relaxed)
+        .saturating_add(DHCP_WAIT_TICKS);
+    while (crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64)
+        < deadline as u64
+    {
+        let Ok(Some(length)) = card.receive_frame(&mut reply_frame) else {
+            continue;
+        };
+        if netdev::ethertype(&reply_frame[..length]) != Some(net::ethernet::ETHERTYPE_IPV4) {
+            continue;
+        }
+        let Some(packet) = net::ipv4::parse(&reply_frame[netdev::ETHERNET_HEADER_LEN..length])
+        else {
+            continue;
+        };
+        if packet.header.protocol != net::ipv4::PROTOCOL_UDP {
+            continue;
+        }
+        let at = packet.payload_at;
+        let Some(datagram) = net::udp::parse(
+            &reply_frame[netdev::ETHERNET_HEADER_LEN + at..length],
+            packet.header.source,
+            packet.header.destination,
+        ) else {
+            continue;
+        };
+        if datagram.destination_port != net::dhcp::CLIENT_PORT {
+            continue;
+        }
+        let data = &reply_frame[netdev::ETHERNET_HEADER_LEN + at + net::udp::HEADER_LEN..]
+            [..datagram.payload_len];
+        if let Some(reply) = net::dhcp::parse_reply(data, transaction)
+            && reply.kind == net::dhcp::MESSAGE_ACK
+        {
+            return net::dhcp::lease_from(&reply, micros_since_boot(), MICROS_PER_SECOND).ok();
+        }
+    }
+    None
+}
+
+/// Apply a lease a server granted and say so on the console.
+///
+/// One function for the two exchanges because applying a lease is the same act
+/// whether it arrived as a unicast acknowledgement or a broadcast one: the
+/// address, the router and the name server are one decision, and a caller that
+/// took two of the three would be a machine sending half its traffic to a
+/// router it is not attached to.
+#[cfg(target_os = "none")]
+fn apply_lease(lease: &net::dhcp::Lease, how: &str) {
+    if let Some(interface) = INTERFACE.lock().as_mut() {
+        interface.configure(lease);
+    }
+    arch::serial::write_str("protofire: dhcp ");
+    arch::serial::write_str(how);
+    arch::serial::write_str(" ");
+    for (index, byte) in lease.address.iter().enumerate() {
+        if index > 0 {
+            arch::serial::write_str(".");
+        }
+        arch::serial::write_u32(*byte as u32);
+    }
+    arch::serial::write_str(" for ");
+    arch::serial::write_u32((lease.lifetime / MICROS_PER_SECOND) as u32);
+    arch::serial::write_str(" second(s) more\n");
+}
+
 /// Renew the interface's lease when its clock says to.
 ///
 /// Called from the pump, which is the one path that already runs while a
@@ -2567,23 +2706,18 @@ fn renew_lease_if_due() {
 
     match due {
         net::dhcp::Duty::Bound => {}
-        net::dhcp::Duty::Renew | net::dhcp::Duty::Rebind => {
+        // The two are different exchanges, which is why `duty` names them
+        // separately: a renewal asks the one server that granted the lease and
+        // a rebinding asks every server on the link, because the one that
+        // granted it has stopped answering.
+        net::dhcp::Duty::Renew => {
             if let Some(renewed) = renew_lease(&lease) {
-                // The new lease is applied the way the first one was: the
-                // address, the router and the name server are one decision.
-                if let Some(interface) = INTERFACE.lock().as_mut() {
-                    interface.configure(&renewed);
-                }
-                arch::serial::write_str("protofire: dhcp renewed ");
-                for (index, byte) in renewed.address.iter().enumerate() {
-                    if index > 0 {
-                        arch::serial::write_str(".");
-                    }
-                    arch::serial::write_u32(*byte as u32);
-                }
-                arch::serial::write_str(" for ");
-                arch::serial::write_u32((renewed.lifetime / MICROS_PER_SECOND) as u32);
-                arch::serial::write_str(" second(s) more\n");
+                apply_lease(&renewed, "renewed");
+            }
+        }
+        net::dhcp::Duty::Rebind => {
+            if let Some(renewed) = rebind_lease(&lease) {
+                apply_lease(&renewed, "rebound");
             }
         }
         net::dhcp::Duty::Expired => {
@@ -3483,6 +3617,48 @@ pub fn window_probe() -> bool {
         ", MISMATCH\n"
     });
     bounded
+}
+
+/// Prove that a rebinding's request is a shape a server answers.
+///
+/// The exchange is [RFC 2131]'s third state: the lease's server has stopped
+/// answering, so the question goes out as a broadcast with no server named.
+/// Nothing in this tree's boot reaches that state on its own, because a
+/// server's default lease is a day, so the probe runs it once against whatever
+/// server the wire has.
+///
+/// The probe asserts the answer rather than reporting it, and the assertion is
+/// the whole point: a rebinding that left and was answered is a server having
+/// read a broadcast request whose server option was absent, which is a claim no
+/// other exchange this gate runs makes.  QEMU's user-mode DHCP answers one,
+/// measured on all four machines; a machine whose wire does not is a machine
+/// where this line would have to be argued for rather than weakened, and the
+/// probe says so by printing what happened.
+#[cfg(target_os = "none")]
+pub fn rebind_probe() -> bool {
+    let lease = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        match interface.lease {
+            Some(lease) => lease,
+            None => return false,
+        }
+    };
+
+    let renewed = rebind_lease(&lease);
+    let answered = renewed.is_some();
+    if let Some(lease) = renewed {
+        apply_lease(&lease, "rebound");
+    }
+    arch::serial::write_str("protofire: rebind sent, ");
+    arch::serial::write_str(if answered {
+        "the wire answered\n"
+    } else {
+        "the wire said nothing\n"
+    });
+    answered
 }
 
 /// Prove that a stream's window grows on acknowledgements and collapses on a

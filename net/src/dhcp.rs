@@ -586,6 +586,42 @@ mod tests {
         assert_eq!(server, Some([10, 0, 2, 2]));
     }
 
+    /// A rebinding's REQUEST names no server, which is what makes it a
+    /// question any server may answer.
+    ///
+    /// [RFC 2131] gives a lease three states and two of them ask again: a
+    /// renewal is a unicast to the server that granted it, and a rebinding is a
+    /// broadcast with no server named because that server has stopped
+    /// answering.  The difference is one option's absence, so the test is that
+    /// the option is absent and that everything else is a request.
+    ///
+    /// [RFC 2131]: https://www.rfc-editor.org/rfc/rfc2131
+    #[test]
+    fn a_rebinding_request_names_no_server() {
+        let mut buffer = [0_u8; 400];
+        let region =
+            write_request(&mut buffer, transaction(), [10, 0, 2, 15], None).expect("a request");
+        let bytes = region.as_slice();
+
+        assert_eq!(bytes[OPTIONS_AT + 2], super::MESSAGE_REQUEST);
+        let mut requested = None;
+        let mut server = None;
+        super::walk_options(&bytes[OPTIONS_AT..], &mut |code, value| match code {
+            super::OPTION_REQUESTED_ADDRESS => requested = super::read_address(value),
+            super::OPTION_SERVER_IDENTIFIER => server = super::read_address(value),
+            _ => {}
+        });
+        assert_eq!(
+            requested,
+            Some([10, 0, 2, 15]),
+            "the address is still asked for by name"
+        );
+        assert_eq!(
+            server, None,
+            "and no server is named, which is what a rebinding is"
+        );
+    }
+
     /// A reply is read only when its transaction and hardware address are this
     /// exchange's: a datagram meant for another machine must not configure
     /// this one.
