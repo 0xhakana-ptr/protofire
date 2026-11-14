@@ -122,6 +122,15 @@ pub struct Interface {
     /// Kept here rather than in a socket because it is a fact about this
     /// machine's network, and a lookup asks it once per name.
     dns: Option<[u8; 4]>,
+    /// The lease this interface is running under, if the address came from
+    /// one.
+    ///
+    /// Kept because an address a server granted is the server's to take back:
+    /// without the lease, a boot's address would outlive the grant that made
+    /// it, and a second machine granted the same address would find it in
+    /// use.  The lease's clocks are in the caller's unit, microseconds here,
+    /// and [`net::dhcp::Lease::duty`] is what reads them.
+    lease: Option<net::dhcp::Lease>,
 }
 
 impl Interface {
@@ -154,6 +163,7 @@ impl Interface {
             ndp: net::ndp::Cache::new(),
             ipv6_global: None,
             dns: None,
+            lease: None,
         }
     }
 
@@ -175,6 +185,9 @@ impl Interface {
             self.gateway = router;
         }
         self.dns = lease.dns;
+        // The lease itself is kept, because its clocks are what say when this
+        // address has to be asked for again.
+        self.lease = Some(*lease);
     }
 
     /// The link-local IPv6 address this interface answers for.
@@ -572,6 +585,11 @@ pub fn pump() -> usize {
     // counter's own thirty-six-hour wrap.
     let now = micros_since_boot();
     retransmit_due(now);
+    // The lease's clock, checked on the path that already runs while a
+    // program waits: a machine whose only activity is a parked reader still
+    // has a lease running out.
+    #[cfg(target_os = "none")]
+    renew_lease_if_due();
 
     let length_limit = card.maximum_frame_len();
     let mut frame = alloc::vec![0; length_limit];
@@ -629,6 +647,18 @@ fn micros_of_ticks(ticks: u64) -> u64 {
 /// no slice, so the assertion that the two agree is a test's.
 #[cfg(any(test, target_os = "none"))]
 const MICROS_PER_TICK: u64 = 100;
+
+/// How many microseconds a second is, which is the scale a lease's seconds
+/// are converted into this kernel's clock with.
+///
+/// A DHCP reply states its lifetime in seconds and `Lease::duty` compares it
+/// against the caller's clock, so the conversion has to be the caller's own
+/// unit or the lease expires at the wrong time.  The first version passed `1`
+/// here, which left the lease in seconds while the clock counted
+/// microseconds: a lease an hour long would have been read as expired
+/// eighty-six milliseconds after it was granted.
+#[cfg(any(test, target_os = "none"))]
+const MICROS_PER_SECOND: u64 = 1_000_000;
 
 /// Send again every segment whose stream is due to.
 ///
@@ -2110,7 +2140,198 @@ pub fn dhcp_probe() -> Option<net::dhcp::Lease> {
         return None;
     }
     let ack = await_reply(net::dhcp::MESSAGE_ACK)?;
-    net::dhcp::lease_from(&ack, 0, 1).ok()
+    // The clock is the caller's, and this caller's is microseconds: the
+    // scale is how many of them a second is, which is what makes a lease the
+    // server granted for an hour last an hour instead of eighty-six
+    // milliseconds.
+    net::dhcp::lease_from(&ack, micros_since_boot(), MICROS_PER_SECOND).ok()
+}
+
+/// Ask the server that granted this address to grant it again.
+///
+/// [RFC 2131]'s renewal is a unicast `REQUEST` to the granting server, not a
+/// broadcast `DISCOVER`: the machine still holds the address, so it can name
+/// itself, and a broadcast would offer the renewal to every server on the
+/// link.  The reply is the same `ACK` a grant is, and applying it is the same
+/// act, which is why this answers a lease rather than changing the interface
+/// itself.
+///
+/// `None` is "the server did not answer", and it is not a failure the caller
+/// should undo anything for: the lease it holds is still valid until the
+/// clock says otherwise, and `Lease::duty` is what says when the next attempt
+/// is due.  A renewal that tore down the address it was renewing would turn a
+/// late reply into an outage.
+///
+/// [RFC 2131]: https://www.rfc-editor.org/rfc/rfc2131
+#[cfg(target_os = "none")]
+fn renew_lease(lease: &net::dhcp::Lease) -> Option<net::dhcp::Lease> {
+    let (card, hardware, address, router) = {
+        let interface = INTERFACE.lock();
+        let interface = interface.as_ref()?;
+        (
+            interface.card.clone(),
+            interface.hardware,
+            interface.protocol,
+            interface.gateway,
+        )
+    };
+    // The renewal asks the server that granted the lease.  A lease that named
+    // none cannot be renewed by unicast, and the caller's next step is
+    // rebinding, which the clocks decide.
+    let server = lease.server?;
+
+    let mut bytes = [0_u8; 2];
+    if crate::random::fill(&mut bytes).is_err() {
+        return None;
+    }
+    let transaction = net::dhcp::Transaction {
+        id: u32::from_be_bytes([bytes[0], bytes[1], bytes[0], bytes[1]]),
+        hardware,
+    };
+
+    // The gateway's hardware address, because a unicast frame to a server off
+    // this link goes through it; a server on this link is in the ARP cache
+    // under its own address, and the fallback is the router for the reason
+    // every other send in this file uses it.
+    let destination_hardware = arp_hardware_for(server).or_else(|| arp_hardware_for(router))?;
+
+    let mut message = [0_u8; 512];
+    let region = net::dhcp::write_request(&mut message, transaction, address, Some(server))?;
+    let payload = region.as_slice();
+    let udp_len = net::udp::datagram_len(payload.len());
+    let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
+    let mut frame = alloc::vec![0_u8; packet_len];
+    net::ethernet::write_header(
+        &mut frame,
+        destination_hardware,
+        hardware,
+        net::ethernet::ETHERTYPE_IPV4,
+    );
+    net::ipv4::write_header(
+        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        address,
+        server,
+        net::ipv4::PROTOCOL_UDP,
+        udp_len,
+    );
+    net::udp::write_datagram(
+        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+        address,
+        server,
+        net::dhcp::CLIENT_PORT,
+        net::dhcp::SERVER_PORT,
+        payload,
+    );
+    if card.submit_frame(&frame).is_err() {
+        return None;
+    }
+
+    // The answer, on the same bounded wait a grant uses: a server that does
+    // not answer leaves the lease as it was, and the clock moves the caller to
+    // rebinding.
+    let limit = card.maximum_frame_len();
+    let mut reply_frame = alloc::vec![0_u8; limit];
+    let deadline = crate::tick::TIMER_TICKS
+        .load(core::sync::atomic::Ordering::Relaxed)
+        .saturating_add(DHCP_WAIT_TICKS);
+    while (crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64)
+        < deadline as u64
+    {
+        let Ok(Some(length)) = card.receive_frame(&mut reply_frame) else {
+            continue;
+        };
+        if netdev::ethertype(&reply_frame[..length]) != Some(net::ethernet::ETHERTYPE_IPV4) {
+            continue;
+        }
+        let Some(packet) = net::ipv4::parse(&reply_frame[netdev::ETHERNET_HEADER_LEN..length])
+        else {
+            continue;
+        };
+        if packet.header.protocol != net::ipv4::PROTOCOL_UDP {
+            continue;
+        }
+        let at = packet.payload_at;
+        let Some(datagram) = net::udp::parse(
+            &reply_frame[netdev::ETHERNET_HEADER_LEN + at..length],
+            packet.header.source,
+            packet.header.destination,
+        ) else {
+            continue;
+        };
+        if datagram.destination_port != net::dhcp::CLIENT_PORT {
+            continue;
+        }
+        let data = &reply_frame[netdev::ETHERNET_HEADER_LEN + at + net::udp::HEADER_LEN..]
+            [..datagram.payload_len];
+        if let Some(reply) = net::dhcp::parse_reply(data, transaction)
+            && reply.kind == net::dhcp::MESSAGE_ACK
+        {
+            return net::dhcp::lease_from(&reply, micros_since_boot(), MICROS_PER_SECOND).ok();
+        }
+    }
+    None
+}
+
+/// Renew the interface's lease when its clock says to.
+///
+/// Called from the pump, which is the one path that already runs while a
+/// program waits: a machine whose only activity is a parked reader still has a
+/// lease running out, and a lease renewed only when a call happened to arrive
+/// would expire between calls.
+///
+/// The three duties are `Lease::duty`'s, which is [RFC 2131]'s clocks:
+/// `Renew` asks the granting server, `Rebind` is a broadcast that any server
+/// may answer and is not written here, and `Expired` clears the address
+/// because it is no longer this machine's.  A renewal that fails leaves the
+/// lease in place: the clock is what says the address is gone, not one
+/// unanswered datagram.
+///
+/// [RFC 2131]: https://www.rfc-editor.org/rfc/rfc2131
+#[cfg(target_os = "none")]
+fn renew_lease_if_due() {
+    let (lease, due) = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return;
+        };
+        let Some(lease) = interface.lease.as_ref() else {
+            return;
+        };
+        (*lease, lease.duty(micros_since_boot()))
+    };
+
+    match due {
+        net::dhcp::Duty::Bound => {}
+        net::dhcp::Duty::Renew | net::dhcp::Duty::Rebind => {
+            if let Some(renewed) = renew_lease(&lease) {
+                // The new lease is applied the way the first one was: the
+                // address, the router and the name server are one decision.
+                if let Some(interface) = INTERFACE.lock().as_mut() {
+                    interface.configure(&renewed);
+                }
+                arch::serial::write_str("protofire: dhcp renewed ");
+                for (index, byte) in renewed.address.iter().enumerate() {
+                    if index > 0 {
+                        arch::serial::write_str(".");
+                    }
+                    arch::serial::write_u32(*byte as u32);
+                }
+                arch::serial::write_str(" for ");
+                arch::serial::write_u32((renewed.lifetime / MICROS_PER_SECOND) as u32);
+                arch::serial::write_str(" second(s) more\n");
+            }
+        }
+        net::dhcp::Duty::Expired => {
+            // The address is no longer this machine's.  Keeping it would put
+            // two machines on one address, so the interface gives it up and
+            // the machine becomes one with a card and no address, which is
+            // what the first boot's state was.
+            if let Some(interface) = INTERFACE.lock().as_mut() {
+                interface.lease = None;
+            }
+            arch::serial::write_str("protofire: dhcp lease expired, the address is released\n");
+        }
+    }
 }
 
 /// How long one DHCP reply is waited for, in timer ticks.
@@ -3320,6 +3541,73 @@ mod tests {
         assert_eq!(
             ticks_in_the_window, 300_000,
             "ten kilohertz for thirty seconds"
+        );
+    }
+
+    /// A DHCP lease's seconds are converted into the clock its duty is
+    /// measured by, and the two agree.
+    ///
+    /// This is the second place the same class of defect lived: `lease_from`
+    /// takes the caller's unit, and the caller passed `1` while its clock
+    /// counted microseconds, so an hour's lease was read as expired
+    /// eighty-six milliseconds after it was granted.  The test goes through
+    /// `lease_from` for exactly that reason: a test that built a `Lease` by
+    /// hand would pass whatever scale the caller used, which is what the
+    /// first version of this test did.
+    #[test]
+    fn a_lease_is_measured_in_the_clock_its_duty_reads() {
+        let reply = net::dhcp::Reply {
+            kind: net::dhcp::MESSAGE_ACK,
+            address: [10, 0, 2, 15],
+            server: Some([10, 0, 2, 2]),
+            router: Some([10, 0, 2, 2]),
+            dns: Some([10, 0, 2, 3]),
+            subnet_mask: Some([255, 255, 255, 0]),
+            lease_seconds: 3_600,
+            renewal_seconds: 1_800,
+            rebinding_seconds: 3_150,
+        };
+
+        // The conversion this kernel makes: a second is `MICROS_PER_SECOND`
+        // of its clock.
+        let lease =
+            net::dhcp::lease_from(&reply, 0, super::MICROS_PER_SECOND).expect("an ACK is a lease");
+        assert_eq!(
+            lease.lifetime,
+            3_600 * super::MICROS_PER_SECOND,
+            "an hour, in this kernel's unit"
+        );
+        assert_eq!(lease.duty(0), net::dhcp::Duty::Bound, "fresh at the grant");
+        assert_eq!(
+            lease.duty(lease.lifetime / 2),
+            net::dhcp::Duty::Renew,
+            "renewal at half the lease"
+        );
+        assert_eq!(
+            lease.duty(lease.lifetime / 8 * 7),
+            net::dhcp::Duty::Rebind,
+            "rebinding at seven eighths"
+        );
+        assert_eq!(
+            lease.duty(lease.lifetime),
+            net::dhcp::Duty::Expired,
+            "and the address is gone at the end"
+        );
+
+        // The scale the caller used before this fix, for contrast: the same
+        // reply becomes a lease whose thirty-six hundred seconds are read as
+        // thirty-six hundred *microseconds*, so a boot three and a half
+        // milliseconds old is already past it.
+        let wrong = net::dhcp::lease_from(&reply, 0, 1).expect("an ACK is a lease");
+        assert_eq!(wrong.lifetime, 3_600, "an hour read as 3600 units");
+        assert_eq!(
+            wrong.duty(3_600),
+            net::dhcp::Duty::Expired,
+            "expired 3.6 milliseconds into a boot"
+        );
+        assert!(
+            super::micros_of_ticks(36) == 3_600,
+            "which is thirty-six timer interrupts, not an hour"
         );
     }
 }

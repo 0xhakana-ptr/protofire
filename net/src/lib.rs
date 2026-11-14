@@ -96,9 +96,8 @@
 //!
 //! ## What is not here yet
 //!
-//! Path-MTU discovery, ICMP errors beyond the one a closed port produces, and
-//! DHCP lease renewal, whose clocks are in [`dhcp::Lease`] and whose caller is
-//! not written.  Each is a documented refusal in the module it belongs to.
+//! Path-MTU discovery and ICMP errors beyond the one a closed port produces.
+//! Each is a documented refusal in the module it belongs to.
 //!
 //! Congestion control is the one refusal that has no module: a stream
 //! retransmits, with [`tcp::RTO_INITIAL_MICROS`]'s backoff, and receives out

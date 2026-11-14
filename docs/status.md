@@ -372,6 +372,34 @@ a partial loss looks like, and the bytes past the position are new.
 
 [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
 
+**The lease is kept, and its clock is the boot's own.**  `Interface` holds the
+`Lease` a server granted, `pump` asks `Lease::duty` what the clocks say, and a
+lease at `Renew` sends [RFC 2131]'s unicast `REQUEST` to the server that
+granted it.  A failure leaves the lease in place: one unanswered datagram is
+not the clock, and tearing down an address to renew it turns a late reply into
+an outage.  An expired lease releases the address, because keeping it would put
+two machines on one.
+
+The conversion was wrong and this change is what found it.  `lease_from` takes
+the caller's unit, and the caller passed `1` while its clock counted
+microseconds: an hour's lease was read as expired eighty-six milliseconds
+after it was granted, so `duty` would have said `Expired` on the first pump and
+the address would have been released before the boot finished printing its
+lease line.  Nothing could see it because nothing called `duty`.  The scale is
+`MICROS_PER_SECOND` now, and the kernel test goes through `lease_from` rather
+than building a `Lease` by hand, because a hand-built one passes whatever scale
+the caller used.
+
+**What this is not yet verified against.**  A renewal is due at half the
+lease's life, and a server's default is a day; QEMU's user-mode DHCP cannot be
+told to grant a short one.  So no boot this gate runs reaches `Renew`, and the
+renewal path is "implemented" rather than "verified".  What *is* verified on a
+machine is everything it shares with the grant the boot already runs: the same
+`write_request`, the same `parse_reply`, the same bounded wait, and a lease
+whose clock now matches the one `duty` reads.
+
+[RFC 2131]: https://www.rfc-editor.org/rfc/rfc2131
+
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and
 `ListenTcp` (56) answer through the registry; `AcceptTcp` (57) is served by
 the trap path, because it parks, and a stream's data rides the same `Read`

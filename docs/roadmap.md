@@ -486,12 +486,13 @@ advertisement could ever reach it.  The branch is the change, and the boot's
 probe sends its advertisement through the same receive path a real one takes.
 
 What is **not** here, and is its own step: path-MTU discovery, so a peer that
-shrinks a path has no way to tell this stack; DHCP lease renewal, whose clock
-is in `net::dhcp::Lease` and whose caller is not written; and DHCPv6, which is
-a different protocol with a different message set.  Congestion control is the
-other one, and it waits on a path with a round trip and a loss on it, which
-neither a loopback nor QEMU's user-mode network is.  Out-of-order receive is no
-longer on the list: a segment ahead of the expected position is held and
+shrinks a path has no way to tell this stack; rebinding, which is the
+broadcast any server may answer and which `Lease::duty` names but no caller
+sends; and DHCPv6, a different protocol with a different message set.
+Congestion control is the other one, and it waits on a path with a round trip
+and a loss on it, which neither a loopback nor QEMU's user-mode network is.
+Out-of-order receive is no longer on the list: a segment ahead of the expected
+position is held and
 delivered in sequence order when the gap closes.
 
 ### The rest of the road: rewriting what the previous kernel had
