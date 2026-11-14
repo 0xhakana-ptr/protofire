@@ -748,6 +748,55 @@ again under another name.
 
 [RFC 1112]: https://www.rfc-editor.org/rfc/rfc1112
 
+**IPsec: ESP sealed, opened, and replayed against.**  `IpsecAddSp` (164),
+`IpsecDelSp` (165), `IpsecAddSa` (166), `IpsecDelSa` (167) and `IpsecGetStats`
+(168) were named in the ABI and served by nothing.  All five are served, and the
+part that matters is the encapsulation: a datagram a policy protects leaves as
+ESP and is recovered on the other side.
+
+```
+protofire: esp sealed 1, opened 1, the wire carried ciphertext, and the replay 0 byte(s)
+```
+
+Three facts, because ESP is broken three ways and each looks like a working
+tunnel through a different window.  **The wire carried ciphertext**: a stack
+that set the protocol number to 50 and sent the datagram unchanged is a stack
+whose peer decrypts garbage, and a counter saying "encrypted 1" would not show
+it.  **The bytes came back**: the round trip runs through `ipsec_open`, which is
+the function the demux calls.  **A repeat produced nothing**: the same payload
+delivered twice yields one delivery, which is what makes ESP a protocol and not
+a cipher.  Mutation-tested: skipping the seal prints `sealed 0 ..., PLAINTEXT,
+MISMATCH`; removing the window check prints `opened 2`; sealing with a copy
+prints `PLAINTEXT, MISMATCH`.
+
+**The loopback was a real hole, and it is closed.**  `send_datagram`'s loopback
+shortcut delivered straight to the port table, so a datagram this machine sent
+itself never saw a policy: a protected service was reachable in plaintext by
+naming the machine's own address.  The shortcut is about the card and not about
+the protocol, so a loopback send is now sealed, opened, and then delivered,
+which is also what spends the sequence number a replay would be checked
+against.
+
+`net::ipsec` is 16 host tests over both AEADs.  Two of them exist because a
+mutation showed the first version could not see the defect:
+
+- the **nonce** test asserts the twelve bytes each algorithm derives.  A round
+  trip cannot catch a wrong nonce, because a nonce derived wrongly on both
+  sides agrees with itself; the middle word is zero for [RFC 4106] and one for
+  [RFC 7634], and that difference is the whole test.
+- the **failed tag** test asserts that a forged payload does not advance the
+  window.  The window is consulted before the tag and advanced only after it
+  verifies, so a stranger cannot burn the sequence numbers the real peer is
+  about to use.
+
+AH and tunnel mode are refused with `Unsupported` rather than served: AH needs
+the mutable IPv4 fields zeroed before its sum, and tunnel mode needs a second IP
+header around the ESP one.  A refusal at the call is better than a packet the
+peer's policy drops in silence.
+
+[RFC 4106]: https://www.rfc-editor.org/rfc/rfc4106
+[RFC 7634]: https://www.rfc-editor.org/rfc/rfc7634
+
 **The timeout is measured now, not assumed.**  `RTO_INITIAL_MICROS` was the
 timeout for every stream on every path, and one second is right for no path: a
 machine on a fast wire retransmits a segment that was merely in flight, and one

@@ -459,6 +459,181 @@ pub const FILTER_STATS_SIZE: usize = size_of::<FilterStats>();
 /// it.
 pub const FILTER_STATS_ALLOWED_OFFSET: usize = offset_of!(FilterStats, packets_allowed);
 
+/// What a security policy does with a packet.
+pub const IPSEC_ACTION_BYPASS: u32 = 0;
+
+/// See [`IPSEC_ACTION_BYPASS`].
+pub const IPSEC_ACTION_DISCARD: u32 = 1;
+
+/// See [`IPSEC_ACTION_BYPASS`].
+pub const IPSEC_ACTION_PROTECT: u32 = 2;
+
+/// Which packets a security policy is about.
+pub const IPSEC_DIR_INBOUND: u32 = 1;
+
+/// See [`IPSEC_DIR_INBOUND`].
+pub const IPSEC_DIR_OUTBOUND: u32 = 2;
+
+/// See [`IPSEC_DIR_INBOUND`].
+pub const IPSEC_DIR_BOTH: u32 = 3;
+
+/// ESP: the protocol number [RFC 4303] gives it.
+///
+/// [RFC 4303]: https://www.rfc-editor.org/rfc/rfc4303
+pub const IPSEC_PROTO_ESP: u32 = 50;
+
+/// AH: the protocol number [RFC 4302] gives it.
+///
+/// Named because a caller may set it, and refused when it does: this build
+/// serves ESP and no AH, and a refusal at the call is better than an ESP
+/// packet a peer's AH policy will drop.
+///
+/// [RFC 4302]: https://www.rfc-editor.org/rfc/rfc4302
+pub const IPSEC_PROTO_AH: u32 = 51;
+
+/// Transport mode: the ESP header goes between the IP header and the payload.
+pub const IPSEC_MODE_TRANSPORT: u32 = 0;
+
+/// Tunnel mode: the whole packet is encapsulated.
+///
+/// Named and refused: it needs a second IP header around the ESP one, which
+/// this stack's senders do not compose.
+pub const IPSEC_MODE_TUNNEL: u32 = 1;
+
+/// AES-128-GCM, [RFC 4106].
+///
+/// [RFC 4106]: https://www.rfc-editor.org/rfc/rfc4106
+pub const IPSEC_AEAD_AES128_GCM: u32 = 1;
+
+/// ChaCha20-Poly1305, [RFC 7634].
+///
+/// [RFC 7634]: https://www.rfc-editor.org/rfc/rfc7634
+pub const IPSEC_AEAD_CHACHA20_POLY1305: u32 = 2;
+
+/// One security policy, as `IpsecAddSp` takes it.
+///
+/// Twelve words, the previous tree's shape.  The selector is the five-tuple: a
+/// protocol, two prefixes with their lengths, and two ports, each of which a
+/// zero leaves unconstrained.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IpsecSpDef {
+    /// Reserved, and must be zero.
+    pub flags: u32,
+    /// [`IPSEC_ACTION_BYPASS`], [`IPSEC_ACTION_DISCARD`] or
+    /// [`IPSEC_ACTION_PROTECT`].
+    pub action: u32,
+    /// [`IPSEC_DIR_INBOUND`], [`IPSEC_DIR_OUTBOUND`] or [`IPSEC_DIR_BOTH`].
+    pub direction: u32,
+    /// The IP protocol number, or zero for any.
+    pub protocol: u32,
+    /// The source prefix's address.
+    pub src_addr: [u8; 4],
+    /// How many leading bits of it are the network's.
+    pub src_prefix: u32,
+    /// The destination prefix's address.
+    pub dst_addr: [u8; 4],
+    /// How many leading bits of it are the network's.
+    pub dst_prefix: u32,
+    /// The source port, or zero for any.
+    pub src_port: u32,
+    /// The destination port, or zero for any.
+    pub dst_port: u32,
+    /// The association a `PROTECT` policy applies, which must exist when the
+    /// policy is installed.
+    pub sa_id: u32,
+    /// Reserved, and must be zero.
+    pub reserved: u32,
+}
+
+pub const IPSEC_SP_DEF_SIZE: usize = size_of::<IpsecSpDef>();
+
+/// One security association, as `IpsecAddSa` takes it.
+///
+/// The keys are inlined so the record is one flat read; only
+/// `enc_key_len`/`auth_key_len` bytes of each are meaningful.  The salt is
+/// twelve bytes in the record and four are used: [RFC 4106] and [RFC 7634]
+/// both derive a twelve-byte nonce from four bytes of salt and the sequence
+/// number, and the record leaves room for a construction that needed more.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IpsecSaDef {
+    /// Reserved, and must be zero.
+    pub flags: u32,
+    /// The Security Parameters Index, which names this association on the
+    /// wire.
+    pub spi: u32,
+    /// [`IPSEC_MODE_TRANSPORT`] is served; [`IPSEC_MODE_TUNNEL`] is refused.
+    pub mode: u32,
+    /// [`IPSEC_PROTO_ESP`] is served; [`IPSEC_PROTO_AH`] is refused.
+    pub proto: u32,
+    /// [`IPSEC_AEAD_AES128_GCM`] or [`IPSEC_AEAD_CHACHA20_POLY1305`].
+    pub aead_algo: u32,
+    /// Reserved: AH is the only protocol that uses it and this build refuses
+    /// AH.
+    pub auth_algo: u32,
+    /// How many of `enc_key` are the key: sixteen for AES-128, thirty-two for
+    /// ChaCha20.
+    pub enc_key_len: u32,
+    /// How many of `auth_key` are meaningful, which for every algorithm this
+    /// build serves is none.
+    pub auth_key_len: u32,
+    /// The encryption key.
+    pub enc_key: [u8; 32],
+    /// The authentication key, which no served algorithm uses.
+    pub auth_key: [u8; 32],
+    /// The salt the nonce's first four bytes come from.
+    pub salt: [u8; 12],
+    /// Reserved: the selector belongs to the policy, and this is the
+    /// association's own address, which transport mode does not add to a
+    /// packet.
+    pub src_addr: [u8; 4],
+    /// See [`IpsecSaDef::src_addr`].
+    pub dst_addr: [u8; 4],
+    /// Reserved: tunnel mode's outer addresses, and tunnel mode is refused.
+    pub tunnel_src: [u8; 4],
+    /// See [`IpsecSaDef::tunnel_src`].
+    pub tunnel_dst: [u8; 4],
+    /// Reserved: a lifetime needs a clock and a byte count that this build
+    /// does not enforce, and an expired association is one a program removes.
+    pub lifetime_bytes: u64,
+    /// See [`IpsecSaDef::lifetime_bytes`].
+    pub lifetime_ticks: u64,
+}
+
+pub const IPSEC_SA_DEF_SIZE: usize = size_of::<IpsecSaDef>();
+
+/// What `IpsecGetStats` answers.
+///
+/// Four counters and the two table sizes.  The counters are sixty-four-bit
+/// because a machine that has been running for a day has encrypted more
+/// packets than a word holds, and `integrity_failures` and `replay_drops` are
+/// separate because they are two different failures: a tag that did not verify
+/// is a packet that was not the peer's, and a refused sequence is a packet
+/// that was and arrived twice.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IpsecStats {
+    /// How many policies are installed.
+    pub policies: u32,
+    /// How many associations are installed.
+    pub associations: u32,
+    /// Reserved, and must be zero.
+    pub reserved0: u32,
+    /// Reserved, and must be zero.
+    pub reserved1: u32,
+    /// Packets ESP encapsulated.
+    pub esp_encrypted: u64,
+    /// Packets ESP decapsulated.
+    pub esp_decrypted: u64,
+    /// Payloads whose tag did not verify.
+    pub integrity_failures: u64,
+    /// Sequences the replay window refused.
+    pub replay_drops: u64,
+}
+
+pub const IPSEC_STATS_SIZE: usize = size_of::<IpsecStats>();
+
 /// A virtual interface's flag: this one is the host's own delivery.
 ///
 /// The number the previous tree published, kept because it is a value a

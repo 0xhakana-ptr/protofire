@@ -1683,6 +1683,75 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // The IPsec records: three calls take one and the other two name words.
+    // `IpsecAddSp` and `IpsecAddSa` read a record, and `IpsecGetStats` writes
+    // one, so all three take the buffer the trap path can validate; one branch
+    // because they differ only in which size they state.
+    if number == SyscallNumber::IpsecAddSp as usize
+        || number == SyscallNumber::IpsecAddSa as usize
+        || number == SyscallNumber::IpsecGetStats as usize
+    {
+        let (record, length) = (call.arguments[0], call.arguments[1]);
+        if length == 0
+            || length
+                > abi::network::IPSEC_SP_DEF_SIZE
+                    .max(abi::network::IPSEC_SA_DEF_SIZE)
+                    .max(abi::network::IPSEC_STATS_SIZE)
+            || !crate::address_space::is_user_range(record, length)
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handlers read or
+        // write one record, each against the size it states.
+        let buffer = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(buffer));
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(match number {
+                n if n == SyscallNumber::IpsecAddSp as usize => " added a security policy, id ",
+                n if n == SyscallNumber::IpsecAddSa as usize => {
+                    " added a security association, id "
+                }
+                _ => " read the ipsec statistics, ",
+            });
+            if refused {
+                arch::serial::write_str("refused\n");
+            } else {
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return outcome;
+    }
+
+    // IPsec's two removals: a policy by id and an association by SPI.
+    if number == SyscallNumber::IpsecDelSp as usize || number == SyscallNumber::IpsecDelSa as usize
+    {
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if number == SyscallNumber::IpsecDelSp as usize {
+                " removed a security policy"
+            } else {
+                " removed a security association"
+            });
+            arch::serial::write_str(if refused { ", refused\n" } else { "\n" });
+        }
+        return outcome;
+    }
+
     // The four multicast calls that name words: the switch's two, and the two
     // removals.  Nothing here turns a word into a borrow, so the registry is
     // reached with no buffer.

@@ -307,6 +307,30 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::MrtDelMfc,
         crate::syscall::mrt_del_mfc,
     );
+    // IPsec's five.  `IpsecAddSp` and `IpsecAddSa` take a record, so their
+    // buffers are borrowed in the trap path; `IpsecGetStats` writes one.  The
+    // two removals name words: a policy by its id and an association by the SPI
+    // a manager has, which is in every packet on the wire.
+    table.register(
+        ::syscall::SyscallNumber::IpsecAddSp,
+        crate::syscall::ipsec_add_sp,
+    );
+    table.register(
+        ::syscall::SyscallNumber::IpsecDelSp,
+        crate::syscall::ipsec_del_sp,
+    );
+    table.register(
+        ::syscall::SyscallNumber::IpsecAddSa,
+        crate::syscall::ipsec_add_sa,
+    );
+    table.register(
+        ::syscall::SyscallNumber::IpsecDelSa,
+        crate::syscall::ipsec_del_sa,
+    );
+    table.register(
+        ::syscall::SyscallNumber::IpsecGetStats,
+        crate::syscall::ipsec_get_stats,
+    );
     table.register(
         ::syscall::SyscallNumber::MacSetMode,
         crate::syscall::mac_set_mode,

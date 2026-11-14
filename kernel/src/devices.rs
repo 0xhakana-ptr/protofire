@@ -947,6 +947,15 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
+    // IPsec: ESP sealing what leaves, the demux recovering it, and the replay
+    // window dropping the second copy.  The three are one exchange because a
+    // tunnel is broken three ways and each looks like a working one: a
+    // protocol number with the plaintext still inside, a cipher that does not
+    // round trip through the demux, and a window that lets a repeat through.
+    if !crate::net::ipsec_probe() {
+        return false;
+    }
+
     // The raw socket: a protocol number instead of a port, a packet this
     // machine sends itself, and the demux handing it back.  The source address
     // on the packet it receives is the stack's, which is what says the header

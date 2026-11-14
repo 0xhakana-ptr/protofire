@@ -674,6 +674,14 @@ impl Machine {
                     "protofire: multicast forwarded 1 frame(s), ttl 5 -> 4, payload intact",
                     true,
                 ),
+                // IPsec's ESP, in one exchange: the wire carried ciphertext,
+                // the demux recovered the bytes, and a repeat of the same frame
+                // did not arrive twice.  A protocol number with the plaintext
+                // still inside passes a counter and not this.
+                (
+                    "protofire: esp sealed 1, opened 1, the wire carried ciphertext, and the replay 0 byte(s)",
+                    true,
+                ),
                 // The frame path's data offset: two TCP segments through the
                 // demux, one carrying an option and one not, and a stream
                 // holding their data and neither header.  Every other exchange
@@ -1426,6 +1434,10 @@ impl Machine {
                         true,
                     ),
                     (
+                        "protofire: esp sealed 1, opened 1, the wire carried ciphertext, and the replay 0 byte(s)",
+                        true,
+                    ),
+                    (
                         "protofire: frame data 8 byte(s) sent, 8 held, the headers stayed out of the stream",
                         true,
                     ),
@@ -1470,6 +1482,10 @@ impl Machine {
                     ),
                     (
                         "protofire: multicast forwarded 1 frame(s), ttl 5 -> 4, payload intact",
+                        true,
+                    ),
+                    (
+                        "protofire: esp sealed 1, opened 1, the wire carried ciphertext, and the replay 0 byte(s)",
                         true,
                     ),
                     (
@@ -1921,6 +1937,14 @@ impl Machine {
                 // each looks right through a different window.
                 (
                     "protofire: multicast forwarded 1 frame(s), ttl 5 -> 4, payload intact",
+                    true,
+                ),
+                // IPsec's ESP, in one exchange: the wire carried ciphertext,
+                // the demux recovered the bytes, and a repeat of the same frame
+                // did not arrive twice.  A protocol number with the plaintext
+                // still inside passes a counter and not this.
+                (
+                    "protofire: esp sealed 1, opened 1, the wire carried ciphertext, and the replay 0 byte(s)",
                     true,
                 ),
                 // The frame path's data offset: two TCP segments through the

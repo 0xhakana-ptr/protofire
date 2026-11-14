@@ -12,6 +12,12 @@ license.workspace = true
 # It names no driver: that is the whole point of `netdev` existing, and the reason
 # `virtio_net` no longer carries an ARP message — a driver that knows what an
 # ARP is cannot be replaced by a second driver without copying the protocol.
+#
+# It names `crypto` for one reason: ESP is authenticated encryption, and the
+# cipher is not a wire format.  A stack that carried its own AES would be a
+# second implementation of a primitive the tree already has, and the one place a
+# stack and a cipher meet is the ESP header, which is this crate's.
 [dependencies]
 abi.workspace = true
+crypto = { path = "../libs/crypto" }
 netdev = { path = "../devices/netdev" }

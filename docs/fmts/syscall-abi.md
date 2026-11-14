@@ -391,6 +391,52 @@ the way a pipe's reader parks, and answers zero, end of file, once the
 stream's connection is gone, which an orderly close's last acknowledgement
 is what leaves behind.
 
+IPsec's five calls install the two databases ESP reads.  They are a manager's
+interface like the multicast ones: nothing here negotiates, and IKE is the
+protocol that would.
+
+- **`IpsecAddSp`**, `a0` the record; `a1` its length, exactly
+  `IPSEC_SP_DEF_SIZE`; `a2`-`a5` reserved zero.  Answers the policy's id.  The
+  list is **ordered and the first match wins**, which is what makes a narrow
+  rule written above a broad one decide.  A `PROTECT` policy must name an
+  association that exists at the moment it is installed: one installed ahead of
+  its association would match a packet and have nothing to apply, and the two
+  readings of that are sending plaintext and dropping in silence.
+- **`IpsecDelSp`**, `a0` the id; `a1`-`a5` reserved zero.  Answers zero, or
+  `NotFound`.
+- **`IpsecAddSa`**, `a0` the record; `a1` its length, exactly
+  `IPSEC_SA_DEF_SIZE`; `a2`-`a5` reserved zero.  Answers the association's id.
+  An SPI another association holds is `AlreadyExists`, because the SPI is what
+  names an association **on the wire** and two with one SPI would make an
+  arriving packet belong to both.  Transport-mode ESP with AES-128-GCM or
+  ChaCha20-Poly1305 is served; **AH and tunnel mode are `Unsupported`**, which
+  is a different refusal from `InvalidArgument`: the machine understood the
+  request and will not, and an ESP packet sent where a tunnel was asked for is
+  one the peer's endpoint drops in silence.
+- **`IpsecDelSa`**, `a0` the SPI; `a1`-`a5` reserved zero.  The SPI and not the
+  id, because the SPI is what a manager has: it is in every packet on the wire.
+  The policies that named the association are removed with it, because a policy
+  whose association is gone would match a packet and have nothing to apply.
+- **`IpsecGetStats`**, `a0` the record; `a1` its length, exactly
+  `IPSEC_STATS_SIZE`; `a2`-`a5` reserved zero.  Four counters and the two table
+  sizes.  `integrity_failures` and `replay_drops` are separate because they are
+  two failures: a tag that did not verify is a packet that was not the peer's,
+  and a refused sequence is a packet that was and arrived twice.
+
+**What the wire carries.**  An outbound datagram a policy protects is built
+first and encapsulated second, so the ports a selector names are the ones in
+its UDP header.  The IP header's protocol becomes ESP's 50 and the payload
+becomes `SPI`, sequence, the encrypted `inner || pad || pad_len || next_header`,
+and the tag; the tag covers `SPI || sequence` as associated data, which is what
+stops a replayed header from being accepted with a fresh one around it.
+
+**A loopback send is still protected.**  The shortcut in `send_datagram` is
+about the card and not about the protocol: a datagram this machine sends itself
+is one that would have left under a policy and arrived under one, and a
+loopback that skipped both would be a machine where a protected service was
+reachable in plaintext by naming its own address.  So it is sealed, opened
+again, and then delivered.
+
 The multicast routing calls, six numbers above the frozen boundary, are a
 manager's interface: they install the tables a forwarding decision reads, and
 they do not speak a membership protocol.  IGMP and MLD are how a link tells a

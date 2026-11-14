@@ -147,8 +147,8 @@
 //! there are two interfaces, the route gains one field and the lookup one
 //! comparison.
 //!
-//! What is also absent is every protocol this crate does not name: DCCP,
-//! IPsec, TLS, multicast routing.  Those are numbers above the frozen range
+//! What is also absent is every protocol this crate does not name: DCCP and
+//! TLS.  Those are numbers above the frozen range
 //! and each is its own stack, which is why `docs/roadmap.md` lists them as
 //! work rather than as gaps in this one.
 //!
@@ -193,6 +193,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod filter;
 pub mod internet;
+pub mod ipsec;
 pub mod link;
 pub mod multicast;
 pub mod route;
@@ -225,6 +226,11 @@ pub use multicast::Cache;
 pub use multicast::Forwarding;
 pub use multicast::Interfaces;
 pub use multicast::Vif;
+
+pub use ipsec::Aead;
+pub use ipsec::Association;
+pub use ipsec::Outcome;
+pub use ipsec::Tables;
 
 pub use transport::local;
 pub use transport::options;

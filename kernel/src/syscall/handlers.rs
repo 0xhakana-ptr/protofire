@@ -1759,6 +1759,198 @@ fn read_mrt_mfc(buffer: &[u8]) -> Result<network_abi::MrtMfcDef> {
     })
 }
 
+/// Add a security policy, and answer its id.
+///
+/// Arguments: the record, its length, then four reserved slots.  A `PROTECT`
+/// policy must name an association that exists at the moment it is installed:
+/// a policy installed ahead of its association would match a packet and have
+/// nothing to apply, and the two readings of that are sending plaintext and
+/// dropping in silence.
+pub fn ipsec_add_sp(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 3)?;
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if buffer.len() != network_abi::IPSEC_SP_DEF_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+    let record = read_ipsec_sp(buffer)?;
+    let id = crate::net::ipsec_add_sp(&record)?;
+    Ok(Dispatch::complete(id as usize))
+}
+
+/// Remove a security policy by id.
+///
+/// Arguments: the id, then five reserved slots.  Answers zero, or `NotFound`
+/// when no policy had that id.
+pub fn ipsec_del_sp(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let id = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if id > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    crate::net::ipsec_del_sp(id as u32)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Add a security association, and answer its id.
+///
+/// Arguments: the record, its length, then four reserved slots.  The record is
+/// [`abi::network::IpsecSaDef`], and this build serves transport-mode ESP with
+/// either AEAD: something else is refused when the association is built, which
+/// is where the record's own words are read.
+pub fn ipsec_add_sa(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 3)?;
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if buffer.len() != network_abi::IPSEC_SA_DEF_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+    let record = read_ipsec_sa(buffer)?;
+    let id = crate::net::ipsec_add_sa(&record)?;
+    Ok(Dispatch::complete(id as usize))
+}
+
+/// Remove a security association by SPI.
+///
+/// Arguments: the SPI, then five reserved slots.  The SPI is what a manager
+/// has, because it is in every packet on the wire; an id is this machine's
+/// private number.  The policies that named the association go with it.
+pub fn ipsec_del_sa(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let spi = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if spi > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    crate::net::ipsec_del_sa(spi as u32)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Read IPsec's statistics into the caller's record.
+///
+/// Arguments: the record, its length, then four reserved slots.  The four
+/// counters are separate because they are different failures: see
+/// [`abi::network::IpsecStats`].
+pub fn ipsec_get_stats(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 3)?;
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() != network_abi::IPSEC_STATS_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+    let (policies, associations, sealed, opened, integrity, replay) = crate::net::ipsec_status();
+    write_ipsec_stats(
+        buffer,
+        policies as u32,
+        associations as u32,
+        sealed,
+        opened,
+        integrity,
+        replay,
+    );
+    Ok(Dispatch::complete(0))
+}
+
+/// Read an [`abi::network::IpsecSpDef`] out of a caller's bytes.
+fn read_ipsec_sp(buffer: &[u8]) -> Result<network_abi::IpsecSpDef> {
+    let word = |at: usize| -> Result<u32> {
+        let bytes = buffer.get(at..at + 4).ok_or(Error::InvalidArgument)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let address = |at: usize| -> Result<[u8; 4]> {
+        let bytes = buffer.get(at..at + 4).ok_or(Error::InvalidArgument)?;
+        let mut address = [0_u8; 4];
+        address.copy_from_slice(bytes);
+        Ok(address)
+    };
+    Ok(network_abi::IpsecSpDef {
+        flags: word(0)?,
+        action: word(4)?,
+        direction: word(8)?,
+        protocol: word(12)?,
+        src_addr: address(16)?,
+        src_prefix: word(20)?,
+        dst_addr: address(24)?,
+        dst_prefix: word(28)?,
+        src_port: word(32)?,
+        dst_port: word(36)?,
+        sa_id: word(40)?,
+        reserved: word(44)?,
+    })
+}
+
+/// Read an [`abi::network::IpsecSaDef`] out of a caller's bytes.
+fn read_ipsec_sa(buffer: &[u8]) -> Result<network_abi::IpsecSaDef> {
+    let word = |at: usize| -> Result<u32> {
+        let bytes = buffer.get(at..at + 4).ok_or(Error::InvalidArgument)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    };
+    let wide = |at: usize| -> Result<u64> {
+        let bytes = buffer.get(at..at + 8).ok_or(Error::InvalidArgument)?;
+        let mut wide = [0_u8; 8];
+        wide.copy_from_slice(bytes);
+        Ok(u64::from_le_bytes(wide))
+    };
+    let array = |at: usize, into: &mut [u8]| -> Result<()> {
+        let bytes = buffer
+            .get(at..at + into.len())
+            .ok_or(Error::InvalidArgument)?;
+        into.copy_from_slice(bytes);
+        Ok(())
+    };
+    let mut record = network_abi::IpsecSaDef {
+        flags: word(0)?,
+        spi: word(4)?,
+        mode: word(8)?,
+        proto: word(12)?,
+        aead_algo: word(16)?,
+        auth_algo: word(20)?,
+        enc_key_len: word(24)?,
+        auth_key_len: word(28)?,
+        enc_key: [0; 32],
+        auth_key: [0; 32],
+        salt: [0; 12],
+        src_addr: [0; 4],
+        dst_addr: [0; 4],
+        tunnel_src: [0; 4],
+        tunnel_dst: [0; 4],
+        lifetime_bytes: 0,
+        lifetime_ticks: 0,
+    };
+    array(32, &mut record.enc_key)?;
+    array(64, &mut record.auth_key)?;
+    array(96, &mut record.salt)?;
+    array(108, &mut record.src_addr)?;
+    array(112, &mut record.dst_addr)?;
+    array(116, &mut record.tunnel_src)?;
+    array(120, &mut record.tunnel_dst)?;
+    record.lifetime_bytes = wide(124)?;
+    record.lifetime_ticks = wide(132)?;
+    Ok(record)
+}
+
+/// Write an [`abi::network::IpsecStats`] at the start of a validated buffer.
+fn write_ipsec_stats(
+    buffer: &mut [u8],
+    policies: u32,
+    associations: u32,
+    sealed: u64,
+    opened: u64,
+    integrity: u64,
+    replay: u64,
+) {
+    for (index, word) in [policies, associations, 0, 0].iter().enumerate() {
+        let at = index * 4;
+        buffer[at..at + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    for (index, counter) in [sealed, opened, integrity, replay].iter().enumerate() {
+        let at = 16 + index * 8;
+        buffer[at..at + 8].copy_from_slice(&counter.to_le_bytes());
+    }
+}
+
 /// The socket a descriptor names, or the error that says why there is none.
 ///
 /// A descriptor that names a file or a pipe is `InvalidArgument` and not

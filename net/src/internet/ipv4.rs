@@ -56,6 +56,16 @@ pub const PROTOCOL_TCP: u8 = 6;
 /// `protocol` value 17: UDP.
 pub const PROTOCOL_UDP: u8 = 17;
 
+/// IPsec's Encapsulating Security Payload, [RFC 4303].
+///
+/// The number is the protocol the IP header carries when its payload is an ESP
+/// header rather than a transport's: a receiver reads it and hands the payload
+/// to the association that SPI names, which is why this number and the SPI are
+/// the two things an ESP packet is recognised by.
+///
+/// [RFC 4303]: https://www.rfc-editor.org/rfc/rfc4303
+pub const PROTOCOL_ESP: u8 = 50;
+
 /// The don't-fragment flag, set on every packet this stack sends.
 ///
 /// A packet this stack sends fits one frame, so nothing it emits ever needs

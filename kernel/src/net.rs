@@ -869,20 +869,72 @@ pub fn send_datagram(
     bytes: &[u8],
 ) -> Result<()> {
     if is_loopback(destination) {
-        let local = {
+        let (local, protocol_number) = {
             let interface = INTERFACE.lock();
             let Some(interface) = interface.as_ref() else {
                 return Err(Error::NotFound);
             };
-            match destination {
-                net::address::Address::V4(_) => net::address::Address::V4(interface.protocol),
-                net::address::Address::V6(_) => net::address::Address::V6(interface.ipv6),
-            }
+            (
+                match destination {
+                    net::address::Address::V4(_) => net::address::Address::V4(interface.protocol),
+                    net::address::Address::V6(_) => net::address::Address::V6(interface.ipv6),
+                },
+                interface.protocol,
+            )
         };
         // The sender the datagram names is this machine: the wire would have
         // seen the frame leave with this address, and the receiver's answer
         // says the same thing.
-        return deliver_udp(destination, destination_port, local, source_port, bytes).map(|_| ());
+        //
+        // **A policy still applies.**  The shortcut is about the card and not
+        // about the protocol: a datagram this machine sends itself is a
+        // datagram that would have left under a policy and arrived under one,
+        // and a loopback that skipped both would be a machine where a protected
+        // service was reachable in plaintext by naming its own address.  So the
+        // datagram is sealed when a policy says so, opened again on the way in
+        // (which is what spends a sequence number and advances the window, and
+        // so is what a replay would be checked against), and only then
+        // delivered.
+        let mut datagram = alloc::vec![0; net::udp::datagram_len(bytes.len())];
+        net::udp::write_datagram(
+            &mut datagram,
+            protocol_number,
+            match destination {
+                net::address::Address::V4(bytes) => bytes,
+                net::address::Address::V6(_) => protocol_number,
+            },
+            source_port,
+            destination_port,
+            bytes,
+        );
+        let sealed = ipsec_seal(
+            protocol_number,
+            match destination {
+                net::address::Address::V4(bytes) => bytes,
+                net::address::Address::V6(_) => protocol_number,
+            },
+            net::ipv4::PROTOCOL_UDP,
+            Some((source_port, destination_port)),
+            &datagram,
+        )?;
+        let payload = match sealed {
+            Some(esp) => {
+                // Opened by the same demux path a frame from the card takes, so
+                // what is delivered is what a peer would have recovered.
+                let Some((inner, _)) = ipsec_open(&esp) else {
+                    return Err(Error::PermissionDenied);
+                };
+                inner
+            }
+            None => datagram,
+        };
+        // The UDP header inside is this machine's own, and the datagram the
+        // queue wants is what follows it.
+        if payload.len() < net::udp::HEADER_LEN {
+            return Err(Error::InvalidArgument);
+        }
+        let data = &payload[net::udp::HEADER_LEN..];
+        return deliver_udp(destination, destination_port, local, source_port, data).map(|_| ());
     }
 
     let interface = INTERFACE.lock();
@@ -896,7 +948,44 @@ pub fn send_datagram(
     match destination {
         net::address::Address::V4(destination) => {
             let gateway_hardware = hardware_for_v4(interface, destination)?;
-            let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
+
+            // The datagram is built first and encapsulated second, because the
+            // policy the encapsulation follows is about the datagram: the ports
+            // a selector names are in the UDP header, and a lookup that ran
+            // before the header existed would have no ports to ask about.
+            let mut datagram = alloc::vec![0; udp_len];
+            net::udp::write_datagram(
+                &mut datagram,
+                protocol,
+                destination,
+                source_port,
+                destination_port,
+                bytes,
+            );
+
+            // ESP, when a policy says so.  The protocol number the IP header
+            // carries becomes ESP's, and the payload becomes the encapsulated
+            // one: what the peer reads as a transport is the peer's own
+            // decapsulation, not this machine's UDP.
+            let (ip_protocol, payload_len, sealed) = match ipsec_seal(
+                protocol,
+                destination,
+                net::ipv4::PROTOCOL_UDP,
+                Some((source_port, destination_port)),
+                &datagram,
+            )? {
+                Some(esp) => {
+                    let length = esp.len();
+                    (net::ipv4::PROTOCOL_ESP, length, Some(esp))
+                }
+                None => (net::ipv4::PROTOCOL_UDP, udp_len, None),
+            };
+            let payload: &[u8] = match &sealed {
+                Some(esp) => esp,
+                None => &datagram,
+            };
+
+            let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + payload_len;
             let mut frame = alloc::vec![0; packet_len];
             net::ethernet::write_header(
                 &mut frame,
@@ -908,24 +997,17 @@ pub fn send_datagram(
                 &mut frame[netdev::ETHERNET_HEADER_LEN..],
                 protocol,
                 destination,
-                net::ipv4::PROTOCOL_UDP,
-                udp_len,
+                ip_protocol,
+                payload_len,
             );
-            net::udp::write_datagram(
-                &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
-                protocol,
-                destination,
-                source_port,
-                destination_port,
-                bytes,
-            );
+            frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..].copy_from_slice(payload);
             submit_filtered(
                 card.as_ref(),
                 &frame,
                 &net::filter::Packet::v4(
                     protocol,
                     destination,
-                    net::ipv4::PROTOCOL_UDP,
+                    ip_protocol,
                     &frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
                 ),
             )
@@ -1174,6 +1256,40 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
         return;
     }
 
+    // ESP is decapsulated here, before any transport reads a byte, and it is
+    // the one arriving protocol whose payload is **not** what the header
+    // claims: the IP header says 50 and the bytes inside are a UDP or TCP
+    // header this machine has to be told about.  A stack that demultiplexed on
+    // the outer number would deliver every protected packet to a protocol
+    // nothing listens on.
+    //
+    // A packet that fails its tag, or whose sequence the window refuses, is
+    // **dropped here**: the checks that would have run on the plaintext are
+    // checks on bytes an attacker chose, and running them is the defect ESP
+    // exists to prevent.
+    // ESP is decapsulated here, before any transport reads a byte, and it is
+    // the one arriving protocol whose payload is **not** what the header
+    // claims: the IP header says 50 and the bytes inside are a UDP or TCP
+    // header this machine has to be told about.  A stack that demultiplexed on
+    // the outer number would deliver every protected packet to a protocol
+    // nothing listens on.
+    //
+    // A packet that fails its tag, or whose sequence the window refuses, is
+    // **dropped here**: the checks that would have run on the plaintext are
+    // checks on bytes an attacker chose, and running them is the defect ESP
+    // exists to prevent.
+    let decapsulated: alloc::vec::Vec<u8>;
+    let (protocol_number, payload): (u8, &[u8]) =
+        if packet.header.protocol == net::ipv4::PROTOCOL_ESP {
+            let Some((inner, next_header)) = ipsec_open(payload) else {
+                return;
+            };
+            decapsulated = inner;
+            (next_header, &decapsulated[..])
+        } else {
+            (packet.header.protocol, payload)
+        };
+
     // A piece of a larger packet is held rather than read as the whole: the
     // bytes at an offset are not a segment, and parsing them as one is how a
     // stack answers with a truncated segment that looks complete.  The last
@@ -1207,7 +1323,7 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
         payload
     };
 
-    if packet.header.protocol == net::ipv4::PROTOCOL_UDP
+    if protocol_number == net::ipv4::PROTOCOL_UDP
         && let Some(datagram) =
             net::udp::parse(payload, packet.header.source, packet.header.destination)
     {
@@ -1237,7 +1353,7 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
             answer_port_unreachable(&packet, original_header, &payload[data_at..]);
         }
     }
-    if packet.header.protocol == net::ipv4::PROTOCOL_TCP && demux_tcp(packet, payload) {
+    if protocol_number == net::ipv4::PROTOCOL_TCP && demux_tcp(packet, payload) {
         // The same wake a datagram delivery makes, from the same kind of
         // context: the table's lock is down, the scheduler's is next.
         let woken = crate::scheduler::wake_blocked();
@@ -1252,7 +1368,7 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
         #[cfg(not(target_os = "none"))]
         let _ = woken;
     }
-    if packet.header.protocol == net::ipv4::PROTOCOL_ICMP {
+    if protocol_number == net::ipv4::PROTOCOL_ICMP {
         handle_icmp(&packet, payload);
     }
 
@@ -1264,7 +1380,7 @@ fn demux(frame: &[u8], protocol: [u8; 4]) {
     // deflected a packet to a raw socket would be a stack whose own protocols
     // changed meaning when a program opened a socket.
     let kept = deliver_raw(
-        packet.header.protocol,
+        protocol_number,
         net::address::Address::V4(packet.header.source),
         payload,
     );
@@ -2300,6 +2416,129 @@ fn fragment_now() -> u64 {
 }
 
 static TCP: Mutex<net::tcp_table::Table> = Mutex::new(net::tcp_table::Table::new());
+
+/// IPsec's two databases.
+///
+/// The encapsulation is [`net::ipsec`]'s and the lock is here, the arrangement
+/// every other table in this file uses.  What this file decides is **where**
+/// the decision is asked: on the send path before a frame is composed, and on
+/// the receive path before a packet's payload is read.
+static IPSEC: Mutex<net::ipsec::Tables> = Mutex::new(net::ipsec::Tables::new());
+
+/// Add a security policy, answering its id.
+pub fn ipsec_add_sp(record: &abi::network::IpsecSpDef) -> Result<u32> {
+    IPSEC.lock().add_policy(record)
+}
+
+/// Remove a security policy by id.
+pub fn ipsec_del_sp(id: u32) -> Result<()> {
+    if !IPSEC.lock().remove_policy(id) {
+        return Err(Error::NotFound);
+    }
+    Ok(())
+}
+
+/// Add a security association, answering its id.
+pub fn ipsec_add_sa(record: &abi::network::IpsecSaDef) -> Result<u32> {
+    IPSEC.lock().add_association(record)
+}
+
+/// Remove a security association by SPI, and the policies that named it.
+pub fn ipsec_del_sa(spi: u32) -> Result<()> {
+    if !IPSEC.lock().remove_association(spi) {
+        return Err(Error::NotFound);
+    }
+    Ok(())
+}
+
+/// What the two databases have done, as `IpsecGetStats` reports it.
+pub fn ipsec_status() -> (usize, usize, u64, u64, u64, u64) {
+    let tables = IPSEC.lock();
+    let (policies, associations) = tables.counts();
+    let (sealed, opened, integrity, replay) = tables.statistics();
+    (policies, associations, sealed, opened, integrity, replay)
+}
+
+/// Decapsulate one arriving ESP payload, answering the bytes inside and what
+/// they were.
+///
+/// `None` is the packet the demux drops: an SPI no association names, a tag
+/// that did not verify, a sequence the window refused, or a payload too short
+/// to be an ESP packet.  Every one of them is a **silent** drop, which is what
+/// ESP is for: a receiver that answered a bad packet would tell a stranger
+/// which part of it was wrong, and the whole construction exists to give that
+/// stranger nothing.
+///
+/// The counters are the diagnostic a boot's line reads, and they are separate
+/// on purpose: an integrity failure is a packet that was not the peer's, and a
+/// replay drop is a packet that was and arrived twice.
+fn ipsec_open(payload: &[u8]) -> Option<(Vec<u8>, u8)> {
+    let mut tables = IPSEC.lock();
+    // The SPI is the first four bytes and it is what names the association on
+    // the wire, so it is read before anything else is trusted.
+    if payload.len() < 4 {
+        return None;
+    }
+    let spi = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    let association = tables.by_spi_mut(spi)?;
+    match association.open(payload) {
+        Ok((inner, next_header)) => {
+            tables.note_opened();
+            Some((inner, next_header))
+        }
+        Err(Error::PermissionDenied) => {
+            // The two failures share a word from the association's side and
+            // not from a boot's: a sequence the window refused is a replay,
+            // and one whose tag failed is an integrity failure.  The window is
+            // asked before the tag, so a payload whose sequence was already
+            // accepted is counted as a replay without its tag being checked.
+            tables.note_replay_drop();
+            None
+        }
+        Err(_) => {
+            tables.note_integrity_failure();
+            None
+        }
+    }
+}
+
+/// Encapsulate one outbound payload under the association a policy names.
+///
+/// Answers `None` when nothing protects it, which is the bypass and the
+/// no-match case both: the caller sends plaintext.  Answers `Some` with the ESP
+/// payload when a policy protects it.  `Discard` never reaches this function,
+/// because a caller that matched a discard policy does not build a frame at
+/// all.
+///
+/// The lookup asks the same question the sender would: the five-tuple, with the
+/// ports read from the transport header the caller is about to send.  A caller
+/// that has no ports passes `None`, and a policy that names a port does not
+/// match it, which is the rule every selector in this tree follows.
+fn ipsec_seal(
+    source: [u8; 4],
+    destination: [u8; 4],
+    protocol: u8,
+    ports: Option<(u16, u16)>,
+    inner: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    let mut tables = IPSEC.lock();
+    match tables.outbound(source, destination, protocol, ports) {
+        net::ipsec::Outcome::Bypass => Ok(None),
+        net::ipsec::Outcome::Discard => Err(Error::PermissionDenied),
+        net::ipsec::Outcome::Protect(id) => {
+            let Some(association) = tables.association_mut(id) else {
+                // A policy whose association is gone is a state the table's own
+                // removal prevents, and reaching it means the two tables
+                // disagreed: refusing is the one answer that cannot send
+                // plaintext.
+                return Err(Error::NotFound);
+            };
+            let sealed = association.seal(inner, protocol)?;
+            tables.note_sealed();
+            Ok(Some(sealed))
+        }
+    }
+}
 
 /// Multicast routing's two tables, and the one machine-wide switch that says
 /// whether forwarding happens at all.
@@ -4579,6 +4818,204 @@ impl LinkDevice for CountingCard {
     fn maximum_frame_len(&self) -> usize {
         1514
     }
+}
+
+/// Prove that ESP encrypts what leaves and recovers it on arrival, and that a
+/// repeat of one packet does not arrive twice.
+///
+/// Three facts, because ESP is broken three ways and each looks like a working
+/// tunnel through a different window.  The frame the card is given must not
+/// **contain** the plaintext: a stack that set the protocol number to ESP and
+/// sent the datagram unchanged is a stack whose peer decrypts garbage, and a
+/// counter saying "encrypted 1" would not show it.  The demux must **recover**
+/// the exact bytes: a round trip through the seal and open is a host test, and
+/// through the demux is the wiring.  And the same frame delivered twice must
+/// produce **one** delivery: the replay window is what makes ESP a protocol and
+/// not a cipher.
+#[cfg(target_os = "none")]
+pub fn ipsec_probe() -> bool {
+    const PORT: u16 = 9_108;
+    const SPI: u32 = 0x0000_2A2A;
+    const PAYLOAD: &[u8] = b"secret";
+
+    let local = {
+        let interface = INTERFACE.lock();
+        let Some(interface) = interface.as_ref() else {
+            return false;
+        };
+        interface.protocol
+    };
+    // A destination that is **not** this machine, so the frame reaches the card
+    // the probe reads.  A send to the loopback is a send the stack delivers
+    // itself, and the sealed bytes it would produce are never composed into a
+    // frame: ESP is proven on the wire or not at all.
+    let peer = [10, 0, 2, 2];
+
+    // An association and a policy that protects every packet leaving this
+    // machine for the peer.
+    let mut sa = abi::network::IpsecSaDef {
+        flags: 0,
+        spi: SPI,
+        mode: abi::network::IPSEC_MODE_TRANSPORT,
+        proto: abi::network::IPSEC_PROTO_ESP,
+        aead_algo: abi::network::IPSEC_AEAD_AES128_GCM,
+        auth_algo: 0,
+        enc_key_len: 16,
+        auth_key_len: 0,
+        enc_key: [0; 32],
+        auth_key: [0; 32],
+        salt: [0; 12],
+        src_addr: [0; 4],
+        dst_addr: [0; 4],
+        tunnel_src: [0; 4],
+        tunnel_dst: [0; 4],
+        lifetime_bytes: 0,
+        lifetime_ticks: 0,
+    };
+    for (index, byte) in sa.enc_key[..16].iter_mut().enumerate() {
+        *byte = (index as u8).wrapping_mul(7).wrapping_add(3);
+    }
+    sa.salt[..4].copy_from_slice(&[0x5A, 0x5B, 0x5C, 0x5D]);
+    let Ok(association) = ipsec_add_sa(&sa) else {
+        return false;
+    };
+    let policy = abi::network::IpsecSpDef {
+        flags: 0,
+        action: abi::network::IPSEC_ACTION_PROTECT,
+        direction: abi::network::IPSEC_DIR_BOTH,
+        protocol: u32::from(net::ipv4::PROTOCOL_UDP),
+        src_addr: [0; 4],
+        src_prefix: 0,
+        dst_addr: [0; 4],
+        dst_prefix: 0,
+        src_port: 0,
+        dst_port: PORT as u32,
+        sa_id: association,
+        reserved: 0,
+    };
+    if ipsec_add_sp(&policy).is_err() {
+        let _ = ipsec_del_sa(SPI);
+        return false;
+    }
+
+    // A bound port to receive what the demux recovers.
+    let Ok(socket) = bind_udp(PORT) else {
+        let _ = ipsec_del_sa(SPI);
+        return false;
+    };
+
+    // The sending half, through the real send path but against a card that
+    // records: what the wire would carry is what this reads.
+    let recorded = Arc::new(RecordingCard::new());
+    let original = {
+        let mut interface = INTERFACE.lock();
+        let Some(interface) = interface.as_mut() else {
+            let _ = ipsec_del_sa(SPI);
+            return false;
+        };
+        let original = interface.card.clone();
+        interface.card = recorded.clone();
+        original
+    };
+    // The route to `peer` goes through the gateway, and a frame with no
+    // hardware address is a frame the card cannot carry: the cache entry is
+    // made up, exactly as the route probe's is.
+    {
+        let mut interface = INTERFACE.lock();
+        if let Some(interface) = interface.as_mut() {
+            interface
+                .arp
+                .learn(interface.gateway, [0x02, 0, 0, 0, 0, 0x03]);
+        }
+    }
+    let sent = send_datagram(net::address::Address::V4(peer), PORT, PORT, PAYLOAD).is_ok();
+    {
+        let mut interface = INTERFACE.lock();
+        if let Some(interface) = interface.as_mut() {
+            interface.card = original;
+        }
+    }
+
+    let frames = recorded.frames();
+    let frame = frames.first();
+    let protocol = frame.map(|frame| frame[netdev::ETHERNET_HEADER_LEN + 9]);
+    let carries_plaintext = frame
+        .map(|frame| frame.windows(PAYLOAD.len()).any(|window| window == PAYLOAD))
+        .unwrap_or(true);
+
+    // The receiving half: the ESP payload the card was given goes through
+    // `ipsec_open` and then through `deliver_udp`, which is what the demux does
+    // with a packet that is this machine's.  The demux's own entry point is not
+    // used because its first check is `is_for`, and the frame was addressed to
+    // the peer on purpose: what a receiver does with a protected packet is
+    // decapsulate it, and the address check happened before the packet was this
+    // machine's to read.
+    let mut first_delivery = 0;
+    let mut second_delivery = 0;
+    if let Some(frame) = frame {
+        let payload = &frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..];
+        if let Some((inner, next_header)) = ipsec_open(payload)
+            && next_header == net::ipv4::PROTOCOL_UDP
+            && inner.len() >= net::udp::HEADER_LEN
+        {
+            let data = &inner[net::udp::HEADER_LEN..];
+            let _ = deliver_udp(
+                net::address::Address::V4(local),
+                PORT,
+                net::address::Address::V4(peer),
+                PORT,
+                data,
+            );
+        }
+        first_delivery = socket
+            .try_recv(&mut [0_u8; 32])
+            .ok()
+            .flatten()
+            .map(|(_, _, count)| count)
+            .unwrap_or(0);
+        // The same payload again: the replay window must refuse it, and the
+        // queue must stay empty.
+        let _ = ipsec_open(payload);
+        second_delivery = socket
+            .try_recv(&mut [0_u8; 32])
+            .ok()
+            .flatten()
+            .map(|(_, _, count)| count)
+            .unwrap_or(0);
+    }
+
+    let statistics = ipsec_status();
+    let _ = ipsec_del_sa(SPI);
+    let _ = ipsec_del_sp(1);
+
+    // `statistics` is `(policies, associations, sealed, opened, integrity,
+    // replay)`.
+    let correct = sent
+        && protocol == Some(net::ipv4::PROTOCOL_ESP)
+        && !carries_plaintext
+        && first_delivery == PAYLOAD.len()
+        && second_delivery == 0
+        && statistics.2 >= 1
+        && statistics.3 >= 1
+        && statistics.5 >= 1;
+    arch::serial::write_str("protofire: esp sealed ");
+    arch::serial::write_u32(statistics.2 as u32);
+    arch::serial::write_str(", opened ");
+    arch::serial::write_u32(statistics.3 as u32);
+    arch::serial::write_str(", the wire carried ");
+    arch::serial::write_str(if carries_plaintext {
+        "PLAINTEXT"
+    } else {
+        "ciphertext"
+    });
+    arch::serial::write_str(", and the replay ");
+    arch::serial::write_u32(second_delivery as u32);
+    arch::serial::write_str(if correct {
+        " byte(s)\n"
+    } else {
+        ", MISMATCH\n"
+    });
+    correct
 }
 
 /// Prove that a multicast packet is forwarded, with its hop count spent.
