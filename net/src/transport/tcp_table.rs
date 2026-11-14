@@ -43,6 +43,7 @@ use crate::tcp::Connection;
 use crate::tcp::FLAG_ACK;
 use crate::tcp::FLAG_SYN;
 use crate::tcp::Outgoing;
+use crate::tcp::Retransmission;
 use crate::tcp::Segment;
 use crate::tcp::State;
 
@@ -281,6 +282,43 @@ impl Table {
     pub fn prune(&mut self) {
         self.connections
             .retain(|entry| entry.connection.state() != State::Closed);
+    }
+
+    /// Tell every stream what time it is, in microseconds.
+    ///
+    /// The clock is the caller's and this call is how a connection learns it.
+    /// A table that was never told the time holds every segment it sent and
+    /// retransmits none of them, which is exactly the behaviour a wire that
+    /// loses nothing needs and the one this stack had before retransmission
+    /// existed.
+    pub fn advance(&mut self, now: u64) {
+        for entry in &mut self.connections {
+            entry.connection.advance(now);
+        }
+    }
+
+    /// Every segment a stream is due to send again, as the id that sends it.
+    ///
+    /// One entry per call per stream: a connection that has run out of
+    /// attempts is abandoned instead, and its entry goes to
+    /// [`State::Closed`] so the next prune drops it.  The caller decides how
+    /// often to ask and where the bytes go, which is the same division every
+    /// other move here makes.
+    pub fn retransmissions(&mut self) -> Vec<(usize, Outgoing)> {
+        let mut due = Vec::new();
+        for entry in &mut self.connections {
+            match entry.connection.retransmit() {
+                Retransmission::Again(segments) => {
+                    due.extend(segments.into_iter().map(|segment| (entry.id, segment)));
+                }
+                // Nothing to send: either the timeout has not passed or, for
+                // `Abandoned`, the state is already `Closed` and the caller's
+                // next prune drops the entry so a reader learns the stream
+                // ended.
+                Retransmission::Idle | Retransmission::Abandoned => {}
+            }
+        }
+        due
     }
 
     /// How many ends the table holds, after a prune or before one.
@@ -541,5 +579,57 @@ mod tests {
         assert!(table.is_gone(client), "the client's close finished");
         assert!(table.is_gone(accepted), "and the accepted end's");
         assert!(table.is_empty());
+    }
+
+    /// The table is the clock's caller, and what it hands back is each
+    /// stream's own unacknowledged segment under the id a descriptor names.
+    ///
+    /// This is the join a connection cannot make: it knows its segment is due
+    /// and not which id a caller would send it by, so a table that answered
+    /// segments without ids would leave the kernel holding bytes it had
+    /// nowhere to put.
+    #[test]
+    fn the_table_hands_back_each_streams_due_segment_with_its_id() {
+        let (mut table, client, accepted, _client_port) = an_established_stream();
+
+        // Nothing in flight, nothing due, however far the clock moves.
+        table.advance(crate::tcp::RTO_INITIAL_MICROS * 100);
+        assert!(
+            table.retransmissions().is_empty(),
+            "a stream with nothing in flight is not asked to send again"
+        );
+
+        // One segment, and the clock has not moved past its timeout.
+        let (sent, outgoing) = table
+            .connection_mut(client)
+            .expect("the client")
+            .send_data(b"due");
+        assert_eq!(sent, 3);
+        assert_eq!(outgoing.len(), 1, "the test assumes one segment");
+        assert!(table.retransmissions().is_empty(), "not yet");
+
+        // At the timeout, the segment comes back under the id that sent it.
+        table.advance(crate::tcp::RTO_INITIAL_MICROS);
+        let due = table.retransmissions();
+        assert_eq!(due.len(), 1, "one stream, one segment");
+        let (id, segment) = &due[0];
+        assert_eq!(*id, client, "the id the descriptor names");
+        assert_ne!(*id, accepted, "not the other end's");
+        assert_eq!(segment.payload, b"due");
+    }
+
+    /// Two ends of an open stream, made the way the kernel makes one: a
+    /// listener, a client's connect, and the handshake's answer routed.
+    fn an_established_stream() -> (Table, usize, usize, u16) {
+        let (mut table, _listener, client) = connected(7000);
+        let client_port = table.local_port_of(client).expect("the client's port");
+        let opening = segment(FLAG_SYN, super::SEQUENCE_FIRST, client_port, 7000);
+        let (accepted, handshake) = table
+            .accept_syn(&opening, (address(LOCAL), client_port))
+            .expect("a listener");
+        for outgoing in handshake {
+            to_peer(&mut table, accepted, outgoing);
+        }
+        (table, client, accepted, client_port)
     }
 }

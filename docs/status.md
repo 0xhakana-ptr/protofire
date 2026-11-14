@@ -318,12 +318,37 @@ The exchange never touches the card: both ends are connections in the
 kernel's own table, and a segment for this machine is delivered to the
 peer's state machine inside the same exchange that carried it, which is
 what loopback is, and why the exchange runs identically on every machine
-the gate boots.  What the state machine does not do is deliberate, and its
-own header says so: no retransmission and no flow control.  The exchanges
-this stack carries run over loopback and QEMU's user-mode network, neither
-of which loses a frame; a lost frame is a connection this stack drops
-rather than recovers, and retransmission asks for timers, which are a
-decision for a stack that runs where frames are lost.
+the gate boots.
+
+**A lost segment is sent again.**  The stack used to have no queue at all: a
+sent segment was forgotten, so the first loss on a real wire hung the stream
+for the rest of the boot, and every exchange above ran on a wire that loses
+nothing so nothing noticed.  `net::tcp::Connection` now keeps what it sent and
+the peer has not acknowledged, and a segment that waits past its timeout is
+handed back to the caller to send again, with the timeout doubled, which is
+[RFC 6298]'s backoff.  Five attempts, then the stream is abandoned and a
+caller's next read answers end of file rather than nothing forever.
+
+The clock is the caller's and the unit is microseconds.  That is not tidiness:
+the first version of the reassembly timeout was written as a count of ticks
+against a comment describing a hundred-hertz clock, and this kernel's slice is
+a hundred **microseconds**, so a thirty-second window was three hundred
+milliseconds and the sentence beside it was wrong by a factor of a hundred.
+A duration written as a count of ticks moves whenever the slice does, so a
+constant that means a duration is now a duration.
+
+No wire this gate boots loses a frame, so a probe makes the loss rather than
+waiting for one: it queues a segment without delivering it, walks the
+schedule, and delivers what the table says is due.  Measured on x86_64:
+
+```
+protofire: tcp recovered 1 attempt(s), 12 byte(s), intact
+```
+
+The attempt count is the schedule's and the byte count is the peer's own
+inbox, which only a retransmitted copy could have filled.
+
+[RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
 
 **The stream calls are served, and both halves park.**  `ConnectTcp` (38) and
 `ListenTcp` (56) answer through the registry; `AcceptTcp` (57) is served by

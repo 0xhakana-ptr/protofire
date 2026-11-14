@@ -564,6 +564,15 @@ pub fn pump() -> usize {
         (interface.card.clone(), interface.protocol)
     };
 
+    // Time first, because what a stream is due to send again is measured
+    // against it, and a pump that drained the card before telling the table
+    // the time would retransmit one pump late.  The tick is a hundred
+    // microseconds, which is `TIME_SLICE_US`, so a count of ticks times a
+    // hundred is microseconds, saturating rather than wrapping at the
+    // counter's own thirty-six-hour wrap.
+    let now = micros_since_boot();
+    retransmit_due(now);
+
     let length_limit = card.maximum_frame_len();
     let mut frame = alloc::vec![0; length_limit];
     let mut taken = 0;
@@ -576,6 +585,78 @@ pub fn pump() -> usize {
         taken += 1;
         demux(&frame[..length], protocol);
     }
+}
+
+/// The boot's clock in microseconds, for a protocol that measures durations.
+///
+/// The conversion is [`micros_of_ticks`]'s, so this and the fragment cache's
+/// clock are one arithmetic rather than two: they disagreed once, one
+/// measuring ticks and one a duration, and the disagreement was a timeout a
+/// hundred times shorter than the constant describing it.
+fn micros_since_boot() -> u64 {
+    #[cfg(target_os = "none")]
+    {
+        let ticks = crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64;
+        micros_of_ticks(ticks)
+    }
+    // A host test has no timer, and a connection that is never told the time
+    // never retransmits, which is what a loopback wire wants.
+    #[cfg(not(target_os = "none"))]
+    {
+        0
+    }
+}
+
+/// A count of timer interrupts, as elapsed microseconds.
+///
+/// `saturating_mul` and not `*`: the product is the one a `u64` would wrap at
+/// an uptime long enough that the wrap is not the interesting number.
+///
+/// A free function rather than three lines inside the two callers, because the
+/// arithmetic is the thing that was wrong once: the caller handed the fragment
+/// cache raw ticks and the cache's constant was a duration, and no test could
+/// see the join because the cache's tests measured against a clock they
+/// supplied.  This is the join.
+#[cfg(any(test, target_os = "none"))]
+fn micros_of_ticks(ticks: u64) -> u64 {
+    ticks.saturating_mul(MICROS_PER_TICK)
+}
+
+/// How long one timer interrupt is, in microseconds.
+///
+/// The same value [`crate::tick::TIME_SLICE_US`] carries on a machine, and
+/// deliberately a second name: a host test compiles `tick` with no timer and
+/// no slice, so the assertion that the two agree is a test's.
+#[cfg(any(test, target_os = "none"))]
+const MICROS_PER_TICK: u64 = 100;
+
+/// Send again every segment whose stream is due to.
+///
+/// Runs inside [`pump`], before the card is drained: a stream whose segment
+/// was lost is exactly a stream whose answer is not on the card, so the only
+/// thing that moves it forward is this call.
+///
+/// The lock discipline is `tcp_exchange`'s, and for its reason: the table's
+/// lock is taken, the segments are queued, the exchange delivers them and
+/// collects the answers, and every wake happens after the lock is down.
+fn retransmit_due(now: u64) {
+    let noteworthy = {
+        let mut table = TCP.lock();
+        table.advance(now);
+        let queue = table.retransmissions();
+        let sent = !queue.is_empty();
+        let found = if queue.is_empty() {
+            false
+        } else {
+            tcp_exchange(&mut table, queue).unwrap_or(false)
+        };
+        // A stream that was abandoned has nothing left to send and its entry
+        // is `Closed`; the prune is what makes the next read answer end of
+        // file rather than a stream that will never move again.
+        table.prune();
+        sent | found
+    };
+    note_stream_wake(noteworthy);
 }
 
 /// What one received frame means, and where it goes.
@@ -1352,62 +1433,17 @@ fn write_ipv6(address: net::ipv6::Addr) {
 /// bound lives beside the arithmetic rather than at this call site.
 static FRAGMENTS: Mutex<net::reassembly::Cache> = Mutex::new(net::reassembly::Cache::new());
 
-/// The clock the fragment cache expires against, in microseconds.
+/// The clock the fragment cache expires against.
 ///
-/// The conversion is [`micros_of_ticks`]'s, which is a pure function so that
-/// the arithmetic can be a host test: the cache's own tests measure against
-/// whatever clock they are handed, which is what let a caller pass ticks to a
-/// constant that means microseconds and have every test still pass.  The
-/// mismatch was a thirty-second window that was three hundred milliseconds on
-/// a clock counting ten thousand times a second.
+/// The same clock the retransmission schedule uses, and deliberately the same
+/// function rather than a second conversion: the two used to disagree, one
+/// measuring ticks and one measuring a duration, and the disagreement was a
+/// timeout a hundred times shorter than the constant describing it.  A cache
+/// with no clock could not expire anything, and a peer that never sent its
+/// last piece would hold its entry for the rest of the boot.
 fn fragment_now() -> u64 {
-    #[cfg(target_os = "none")]
-    {
-        let ticks = crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64;
-        micros_of_ticks(ticks)
-    }
-    #[cfg(not(target_os = "none"))]
-    {
-        // A host test has no timer.  A cache that is never told the time
-        // never expires anything, which is the honest answer without a clock.
-        0
-    }
+    micros_since_boot()
 }
-
-/// A count of timer interrupts, as elapsed microseconds.
-///
-/// `saturating_mul` and not `*`: the product is the one a `u64` would wrap
-/// at an uptime long enough that the wrap is not the interesting number.
-///
-/// A free function rather than three lines inside [`fragment_now`] because
-/// the arithmetic is the thing that was wrong: the caller handed the cache
-/// raw ticks and the cache's constant was a duration, and no test could see
-/// the join because the tests measured against a clock they supplied.  This
-/// is the join, and
-/// [`tests::the_tick_is_a_duration_and_the_timeout_is_measured_in_one`] is what
-/// reads it.
-///
-/// The slice is written here rather than read from `tick`, because
-/// `TIME_SLICE_US` is the boot's and a host test has no boot: the test
-/// asserts the two agree, which is the comparison that would have caught the
-/// mismatch this function exists for.
-#[cfg(any(test, target_os = "none"))]
-fn micros_of_ticks(ticks: u64) -> u64 {
-    ticks.saturating_mul(MICROS_PER_TICK)
-}
-
-/// How long one timer interrupt is, in microseconds.
-///
-/// The same value [`crate::tick::TIME_SLICE_US`] carries on a machine, and
-/// deliberately a second name: a host test compiles `tick` with no timer and
-/// no slice, and the assertion that the two agree is
-/// [`tests::the_tick_is_a_duration_and_the_timeout_is_measured_in_one`]'s.
-///
-/// `cfg(test)` on the host only because that is the only place this copy is
-/// read: a machine reads the boot's constant through `fragment_now`, and a
-/// host build has no boot to read one from.
-#[cfg(any(test, target_os = "none"))]
-const MICROS_PER_TICK: u64 = 100;
 
 static TCP: Mutex<net::tcp_table::Table> = Mutex::new(net::tcp_table::Table::new());
 
@@ -2507,6 +2543,101 @@ fn table_state(id: usize) -> bool {
     TCP.lock().is_gone(id)
 }
 
+/// Prove that a lost segment is recovered, rather than assuming it would be.
+///
+/// A boot's own network loses nothing: QEMU's user-mode network and the
+/// loopback both deliver every frame, so nothing the exchanges above do can
+/// tell a stack that retransmits from one that never would.  This probe makes
+/// the loss itself, by refusing to deliver the first copy of a segment, and
+/// then asks the table for what it is due to send again.
+///
+/// The line's numbers are the evidence, and each is a value the peer
+/// produced: the attempt count comes from the schedule, the byte count from
+/// the segment that was sent twice, and `intact` from the peer's own
+/// acknowledgement retiring the entry.  A stack that queued nothing would
+/// send nothing again and the peer's inbox would stay empty.
+#[cfg(target_os = "none")]
+pub fn retransmission_probe() -> bool {
+    let listener = match tcp_listen(9100) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let protocol = match INTERFACE.lock().as_ref() {
+        Some(interface) => interface.protocol,
+        None => return false,
+    };
+    let client = match tcp_connect(net::address::Address::V4(protocol), 9100) {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    let accepted = match tcp_accept(listener) {
+        Ok(Some(id)) => id,
+        _ => return false,
+    };
+
+    // The segment this probe will lose.  It is written with the loopback's
+    // own exchange disabled: the bytes go into the table's queue and nowhere
+    // else, which is the loss.
+    const LOST: &[u8] = b"lost segment";
+    let queued = {
+        let mut table = TCP.lock();
+        table.advance(0);
+        let Some(connection) = table.connection_mut(client) else {
+            return false;
+        };
+        let (count, outgoing) = connection.send_data(LOST);
+        (count, outgoing.len(), connection.unacknowledged())
+    };
+    // Nothing was delivered, so the peer has nothing, and the sender is
+    // holding one unacknowledged segment.
+    let peer_has_nothing = !TCP.lock().has_data(accepted);
+
+    // Walk the schedule: each ask advances the clock past the current
+    // timeout, and the table hands back what is due.  The retransmission is
+    // then delivered, which is the point of the exercise.
+    let mut attempts = 0;
+    let mut delivered = 0;
+    let mut now = 0u64;
+    let mut timeout = net::tcp::RTO_INITIAL_MICROS;
+    for _ in 0..net::tcp::MAX_ATTEMPTS {
+        now += timeout;
+        let due = {
+            let mut table = TCP.lock();
+            table.advance(now);
+            table.retransmissions()
+        };
+        if due.is_empty() {
+            timeout = (timeout * 2).min(net::tcp::RTO_MAX_MICROS);
+            continue;
+        }
+        attempts += 1;
+        let mut table = TCP.lock();
+        let noteworthy = tcp_exchange(&mut table, due).unwrap_or(false);
+        let _ = noteworthy;
+        delivered = table
+            .connection(accepted)
+            .map(|connection| connection.inbox_len())
+            .unwrap_or(0);
+        break;
+    }
+
+    // The close is the ordinary one, and it is the second half of the
+    // evidence: an acknowledgement that retires what was sent twice is what
+    // `table_state` reports.
+    let _ = tcp_close(client);
+    let _ = tcp_close(accepted);
+
+    let intact = delivered == LOST.len() && peer_has_nothing;
+    arch::serial::write_str("protofire: tcp recovered ");
+    arch::serial::write_u32(attempts as u32);
+    arch::serial::write_str(" attempt(s), ");
+    arch::serial::write_u32(delivered as u32);
+    arch::serial::write_str(" byte(s)");
+    arch::serial::write_str(if intact { ", intact\n" } else { ", MISMATCH\n" });
+    let _ = queued;
+    intact
+}
+
 #[cfg(test)]
 mod tests {
     use super::Interface;
@@ -3018,10 +3149,7 @@ mod tests {
     /// This is the join no test could see before: the cache's own tests
     /// measure against a clock they supply, so a caller that handed it raw
     /// ticks satisfied every one of them while the window it actually offered
-    /// was a hundred times shorter than the constant describing it.  The
-    /// assertion is the comparison a reader would make by hand, and it is
-    /// deliberately in one place: the cache holds microseconds, the conversion
-    /// answers microseconds, and the number the RFC names is seconds.
+    /// was a hundred times shorter than the constant describing it.
     #[test]
     fn the_tick_is_a_duration_and_the_timeout_is_measured_in_one() {
         // The machine's slice and this file's copy are the same number.  On a

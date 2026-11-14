@@ -25,21 +25,39 @@
 //! same state machine with two callers, and what makes every move here a
 //! host test without a device in it.
 //!
-//! What it does not do is deliberate, and the header of the change that
-//! added it says so in the kernel's own log: **no retransmission and no flow
-//! control**.  The exchanges this stack carries run over loopback and QEMU's
-//! user-mode network, neither of which loses a frame; a lost frame is a
-//! connection this stack drops rather than recovers, and a peer's window is
-//! carried but never enforced.  Retransmission asks for timers, and timers
-//! are a decision for a stack that runs where frames are lost.
+//! What it does not do is deliberate: **no flow control**.  A peer's window is
+//! carried but never enforced, because the receive buffer is this stack's own
+//! bound and a peer that sent past it is a peer whose segments the sequence
+//! check already drops.
+//!
+//! ## Retransmission, and the clock it needs
+//!
+//! A segment can be lost, and a stream that never sent one again is a stream
+//! that hangs forever on the first loss.  [`Connection::retransmit`] is the
+//! answer: the segments this side sent and the peer has not acknowledged are
+//! kept, oldest first, and one that has waited past the timeout is handed back
+//! to the caller to send again with the timeout doubled, which is [RFC 6298]'s
+//! exponential backoff.  Five attempts is where this stack gives up, which is
+//! the same order as the retransmission count the common stacks use.
+//!
+//! A timeout is a duration, and a duration in ticks is a duration in a unit
+//! this crate would have to guess: the kernel's clock runs at ten kilohertz,
+//! and a constant written for a hundred-hertz clock is a schedule a hundred
+//! times too fast.  So the unit here is **microseconds**, and the connection
+//! does not read a clock at all.  [`Connection::advance`] is how it is told the
+//! time, by the caller whose clock it is.  That keeps every move here a host
+//! test with a clock the test owns, and it is why a lost segment is a test
+//! rather than something only a bad network finds.
+//!
+//! [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
 //!
 //! ## What a segment refuses
 //!
 //! The checksum is mandatory, TCP has no zero field that means "not
 //! summed", and the sequence is checked against the connection's own
 //! acknowledgement: a segment that arrives out of order is dropped rather
-//! than held, because holding one asks for the reassembly buffer and the
-//! timers that retransmission would have brought.
+//! than held, because holding one asks for the receive-side reassembly that
+//! this module does not have.
 
 use crate::address::Address;
 use crate::ethernet::get_u16;
@@ -60,6 +78,41 @@ pub const FLAG_RST: u8 = 0x04;
 pub const FLAG_PSH: u8 = 0x08;
 /// `ACK`: the acknowledgement field means something.
 pub const FLAG_ACK: u8 = 0x10;
+
+/// The timeout a first retransmission waits, in microseconds.
+///
+/// [RFC 6298] section 2.1's initial value is one second, and this stack keeps
+/// it rather than measuring a round trip: one exchange per boot is not a
+/// sample, and a smoothed estimate from a single measurement is a number that
+/// looks measured and is not.
+///
+/// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+pub const RTO_INITIAL_MICROS: u64 = 1_000_000;
+
+/// The longest a retransmission may wait, in microseconds.
+///
+/// The same section's ceiling, sixty seconds.  Without it, five doublings
+/// would put the last attempt half an hour away, and a stream that is not
+/// going to work would hold its caller for most of a boot.
+pub const RTO_MAX_MICROS: u64 = 60_000_000;
+
+/// How many times one segment is sent before the stream is abandoned.
+///
+/// Five attempts at one, two, four, eight and sixteen seconds is thirty-one
+/// seconds before giving up, which is the order the common stacks' longer
+/// schedules land at.  A stream that cannot carry a segment in half a minute
+/// is not going to, and a caller waiting longer has been told nothing.
+pub const MAX_ATTEMPTS: u8 = 5;
+
+/// How many unacknowledged segments one connection holds.
+///
+/// This stack has no send window, so the queue is the only thing standing
+/// between a peer that stopped acknowledging and a program that keeps
+/// writing: every byte written before an acknowledgement is a byte this
+/// connection keeps a copy of.  Sixteen segments is the bound, and a full
+/// queue refuses the write with a zero rather than growing, which is the same
+/// "nothing was carried, ask again" a full pipe answers with.
+pub const MAX_UNACKNOWLEDGED: usize = 16;
 
 /// The window this stack advertises.
 ///
@@ -328,6 +381,58 @@ pub struct Connection {
     inbox: alloc::vec::Vec<u8>,
     /// Whether this side has said it is done sending.
     finished: bool,
+    /// The segments this side sent and the peer has not acknowledged, oldest
+    /// first.
+    ///
+    /// A sent segment that is forgotten cannot be sent again, so the queue is
+    /// the retransmission: an entry leaves when an acknowledgement covers its
+    /// last byte, and one that waits past its deadline is handed back to the
+    /// caller.  The queue is bounded by [`MAX_UNACKNOWLEDGED`] because a
+    /// connection that keeps every unacknowledged segment is a connection a
+    /// peer's silence spends memory on.
+    unacknowledged: alloc::vec::Vec<Unacknowledged>,
+    /// The time this side was last told, in microseconds.
+    ///
+    /// [`Connection::advance`] sets it.  A move that needs a deadline reads
+    /// it rather than calling a clock, which is what lets a test own the
+    /// time: the module has no clock and asks for none.
+    now: u64,
+    /// The timeout the next retransmission waits, which doubles with each
+    /// attempt at the same position.
+    timeout: u64,
+    /// How many times the oldest unacknowledged segment has been sent.
+    attempts: u8,
+}
+
+/// One segment waiting for its acknowledgement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Unacknowledged {
+    /// The sequence number of this segment's first byte, which is what an
+    /// acknowledgement has to cover before it leaves the queue.
+    sequence: u32,
+    /// The sequence number one past its last byte, with SYN and FIN each
+    /// counting as one.  An acknowledgement at or past this retires the entry.
+    end: u32,
+    flags: u8,
+    payload: alloc::vec::Vec<u8>,
+    /// The time this copy was sent, in microseconds of the caller's clock.
+    sent_at: u64,
+}
+
+/// What a retransmission check found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Retransmission {
+    /// Nothing is due: either the queue is empty or the oldest segment has
+    /// not waited its timeout.
+    Idle,
+    /// A segment waited past its timeout, and these are the bytes to send
+    /// again.  The timeout has already doubled.
+    Again(alloc::vec::Vec<Outgoing>),
+    /// The oldest segment has been sent every way this stack sends it and
+    /// nothing came back.  The connection is now [`State::Closed`], and a
+    /// caller's next read or write sees a stream that ended rather than one
+    /// that will never move.
+    Abandoned,
 }
 
 impl Connection {
@@ -345,8 +450,12 @@ impl Connection {
             acknowledgement: 0,
             inbox: alloc::vec::Vec::new(),
             finished: false,
+            unacknowledged: alloc::vec::Vec::new(),
+            now: 0,
+            timeout: RTO_INITIAL_MICROS,
+            attempts: 0,
         };
-        let sent = one(connection.sequence, 0, FLAG_SYN, &[]);
+        let sent = connection.take_outgoing(connection.sequence, 0, FLAG_SYN, &[]);
         connection.sequence += 1;
         (connection, sent)
     }
@@ -372,8 +481,12 @@ impl Connection {
             acknowledgement: client_sequence.wrapping_add(1),
             inbox: alloc::vec::Vec::new(),
             finished: false,
+            unacknowledged: alloc::vec::Vec::new(),
+            now: 0,
+            timeout: RTO_INITIAL_MICROS,
+            attempts: 0,
         };
-        let sent = one(
+        let sent = connection.take_outgoing(
             connection.sequence,
             connection.acknowledgement,
             FLAG_SYN | FLAG_ACK,
@@ -416,14 +529,22 @@ impl Connection {
     ///
     /// The sequence is checked before anything else: a segment out of order
     /// is dropped silently, because there is no buffer to hold it in and no
-    /// timer to ask for it again.  The handshake's moves and the stream's
-    /// data and finishes are the three things a segment can be; everything
-    /// else is refused without changing the state.
+    /// receive-side reassembly to sort it with.  The handshake's moves and
+    /// the stream's data and finishes are the three things a segment can be;
+    /// everything else is refused without changing the state.
+    ///
+    /// An acknowledgement is acted on before any of that: it is the one thing
+    /// a segment says about this side's own sending, and a segment whose data
+    /// is dropped still acknowledges what it acknowledges.
     pub fn receive(
         &mut self,
         segment: &Segment,
         payload: &[u8],
     ) -> (abi::Result<Event>, alloc::vec::Vec<Outgoing>) {
+        if segment.flags & FLAG_ACK != 0 {
+            self.note_acknowledgement(segment.acknowledgement);
+        }
+
         // The one segment the handshake's answer is: the SYN with this
         // side's own acknowledgement in it.  The client's move from
         // [`State::SynSent`], on the server's SYN with ACK.
@@ -433,7 +554,7 @@ impl Connection {
         {
             self.state = State::Established;
             self.acknowledgement = segment.sequence.wrapping_add(1);
-            let sent = one(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
+            let sent = self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
             return (Ok(Event::Settled), sent);
         }
 
@@ -474,7 +595,7 @@ impl Connection {
             // The peer's finish, answering this side's own: the last
             // acknowledgement closes both halves at once.
             self.acknowledgement = segment.sequence.wrapping_add(1);
-            let sent = one(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
+            let sent = self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
             self.state = State::Closed;
             return (Ok(Event::Settled), sent);
         }
@@ -486,7 +607,7 @@ impl Connection {
         }
         if segment.flags & FLAG_FIN != 0 {
             self.acknowledgement += 1;
-            let sent = one(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
+            let sent = self.take_outgoing(self.sequence, self.acknowledgement, FLAG_ACK, &[]);
             self.state = if self.finished {
                 State::Closed
             } else {
@@ -510,6 +631,11 @@ impl Connection {
     /// Answering zero for a closed half is the caller's signal, not an
     /// error: a stream whose send side is finished has nothing to carry,
     /// and a caller that writes after closing wrote to a stream it ended.
+    ///
+    /// A queue that is full answers zero too, and for the same reason: what it
+    /// holds is a peer's unacknowledged bytes, and a peer that stopped
+    /// acknowledging must not be able to spend this machine's memory by
+    /// letting a program keep writing.
     pub fn send_data(&mut self, bytes: &[u8]) -> (usize, alloc::vec::Vec<Outgoing>) {
         if self.finished || bytes.is_empty() {
             return (0, alloc::vec::Vec::new());
@@ -518,7 +644,10 @@ impl Connection {
         if !open {
             return (0, alloc::vec::Vec::new());
         }
-        let sent = one(
+        if self.unacknowledged.len() >= MAX_UNACKNOWLEDGED {
+            return (0, alloc::vec::Vec::new());
+        }
+        let sent = self.take_outgoing(
             self.sequence,
             self.acknowledgement,
             FLAG_ACK | FLAG_PSH,
@@ -541,7 +670,7 @@ impl Connection {
         self.finished = true;
         match self.state {
             State::Established => {
-                let sent = one(
+                let sent = self.take_outgoing(
                     self.sequence,
                     self.acknowledgement,
                     FLAG_ACK | FLAG_FIN,
@@ -554,7 +683,7 @@ impl Connection {
             State::CloseWait => {
                 // The peer finished first; this side's finish is the last
                 // move a handshake of finishes has.
-                let sent = one(
+                let sent = self.take_outgoing(
                     self.sequence,
                     self.acknowledgement,
                     FLAG_ACK | FLAG_FIN,
@@ -567,6 +696,155 @@ impl Connection {
             _ => alloc::vec::Vec::new(),
         }
     }
+
+    /// Tell the connection what time it is, in microseconds.
+    ///
+    /// The caller's clock, which is the only clock there is: this module has
+    /// none, because a crate that read a timer could not be a host test.  A
+    /// connection that is never told the time still works, and never
+    /// retransmits, which is exactly what a loopback wire and a test that does
+    /// not care about loss want.
+    pub fn advance(&mut self, now: u64) {
+        self.now = now;
+    }
+
+    /// The segments this side sent and the peer has not acknowledged.
+    pub fn unacknowledged(&self) -> usize {
+        self.unacknowledged.len()
+    }
+
+    /// Whether a retransmission is due at the time this connection was last
+    /// told, and if so, what to send.
+    ///
+    /// The check is a comparison and not a timer: nothing here schedules
+    /// anything, and the caller decides how often to ask.  Ask it from
+    /// whatever already runs periodically, which for this kernel is the pump
+    /// the receive path calls.
+    ///
+    /// An attempt count that reaches [`MAX_ATTEMPTS`] abandons the stream:
+    /// the oldest segment has been offered every way this stack offers one,
+    /// and the state goes to [`State::Closed`] so a caller's next read or
+    /// write learns the stream ended instead of waiting forever on it.
+    pub fn retransmit(&mut self) -> Retransmission {
+        let Some(oldest) = self.unacknowledged.first() else {
+            return Retransmission::Idle;
+        };
+        if self.now.wrapping_sub(oldest.sent_at) < self.timeout {
+            return Retransmission::Idle;
+        }
+        if self.attempts >= MAX_ATTEMPTS {
+            self.unacknowledged.clear();
+            self.state = State::Closed;
+            return Retransmission::Abandoned;
+        }
+        let sequence = oldest.sequence;
+        let acknowledgement = self.acknowledgement;
+        let flags = oldest.flags;
+        let payload = oldest.payload.clone();
+        self.attempts += 1;
+        // [RFC 6298]'s backoff, capped: a stream that answers nothing must
+        // not hold a caller for the sum of unbounded doublings.
+        self.timeout = self.timeout.saturating_mul(2).min(RTO_MAX_MICROS);
+        let sent = one(sequence, acknowledgement, flags, &payload);
+        self.unacknowledged[0].sent_at = self.now;
+        Retransmission::Again(sent)
+    }
+
+    /// Build one segment and remember it until its acknowledgement arrives.
+    ///
+    /// A segment that carries nothing but an acknowledgement is not
+    /// remembered: it is not retransmitted, because a lost pure ACK is
+    /// recovered by the peer retransmitting the data it acknowledged, and
+    /// queueing every ACK would make a stream's memory follow its
+    /// conversation rather than its unacknowledged bytes.
+    fn take_outgoing(
+        &mut self,
+        sequence: u32,
+        acknowledgement: u32,
+        flags: u8,
+        payload: &[u8],
+    ) -> alloc::vec::Vec<Outgoing> {
+        let carried = !payload.is_empty() || flags & (FLAG_SYN | FLAG_FIN) != 0;
+        let mut end = sequence.wrapping_add(payload.len() as u32);
+        // A SYN and a FIN each occupy one sequence number.
+        if flags & FLAG_SYN != 0 {
+            end = end.wrapping_add(1);
+        }
+        if flags & FLAG_FIN != 0 {
+            end = end.wrapping_add(1);
+        }
+        if carried {
+            self.unacknowledged.push(Unacknowledged {
+                sequence,
+                end,
+                flags,
+                payload: alloc::vec::Vec::from(payload),
+                sent_at: self.now,
+            });
+        }
+        one(sequence, acknowledgement, flags, payload)
+    }
+
+    /// Retire every segment an acknowledgement covers, and start its clock
+    /// over.
+    ///
+    /// The range is checked first, and the check is the one [RFC 793] section
+    /// 3.9 states: an acknowledgement is meaningful only between the oldest
+    /// byte this side has not had acknowledged and the next byte it will send.
+    /// Without it a segment carrying any number at all would retire data the
+    /// peer never received, which is silent loss rather than a slow stream:
+    /// the sender would stop offering bytes nothing had acknowledged.
+    ///
+    /// "Covers" is `end <= ack` in the sequence's own arithmetic, which is the
+    /// one comparison a wrapping number allows.  Progress resets the attempt
+    /// count and the timeout together: [RFC 6298] measures a round trip from a
+    /// segment that was sent once, and a doubling that survived an
+    /// acknowledged segment would make the next loss wait on a schedule the
+    /// previous one earned.
+    ///
+    /// [RFC 793]: https://www.rfc-editor.org/rfc/rfc793
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    fn note_acknowledgement(&mut self, acknowledgement: u32) {
+        let Some(oldest) = self.unacknowledged.first() else {
+            return;
+        };
+        // `SND.UNA <= SEG.ACK <= SND.NXT`, each comparison in the sequence's
+        // own arithmetic so a stream that crossed the wrap is not refused.
+        if seq_before(acknowledgement, oldest.sequence)
+            || seq_before(self.sequence, acknowledgement)
+        {
+            return;
+        }
+        let before = self.unacknowledged.len();
+        self.unacknowledged
+            .retain(|segment| !acknowledges(acknowledgement, segment.end));
+        if self.unacknowledged.len() != before {
+            self.attempts = 0;
+            self.timeout = RTO_INITIAL_MICROS;
+        }
+    }
+}
+
+/// Whether an acknowledgement covers a segment's last byte.
+///
+/// The comparison is the difference, so a segment that ends one past the
+/// wrap is covered by an acknowledgement of zero, which is the case a plain
+/// `>=` gets wrong.
+fn acknowledges(acknowledgement: u32, end: u32) -> bool {
+    acknowledgement.wrapping_sub(end) as i32 >= 0
+}
+
+/// Whether `a` comes before `b` in a sequence's own arithmetic.
+///
+/// Sequence numbers wrap, so a plain `<` is wrong at the wrap: the comparison
+/// is on the difference, and [RFC 1982]'s rule is that a difference of half
+/// the space or more is the other way round.  This stack never has two
+/// numbers that far apart for one connection, and the wrapping difference is
+/// still the honest test for the ones it has.
+///
+/// [RFC 1982]: https://www.rfc-editor.org/rfc/rfc1982
+fn seq_before(a: u32, b: u32) -> bool {
+    (a.wrapping_sub(b) as i32) < 0
 }
 
 #[cfg(test)]
@@ -902,5 +1180,307 @@ mod tests {
         assert_eq!(parsed.acknowledgement, 0x5566_7788);
         assert_eq!(parsed.flags, super::FLAG_ACK);
         assert_eq!(parsed.payload_len, 9);
+    }
+
+    /// An opened stream: the handshake run, both ends established, and both
+    /// told what time it is.
+    fn established_on_the_loopback() -> (Connection, Connection) {
+        let (mut client, mut server) = handshake();
+        // The handshake's own segments are acknowledged by the drain, so the
+        // queue starts empty and the test's own send is the first entry.
+        client.advance(0);
+        server.advance(0);
+        (client, server)
+    }
+
+    /// A sent segment is kept until the peer acknowledges it.
+    ///
+    /// This is the defect the change this test arrived with was written for:
+    /// nothing kept a sent segment, so nothing could send it again, and the
+    /// first loss on a real wire hung the stream for the rest of the boot.
+    #[test]
+    fn a_sent_segment_is_kept_until_its_acknowledgement() {
+        let (mut client, mut server) = established_on_the_loopback();
+        let mut client_out = alloc::vec::Vec::new();
+        let mut server_out = alloc::vec::Vec::new();
+
+        assert_eq!(client.unacknowledged(), 0, "the handshake was acknowledged");
+        let (sent, outgoing) = client.send_data(b"protofire");
+        assert_eq!(sent, 9);
+        assert_eq!(client.unacknowledged(), 1, "the data is held");
+        client_out.extend(outgoing);
+
+        // The peer gets it and answers, and the answer retires the entry.
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        assert_eq!(client.unacknowledged(), 0, "the acknowledgement retired it");
+
+        // Nothing is due on a queue with nothing in it.
+        client.advance(super::RTO_INITIAL_MICROS * 10);
+        assert_eq!(client.retransmit(), super::Retransmission::Idle);
+    }
+
+    /// A segment nobody acknowledged is sent again when its timeout passes,
+    /// with the same bytes and the same sequence.
+    #[test]
+    fn an_unacknowledged_segment_is_sent_again_after_its_timeout() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        let (_, outgoing) = client.send_data(b"lost");
+        let original = outgoing[0].clone();
+        assert_eq!(client.unacknowledged(), 1);
+
+        // Before the timeout, nothing is due.
+        client.advance(super::RTO_INITIAL_MICROS - 1);
+        assert_eq!(client.retransmit(), super::Retransmission::Idle);
+
+        // At it, the same segment is handed back.
+        client.advance(super::RTO_INITIAL_MICROS);
+        match client.retransmit() {
+            super::Retransmission::Again(sent) => {
+                assert_eq!(sent.len(), 1, "one segment again");
+                assert_eq!(sent[0].sequence, original.sequence, "the same position");
+                assert_eq!(sent[0].payload, original.payload, "the same bytes");
+                assert_eq!(sent[0].flags, original.flags);
+            }
+            other => panic!("expected a retransmission, got {other:?}"),
+        }
+        assert_eq!(client.unacknowledged(), 1, "still waiting for the one ACK");
+    }
+
+    /// The timeout doubles with each attempt, which is [RFC 6298]'s backoff.
+    ///
+    /// The test measures the intervals rather than reading the field: a
+    /// backoff that was written but never applied is the defect this is for,
+    /// and the interval between two retransmissions is what a peer sees.
+    ///
+    /// [RFC 6298]: https://www.rfc-editor.org/rfc/rfc6298
+    #[test]
+    fn the_timeout_doubles_with_each_attempt() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        client.send_data(b"backoff");
+
+        // The first attempt waits the initial timeout, and the next waits
+        // twice it: a clock that advanced one microsecond before the doubled
+        // interval is due must still be idle.
+        client.advance(super::RTO_INITIAL_MICROS);
+        assert!(matches!(
+            client.retransmit(),
+            super::Retransmission::Again(_)
+        ));
+
+        let doubled = super::RTO_INITIAL_MICROS * 2;
+        client.advance(super::RTO_INITIAL_MICROS + doubled - 1);
+        assert_eq!(client.retransmit(), super::Retransmission::Idle);
+        client.advance(super::RTO_INITIAL_MICROS + doubled);
+        assert!(matches!(
+            client.retransmit(),
+            super::Retransmission::Again(_)
+        ));
+    }
+
+    /// An acknowledgement of *any* segment resets the backoff, because
+    /// progress is what the timeout is measuring toward.
+    #[test]
+    fn an_acknowledgement_resets_the_backoff() {
+        let (mut client, mut server) = established_on_the_loopback();
+        let mut client_out = alloc::vec::Vec::new();
+        let mut server_out = alloc::vec::Vec::new();
+        client.advance(0);
+        let (_, outgoing) = client.send_data(b"first");
+        client_out.extend(outgoing);
+
+        // Two lost attempts, so the next wait would be four times the initial.
+        client.advance(super::RTO_INITIAL_MICROS);
+        assert!(matches!(
+            client.retransmit(),
+            super::Retransmission::Again(_)
+        ));
+        client.advance(super::RTO_INITIAL_MICROS * 3);
+        assert!(matches!(
+            client.retransmit(),
+            super::Retransmission::Again(_)
+        ));
+
+        // The answer lands after all, and the schedule starts over.
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        assert_eq!(client.unacknowledged(), 0);
+
+        client.advance(super::RTO_INITIAL_MICROS * 3 + 10);
+        let (_, outgoing) = client.send_data(b"second");
+        client_out.extend(outgoing);
+        // The initial timeout, not four times it, is what the new segment
+        // waits: an entry recorded at the later time is due at the later time
+        // plus the *initial* timeout.
+        client.advance(super::RTO_INITIAL_MICROS * 3 + 10 + super::RTO_INITIAL_MICROS);
+        assert!(
+            matches!(client.retransmit(), super::Retransmission::Again(_)),
+            "the backoff started over"
+        );
+    }
+
+    /// A full unacknowledged queue refuses a write rather than growing.
+    #[test]
+    fn a_full_unacknowledged_queue_refuses_a_write() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        for length in 0..super::MAX_UNACKNOWLEDGED {
+            let (sent, _) = client.send_data(b"x");
+            assert_eq!(sent, 1, "write {length} fit");
+        }
+        assert_eq!(
+            client.unacknowledged(),
+            super::MAX_UNACKNOWLEDGED,
+            "the queue is full"
+        );
+        let (sent, outgoing) = client.send_data(b"one too many");
+        assert_eq!(sent, 0, "a full queue carried nothing");
+        assert!(outgoing.is_empty(), "nothing went out");
+
+        // The peer's acknowledgement frees room, and the same write succeeds.
+        let acknowledgement = client.sequence;
+        let (_event, _replies) = client.receive(
+            &super::Segment {
+                source_port: THEIR_PORT,
+                destination_port: OUR_PORT,
+                sequence: client.acknowledgement,
+                acknowledgement,
+                flags: FLAG_ACK,
+                window: super::WINDOW,
+                payload_len: 0,
+            },
+            &[],
+        );
+        assert_eq!(client.unacknowledged(), 0, "one acknowledgement freed it");
+        let (sent, _) = client.send_data(b"now it fits");
+        assert_eq!(sent, 11, "the write the full queue refused");
+    }
+
+    /// A stream that is never answered is abandoned, and a caller learns it
+    /// rather than waiting forever.
+    #[test]
+    fn a_stream_nobody_answers_is_abandoned() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        client.send_data(b"into the void");
+
+        // Walk the whole schedule, asking after each interval.
+        let mut now = 0u64;
+        let mut attempts = 0;
+        let mut timeout = super::RTO_INITIAL_MICROS;
+        while attempts < super::MAX_ATTEMPTS {
+            now += timeout;
+            client.advance(now);
+            match client.retransmit() {
+                super::Retransmission::Again(_) => attempts += 1,
+                other => panic!("attempt {attempts}: expected a retransmission, got {other:?}"),
+            }
+            timeout = (timeout * 2).min(super::RTO_MAX_MICROS);
+        }
+
+        // One more interval, and the next attempt is the one past the limit.
+        now += timeout;
+        client.advance(now);
+        assert_eq!(client.retransmit(), super::Retransmission::Abandoned);
+        assert_eq!(
+            client.state(),
+            State::Closed,
+            "a stream nobody answers is not a stream a caller waits on"
+        );
+        assert_eq!(client.unacknowledged(), 0, "the queue is released");
+    }
+
+    /// A pure acknowledgement is not queued: it carries no bytes, and the
+    /// peer recovers a lost one by retransmitting what it acknowledged.
+    #[test]
+    fn a_pure_acknowledgement_is_not_kept() {
+        let (mut client, mut server) = established_on_the_loopback();
+        let mut client_out = alloc::vec::Vec::new();
+        let mut server_out = alloc::vec::Vec::new();
+
+        // The server acknowledges the client's data, and that ACK is not the
+        // server's to remember.
+        let (_, outgoing) = client.send_data(b"x");
+        client_out.extend(outgoing);
+        let before = server.unacknowledged();
+        drain(&mut client_out, &mut server_out, &mut client, &mut server);
+        assert_eq!(
+            server.unacknowledged(),
+            before,
+            "an acknowledgement is not retransmitted"
+        );
+    }
+
+    /// An acknowledgement of a byte this side never sent retires nothing.
+    ///
+    /// The defect this is for is the one [RFC 793] section 3.9 names: a
+    /// segment carrying an acknowledgement past `SND.NXT` is a segment whose
+    /// number means nothing, and acting on it would drop data the peer never
+    /// received.  The stream would then be silent rather than slow, which is
+    /// the harder failure to find.
+    ///
+    /// [RFC 793]: https://www.rfc-editor.org/rfc/rfc793
+    #[test]
+    fn an_acknowledgement_past_what_was_sent_retires_nothing() {
+        let (mut client, _server) = established_on_the_loopback();
+        client.advance(0);
+        let (_, outgoing) = client.send_data(b"protofire");
+        assert_eq!(client.unacknowledged(), 1);
+
+        // One byte past the last one this side sent: refused.
+        let past = outgoing[0].sequence + outgoing[0].payload.len() as u32 + 1;
+        let (_event, _replies) = client.receive(
+            &super::Segment {
+                source_port: THEIR_PORT,
+                destination_port: OUR_PORT,
+                sequence: client.acknowledgement,
+                acknowledgement: past,
+                flags: FLAG_ACK,
+                window: super::WINDOW,
+                payload_len: 0,
+            },
+            &[],
+        );
+        assert_eq!(
+            client.unacknowledged(),
+            1,
+            "an acknowledgement past the send position retires nothing"
+        );
+
+        // Below the oldest unacknowledged byte: also refused.
+        let (_event, _replies) = client.receive(
+            &super::Segment {
+                source_port: THEIR_PORT,
+                destination_port: OUR_PORT,
+                sequence: client.acknowledgement,
+                acknowledgement: outgoing[0].sequence - 1,
+                flags: FLAG_ACK,
+                window: super::WINDOW,
+                payload_len: 0,
+            },
+            &[],
+        );
+        assert_eq!(
+            client.unacknowledged(),
+            1,
+            "an acknowledgement below the oldest sent byte retires nothing"
+        );
+
+        // And the exact last byte does retire it, which is the control that
+        // shows the two refusals above were the range and not a queue that
+        // never retires anything.
+        let (_event, _replies) = client.receive(
+            &super::Segment {
+                source_port: THEIR_PORT,
+                destination_port: OUR_PORT,
+                sequence: client.acknowledgement,
+                acknowledgement: past - 1,
+                flags: FLAG_ACK,
+                window: super::WINDOW,
+                payload_len: 0,
+            },
+            &[],
+        );
+        assert_eq!(client.unacknowledged(), 0, "the last byte retires it");
     }
 }

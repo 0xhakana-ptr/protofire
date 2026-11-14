@@ -857,7 +857,16 @@ pub fn exercise_network() -> bool {
 
     // The stream: a listener, a client, an echo, and the close that ends
     // both ends, the whole of a TCP exchange, on loopback.
-    crate::net::tcp_probe()
+    if !crate::net::tcp_probe() {
+        return false;
+    }
+
+    // The recovery: a segment this stack refuses to deliver, and the
+    // retransmission that puts it back.  Every exchange above runs on a wire
+    // that loses nothing, so none of them can tell a stack that retransmits
+    // from one with no queue at all; this makes the loss and reads the
+    // recovery.
+    crate::net::retransmission_probe()
 }
 
 /// Ask the wire who holds the gateway's address, and put the answer in the

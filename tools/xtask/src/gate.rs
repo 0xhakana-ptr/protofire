@@ -547,6 +547,16 @@ impl Machine {
                 ("protofire: tcp connected, listener ", false),
                 ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
                 ("protofire: tcp closed, both ends done", true),
+                // The recovery: a segment the probe refuses to deliver, and
+                // the retransmission that puts it back.  No wire this gate
+                // boots loses a frame, so this is the only line that can tell
+                // a stack with a queue from one without: the attempt count is
+                // the schedule's, and the byte count is the peer's own inbox
+                // after the copy that was lost arrived again.
+                (
+                    "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
+                    true,
+                ),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and
@@ -1131,6 +1141,15 @@ impl Machine {
                     ("protofire: tcp connected, listener ", false),
                     ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
                     ("protofire: tcp closed, both ends done", true),
+                    // The recovery: a segment the probe refuses to deliver,
+                    // and the retransmission that puts it back.  The same line
+                    // the other machines gate on, for the same reason: no wire
+                    // this gate boots loses a frame, so this is the only one
+                    // that can tell a stack with a queue from one without.
+                    (
+                        "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
+                        true,
+                    ),
                     // The exchange, for the reason the x86_64 list states:
                     // the child's exit status is the echo's first byte.
                     (
@@ -1426,6 +1445,16 @@ impl Machine {
                 ("protofire: tcp connected, listener ", false),
                 ("protofire: tcp echoed 9 byte(s) of 9, round trip", true),
                 ("protofire: tcp closed, both ends done", true),
+                // The recovery: a segment the probe refuses to deliver, and
+                // the retransmission that puts it back.  No wire this gate
+                // boots loses a frame, so this is the only line that can tell
+                // a stack with a queue from one without: the attempt count is
+                // the schedule's, and the byte count is the peer's own inbox
+                // after the copy that was lost arrived again.
+                (
+                    "protofire: tcp recovered 1 attempt(s), 12 byte(s), intact",
+                    true,
+                ),
                 // The stream exchange, from ring 3: the same two programs
                 // the datagram exchange used.  The listen and the accept
                 // are prefixes, the descriptor number is the table's, and
