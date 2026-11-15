@@ -1260,6 +1260,20 @@ the first large allocation:
 search asked class 48 got a23a40 of class 672 size 4000000
 ```
 
+**Three more checks the same way, all clean.**  A block just marked in use is
+reachable from no list at any position, not only at a head.  That check was first
+written inside one of the three carve branches and missed the other two, which is
+worth recording: the branches end at different places and only the last one had
+it.  Moved after the branch, it still never fires.  `coalesce` never merges into
+a block that is in use, checked at the point where it would have to.  And a
+removal never leaves its own block at the head it named.
+
+So the three functions that could put a used block into `free_lists` are each
+clean by measurement, and the array element is still wrong.  That contradiction
+is the whole of what is left, and it says the store happens somewhere none of
+these three functions is on the stack: not the search, not the carve, not the
+coalesce, not the removal.
+
 **The instrument matters as much as the machine.**  `panic!` at a candidate
 survives where `diag::write` made the fault disappear, and the difference is
 that a formatted diagnostic goes through `core::fmt` and the allocator while a
