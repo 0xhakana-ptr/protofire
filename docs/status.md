@@ -937,10 +937,12 @@ skipped the rule for a chain of one.  Exempting by **position** is the fix: the
 leaf is index zero and nothing hangs below it, and every certificate above it
 vouched for the next one down.
 
-**A defect this exposed, and did not fix: ECDSA after the network exercise.**
-On aarch64, verifying a chain faults inside `ecdsa_p256_verify`.  On x86_64 the
-same call returns the right answer, and `cargo test -p crypto` passes every one
-of its 64 tests on the host.
+**A defect this exposed: ECDSA after the network exercise, found and fixed.**
+On aarch64, verifying a chain faulted inside `ecdsa_p256_verify`.  On x86_64 the
+same call returned the right answer, and `cargo test -p crypto` passes every one
+of its 64 tests on the host.  The cause was the heap's second allocator, recorded
+further down this section; the fault is gone now that the free lists are one
+`static`, and the chain check after the network reports `verified yes`.
 
 Where it happens was narrowed by measurement rather than by reading, and the
 answer is not the one this entry first recorded:
@@ -1072,24 +1074,29 @@ was sent.
 
 **A static audit of the allocator's own address range, and what it rules out.**
 `AllocatorState` is 5752 bytes with `free_lists` at offset 112 and 704 entries,
-measured on the host rather than counted by hand.  `HEAP_MODEL` is 5760 bytes,
-so the eight bytes in front of the state are `SpinLock`'s word, and the whole
-object is the only static in
-`[0x44989a48, 0x4498b0c8)`: the next symbol begins exactly at the end.  That
-rules out the cheapest explanation, which is an unrelated static beside the
-allocator overrunning into it.  Whatever writes `free_lists` is writing into
-`HEAP_MODEL` itself, and the only two ways in are a store through a pointer the
-allocator computed and a store through `&mut AllocatorState` with an index that
-is out of range.
+measured on the host rather than counted by hand.  `HEAP_MODEL` was 5760 bytes
+when this was measured, so the eight bytes in front of the state were
+`SpinLock`'s word, and the whole object was the only static in
+`[0x44989a48, 0x4498b0c8)`: the next symbol began exactly at the end.  That ruled
+out the cheapest explanation, which was an unrelated static beside the allocator
+overrunning into it, and it left two ways in: a store through a pointer the
+allocator computed, or a store through `&mut AllocatorState` with an index out of
+range.
+
+The audit was sound and aimed at a store that never happened.  `HEAP_MODEL` is
+zero-sized now: the state it used to hold is the `STATE` static, and the type
+carries nothing.  The two writers it named are still the only two, and neither
+was ever wrong; the array they wrote was correct for the allocator doing the
+writing, and wrong only for the second one that read it.
 
 The page tables sit immediately in front of the heap, which is worth knowing and
 is not the answer.  `TABLES` spans `0x40154000..0x40986000` and the heap starts
-at `0x40989a40`, so a `Tables` overrun would reach `KERNEL_HEAP` first and
-`HEAP_MODEL` 64 MiB later.  `re_encode` and `map_device_blocks` both write
-leaves whose addresses came from `build`, which builds a table entry for every
-level below the root; the device path taken for BARs below four gigabytes is
+at `0x40989a40`, so a `Tables` overrun would reach `KERNEL_HEAP` first and the
+heap model 64 MiB later.  `re_encode` and `map_device_blocks` both write leaves
+whose addresses came from `build`, which builds a table entry for every level
+below the root; the device path taken for BARs below four gigabytes is
 `re_encode`, which only rewrites an entry that already exists.  Neither reaches
-`HEAP_MODEL`.
+the heap model.
 
 **The checkpoints that survived a one-byte probe, and the ones that did not.**
 Writing one character and walking the heap after it puts `build_image` on the
@@ -1382,14 +1389,32 @@ yet depends on the allocation sequence, and every diagnostic that allocated move
 that sequence.  And `heap_audit` never reported anything because it audits the
 global allocator, which is the one that is right.
 
-**What the repair is.**  One allocator, not two: the kernel's
-`#[global_allocator]` and the wrapper's model have to be the same object, so a
-check and an allocation read one set of free lists.  `HeapAllocator` becomes a
-handle over the global one rather than a second instance with its own state, and
-a host test binary keeps a model of its own because it can install one.  That is
-a change to `libs/allocator` and `kernel/src/lib.rs` together, and it is not made
-here: this entry records the cause and the checker that will say whether the
-repair worked.
+**The repair: one heap, reached through handles.**  The free lists were a field
+of `KernelGlobalAllocator`, so two objects of that type held two views of one
+arena.  They are a `static` in `libs/allocator` now, and the type is zero-sized,
+so a handle is a way to reach the lists rather than a place to keep them and the
+divergence is not something a caller can write down.
+
+Two tests hold the property.  `a_second_handle_sees_the_first_handle_s_allocation`
+allocates through one handle and asserts the other one's byte count moved, then
+runs the check through the second; with the state put back in a field it fails
+with `67108864` free before and after, which is the boot's own number.  And the
+boot walks the heap after the mount and prints what the walk read:
+
+```text
+protofire: heap checked after mount, 0x3faefd0 of 0x4000000 bytes free
+```
+
+`0x3faefd0` is `0x4000000` minus the 331824 bytes the mount carved, on x86_64,
+aarch64 and riscv64 alike.  A stale second view would print the whole arena
+free, so that number is the claim, and the gate requires the line whole rather
+than as a prefix.  Putting the state back in a field makes the boot panic with
+the record's original address, `10631744`, which is `0xa23a40`, the heap's first
+block.
+
+The aarch64 fault that started this search is gone with it: the chain check
+after the network exercise reports `verified yes` on four consecutive boots, and
+the earlier entries' `0x5` and `0x15` data aborts do not recur.
 
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.

@@ -715,4 +715,60 @@ mod tests {
             assert_eq!(check_invariants(state), Ok(()));
         });
     }
+
+    /// Two handles reach one heap, and this is the property whose absence let
+    /// the kernel ship a check that inspected an allocator nothing allocated
+    /// from.
+    ///
+    /// The failure it guards is not corruption.  A second handle that kept its
+    /// own free lists would report the arena as one free block no matter how
+    /// much the first had carved, so `verify_kernel_heap` would name a used
+    /// block as free and the boot would call that damage.  Allocating through
+    /// one handle and observing the *other* handle's byte count is the
+    /// smallest thing that fails if the state ever becomes a field again.
+    #[test]
+    fn a_second_handle_sees_the_first_handle_s_allocation() {
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let first = KernelGlobalAllocator::new();
+        let second = KernelGlobalAllocator::new();
+        first.ensure_init();
+
+        let before = second.remaining();
+        let profiler = AllocProfiler::new();
+        let layout = Layout::from_size_align(4096, 16).unwrap();
+        let mut pointer: *mut u8 = core::ptr::null_mut();
+        // `with_state` holds the heap's lock while this closure runs, which is
+        // the exclusive access `allocate_locked` requires; no `unsafe` is
+        // needed because it takes the state by `&mut`, so the borrow is the
+        // proof.
+        first.with_state(|state| {
+            pointer = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
+        });
+        assert!(!pointer.is_null());
+
+        let after = second.remaining();
+        assert!(
+            after < before,
+            "a second handle reported {after} free bytes after the first \
+             allocated 4096 bytes, from {before}: the handles hold separate state"
+        );
+
+        // The second handle's own check has to pass, and it can only pass if it
+        // reads the lists the first one wrote.
+        second.verify_heap_integrity();
+
+        // The pointer came from this heap and is freed once.
+        first.with_state(|state| {
+            assert!(KernelGlobalAllocator::deallocate_locked(
+                state, pointer, &profiler
+            ));
+        });
+        assert_eq!(
+            second.remaining(),
+            before,
+            "the freed bytes did not return to the count the other handle reads"
+        );
+    }
 }

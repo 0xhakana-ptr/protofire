@@ -5,21 +5,32 @@
 
 pub use super::allocator::KernelGlobalAllocator;
 
-// The heap model
+// One heap, reached through handles
 //
 // This crate does **not** install a `#[global_allocator]`, and the absence is
 // the design: a library that installed one could not be a dependency of a test
 // binary, because two global allocators is a link error.  The kernel installs
-// `KernelGlobalAllocator` in the change that gives it a `#[global_allocator]`
-// of its own; here the model is a static the tests and the kernel both reach.
+// `KernelGlobalAllocator` as its own, and what it installs is a zero-sized
+// handle: the free lists live in a `static` inside this crate, so every handle
+// reaches the same lists.
+//
+// That arrangement replaces a defect rather than tidying one.  The state used
+// to be a field, so the kernel's `#[global_allocator]` and the accessor below
+// were two objects with a view of the arena each.  Only the global allocator
+// was ever asked for memory, and `verify_kernel_heap` went through the other
+// one, which still described the heap as one free block and reported a free
+// list naming a block marked in use.  The block really was in use, by the
+// allocator the check was not looking at.
 //
 // The host arm is gone for the same reason: `std::alloc::System` was how the
 // previous tree let the same file serve a host build, and in this tree the host
-// build is the crate's own tests, which use `HeapAllocator` over the model
-// rather than a second allocator.
-
-/// The model the kernel and the tests both drive.
-pub static HEAP_MODEL: KernelGlobalAllocator = KernelGlobalAllocator::new();
+// build is the crate's own tests, which use `HeapAllocator` over the same
+// `static` rather than a second allocator.
+//
+// There is deliberately no `HEAP_MODEL` static beside the state.  One used to
+// sit here, and its existence was the defect: a name that looked like "the
+// heap" while holding a second copy of the free lists.  `heap_model()` below
+// returns a handle, which costs nothing and cannot diverge.
 
 #[derive(Clone, Copy, Default)]
 pub struct HeapAllocator;
@@ -52,8 +63,9 @@ impl HeapAllocator {
     }
 }
 
-pub(crate) fn heap_model() -> &'static KernelGlobalAllocator {
-    &HEAP_MODEL
+/// A handle over the one heap, for code written against the accessor.
+pub(crate) fn heap_model() -> KernelGlobalAllocator {
+    KernelGlobalAllocator::new()
 }
 
 /// Verify the integrity of the kernel heap. Returns a human-readable report.

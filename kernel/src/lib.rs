@@ -85,8 +85,16 @@ pub mod volume;
 // The heap's global allocator, installed here because this is the crate that
 // knows it is a kernel.
 //
+// It is a zero-sized handle and not a heap.  The free lists live in a `static`
+// inside `libs/allocator`, so this static and the crate's own
+// `verify_kernel_heap` reach the same lists.  That is the repair for a defect
+// this tree shipped: the state used to be a field, so this static and the
+// crate's model were two views of one arena, only this one was ever asked for
+// memory, and the check read a record that still said the arena was untouched
+// and reported a used block as damage.
+//
 // SAFETY: `KernelGlobalAllocator` implements `GlobalAlloc` with every method
-// taking `&self` and reaching its state only through a lock, so it is safe to
+// taking `&self` and reaching the state only through a lock, so it is safe to
 // share as the process-wide allocator.  Its arena is a `static` array and its
 // free lists are laid out on the first call.
 #[cfg(target_os = "none")]

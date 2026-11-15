@@ -82,6 +82,11 @@ pub fn kernel_main() -> ! {
     // The heap, and then the filesystem that needs it.
     crate::heap::bring_up();
     let namespace = crate::volume::mount_everything();
+    // The mount is where the kernel first allocates in volume, so it is where a
+    // check reading a second view of the arena stops agreeing with the
+    // allocator that carved it.  Compiles out with the check it calls.
+    #[cfg(debug_assertions)]
+    crate::heap::check_after_mount();
 
     // The registry that outlives this function, and the policy proven through
     // it rather than beside it.

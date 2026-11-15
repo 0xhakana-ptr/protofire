@@ -25,6 +25,17 @@
 //! With no writer installed the messages are dropped, which is the state a host
 //! test is in by default.
 //!
+//! ## One heap, and handles that reach it
+//!
+//! The free lists are a `static` in this crate, and `KernelGlobalAllocator` is
+//! a zero-sized handle over them.  Two handles therefore cannot disagree: a
+//! check through one reads the lists the other wrote.  That is not a tidiness
+//! choice. The state used to be a field, the kernel installed one instance as
+//! its `#[global_allocator]` while `verify_kernel_heap` reached another, and
+//! the second went on describing the arena as one free block while the first
+//! carved it, so the check reported a used block as free and a boot called that
+//! damage.
+//!
 //! ## Why the tests live here
 //!
 //! They exercise block splitting and merging, alignment, the free lists and the

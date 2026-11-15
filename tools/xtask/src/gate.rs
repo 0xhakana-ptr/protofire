@@ -367,6 +367,21 @@ impl Machine {
                     true,
                 ),
                 ("protofire: heap at ", false),
+                // The heap walked by the allocator's own invariant after the
+                // mount, with the bytes it found free.  The line exists because
+                // a check that reads an allocator nothing allocates from passes
+                // forever: this tree shipped `verify_kernel_heap` reaching a
+                // second `KernelGlobalAllocator` whose free lists still said
+                // "one free block" while the kernel's `#[global_allocator]`
+                // carved the arena, and the check called the used block damage.
+                // The count is required as the whole line because it is the
+                // claim: a second view would print the arena untouched, so a
+                // boot that regressed to two instances fails here rather than
+                // passing with a line that only says it looked.
+                (
+                    "protofire: heap checked after mount, 0x3faefd0 of 0x4000000 bytes free",
+                    true,
+                ),
                 ("protofire: block device from virtio-blk on pci", true),
                 // The network card, and the ARP exchange that proves both
                 // queues.  The first line is the bring-up, the second is a
@@ -1173,6 +1188,17 @@ impl Machine {
                     // delivered" instead.
                     ("protofire: interrupt delivered to its handler", true),
                     ("protofire: heap at ", false),
+                    // The heap walked by the allocator's own invariant after
+                    // the mount, with the bytes it found free.  The count is
+                    // the claim: a second view of the arena would report it
+                    // untouched, so a boot that went back to two instances
+                    // fails here instead of printing a line that only says it
+                    // looked.  The three machines carve the same number of
+                    // bytes, which is why one line covers all of them.
+                    (
+                        "protofire: heap checked after mount, 0x3faefd0 of 0x4000000 bytes free",
+                        true,
+                    ),
                     // The driver running on the device, and doing real I/O on
                     // it.
                     //
@@ -1656,6 +1682,17 @@ impl Machine {
                 ("protofire: timer line enabled = 1", true),
                 ("protofire: timer armed at ", false),
                 ("protofire: heap at ", false),
+                // The heap walked by the allocator's own invariant after the
+                // mount, with the bytes it found free.  The count is the
+                // claim: a second view of the arena would report it untouched,
+                // so a boot that went back to two instances fails here instead
+                // of printing a line that only says it looked.  All three
+                // machines carve the same number of bytes, which is why one
+                // line covers every list.
+                (
+                    "protofire: heap checked after mount, 0x3faefd0 of 0x4000000 bytes free",
+                    true,
+                ),
                 ("protofire: block device from virtio-blk on pci", true),
                 // The network card, and the ARP exchange that proves both
                 // queues.  The first line is the bring-up, the second is a

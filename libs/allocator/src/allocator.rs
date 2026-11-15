@@ -8,6 +8,7 @@ use core::alloc::Layout;
 use core::ptr::null_mut;
 
 use profiler::AllocProfiler;
+use sync::SpinLock;
 
 use super::tlsf::AllocatorState;
 use super::tlsf::HEADER_SIZE;
@@ -35,17 +36,40 @@ use super::tlsf::remove_free_block;
 #[cfg(debug_assertions)]
 use super::tlsf::scan_free_lists;
 
-pub struct KernelGlobalAllocator {
-    /// The free lists and bitmaps, behind the crate's lock.
-    ///
-    /// The previous tree hand-rolled a spinlock here, with its own backoff and
-    /// its own interrupt save/restore, a third copy of what `sync` already
-    /// provides, carrying the same comment ("the same pattern used by
-    /// SpinLock") that says so.  One lock is one place to get the interrupt
-    /// ordering right, and this is it.
-    pub(crate) state: sync::SpinLock<AllocatorState>,
-    pub profiler: AllocProfiler,
-}
+/// The free lists and bitmaps, behind the crate's lock.
+///
+/// The previous tree hand-rolled a spinlock here, with its own backoff and its
+/// own interrupt save/restore, a third copy of what `sync` already provides,
+/// carrying the same comment ("the same pattern used by SpinLock") that says
+/// so.  One lock is one place to get the interrupt ordering right, and this is
+/// it.
+///
+/// It is a `static` rather than a field, and that is the repair for a defect
+/// this tree shipped.  The kernel installed one `KernelGlobalAllocator` as its
+/// `#[global_allocator]` while `verify_kernel_heap` reached a second one kept
+/// by the crate, and each carried its own view of this state.  Only the first
+/// was ever asked for memory, so the second went on describing the arena as one
+/// free block while the first carved it, and the check read a record that
+/// stopped being true at the first allocation.  Nothing was corrupt; the check
+/// was reading an allocator that had never allocated.
+///
+/// With the state here, a handle is a way to reach these lists and not a place
+/// to keep them, so the divergence is not something a caller can write down.
+static STATE: SpinLock<AllocatorState> = SpinLock::new(AllocatorState::new());
+
+/// The counters, which belong to the heap for the same reason its free lists
+/// do: a per-handle copy would let one handle's allocations be invisible to a
+/// snapshot taken through another.
+static PROFILER: AllocProfiler = AllocProfiler::new();
+
+/// A handle over the one heap state.
+///
+/// Zero-sized on purpose: it owns nothing, so two handles cannot disagree about
+/// a free list.  The kernel's `#[global_allocator]` and the crate's own
+/// accessor are both this type, and
+/// `a_second_handle_sees_the_first_handle_s_allocation` is what holds that: it
+/// allocates through one handle and asserts the other one's byte count moved.
+pub struct KernelGlobalAllocator;
 
 impl Default for KernelGlobalAllocator {
     fn default() -> Self {
@@ -55,14 +79,11 @@ impl Default for KernelGlobalAllocator {
 
 impl KernelGlobalAllocator {
     pub const fn new() -> Self {
-        Self {
-            state: sync::SpinLock::new(AllocatorState::new()),
-            profiler: AllocProfiler::new(),
-        }
+        Self
     }
 
     pub(crate) fn with_state<R>(&self, callback: impl FnOnce(&mut AllocatorState) -> R) -> R {
-        let mut guard = self.state.lock();
+        let mut guard = STATE.lock();
         if !guard.initialized {
             self.initialize(&mut guard);
         }
@@ -510,18 +531,18 @@ impl KernelGlobalAllocator {
 // GlobalAlloc impl
 
 // SAFETY: the `GlobalAlloc` methods take `&self` and reach the state only
-// through `with_state`, which holds the allocator's lock for the duration of
-// each call.
+// through `with_state`, which holds the heap's lock for the duration of each
+// call.  The handle is zero-sized, so every handle reaches the same lists.
 unsafe impl GlobalAlloc for KernelGlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.with_state(|state| {
-            let result = Self::allocate_locked(state, layout, &self.profiler);
+            let result = Self::allocate_locked(state, layout, &PROFILER);
             if !result.is_null() {
                 // Recorded inside the allocator's critical section, so the
                 // trace is ordered with respect to the heap changes it
                 // describes.
                 super::tlsf::record_heap_trace(super::tlsf::TRACE_ALLOC, result as usize);
-                self.profiler.inc_heap_allocs();
+                PROFILER.inc_heap_allocs();
             }
             result
         })
@@ -533,8 +554,8 @@ unsafe impl GlobalAlloc for KernelGlobalAllocator {
             // two adjacent entries instead of being hidden by the corruption
             // the second free causes.
             super::tlsf::record_heap_trace(super::tlsf::TRACE_DEALLOC, ptr as usize);
-            if Self::deallocate_locked(state, ptr, &self.profiler) {
-                self.profiler.inc_heap_frees();
+            if Self::deallocate_locked(state, ptr, &PROFILER) {
+                PROFILER.inc_heap_frees();
             }
         });
     }
