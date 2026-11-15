@@ -11,7 +11,8 @@ Because the thing it holds is a *decision* rather than a program.  A root
 certificate is bytes a CA published; a TOML file beside it says which root a
 machine is built to trust and why.  Encoding that as a Rust array would make
 every certificate rotation a rebuild of a crate that also contains code, and
-would hide the one question a reader should be able to ask of a trust store, "what is this machine trusting, and who said so", inside a source file.
+would hide the one question a reader should be able to ask of a trust store,
+"what is this machine trusting, and who said so", inside a source file.
 
 ## What a trust anchor is for here
 

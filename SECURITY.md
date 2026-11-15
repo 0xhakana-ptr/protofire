@@ -55,8 +55,9 @@ recorded where its mechanism is:
 - **`TlsConnect`'s boot probe proves agreement, not rejection.**  It runs both
   sides of a handshake against each other, so a wrong side never appears in it;
   the rejection cases are host tests.  A reader who reads the boot line as
-  "TLS refuses forgeries" is reading it wrong.  `docs/status.md`.  `docs/status.md` is the census of what each machine does and does
-not do, and it is the authority where this list and the tree disagree.
+  "TLS refuses forgeries" is reading it wrong.  `docs/status.md`.
+  `docs/status.md` is the census of what each machine does and does not do, and
+  it is the authority where this list and the tree disagree.
 
 The threat model the tree is built against today is **a program that is wrong**,
 not a program that is hostile.  That is what the gates exercise: a program that
