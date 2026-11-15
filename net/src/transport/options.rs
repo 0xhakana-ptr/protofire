@@ -6,8 +6,8 @@
 //!
 //! ## Why this is a value and not a table
 //!
-//! The previous tree's option handling was two `match` arms over a struct of
-//! fourteen fields, and eleven of those fields were written by the setter and
+//! Two `match` arms over a struct of fourteen fields is the shape this module
+//! avoids, because eleven of those fields would be written by the setter and
 //! read by nothing.  A field nothing reads is not an option; it is a promise
 //! the kernel makes to a program that asks, and the promise is false.  This
 //! module holds one field per option **this stack acts on**, and the setter's
@@ -25,10 +25,10 @@
 //!
 //! ## Why `SO_REUSEADDR` is not one of them
 //!
-//! It was in the previous tree's table and in this one's first draft, and it
-//! cannot be honoured by this ABI: `BindUdp` names a port and nothing else, so
-//! the option would have to be set on a socket that does not exist yet, and a
-//! version that recorded it per process and spent it at the next bind was
+//! An option table for `SO_REUSEADDR` is the shape this module refuses, because
+//! it cannot be honoured by this ABI: `BindUdp` names a port and nothing else,
+//! so the option would have to be set on a socket that does not exist yet, and
+//! a version that recorded it per process and spent it at the next bind was
 //! kernel state for a flag no test could reach from ring 3.  A program that
 //! sets an option gets an effect or a refusal; the refusal for this one is
 //! the `match` below, and the ABI change that would make it honourable is a
@@ -331,8 +331,8 @@ mod tests {
             Err(Error::InvalidArgument)
         );
         // The right level, a name this build does not act on.  `SO_KEEPALIVE`
-        // was in the previous tree's table and nothing read it, which is the
-        // case this refusal exists for.
+        // is the case this refusal exists for: a name a caller can set, which
+        // nothing in the stack reads.
         assert_eq!(
             options.set(network::SOL_SOCKET, 1, &[1]),
             Err(Error::InvalidArgument)

@@ -16,8 +16,8 @@
 //! `sync` for the policy's lock.  Not the kernel, and not the audit layer: a
 //! denial is reported through a sink (`mac::set_sink`) because a security
 //! decision should not have to know how to find the current process in order to
-//! say that it denied something.  The previous tree's comment at that call site
-//! said exactly that, and the code did the opposite.
+//! say that it denied something.  A comment claiming that while the code
+//! reaches for the process is the mismatch this arrangement removes.
 //!
 //! ## Tests
 //!

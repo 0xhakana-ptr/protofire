@@ -18,11 +18,11 @@ use alloc::vec::Vec;
 
 /// The page size every operation here is stated in.
 ///
-/// The previous tree read it from its paging module; this crate has no page
-/// tables and no reason to gain them, so the number is stated here and the
-/// paging code will read it from the same place when it arrives.  A page is
-/// 4096 bytes on all three machines this tree runs on, which is why one
-/// constant serves all of them.
+/// This crate has no page tables and no reason to gain them, so the number is
+/// stated here rather than read from a paging crate, and the paging code will
+/// read it from the same place when it arrives.  A page is 4096 bytes on all
+/// three machines this tree runs on, which is why one constant serves all of
+/// them.
 pub const PAGE_SIZE: usize = 4096;
 
 /// Budget for the compressed-page cache.  When the total encoded size of

@@ -61,9 +61,9 @@ pub const VIF_LOCAL: u32 = 0;
 
 /// How many virtual interfaces a machine may have.
 ///
-/// The same order as the cache's bound and the previous tree's, and bounded
-/// because the entries arrive from a program: a caller that added VIFs in a
-/// loop would otherwise make the kernel hold whatever it sent.
+/// The same order as the cache's bound, and bounded because the entries arrive
+/// from a program: a caller that added VIFs in a loop would otherwise make the
+/// kernel hold whatever it sent.
 pub const VIF_LIMIT: usize = 64;
 
 /// How many forwarding-cache entries a machine may hold.
@@ -427,12 +427,12 @@ impl Cache {
 
     /// Drop everything, which is what disabling routing does.
     ///
-    /// The previous tree kept the cache across a disable and said so, quoting
-    /// Linux.  That is not the rule here: an entry a manager installed while
-    /// routing was on is an entry it wanted forwarding for, and a machine that
-    /// stopped forwarding should not start again on the next `init` with a
-    /// cache nobody re-checked.  The interfaces go the same way, so a later
-    /// `init` installs the local interface and nothing else.
+    /// Keeping the cache across a disable is the other rule, and this one is
+    /// chosen instead: an entry a manager installed while routing was on is an
+    /// entry it wanted forwarding for, and a machine that stopped forwarding
+    /// should not start again on the next `init` with a cache nobody
+    /// re-checked.  The interfaces go the same way, so a later `init` installs
+    /// the local interface and nothing else.
     pub fn clear(&mut self) {
         self.entries.clear();
     }

@@ -15,8 +15,8 @@
 //! `DAIF` holds the four mask bits, debug, SError, IRQ, FIQ, and bit 7 is
 //! `I`, the IRQ mask.  `I` set means IRQs are masked, so "enabled" is the bit
 //! being clear.  Setting and clearing the whole group is `msr DAIFSet, #0xf`
-//! and `msr DAIFClr, #0xf`; the previous tree's `arch/aarch64/mod.rs` does the
-//! same three operations, and this file is that code given its own module.
+//! and `msr DAIFClr, #0xf`, and the three operations live here as their own
+//! module because a mask is a machine's answer and not a scheduler's.
 //!
 //! ## On a host build
 //!

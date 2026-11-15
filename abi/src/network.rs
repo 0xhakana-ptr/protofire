@@ -536,9 +536,9 @@ pub const IPSEC_AEAD_CHACHA20_POLY1305: u32 = 2;
 
 /// One security policy, as `IpsecAddSp` takes it.
 ///
-/// Twelve words, the previous tree's shape.  The selector is the five-tuple: a
-/// protocol, two prefixes with their lengths, and two ports, each of which a
-/// zero leaves unconstrained.
+/// Twelve words, which is the wire size and not an implementation detail: the
+/// selector is the five-tuple, a protocol, two prefixes with their lengths, and
+/// two ports, each of which a zero leaves unconstrained.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IpsecSpDef {
@@ -660,8 +660,8 @@ pub const IPSEC_STATS_SIZE: usize = size_of::<IpsecStats>();
 
 /// A virtual interface's flag: this one is the host's own delivery.
 ///
-/// The number the previous tree published, kept because it is a value a
-/// program's own record carries.
+/// `1` rather than a value chosen here, because it is a number a program's own
+/// record carries and the wire is the contract.
 pub const MRT_VIF_FLAG_LOCAL: u32 = 1;
 
 /// A virtual interface's flag: this one sends out of the card.
@@ -669,10 +669,10 @@ pub const MRT_VIF_FLAG_LINK: u32 = 2;
 
 /// One virtual interface, as `MrtAddVif` takes it.
 ///
-/// Six words, the previous tree's shape.  `vif_index` of zero asks for
-/// automatic numbering: the field is documented on `MrtAddVif` and the reading
-/// is stated there, because the record's own comment and the flag word could be
-/// read as saying zero means the local interface, and one value cannot be both.
+/// Six words, the wire size.  `vif_index` of zero asks for automatic numbering:
+/// the field is documented on `MrtAddVif` and the reading is stated there,
+/// because the record's own comment and the flag word could be read as saying
+/// zero means the local interface, and one value cannot be both.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MrtVifDef {
@@ -711,9 +711,8 @@ pub struct MrtOutVif {
 ///
 /// `(source, group)`, the interface it must arrive on, and up to four outgoing
 /// interfaces.  All four are carried in the record and `num_out_vifs` says how
-/// many are meaningful, which is the shape the previous tree published: a
-/// caller that set two and left the rest zero is a caller whose record this
-/// reads the first two of.
+/// many are meaningful, so a caller that set two and left the rest zero is a
+/// caller whose record this reads the first two of.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MrtMfcDef {
@@ -886,8 +885,8 @@ mod tests {
         assert_eq!(super::FILTER_FAMILY_IPV6, 6);
     }
 
-    /// The multicast records are the previous tree's shapes, and their sizes
-    /// are pinned because a program's own record is written against them.
+    /// The multicast records' wire sizes, pinned because a program's own
+    /// record is written against them.
     #[test]
     fn the_multicast_records_keep_their_shape() {
         assert_eq!(

@@ -22,10 +22,10 @@ pub use super::allocator::KernelGlobalAllocator;
 // list naming a block marked in use.  The block really was in use, by the
 // allocator the check was not looking at.
 //
-// The host arm is gone for the same reason: `std::alloc::System` was how the
-// previous tree let the same file serve a host build, and in this tree the host
-// build is the crate's own tests, which use `HeapAllocator` over the same
-// `static` rather than a second allocator.
+// The host arm is gone for the same reason: `std::alloc::System` was how one
+// file could serve a host build, and the host build here is the crate's own
+// tests, which use `HeapAllocator` over the same `static` rather than a second
+// allocator.
 //
 // There is deliberately no `HEAP_MODEL` static beside the state.  One used to
 // sit here, and its existence was the defect: a name that looked like "the

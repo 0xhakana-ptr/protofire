@@ -496,8 +496,8 @@ destination's.  Removing the route makes that line print `MISMATCH` and the
 boot fail, which is the mutation this was checked with.
 
 **Five network numbers moved out of `NotImplemented`.**  They are the frozen
-range's own, with the contracts the previous tree assigned them, so none of them
-is a new decision: `GetHostName` (71) and `SetHostName` (72) are a name this
+range's own, and the ABI already fixed their contracts, so none of them is a new
+decision: `GetHostName` (71) and `SetHostName` (72) are a name this
 machine holds, `GetSockName` (73) and `GetPeerName` (74) are a `sockaddr_in`
 written from the connection's own four-tuple, and `ResolveHostname` (93) is the
 lookup the boot's DNS probe already runs.
@@ -535,8 +535,8 @@ are served, and each one changes what it names: `SO_RCVBUF` is the window every
 outgoing segment advertises, `SO_SNDBUF` is the congestion window a write may
 not exceed, and `TCP_NODELAY` is whether a small write waits for a segment's
 worth.  Every other number is `InvalidArgument`, which is the point of having
-three rather than fourteen: the previous tree's table stored eleven options
-nothing read, and a field nothing reads is a promise to a program that asks,
+three rather than fourteen: a table of fourteen stores eleven options nothing
+reads, and a field nothing reads is a promise to a program that asks,
 not an option.
 
 `SO_REUSEADDR` is deliberately **not** one of the three, and its absence is the
@@ -660,11 +660,11 @@ them is `net::filter`'s: an ordered rule list, the first match deciding, a
 prefix and a port range in each rule, and a flow table the stateful rules fill
 so a reply finds the answer its request already got.
 
-**The previous tree's shape was not copied, because its shape was the bug.**
-That filter had an `enabled` flag, started with it `false`, and no call among
-its four ever set it: every packet took the `if !enabled { allow }` path, so the
-rules a program installed were consulted by nothing while each call answered
-success.  There is no flag here to leave off.  A filter with no rules is one
+**A filter with an `enabled` flag has a shape that is the bug.**  Such a filter
+starts with it `false`, and if no call among its four sets it, every packet takes
+the `if !enabled { allow }` path, so the rules a program installed are consulted
+by nothing while each call answers success.  There is no flag here to leave off.
+A filter with no rules is one
 whose default action decides everything, the boot installs one that allows, and
 what a call can change is the rules and the default, which are the two things
 that decide.
@@ -706,11 +706,10 @@ saying is not the tables: it is that this stack **forwards**.  A multicast
 packet is read because a cache entry names its group, and it leaves by each
 interface its entry names with the hop count spent.
 
-The previous tree had those tables too, and nothing in its data path read them:
-the cache was written by the syscalls and read by a `tick` that aged entries
-out, so every entry described a stream nothing forwarded.  That is the same
-shape as the packet filter's `enabled` flag, and the probe is built to fail on
-it.
+Tables alone are not forwarding, and this is the shape to avoid: a cache written
+by the syscalls and read only by a `tick` that ages entries out describes a
+stream nothing forwards.  That is the same shape as the packet filter's
+`enabled` flag, and the probe is built to fail on it.
 
 ```
 protofire: forwarded multicast from 167772674 to 4009820675 with ttl 4, 1 interface(s)
@@ -1290,18 +1289,15 @@ arithmetic did too.  Every measurement in this entry that is worth having was
 taken with a panic on x86_64, which boots in seconds and fails at a fixed
 address.
 
-**The previous tree has the same code, and never looked.**  The previous tree's
-heap module, a pair of files named `tlsf` and `allocator` under its own memory
-directory, is read-only source material and not part of this one, so its paths
-are not written here.  Against this tree's `libs/allocator` it differs in comment
-wording, in `println!` becoming `diag::write`, and in one compile-time assert;
-the allocator differs in how the lock is spelled, `UnsafeCell` and an `AtomicBool`
-in that tree against `sync::SpinLock` here, and in nothing else.
-`MemoryBlockDevice` is byte for byte the same, fields, order and constructor.
-With those files equal and the mount path equal, the defect is in code both trees
-share, so the previous tree has it too.
+**The defect was not a regression from the restructure.**  A comparison against
+the archived tree, read-only source material and not part of this one, found the
+heap module there differing in comment wording, in `println!` becoming
+`diag::write`, and in one compile-time assert; the allocator differs in how the
+lock is spelled and in nothing else, and `MemoryBlockDevice` is byte for byte the
+same.  With those files equal and the mount path equal, the defect is in code
+both trees share.
 
-What the previous tree does not have is a call to `verify_kernel_heap` anywhere
+What the archived tree does not have is a call to `verify_kernel_heap` anywhere
 in its sources.  The function exists there, and nothing invokes it, so the
 attributes below were never checked on a boot: the physical walk every boot does
 was always clean, and the free lists were only ever read by code that had a
@@ -1309,8 +1305,8 @@ reason to follow one, which is the same asymmetry that let this defect survive
 here until a walk was added.
 
 That answers a question worth asking and does not move the search: the defect is
-not new, so it is not a regression from this tree's restructure, and looking for
-what the restructure broke would be looking in the wrong place.
+not new, so looking for what the restructure broke would have been looking in the
+wrong place.
 
 **The checker now looks at both structures.**  `check_invariants` walked only the
 physical chain, which is the reason a walk after every allocation reported clean
@@ -1399,18 +1395,28 @@ Two tests hold the property.  `a_second_handle_sees_the_first_handle_s_allocatio
 allocates through one handle and asserts the other one's byte count moved, then
 runs the check through the second; with the state put back in a field it fails
 with `67108864` free before and after, which is the boot's own number.  And the
-boot walks the heap after the mount and prints what the walk read:
+boot walks the heap after the mount and prints the verdict the walk reached:
 
 ```text
-protofire: heap checked after mount, 0x3faefd0 of 0x4000000 bytes free
+protofire: heap checked after mount, carved 0x51040 byte(s), and the free lists agree
 ```
 
-`0x3faefd0` is `0x4000000` minus the 331824 bytes the mount carved, on x86_64,
-aarch64 and riscv64 alike.  A stale second view would print the whole arena
-free, so that number is the claim, and the gate requires the line whole rather
-than as a prefix.  Putting the state back in a field makes the boot panic with
-the record's original address, `10631744`, which is `0xa23a40`, the heap's first
-block.
+The line states the **verdict** and not the byte count, and the first draft of it
+got that wrong.  The count moves with the allocation sequence: it read `0x3faefd0`
+as free bytes until a comment-only change moved one allocation and it read
+`0x3faefc0`, which made the gate report a documentation edit as a defect.  What
+does not move is whether the arena was touched at all.  A stale second view still
+describes the whole range as free, so the boot compares what the walk reads
+against the arena's own size, and an untouched arena prints
+
+```text
+protofire: heap check after mount saw an UNTOUCHED heap, so it is reading a second view
+```
+
+and panics.  The gate requires the `carved ` prefix, which that sentence does not
+begin with, so the regression cannot satisfy the requirement with its own
+failure.  Putting the state back in a field was re-run to confirm it: the boot
+prints the `UNTOUCHED` line, and the gate fails.
 
 The aarch64 fault that started this search is gone with it: the chain check
 after the network exercise reports `verified yes` on four consecutive boots, and
@@ -1596,10 +1602,10 @@ name is **bytes** and not a filesystem path: nothing resolves it through a
 namespace and a filesystem may hold a file of the same name, which is what makes
 this a socket rather than a file a program would have to create and clean up.
 
-The connection is **two pipes**, not one.  The previous tree's local socket was
-one pipe: the client kept its write end and the server its read end, so a client
-could not read what its server answered, which is half of what a socket is.  Two
-pipes cost one more buffer per connection and make the connection a connection.
+The connection is **two pipes**, not one.  One pipe per local socket, the client
+keeping its write end and the server its read end, is a client that cannot read
+what its server answered, which is half of what a socket is.  Two pipes cost one
+more buffer per connection and make the connection a connection.
 The mutation is the probe's: wire both halves to one pipe and the line reads
 `5 byte(s) forward, 0 back, MISMATCH`.
 

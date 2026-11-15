@@ -9,10 +9,9 @@
 //! layout, an enable mask, and a ring of them.  Nothing here opens a file, asks
 //! who the current process is, or knows that a boot command line exists.
 //!
-//! The other half of the previous tree's `src/kernel/audit/`, `persist.rs`,
-//! which opens `/data/audit.log` through the filesystem, and `mod.rs`'s
-//! `audit=persist` boot argument, names `fs` and the scheduler, so it moves
-//! with the filesystem rather than with the record.
+//! Persistence is not here, and deliberately: opening a log file through the
+//! filesystem and the boot argument that asks for one name `fs` and the
+//! scheduler, so they move with the filesystem rather than with the record.
 //!
 //! ## Why the record is `repr(C)`-shaped rather than a Rust struct
 //!

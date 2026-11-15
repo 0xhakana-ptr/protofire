@@ -38,11 +38,9 @@ use super::tlsf::scan_free_lists;
 
 /// The free lists and bitmaps, behind the crate's lock.
 ///
-/// The previous tree hand-rolled a spinlock here, with its own backoff and its
-/// own interrupt save/restore, a third copy of what `sync` already provides,
-/// carrying the same comment ("the same pattern used by SpinLock") that says
-/// so.  One lock is one place to get the interrupt ordering right, and this is
-/// it.
+/// Hand-rolling a spinlock here would mean a second backoff and a second
+/// interrupt save/restore, a third copy of what `sync` already provides.  One
+/// lock is one place to get the interrupt ordering right, and this is it.
 ///
 /// It is a `static` rather than a field, and that is the repair for a defect
 /// this tree shipped.  The kernel installed one `KernelGlobalAllocator` as its

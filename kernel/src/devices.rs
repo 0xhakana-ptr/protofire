@@ -931,8 +931,8 @@ pub fn exercise_network() -> bool {
     // The filter: a rule installed and the packet it names **not delivered**,
     // then the same packet delivered once the rule is gone.  Both halves,
     // because a filter that always drops and one that never does each pass one
-    // of them; the previous tree's filter passed neither, its rules being
-    // consulted by nothing while an `enabled` flag nothing set said otherwise.
+    // of them, and a filter whose rules are consulted by nothing while an
+    // `enabled` flag nothing sets says otherwise passes neither.
     if !crate::net::filter_probe() {
         return false;
     }

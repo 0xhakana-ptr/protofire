@@ -5774,10 +5774,9 @@ pub fn tls_probe() -> bool {
 /// Prove that a multicast packet is forwarded, with its hop count spent.
 ///
 /// The claim multicast routing has to earn is not "the entry was stored": it is
-/// "a packet the entry names was sent on".  The previous tree's forwarding
-/// cache had no caller in the data path at all, so every entry it accepted
-/// described a stream nothing read, which is the same shape the packet filter's
-/// `enabled` flag had.
+/// "a packet the entry names was sent on".  Forwarding state with no caller in
+/// the data path describes a stream nothing reads, which is the same shape the
+/// packet filter's `enabled` flag had.
 ///
 /// The exchange is a frame this machine hands the demux, carrying a multicast
 /// destination and an entry that forwards it, and the assertion is what the
@@ -5932,10 +5931,10 @@ pub fn multicast_probe() -> bool {
 /// Prove that a rule changes what the demux does with a packet.
 ///
 /// The claim a filter has to earn is not "the rule was stored", it is "the
-/// packet was dropped", and the difference is the whole of the previous tree's
-/// defect: its filter kept rules and had an `enabled` flag that no call ever
-/// set, so every packet took the allow path and the rules were consulted by
-/// nothing.  This probe measures the delivery instead of the table.
+/// packet was dropped", and the difference is the whole of the shape to avoid:
+/// a filter that keeps rules and has an `enabled` flag no call ever sets takes
+/// the allow path for every packet and consults the rules by nothing.  This
+/// probe measures the delivery instead of the table.
 ///
 /// The exchange is a datagram this machine sends **itself** through the demux,
 /// which is the loopback path and the one path that reaches the filter without

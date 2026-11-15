@@ -25,8 +25,8 @@ use crate::halt;
 /// The boot, from the point where a machine is up to the point where it stops.
 ///
 /// This takes a [`crate::BootInfo`] through `arch::boot_info()` rather than a
-/// loader's registers: parsing the handshake is the architecture's business,
-/// and the previous tree's entry took x86_64's convention for the whole tree's.
+/// loader's registers: parsing the handshake is the architecture's business, so
+/// no one machine's convention leaks into the entry every machine shares.
 /// A new machine supplies its own `arch::boot_info()` and nothing here changes.
 ///
 /// The console is what makes this boot observable, so it comes first: every

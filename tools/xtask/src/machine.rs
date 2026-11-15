@@ -18,8 +18,8 @@ use std::path::Path;
 /// The accepted spellings are the ones the target triples use, `x86_64`, not
 /// `x8664`, because a caller reads them from `rustc --print target-list` and
 /// from every other command in this tree.  An alias that disagreed with the
-/// thing it names is a papercut the previous tree's `Makefile` had in the other
-/// direction (`run-x8664` beside `x86_64-unknown-none`).
+/// thing it names is the papercut a `run-x8664` recipe beside a
+/// `x86_64-unknown-none` target produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Machine {
     #[value(name = "x86_64", alias = "x8664")]
@@ -178,11 +178,11 @@ impl Machine {
             ],
             // The OpenSBI machine: firmware first, then this image's entry in
             // S-mode.  `-cpu rv64` and not a named extension list, because the
-            // generic CPU is what the previous tree booted and what the device
-            // tree describes; the disk rides the PCIe bus, which is the same
-            // `virtio-blk-pci` the other two machines are given and the same
-            // modern-only interface request.  `-smp 2` because the boot starts
-            // the machine's second hart, the tree lists what the firmware
+            // generic CPU is what the device tree describes; the disk rides the
+            // PCIe bus, which is the same `virtio-blk-pci` the other two
+            // machines are given and the same modern-only interface request.
+            // `-smp 2` because the boot starts the machine's second hart, the
+            // tree lists what the firmware
             // cold-booted and asks the firmware for the rest, and a gate that
             // booted one hart would never exercise the start.
             Self::Riscv64 | Self::Riscv64Aia => {

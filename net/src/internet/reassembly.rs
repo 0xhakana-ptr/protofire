@@ -67,11 +67,11 @@ pub const MAX_ENTRIES: usize = 16;
 /// seconds".  It is in **microseconds** and not in ticks, and that unit is a
 /// correction: the caller's clock counts timer interrupts, this kernel's
 /// slice is a hundred microseconds, and a constant written as a count of ticks
-/// is a duration that moves when the slice does.  The first version said three
-/// thousand ticks and its comment said a hundred-hertz clock, which was the
-/// previous tree's; at ten kilohertz it was three hundred milliseconds, a
-/// hundred times shorter than the sentence describing it, so pieces arriving a
-/// third of a second apart were pieces this stack threw away.
+/// is a duration that moves when the slice does.  An earlier version said three
+/// thousand ticks and its comment said a hundred-hertz clock, which is a
+/// different kernel's slice; at ten kilohertz it was three hundred
+/// milliseconds, a hundred times shorter than the sentence describing it, so
+/// pieces arriving a third of a second apart were pieces this stack threw away.
 ///
 /// [RFC 1122]: https://www.rfc-editor.org/rfc/rfc1122
 pub const TIMEOUT_MICROS: u64 = 30_000_000;

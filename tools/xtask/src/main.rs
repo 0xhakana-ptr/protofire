@@ -18,10 +18,10 @@
 //!
 //! ## Why this is Rust and not a script
 //!
-//! The previous tree had thirty-odd `scripts/check-*.sh`, each the same shape:
-//! build, start QEMU, capture the log, grep for a line.  The shape is fine; the
-//! medium is not.  An assertion written as a `grep` is a string in a shell, and
-//! the only way to know whether it can fail is to break the kernel and boot it.
+//! Thirty-odd `scripts/check-*.sh`, each the same shape, build, start QEMU,
+//! capture the log, grep for a line, has a fine shape and the wrong medium.  An
+//! assertion written as a `grep` is a string in a shell, and the only way to
+//! know whether it can fail is to break the kernel and boot it.
 
 mod build;
 mod gate;

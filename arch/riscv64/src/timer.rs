@@ -16,11 +16,11 @@
 //!
 //! An `ecall` into firmware clobbers the argument registers, the firmware is
 //! another machine's code running on this hart, and it keeps its state
-//! wherever it likes.  The previous tree's timer call did not declare them, so
-//! every arm destroyed whatever the interrupted code had in `a0`..`a7`, and
-//! every timer interrupt reported tick 1: the deadline was recomputed against
-//! a register that had just been eaten.  Every register the call can reach is
-//! declared here, which is the one place a reader can check it.
+//! wherever it likes.  A timer call that does not declare them destroys
+//! whatever the interrupted code had in `a0`..`a7`, so every timer interrupt
+//! reports tick 1: the deadline is recomputed against a register that was just
+//! eaten. Every register the call can reach is declared here, which is the one
+//! place a reader can check it.
 //!
 //! ## A fire is a deadline passed
 //!

@@ -13,9 +13,8 @@
 //! ## How this machine reports it
 //!
 //! `sstatus.SIE` is bit 1, note that bit 0 is `UIE` and is not the one that
-//! gates supervisor interrupts, which is the mistake the previous tree's
-//! `arch/riscv64/mod.rs` calls out beside the instruction.  `csrsi sstatus, 2`
-//! and `csrci sstatus, 2` set and clear it.
+//! gates supervisor interrupts, a confusion worth stating beside the
+//! instruction.  `csrsi sstatus, 2` and `csrci sstatus, 2` set and clear it.
 //!
 //! ## On a host build
 //!

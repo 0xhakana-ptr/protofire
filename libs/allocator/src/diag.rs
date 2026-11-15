@@ -5,11 +5,10 @@
 //!
 //! ## The problem this solves
 //!
-//! The previous tree's heap called `crate::println!` directly.  That is one
-//! line in a kernel where the heap and the console are the same crate, and it
-//! is impossible in a crate that is supposed to be testable on the host:
-//! `println!` is the kernel's macro, it reaches a `_print` that writes a UART,
-//! and a host test has neither.
+//! A heap that called `println!` directly would be one line in a tree where the
+//! heap and the console are the same crate, and impossible in a crate that is
+//! supposed to be testable on the host: `println!` is the kernel's macro, it
+//! reaches a `_print` that writes a UART, and a host test has neither.
 //!
 //! The allocator cannot simply drop the messages.  An allocation failure with
 //! no explanation is the worst thing a heap can do, the caller gets a null

@@ -17,11 +17,11 @@
 //!
 //! ## Why two pipes and not one
 //!
-//! A connection is **two directions** and a pipe is one.  The previous tree
-//! made one pipe per connection, gave the client its write end and the server
-//! its read end, and called it a local socket: a client could not read what
-//! its server answered, which is half of what a socket is for.  Two pipes cost
-//! one more buffer per connection and make the connection a connection.
+//! A connection is **two directions** and a pipe is one.  One pipe per
+//! connection, the client handed its write end and the server its read end, is
+//! a local socket a client cannot read an answer from, which is half of what a
+//! socket is for.  Two pipes cost one more buffer per connection and make the
+//! connection a connection.
 //!
 //! The four ends are counted by the pipes themselves, so a client that exits
 //! drops its two handles, and a server reading sees end-of-file on the pipe

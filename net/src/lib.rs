@@ -158,10 +158,9 @@
 //! protocol numbers above the frozen range are all served, and what remains is
 //! the **metric** above, the **X.509 parser** [`tls`] names, and the protocols
 //! no number in this ABI mentions at all: SCTP, QUIC, WireGuard, PPPoE, NTP and
-//! mDNS are in the previous tree and are not here, and none of them is a call a
-//! program can make.  A protocol nothing calls is a library, not a subsystem,
-//! which is why `docs/roadmap.md` lists them as work rather than as a gap in
-//! this crate's surface.
+//! mDNS, none of which is a call a program can make.  A protocol nothing calls
+//! is a library, not a subsystem, which is why `docs/roadmap.md` lists them as
+//! work rather than as a gap in this crate's surface.
 //!
 //! [`multicast`] is the other, and its shape is different from a protocol's:
 //! two tables, one from virtual interface to what it does with a frame and one
@@ -178,7 +177,7 @@
 //! under `transport`: it is asked at two points the frame crosses, and neither
 //! of them is a transport.  There is no `enabled` flag, deliberately: a rule
 //! set that a call could switch off is a rule set that can be installed and
-//! never consulted, which is the state the previous tree shipped.
+//! never consulted.
 //! What a program **may change** about a socket is [`options`]: three numbers,
 //! each of which moves the thing it names.  The module is short because an
 //! option nothing acts on is a field, and this crate would rather refuse one

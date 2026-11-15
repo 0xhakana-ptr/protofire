@@ -45,11 +45,10 @@
 //! ## Why this is a trait and not a queue of operation codes
 //!
 //! The obvious design is a submission queue and a completion queue with an
-//! operation code in each entry.  The previous tree has exactly that, its
-//! `io_uring` syscall decodes an opcode and calls the subsystem, and it is the
-//! wrong shape here because it puts the *set of operations* in the ABI.  Adding
-//! one would mean extending a wire format, and every service would have to
-//! understand operations it does not provide.
+//! operation code in each entry, where the queue decodes an opcode and calls
+//! the subsystem.  That is the wrong shape here because it puts the *set of
+//! operations* in the ABI.  Adding one would mean extending a wire format, and
+//! every service would have to understand operations it does not provide.
 //!
 //! Here a request is opaque to the queue.  A service decides what it accepts
 //! and the crate never learns what an operation is.  The io_uring ABI stays

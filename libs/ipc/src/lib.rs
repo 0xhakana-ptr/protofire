@@ -17,11 +17,11 @@
 //!
 //! ## Why a crate rather than a module under the kernel
 //!
-//! The previous tree files its pipe under `kernel::ipc` for a reason its own
-//! header states: blocking is the point, and parking a thread is the
-//! scheduler's business.  That is right about the *pipe* and wrong about the
-//! ring, the ring blocks nothing.  Splitting them is what gives the arithmetic
-//! somewhere to be tested.
+//! A pipe filed under the kernel has a real reason, and it is stated where the
+//! pipe is: blocking is the point, and parking a thread is the scheduler's
+//! business.  That is right about the *pipe* and wrong about the ring, the ring
+//! blocks nothing.  Splitting them is what gives the arithmetic somewhere to be
+//! tested.
 
 #![no_std]
 

@@ -11,10 +11,10 @@
 //! lives, otherwise the kernel's `Error` and the ABI's code table are two
 //! descriptions of one thing, and nothing makes them agree.
 //!
-//! The previous tree had exactly that split: the enum in the crate root, and
-//! the constants `ERROR_CODE_MAX` in a copy the user side compiled.  The
-//! assertion that kept them in step was one line, and this crate is where that
-//! line stops being necessary.
+//! Splitting them is what puts the kernel's `Error` and the ABI's code table in
+//! two places: the enum in one crate root and the constants in a copy the user
+//! side compiles, kept in step by an assertion.  One crate both sides depend on
+//! is what makes that assertion unnecessary rather than merely cheap.
 //!
 //! ## Adding a variant
 //!

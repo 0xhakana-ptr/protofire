@@ -85,10 +85,9 @@ ABI, the numbering under call-site names, one call gate per machine, and the
 wrappers above them.  It names `abi` and nothing else of this tree, which is
 what this row's test asks, and every constant it carries is derived from abi's
 own value rather than copied, so a number that moves in `abi` breaks this
-crate's build instead of drifting.  (The previous tree carried a copy justified
-by an `abi` that carried the kernel; this tree's does not, and the copy is
-gone.)  The arrangement is `docs/fmts/syscall-abi.md` §8's subject, not a
-detail of this file.
+crate's build instead of drifting.  A copy is only necessary when `abi` carries
+the kernel, which it does not here.  The arrangement is
+`docs/fmts/syscall-abi.md` §8's subject, not a detail of this file.
 
 ### Layer 1, the wire format
 
@@ -103,12 +102,12 @@ The rule for this crate is that nothing may be added that needs `alloc`: a
 program's ABI is a word.  Where that is inconvenient, the type does not belong
 here.
 
-**What this crate replaces.**  The previous tree carried the ABI twice, the
+**Why `abi` is one crate.**  A payload is compiled separately and cannot `use`
+the kernel's crate, so an ABI that lives in the kernel has to exist twice: the
 kernel's copy and a vendored copy for the user side, kept identical below the
-header by a census script with a baseline of recorded differences.  The copy
-existed because a payload is compiled separately and could not `use` the kernel's
-crate.  A crate both sides depend on removes the reason, and the script that
-compared two copies is not needed.
+header by a census script with a baseline of recorded differences.  A crate both
+sides depend on removes the reason, and the script that compared two copies is
+not needed.
 
 ### Layer 2, algorithms over the ABI's types
 
@@ -194,8 +193,8 @@ A spinlock that only spins is safe between CPUs and unsafe against itself: an
 interrupt taken while the lock is held, whose handler takes the same lock, spins
 forever on a CPU that cannot make progress.  Closing that window needs the
 interrupt flag, the flag is the machine's, and putting it behind a trait would add
-an indirect call on the hottest path in the kernel.  That was measured in the
-previous tree and declined.
+an indirect call on the hottest path in the kernel.  That alternative was measured
+and declined.
 
 So everything that wants a lock carries the machine layer with it.  That is the
 price, it is cheaper than the alternative, and it is written down because an

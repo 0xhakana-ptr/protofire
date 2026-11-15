@@ -21,11 +21,10 @@
 //!
 //! ## What is not here
 //!
-//! Security, overlay and the zone layout.  The previous tree's mount layer had
-//! all three, and they are decisions about *this* kernel's policy rather than
-//! about what a mount table is: an overlay is two filesystems standing where
-//! one was, and a zone is a partition of the boot disk.  They arrive with the
-//! code that needs them.
+//! Security, overlay and the zone layout.  All three are decisions about
+//! *this* kernel's policy rather than about what a mount table is: an overlay
+//! is two filesystems standing where one was, and a zone is a partition of the
+//! boot disk.  They arrive with the code that needs them.
 
 use alloc::format;
 use alloc::string::String;

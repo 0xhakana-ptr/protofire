@@ -9,10 +9,9 @@
 //! scheduler, and a crate that needed the scheduler could not be tested on a
 //! host, which is where the arithmetic below has to be tested.
 //!
-//! So the ring is its own type with no lock, no wait queue and no `Arc`.  The
-//! previous tree's `PipeRing` was already that; what it did not have was a
-//! boundary that said so, and its tests shared a file with twenty others that
-//! needed a scheduler.
+//! So the ring is its own type with no lock, no wait queue and no `Arc`.  A
+//! ring that is merely *there* inside a pipe has no boundary to state that, and
+//! its tests share a file with twenty others that need a scheduler.
 //!
 //! ## What the caller owns
 //!

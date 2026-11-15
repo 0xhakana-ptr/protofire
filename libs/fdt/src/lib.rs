@@ -29,12 +29,12 @@
 //!
 //! ## Why it is byte-oriented and not a `repr(C)` cast
 //!
-//! The previous tree read the header by casting a struct over the blob and
-//! indexing fields.  That works exactly once: on a little-endian machine, with
-//! a compiler that padded the struct the way the author assumed, and with a
-//! blob whose version matched.  A device tree is a *defined* byte layout that
-//! happens to agree with such a struct on one platform, and the difference
-//! appears as a wrong offset rather than as a compile error.
+//! Reading the header by casting a struct over the blob and indexing fields
+//! works exactly once: on a little-endian machine, with a compiler that padded
+//! the struct the way the author assumed, and with a blob whose version
+//! matched.  A device tree is a *defined* byte layout that happens to agree
+//! with such a struct on one platform, and the difference appears as a wrong
+//! offset rather than as a compile error.
 //!
 //! So every field is read with a big-endian [`u32`] decode at a named offset,
 //! and the tests build blobs byte by byte.

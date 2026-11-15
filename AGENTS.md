@@ -150,10 +150,10 @@ it; write `unsafe` without its argument.
 
 ## The development host
 
-Linux, x86_64.  `rust-toolchain.toml` says why: the previous tree also carried
-Windows and macOS on Intel, and the cost was not the code, it was that every
-measurement had three answers, every script had a shell-difference branch, and a
-defect that only appeared on one host was found by whoever ran the gate there.
+Linux, x86_64.  `rust-toolchain.toml` says why: carrying Windows and macOS on
+Intel too costs more than the code, it makes every measurement have three
+answers, every script have a shell-difference branch, and a defect that only
+appears on one host be found by whoever ran the gate there.
 
 This tree has one host, and a build that does not work on it is broken rather
 than unsupported.

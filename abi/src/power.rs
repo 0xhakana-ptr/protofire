@@ -6,10 +6,9 @@
 //!
 //! The power layer asks the machine for a frequency and the machine answers;
 //! the machine's driver is written against this trait, so both sides name it.
-//! In the previous tree the trait lived in `kernel::power` and the architecture
-//! crates imported it, which made `arch` depend on `kernel`, the exact upward
-//! edge this tree's layering refuses, and one of the 322 such edges that made
-//! the old tree's `arch` impossible to read on its own.
+//! Putting it in `kernel` and having the architecture crates import it would
+//! make `arch` depend on `kernel`, the exact upward edge this tree's layering
+//! refuses and the one that makes a machine's crate unreadable on its own.
 //!
 //! Frequencies are in KHz throughout, because that is what the MSR ratios and
 //! the device-tree OPP tables both produce and a conversion in the middle would

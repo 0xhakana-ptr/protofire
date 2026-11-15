@@ -17,11 +17,11 @@
 //!
 //! ## What is not here yet
 //!
-//! The rest of the previous tree's `src/memory/`, the manager, the page table
-//! walk, the architecture glue, the swapping, is the half that does name a
-//! machine.  It arrives in changes of its own, because each of those files
-//! reaches for `arch` and for the kernel, and moving them together would be a
-//! change nobody could review.
+//! The manager, the page table walk, the architecture glue and the swapping are
+//! the half that does name a machine, so they stay out of this crate.  They
+//! arrive in changes of their own, because each of those files reaches for
+//! `arch` and for the kernel, and moving them together would be a change nobody
+//! could review.
 //!
 //! The boundary is worth stating because it is the crate's whole argument: a
 //! frame allocator that knows how to map a page cannot be tested without a page

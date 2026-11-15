@@ -10,10 +10,10 @@
 //! device, a lock, or the kernel, the dependencies are `core` and `alloc` and
 //! there are no others.  A pure algorithm's home follows what it is.
 //!
-//! Filing it by caller has a cost that shows up on a move: the previous tree's
-//! doc tests said `use protofire::fs::unicode::…`, which is the path they had,
-//! and they compiled because the crate they named happened to contain them.
-//! They now say `use unicode::…`, and the compiler is what checks that.
+//! Filing it by caller has a cost that shows up on a move: a doc test written
+//! against the path the code had, `use fs::unicode::…`, keeps compiling because
+//! the module it names happens to contain it.  Written against `unicode::…`,
+//! the compiler is what checks the name.
 //!
 //! ## What belongs here
 //!
@@ -25,11 +25,11 @@
 //! ## The tables
 //!
 //! `casefold_tables` and `normalize_tables` are generated from the Unicode
-//! Character Database and are tracked rather than built: the generators live in
-//! the previous tree under `tools/unicode/`, and regenerating them is a
-//! deliberate act.  They are ordinary modules here so that this crate has no
-//! build script, a crate whose contents change when a generator runs is harder
-//! to reason about than one whose source is checked in.
+//! Character Database and are tracked rather than built: regenerating them is a
+//! deliberate act, done by a generator kept outside this crate.  They are
+//! ordinary modules here so that this crate has no build script, a crate whose
+//! contents change when a generator runs is harder to reason about than one
+//! whose source is checked in.
 
 #![no_std]
 

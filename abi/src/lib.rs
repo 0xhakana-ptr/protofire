@@ -13,12 +13,12 @@
 //!
 //! ## Why there is no mirror
 //!
-//! The previous tree carried the ABI twice: `src/abi/` for the kernel and the
-//! shared crate's copy for the user side, kept identical below the header by a
-//! census script with a baseline of recorded differences.  The copy existed
-//! because a payload is compiled separately and could not `use` the kernel's
-//! crate.  A crate both sides depend on removes the reason: there is one
-//! definition, and the script that compared two of them is not needed.
+//! A payload is compiled separately and cannot `use` the kernel's crate, so a
+//! tree whose ABI lives in the kernel has to carry it twice: one copy for the
+//! kernel and one for the user side, kept identical below the header by a
+//! census script with a baseline of recorded differences.  A crate both sides
+//! depend on removes the reason.  There is one definition, and the script that
+//! compared two of them is not needed.
 //!
 //! The cost is that everything in here must be `no_std` and allocation-free.
 //! That is not a hardship for a wire format, a syscall argument is a word,

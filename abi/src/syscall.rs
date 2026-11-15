@@ -33,9 +33,9 @@ pub const ARG_COUNT: usize = 6;
 /// from a future build (an error code this one does not know) on the failure
 /// side.
 ///
-/// The previous tree computed this as `usize::MAX - ERROR_CODE_MAX`, which put
-/// the floor *below* every unknown code: a status naming error 14 decoded as
-/// `Ok(usize::MAX - 14)`, so a failure in a newer program was reported to its
+/// Computing it as `usize::MAX - ERROR_CODE_MAX` would put the floor *below*
+/// every unknown code: a status naming error 14 then decodes as
+/// `Ok(usize::MAX - 14)`, so a failure in a newer program is reported to its
 /// caller as a successful return of an enormous count.  Two constants cannot
 /// both be "the boundary" when the list of codes can grow.
 pub const ERROR_STATUS_FLOOR: usize = usize::MAX / 2;

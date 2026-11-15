@@ -80,8 +80,8 @@ stays on the queue for the same reason.
 ## Why a trait and not a table of operation codes
 
 The obvious design is a submission queue and a completion queue with an operation
-code in each entry.  The previous tree has exactly that: its `io_uring` syscall
-decodes an opcode and calls the subsystem that owns it.
+code in each entry, where the queue decodes an opcode and calls the subsystem
+that owns it.
 
 That is the wrong shape for a crate at layer 2, because it puts the *set of
 operations* in the ABI.  Adding one would mean extending a wire format, and every

@@ -6,8 +6,8 @@
 //! note, a device tree in a register the machine's own convention names, and
 //! the kernel consumes the result.  If the type lived in the kernel, `arch`
 //! would have to name it, and that is the one edge this tree exists to forbid:
-//! the previous tree's `arch` names `kernel` 322 times, 171 of them to reach
-//! the scheduler through the trap handler.
+//! a machine crate that reaches into the scheduler through its own trap handler
+//! cannot be read, or tested, without the whole kernel.
 //!
 //! A type both sides name belongs where both sides can reach it, which is here.
 //!

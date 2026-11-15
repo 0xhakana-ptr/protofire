@@ -40,14 +40,24 @@ pub fn bring_up() {
     arch::serial::write_str("\n");
 }
 
-/// Walk the heap after the mount, and report the free bytes the walk read.
+/// Walk the heap after the mount, and say whether the walk saw a carved heap.
 ///
 /// The mount is where the kernel first allocates in volume: images, devices,
 /// namespace entries and the copies the filesystem makes of them.  A checker
 /// reading a stale second view of the arena would survive every earlier point
 /// in the boot, because before the mount both views say the same thing.  Here
-/// they cannot, so here is where the check has to run and where the number on
-/// the line is worth reading.
+/// they cannot, so here is where the check has to run.
+///
+/// The line states the **verdict** and not the byte count.  A count moves with
+/// the allocation sequence, so a gate that required it whole would break on any
+/// change to an unrelated allocation, which is a gate reporting a refactor as a
+/// defect.  The verdict is the claim that does not move: a handle reading a
+/// second view would report the arena untouched.
+///
+/// The two outcomes start with different words on purpose.  The gate requires
+/// the prefix `... after mount, carved `, and the failure branch does not begin
+/// with it, so a boot that regressed cannot satisfy the requirement with the
+/// sentence that reports the regression.
 ///
 /// Panics on the first defect, through the allocator's own invariant, which is
 /// what makes the line's absence a failure rather than a missing observation.
@@ -57,9 +67,18 @@ pub fn check_after_mount() {
     let heap = allocator::HeapAllocator::new();
     let (heap_start, heap_end) = heap.bounds();
     let remaining = heap.remaining();
-    arch::serial::write_str("protofire: heap checked after mount, ");
-    arch::serial::write_hex(remaining as u64);
-    arch::serial::write_str(" of ");
-    arch::serial::write_hex((heap_end - heap_start) as u64);
-    arch::serial::write_str(" bytes free\n");
+    let carved = (heap_end - heap_start).saturating_sub(remaining);
+    if carved == 0 {
+        // Two allocators over one arena produce exactly this: the checker's
+        // view was never asked for memory, so it still describes the whole
+        // range as free.  Failing here names the defect at its own line rather
+        // than leaving a later allocation to trip over it.
+        arch::serial::write_str(
+            "protofire: heap check after mount saw an UNTOUCHED heap, so it is reading a second view\n",
+        );
+        panic!("check_after_mount: the heap a check reads is not the heap that allocates");
+    }
+    arch::serial::write_str("protofire: heap checked after mount, carved ");
+    arch::serial::write_hex(carved as u64);
+    arch::serial::write_str(" byte(s), and the free lists agree\n");
 }

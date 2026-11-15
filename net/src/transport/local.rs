@@ -24,10 +24,9 @@
 //! A local socket's name is a byte string a program chooses and a listener
 //! owns.  It is not a filesystem path: nothing resolves it through a
 //! namespace, nothing stat()s it, and a name a filesystem already holds is a
-//! name a local socket may still use.  The previous tree stored them in a
-//! `BTreeMap` keyed on the path string and called them paths, which is why its
-//! `bind` had to be careful about `/tmp`; this module keys on the bytes and the
-//! ABI names them bytes.
+//! name a local socket may still use.  Keying these on a path string and
+//! calling them paths is what forces a `bind` to be careful about `/tmp`; this
+//! module keys on the bytes, and the ABI names them bytes.
 //!
 //! The bound on a name is [`NAME_LIMIT`], and it is the ABI's: a name is copied
 //! from the caller's memory into kernel memory, so its length is a number a

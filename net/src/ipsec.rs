@@ -70,8 +70,9 @@ use abi::Result;
 
 /// The largest number of policies a machine holds.
 ///
-/// Bounded because the entries arrive from a program, and the previous tree's
-/// number so a boot's configuration is what it was written against.
+/// Bounded because the entries arrive from a program: 256 is what a boot's
+/// configuration is written against, so the bound is the contract rather than a
+/// tuning knob.
 pub const POLICY_LIMIT: usize = 256;
 
 /// The largest number of associations a machine holds.
@@ -703,11 +704,10 @@ impl Tables {
 
     /// What a **leaving** packet should get.
     ///
-    /// No match is [`Outcome::Bypass`], which is the state the previous tree's
-    /// default action named and this one states outright: a machine with no
-    /// policy sends plaintext, because a default of discard would make the
-    /// stack stop working the moment this module arrived, and a default of
-    /// protect has nothing to protect with.
+    /// No match is [`Outcome::Bypass`], and this is stated outright rather than
+    /// inherited: a machine with no policy sends plaintext, because a default
+    /// of discard would make the stack stop working the moment this module
+    /// arrived, and a default of protect has nothing to protect with.
     pub fn outbound(
         &self,
         source: [u8; 4],

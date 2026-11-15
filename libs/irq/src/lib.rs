@@ -26,8 +26,7 @@
 //!
 //! Keeping the table here means a host test can register handlers, dispatch to
 //! them, and assert what happened, without an interrupt controller, an IDT or a
-//! machine.  The previous tree had the same table and no way to test it: it was
-//! reachable only from a boot.
+//! machine.  A table reachable only from a boot has no way to be tested at all.
 //!
 //! ## What is not here
 //!

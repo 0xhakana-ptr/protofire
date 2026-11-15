@@ -12,11 +12,10 @@
 //!
 //! ## Why the fields are read by offset
 //!
-//! The previous tree described a descriptor as a `#[repr(C, packed)]` struct
-//! and cast a sector to it.  The layout is the specification's, so that works,
-//! //! but it puts the field offsets in a struct definition that no test can
-//! point at, and it needs `unsafe` for a read that is really "these bytes, at
-//! these offsets".
+//! Describing a descriptor as a `#[repr(C, packed)]` struct and casting a
+//! sector to it works, because the layout is the specification's, but it puts
+//! the field offsets in a struct definition that no test can point at, and it
+//! needs `unsafe` for a read that is really "these bytes, at these offsets".
 //!
 //! Here each field is read from the slice at its offset.  The offsets are named
 //! constants, a test pins them against an image built to the specification, and

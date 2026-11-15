@@ -10,8 +10,7 @@
 //!
 //! The primitives that *park a thread* live elsewhere, and deliberately so.
 //! Parking is a scheduler act, and a queue that parks has no business in the
-//! layer a mutex is built on, the previous tree states the same boundary in
-//! its `kernel/sync/mod.rs` and files the wait queues one layer up.
+//! layer a mutex is built on, so the wait queues are filed one layer up.
 //!
 //! ## Why it names `arch`
 //!

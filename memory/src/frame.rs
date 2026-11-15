@@ -178,13 +178,12 @@ pub struct FrameAllocator {
     pub profiler: AllocProfiler,
     /// What makes a range of physical frames safe to write through.
     ///
-    /// The previous tree called `super::arch::ensure_identity_mapped_range`
-    /// here, which is a machine function reached from a data structure, the
-    /// one line that made this file impossible to build without a page table,
-    /// and therefore impossible to test on a host.  The allocator cannot do
-    /// this for itself (it has no page table and should not have one) and
-    /// cannot skip it (a frame handed out has to be writable before the caller
-    /// zeros or reads it).
+    /// The allocator cannot do this for itself (it has no page table and should
+    /// not have one) and cannot skip it (a frame handed out has to be writable
+    /// before the caller zeros or reads it).  Calling a machine function from
+    /// this data structure would be the one line that made this file impossible
+    /// to build without a page table, and therefore impossible to test on a
+    /// host.
     ///
     /// So the machine supplies the answer once, at [`Self::set_map_hook`], and
     /// the default is a no-op for a test, where frames are ordinary memory and

@@ -189,12 +189,11 @@ fn mutation_support_capabilities() {
 /// A node with a name and nothing else: the smallest `VNode` the read-only
 /// skeleton will accept.
 ///
-/// Written here rather than moved in from the previous tree's
-/// `filesystem::types::StaticVNode`, which is a real type with a directory's
-/// worth of behaviour behind it.  A test that needs "some node" should say so
-/// in ten lines, and those ten lines are also what pins the trait's required
-/// surface: if `VNode` grew a required method, this is the implementor that
-/// fails first.
+/// Written here rather than shared with a real node type, which has a
+/// directory's worth of behaviour behind it.  A test that needs "some node"
+/// should say so in ten lines, and those ten lines are also what pins the
+/// trait's required surface: if `VNode` grew a required method, this is the
+/// implementor that fails first.
 struct EmptyNode {
     name: &'static str,
 }

@@ -10,9 +10,10 @@ is in the file that follows it.
 ## Building and running
 
 Linux, x86_64.  One development host is supported and `rust-toolchain.toml` says
-why: every measurement in the previous tree had three answers, every script had
-a shell-difference branch, and a defect that only appeared on one host was found
-by whoever ran the gate there.
+why: a tree that also carries Windows and macOS on Intel pays a cost that is not
+the code, it is that every measurement has three answers, every script has a
+shell-difference branch, and a defect that appears on one host is found by
+whoever ran the gate there.
 
 Three things are needed, and the first two are enough to **test** the tree:
 

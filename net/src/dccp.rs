@@ -704,10 +704,10 @@ pub const RESET_CODE_CONNECTION_REFUSED: u8 = 7;
 
 /// How many sequence numbers ahead of the last accepted one a peer may send.
 ///
-/// [RFC 4340] lets an implementation choose, and this is the previous tree's
-/// number: sixty-four datagrams of slack is far more than one window of a
-/// stream needs and small enough that a peer cannot make this side hold a
-/// megabyte of unread datagrams.
+/// [RFC 4340] lets an implementation choose, and sixty-four is chosen:
+/// that many datagrams of slack is far more than one window of a stream needs
+/// and small enough that a peer cannot make this side hold a megabyte of unread
+/// datagrams.
 pub const WINDOW: u64 = 64;
 
 /// How many datagrams one connection's inbox holds.

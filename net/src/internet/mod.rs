@@ -16,8 +16,8 @@
 //!
 //! These are grouped here rather than left flat because they answer one
 //! question between them: what a packet means before any transport reads it.
-//! The split from [`crate::transport`] is the one a reader looks for, and it
-//! is the same split the previous tree's `network/internet/` made.
+//! The split from [`crate::transport`] is the one a reader looks for, and the
+//! directory is what makes it visible in a listing.
 //!
 //! Nothing here is re-exported as part of the crate's surface from this file:
 //! the crate root does that, so a caller spells `net::ipv4` and never learns

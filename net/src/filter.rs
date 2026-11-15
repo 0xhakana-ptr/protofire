@@ -17,15 +17,15 @@
 //!
 //! ## What is deliberately not here
 //!
-//! **Nothing is enabled or disabled.**  The previous tree's filter had an
-//! `enabled` flag and four calls that managed rules, and not one of those four
-//! turned it on: every packet took the `if !self.enabled { allow }` early
-//! return, so the rules a program installed were consulted by nothing.  That is
-//! the defect this module's shape prevents.  There is no flag here to leave
-//! off: a filter with no rules is a filter whose default action decides
-//! everything, the boot installs a filter that allows, and the presence of a
-//! rule is what makes the filter do something.  What a call can change is the
-//! rules and the default action, and those are the two things that decide.
+//! **Nothing is enabled or disabled.**  An `enabled` flag beside four calls
+//! that manage rules is a shape where three of the four can fail to turn it on:
+//! every packet takes the `if !self.enabled { allow }` early return, and the
+//! rules a program installed are consulted by nothing.  That is the defect this
+//! module's shape prevents.  There is no flag here to leave off: a filter with
+//! no rules is a filter whose default action decides everything, the boot
+//! installs a filter that allows, and the presence of a rule is what makes the
+//! filter do something.  What a call can change is the rules and the default
+//! action, and those are the two things that decide.
 //!
 //! **It is not a connection tracker's state machine.**  A flow here is a key
 //! and a last-seen time.  This module does not read TCP's flags, and it says so
@@ -61,8 +61,8 @@ use crate::address::Address;
 ///
 /// A bound rather than no bound, because the rules arrive from a program: a
 /// caller that added rules in a loop would otherwise make the kernel hold
-/// whatever it sent.  It is the previous tree's number, which is the number a
-/// boot's own configuration has been written against.
+/// whatever it sent.  256 because a boot's own configuration is written against
+/// it, and the number is the contract rather than a tuning knob.
 pub const RULE_LIMIT: usize = 256;
 
 /// How many flows the tracking table holds.
@@ -905,10 +905,10 @@ mod tests {
 
     /// A deny rule drops the packet the default action would have allowed.
     ///
-    /// This is the test the previous tree could not have passed: its filter had
-    /// an `enabled` flag that started `false` and no call that set it, so the
-    /// rule walk never ran.  The absence of that flag is what this asserts, by
-    /// asserting the rule's effect with nothing else turned on.
+    /// This is the test an `enabled` flag would have made unable to fail: with
+    /// that flag in the condition and nothing setting it, the rule walk never
+    /// runs and this packet is allowed.  Asserting the rule's effect with
+    /// nothing else turned on is what holds the absence of the flag.
     #[test]
     fn a_deny_rule_drops_what_the_default_allows() {
         let mut filter = Filter::new();
