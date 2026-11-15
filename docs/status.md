@@ -1015,6 +1015,42 @@ thing it measures is not evidence a gate can keep.  It is recorded here because
 its result is what the next session should start from, and because reproducing
 it is cheaper than the bisect that led to it.
 
+**What the free list holds, measured.**  `AllocatorState` sits at
+`0x44989a48` when the heap ends at `0x44989a40`, which is eight bytes: only
+`HEAP_TRACE_CURSOR` is between them.  Its `free_lists` array is at `state + 112`,
+which is where `offsetof` puts it and not where a reader counting fields by hand
+would.  The heap's first block is class 26's list head, and at two points in the
+same boot its first four words read:
+
+```text
+before the mount   67108864       0  0  0      free, whole, unlinked
+after the mount          65       0  1  1      used, 0x41 bytes, link is 1
+```
+
+`65` is not a block size: bit 0 is the in-use flag and `0x40` is the extent, so
+the block really was handed out at 64 bytes.  The trailing `1` is the reference
+count an `Arc` wrote into the payload, which is the same word `block_next_free`
+reads as the link.
+
+**And the trace that would explain it makes it go away.**  Instrumenting every
+insert and removal by class, every allocation of a block in the heap's first
+page, and every coalesce, produced a sequence in which each removal matched an
+insert and every class agreed with every size.  It also produced a boot that ran
+to the end: the same source, one diagnostic more, and no `0x1`.  That is not the
+first time: `0..4` indices instead of `iter().enumerate()` moved the panic to a
+data abort, `#[inline(never)]` and a wider `prod` each turned it into a wrong
+answer, and the sentinel arrays moved the heap itself.  **Every attempt in this
+record that changed the build changed the symptom without changing the
+arithmetic**, and that is the single most useful fact about this defect: it is
+layout sensitive, so a probe is the worst instrument for it and a gate that only
+boots is nearly useless.
+
+What that leaves is a defect a session cannot finish by reading.  The next one
+should not add a probe inside the allocator.  It should build the same image
+twice with a one-byte difference that does not touch the allocator, confirm the
+fault flips, and then use a hardware watchpoint on `free_lists[672]` under
+`gdb-multiarch`, which is the tool that does not perturb the layout at all.
+
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
 Both were true statements about what failed first, and neither was the cause.
