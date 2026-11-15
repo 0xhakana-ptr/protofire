@@ -972,6 +972,22 @@ whole exercise makes the chain pass; running ARP alone makes it pass; adding
 ping makes it fail.  That is the whole of the bisect, and it is reproduced on
 every boot of this revision.
 
+**The write is an overrun, and widening the array proves it.**  `mul_256_by_256`
+accumulates into `prod[idx]` for an `idx` whose type says it cannot pass six, and
+at the failing site the index measured is four and then eight.  Giving `prod` a
+sixteen-limb backing store and copying the first eight out does not fix the
+arithmetic, but it does change what the fault looks like: the panic and the data
+abort both go away, and the chain answers `verified no`.  So the out-of-range
+write is real, it lands on the stack next to the array, and what it destroys is
+whatever the compiler put there.
+
+**The release build fails worse than the debug one.**  In the release profile the
+boot does not print the panic at all: the last line is the multicast exchange and
+the boot stops there.  Debug has the bounds check that names the index; release
+has undefined behaviour, and a boot that stops without a word is what it looks
+like.  `check --machine aarch64 --profile release` fails with the serial log
+ending at that line.
+
 **What is left needs a debugger, and the record says so rather than guessing.**
 The failure moves with the binary: it is a bounds panic whose location is
 `ecdsa.rs:492:28` in one build and a data abort at `0x5`, `0x15`, `0x1d`, `0x25`
@@ -979,10 +995,17 @@ or `0x2d` in another.  `src/arch/aarch64`'s data abort names `FAR_EL1`, and the
 faulting instruction is a load through a register that held a stack address a
 few instructions earlier.  Reading the source cannot say what wrote that
 register, and every static hypothesis tried so far has been wrong, which is why
-none of them is repeated here as a finding.  A `gdb-multiarch` session on the
-faulting instruction is the next step, and it is a session with its own budget:
-the emulator under `-s -S` does not reach `exercise_network` in the time a gate
-gives a boot.
+none of them is repeated here as a finding.
+
+A `gdb-multiarch` session is the next step, and it has a budget problem of its
+own that this entry records so the next reader does not spend a session on it:
+attaching to a running boot and interrupting after the fact works (that is where
+the register dump above came from), but a breakpoint on the panic does not reach
+`exercise_network` before a gate's timeout, because the emulator under software
+translation runs the thousands of ECDSA inversions slow enough that the wait is
+minutes per attempt.  The session needs the probe moved to the front of the
+boot, where the same fault is reachable in seconds, and that is a change to make
+in the session rather than here.
 
 **This is why `net::x509` has no boot probe.**  One would make every aarch64
 boot fail on a defect that is not this subsystem's, and the failure would be
