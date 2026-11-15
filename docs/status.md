@@ -1189,6 +1189,31 @@ returned to the list or the block was never taken off it.  The counters in the
 earlier entry say the removal happened and set the head to zero, which leaves
 the first: a payload write that arrives after the block is free again.
 
+**The block a list names is marked used.**  One more line, taken at the walk,
+settles what the head is:
+
+```text
+free block 0xa23a40  size 0x40  used true  link 0x1
+```
+
+The head of class 26's list is a block whose own header says it is in use and
+whose extent is sixty-four bytes.  `insert_free_block` beginning
+`debug_assert!(!block_is_used(block))`, and that assert is live in this profile,
+so the insert that put it there did not go through `insert_free_block`.  The only
+other write to `free_lists` is `remove_free_block`'s
+`state.free_lists[idx] = next`, and `next` comes from `block_next_free(current)`.
+So the head was written from a link the walk itself read out of some block, which
+means one free block's `next_free` word held the address of another block rather
+than zero or a third free block's address.
+
+That closes the loop this record has been going around, and the sentence it ends
+on is a hypothesis with one measurement behind it: a free block's link word
+holds payload bytes, `remove_free_block` copies that word into a list head, and
+the next walk follows it to a block that is in use.  What the measurement shows
+is the last step of that (a list head that is a used block) and the earlier ones
+follow from where `next` comes from, but the write that puts payload bytes into a
+**free** block's link is the one still to be found, and it is the only one left.
+
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
 Both were true statements about what failed first, and neither was the cause.
