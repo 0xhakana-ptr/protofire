@@ -1214,6 +1214,61 @@ is the last step of that (a list head that is a used block) and the earlier ones
 follow from where `next` comes from, but the write that puts payload bytes into a
 **free** block's link is the one still to be found, and it is the only one left.
 
+**Five explanations tested with a panic and ruled out.**  Each of these was a
+`panic!` at the point where it would have happened, run on x86_64, and each left
+the failure unchanged, which is what makes the list worth carrying forward:
+
+- `initialize` runs once, so the heap's first block is linked once.
+- No `allocate` returns a payload inside a block a list still names, so the
+  allocator never hands out a linked block.
+- No `remove_free_block` is asked to remove a block that sits on a different
+  class's list, so every removal's class agreed with its block's size.
+- No removal meets a block whose link names itself.
+- No walk meets a free block whose link is a used block's address before the
+  head that is itself a used block.
+
+The last two deserve a note on why they are not contradictory with the head
+being a used block.  The removals are all consistent and the walks that were
+instrumented did not see a bad link, while the **head** of class 26 is a used
+block, and by `mapping` a 64-byte block belongs to class 6, not class 26.  So the word
+holding it did not come from any removal that was traced, and it did not come
+from `insert_free_block` either, which asserts the block is free.  That is the
+shape the next attempt has to explain, and it is narrower than "the heap is
+corrupted": **one array element holds an address that belongs to a class it
+could not have been filed under.**
+
+**Two more measurements, and one assumption of mine that was wrong.**  The cells
+either side of the bad one are zero:
+
+```text
+idx 672 near 0 0 a23a40 0 0
+```
+
+so this is one word written, not a run of them, and an out-of-range index into
+`free_lists` is not what did it.  And a removal never leaves its block at the
+head it named, which was checked by panicking in `remove_free_block` when the
+slot still held the block on return; that never fired.
+
+The assumption that was wrong is worth recording because it cost a build:
+`find_suitable_block` returning a block from a **higher** class than the request
+is the TLSF search working as designed, not a defect.  A search for class 48
+returning the 64 MiB block of class 672 is exactly what the upward scan is for,
+and a check that treats the two classes having to agree as an invariant panics on
+the first large allocation:
+
+```text
+search asked class 48 got a23a40 of class 672 size 4000000
+```
+
+**The instrument matters as much as the machine.**  `panic!` at a candidate
+survives where `diag::write` made the fault disappear, and the difference is
+that a formatted diagnostic goes through `core::fmt` and the allocator while a
+panic does not.  Every earlier attempt in this record that printed a diagnostic
+from inside the allocator changed the symptom; the ones that changed the
+arithmetic did too.  Every measurement in this entry that is worth having was
+taken with a panic on x86_64, which boots in seconds and fails at a fixed
+address.
+
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
 Both were true statements about what failed first, and neither was the cause.
