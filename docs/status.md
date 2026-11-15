@@ -1070,6 +1070,37 @@ a session and a half on the network because a certificate was the first consumer
 big enough to fall over; the allocator was already broken before the first frame
 was sent.
 
+**A static audit of the allocator's own address range, and what it rules out.**
+`AllocatorState` is 5752 bytes with `free_lists` at offset 112 and 704 entries,
+measured on the host rather than counted by hand.  `HEAP_MODEL` is 5760 bytes,
+so the eight bytes in front of the state are `SpinLock`'s word, and the whole
+object is the only static in
+`[0x44989a48, 0x4498b0c8)`: the next symbol begins exactly at the end.  That
+rules out the cheapest explanation, which is an unrelated static beside the
+allocator overrunning into it.  Whatever writes `free_lists` is writing into
+`HEAP_MODEL` itself, and the only two ways in are a store through a pointer the
+allocator computed and a store through `&mut AllocatorState` with an index that
+is out of range.
+
+The page tables sit immediately in front of the heap, which is worth knowing and
+is not the answer.  `TABLES` spans `0x40154000..0x40986000` and the heap starts
+at `0x40989a40`, so a `Tables` overrun would reach `KERNEL_HEAP` first and
+`HEAP_MODEL` 64 MiB later.  `re_encode` and `map_device_blocks` both write
+leaves whose addresses came from `build`, which builds a table entry for every
+level below the root; the device path taken for BARs below four gigabytes is
+`re_encode`, which only rewrites an entry that already exists.  Neither reaches
+`HEAP_MODEL`.
+
+**The checkpoints that survived a one-byte probe, and the ones that did not.**
+Writing one character and walking the heap after it puts `build_image` on the
+clean side and `find_virtio_block` on the damaged side, with a disk attached.
+Two attempts to confirm that on a machine with no disk disagreed with each
+other: one boot reported the damage and another reported none, from two
+checkpoint layouts.  That is the same instability as everything else in this
+record, and it is why the audit above is worth more than the checkpoints: the
+address arithmetic is a fact about the image, and a checkpoint result is a fact
+about one build of it.
+
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
 Both were true statements about what failed first, and neither was the cause.
