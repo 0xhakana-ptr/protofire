@@ -151,8 +151,15 @@
 //! 0-RTT.  The record layer, the key schedule and the handshake messages are
 //! here, and a caller that needs a chain examined needs a parser this crate
 //! does not pretend to have.
-//! Those are numbers above the frozen range and each is its own stack, which is
-//! why `docs/roadmap.md` lists them as work rather than as gaps in this one.
+//!
+//! What is absent from the stack as a whole is shorter than it was: the 23
+//! protocol numbers above the frozen range are all served, and what remains is
+//! the **metric** above, the **X.509 parser** [`tls`] names, and the protocols
+//! no number in this ABI mentions at all: SCTP, QUIC, WireGuard, PPPoE, NTP and
+//! mDNS are in the previous tree and are not here, and none of them is a call a
+//! program can make.  A protocol nothing calls is a library, not a subsystem,
+//! which is why `docs/roadmap.md` lists them as work rather than as a gap in
+//! this crate's surface.
 //!
 //! [`multicast`] is the other, and its shape is different from a protocol's:
 //! two tables, one from virtual interface to what it does with a frame and one

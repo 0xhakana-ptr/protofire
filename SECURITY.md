@@ -36,7 +36,26 @@ plans around it.
 Recorded here so that a reader does not assume it: no address-space layout
 randomisation, no stack canaries in ring-3 programs, no seccomp-style filter,
 no signed images, no encryption at rest, no auditing beyond the MAC denials the
-boot prints.  `docs/status.md` is the census of what each machine does and does
+boot prints.
+
+The network stack has three gaps a reader planning around it must know, each
+recorded where its mechanism is:
+
+- **`TlsConnect` cannot be used.**  It builds and sends a TLS 1.3 ClientHello
+  and then answers `Unsupported`, because there is no TLS server on this machine
+  to finish the handshake with.  The record layer, the key schedule and the
+  handshake messages are implemented and host-tested; the **call** is not a way
+  to reach a server.  `docs/status.md` and `docs/fmts/syscall-abi.md`.
+
+- **No X.509 parser, so no certificate is checked.**  A chain a peer sends is
+  carried opaque and the Finished is verified against a key the caller supplies.
+  A program that trusts a peer's Finished has authenticated the **handshake**,
+  not the peer's name.  `net/src/tls.rs`.
+
+- **`TlsConnect`'s boot probe proves agreement, not rejection.**  It runs both
+  sides of a handshake against each other, so a wrong side never appears in it;
+  the rejection cases are host tests.  A reader who reads the boot line as
+  "TLS refuses forgeries" is reading it wrong.  `docs/status.md`.  `docs/status.md` is the census of what each machine does and does
 not do, and it is the authority where this list and the tree disagree.
 
 The threat model the tree is built against today is **a program that is wrong**,
