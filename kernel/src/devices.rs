@@ -947,11 +947,14 @@ pub fn exercise_network() -> bool {
         return false;
     }
 
-    // X.509's protocol half is host tests and not a boot probe: the chain
-    // check calls ECDSA, and ECDSA **faults on aarch64** in this tree's crypto
-    // crate.  `docs/status.md` records it; a probe added here would make every
-    // aarch64 boot fail on a defect that is not this subsystem's, and the
-    // honest arrangement is for the defect to be its own change.
+    // X.509 has no boot probe, and the reason is a measurement rather than a
+    // preference.  A chain check calls ECDSA, and on aarch64 that call fails
+    // **after `ping_gateway` below has run** while passing at the top of this
+    // function: the bisect is in `docs/status.md`.  A probe here would fail
+    // every aarch64 boot and name X.509 as the culprit, so the subsystem's
+    // evidence is its host tests until that defect is found.  The defect is
+    // not in `libs/crypto`; the same source verifies correctly through the
+    // harness the entry describes.
 
     // TLS 1.3's protocol half: both sides of a handshake against each other,
     // a real X25519 exchange, and each verifying the other's Finished.  There

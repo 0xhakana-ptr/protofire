@@ -937,59 +937,58 @@ skipped the rule for a chain of one.  Exempting by **position** is the fix: the
 leaf is index zero and nothing hangs below it, and every certificate above it
 vouched for the next one down.
 
-**A crypto defect this exposed, and did not fix.**  On aarch64, verifying a
-chain faults inside `ecdsa_p256_verify`: a data abort whose faulting address is
-a small number that moves with the code above it, `0x5`, `0x15` or `0x1d`.  On
-x86_64 the same call returns the right answer, and `cargo test -p crypto` passes
-every one of its 64 tests on the host.
+**A defect this exposed, and did not fix: ECDSA after the network exercise.**
+On aarch64, verifying a chain faults inside `ecdsa_p256_verify`.  On x86_64 the
+same call returns the right answer, and `cargo test -p crypto` passes every one
+of its 64 tests on the host.
 
-What was **ruled out**, so the next reader does not repeat it:
+Where it happens was narrowed by measurement rather than by reading, and the
+answer is not the one this entry first recorded:
 
-- **Not the arguments.**  Instrumented at the call: the key is 65 bytes and `r`
-  and `s` are 32 each, all printed before the fault.  It happens inside
-  `ecdsa_p256_verify` after every one of them was read.
-- **Not the stack.**  The probe's own frame sits at `0x4499ecec`, an ordinary
-  boot stack address, so the small faulting address is not a stack pointer that
-  ran off the end.
-- **Not the parser or the certificate.**  Both run first and print their own
-  checkpoints; the fault is the first ECDSA computation after the arguments.
-- **Not a dangling borrow in the call.**  `key`, `r` and `s` are `Vec`s alive at
-  the call, and binding each to a name changed nothing.
+- **`libs/crypto` is not the defect.**  The same source, built for
+  `aarch64-unknown-none` by an out-of-tree harness with the kernel's own
+  profiles (`opt-level = "s"` with LTO and one codegen unit, and `opt-level = 1`
+  with debug assertions and overflow checks), verifies correctly.  So does the
+  kernel itself when the call is made from `boot.rs`: `verified=1`, eight times
+  in a row, with no network in between.
+- **The inputs are not the defect.**  A canary at the failing site prints the
+  key, hash, `r` and `s` it is about to pass, and every byte matches the
+  constant.
+- **The stack is not the defect.**  At the failing call `sp` is
+  `0x4499b010`: sixteen-byte aligned, as the ABI requires, with 36 KiB still
+  below it to the bottom of the reservation at `0x44992000`.
+- **The trap path is not the defect.**  A pattern written to `v0` and read back
+  at the failing site matches, so the exception entry is restoring the SIMD
+  state it saved.  Masking IRQs around the chain check changed nothing.
+- **The heap is not the defect.**  `remaining()` is 64 MiB both before and after
+  the exchange that triggers it, and the ECDSA call allocates nothing.
 
-What was **tried and did not fix it**: rewriting `mul_256_by_256`'s
-`iter().enumerate()` loops as explicit `0..4` indices (the index-overrun report
-became a data abort, which is what a compiler-visible bound does to undefined
-behaviour); accumulating each row in a `u128` so no carry could wrap; binding
-`reduce_mod_n`'s wide temporary to a name; `#[inline(never)]` on both arithmetic
-functions; and masking IRQs around the whole chain check, which rules out a trap
-context that fails to restore a register.
+**The trigger is `ping_gateway`.**  A canary that is a single known-vector
+verification passes at the top of `exercise_network`, after `find_virtio`, after
+`install`, after `post_receive_buffer`, after DHCP, and after `arp_exchange`.  It
+fails after `ping_gateway`, and it fails there whatever is asked of it next: the
+chain, or one known vector, or the same vector a second time.  Skipping the
+whole exercise makes the chain pass; running ARP alone makes it pass; adding
+ping makes it fail.  That is the whole of the bisect, and it is reproduced on
+every boot of this revision.
 
-**Where it is, and why it is not a logic error.**  Built without LTO so the
-symbols are whole, the fault lands in `ecdsa_p256_verify` at
-`mul_256_by_256`'s `prod[idx] = s2`, and the panic says `index is 8` over an
-eight-element array.  The index is `i + j` where both come from `0..4`, so it
-cannot exceed six: **the source cannot produce the access the hardware takes**.
-Replacing the access with `get_unchecked_mut` turns the bounds panic into
-`unsafe precondition(s) violated: slice::get_unchecked_mut requires that the
-index is within the slice`, which confirms the index really is out of range
-rather than the panic being stale.  Every loop bound in the generated code
-compares against four, and every operand is a four-element array; `mul_256_by_256`
-is called once, from `reduce_512_mod`, with `hi` (four elements) and one of the
-two four-element reduction constants.
+**What is left needs a debugger, and the record says so rather than guessing.**
+The failure moves with the binary: it is a bounds panic whose location is
+`ecdsa.rs:492:28` in one build and a data abort at `0x5`, `0x15`, `0x1d`, `0x25`
+or `0x2d` in another.  `src/arch/aarch64`'s data abort names `FAR_EL1`, and the
+faulting instruction is a load through a register that held a stack address a
+few instructions earlier.  Reading the source cannot say what wrote that
+register, and every static hypothesis tried so far has been wrong, which is why
+none of them is repeated here as a finding.  A `gdb-multiarch` session on the
+faulting instruction is the next step, and it is a session with its own budget:
+the emulator under `-s -S` does not reach `exercise_network` in the time a gate
+gives a boot.
 
-So the source is right, the loop bounds are right, and the access is out of
-range.  What is left is a code-generation defect on this target, and the way to
-find it is a debugger on the faulting instruction -- not more reading.
-`cargo clean -p crypto --target aarch64-unknown-none` and a rebuild reproduce
-it, so it is not a stale artifact.
-
-**The defect is in `libs/crypto` and it is its own change.**  Fixing it here
-would put a cipher's bug in a certificate's commit, and the ruled-out list above
-is worth more to the next reader than a hurried patch.  `crypto`'s tests are
-host-only, which is why this survived: nothing in this tree had ever run ECDSA
-on aarch64 before this change called it.  For that reason `net::x509` has **no
-boot probe** -- one would make every aarch64 boot fail on a defect that is not
-this subsystem's -- and its 13 host tests are the whole of the evidence it has.
+**This is why `net::x509` has no boot probe.**  One would make every aarch64
+boot fail on a defect that is not this subsystem's, and the failure would be
+attributed to X.509 by whoever read the line.  Its 13 host tests are the whole
+of the evidence it has, and the paragraph above the chain check says so where
+the module's status is recorded.
 
 What is not here: **revocation** (OCSP and CRLs are a network protocol and a
 distribution decision) and **validity windows** (the check needs a clock, and a
