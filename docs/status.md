@@ -960,26 +960,78 @@ answer is not the one this entry first recorded:
 - **The trap path is not the defect.**  A pattern written to `v0` and read back
   at the failing site matches, so the exception entry is restoring the SIMD
   state it saved.  Masking IRQs around the chain check changed nothing.
-- **The heap is not the defect.**  `remaining()` is 64 MiB both before and after
-  the exchange that triggers it, and the ECDSA call allocates nothing.
 
-**The trigger is `ping_gateway`.**  A canary that is a single known-vector
-verification passes at the top of `exercise_network`, after `find_virtio`, after
-`install`, after `post_receive_buffer`, after DHCP, and after `arp_exchange`.  It
-fails after `ping_gateway`, and it fails there whatever is asked of it next: the
-chain, or one known vector, or the same vector a second time.  Skipping the
-whole exercise makes the chain pass; running ARP alone makes it pass; adding
-ping makes it fail.  That is the whole of the bisect, and it is reproduced on
-every boot of this revision.
+**The heap is the defect, and the trigger is not the network.**  Walking the
+allocator's own free lists with `verify_kernel_heap` says where the damage
+starts: it is clean immediately after `heap::bring_up`, and it is already
+damaged before `exercise_network` is called at all.  Bisecting the boot puts the
+first break inside `volume::attach_device`'s call to `devices::find_virtio_block`,
+and inside that, after the `Arc::new(MappedBar { .. })` that the first BAR's
+mapping builds.  Nothing about the network is involved: the earlier entry's
+`ping_gateway` was the first consumer big enough to trip over damage that was
+already there.
 
-**The write is an overrun, and widening the array proves it.**  `mul_256_by_256`
-accumulates into `prod[idx]` for an `idx` whose type says it cannot pass six, and
-at the failing site the index measured is four and then eight.  Giving `prod` a
-sixteen-limb backing store and copying the first eight out does not fix the
-arithmetic, but it does change what the fault looks like: the panic and the data
-abort both go away, and the chain answers `verified no`.  So the out-of-range
-write is real, it lands on the stack next to the array, and what it destroys is
-whatever the compiler put there.
+The damage has one shape.  `verify_kernel_heap` panics in `scan_free_lists` with
+`block 0x1 outside heap`, and the diagnostics printed around it name the chain:
+the free list's head is the heap's first block at `0x4098fa40`, and the block
+after it is `0x1`.  `block_next_free` reads the word at `block + 16`, which is
+`FREE_NEXT_OFFSET`, and that is also where the payload of an allocated block
+begins.  The allocation trace shows an `alloc` at exactly `0x4098fa50`, which is
+`0x4098fa40 + 16`: a block was handed out while it was still linked into a free
+list, its new owner wrote the reference count over `next_free`, and the walk
+then followed `0x1` as a block address.
+
+This is where the record stops claiming and starts asking.  The allocator
+removes a block from a free list by recomputing the list from
+`block_size(block)` and then scanning **that** list for the block.  If the size
+word is not the one the block was inserted under, the scan is a different list,
+finds nothing, and leaves the block linked.  That fits every observation above,
+and it is a hypothesis rather than a finding: proving it needs a test that
+allocates, writes the payload, and then walks the lists, which is the first
+thing to write in `libs/allocator` and not a thing this entry did.  A host test
+that does exactly that passes for every size from one to five hundred and twelve
+bytes, so the allocator's arithmetic is right on the host and the defect is
+something the host does not do.
+
+What is measured is narrower, and it is enough to name the subsystem: the free
+list's head is the heap's first block, the block the walk reaches next is `0x1`,
+the word it read is the one an allocated block's payload begins at, and the
+allocation trace records a payload at exactly that address.  The block was
+handed out while it was still linked, and its new owner wrote a small integer
+over the link.
+
+**There is a write past the end of the heap, and a sentinel proves it.**  Putting
+two pattern-filled arrays on either side of the heap's region, in one `repr(C)`
+object beside it, and checking them at two points in the boot gives a cleaner
+answer than any of the above: both are intact immediately after `heap::bring_up`,
+and the one **after** the heap is scribbled before `exercise_network` is called.
+So the damage is not the heap's arithmetic going wrong inside its own region.
+Something writes past the region's end, and the free list's `0x1` is downstream
+of that write.
+
+That experiment is not in the tree.  It is four lines of static and a check,
+it changed the heap's address when it was added, and a probe that moves the
+thing it measures is not evidence a gate can keep.  It is recorded here because
+its result is what the next session should start from, and because reproducing
+it is cheaper than the bisect that led to it.
+
+**The trigger moved twice, and the earlier entries' answers were younger
+symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
+Both were true statements about what failed first, and neither was the cause.
+What made the difference was walking the allocator's invariant instead of the
+call that crashed: the ECDSA index that reached eight, the `0x5` and `0x15` data
+aborts, and the release build's silent stop are one damage seen from four
+places.
+
+**Widening `prod` changes the symptom, which is what a corrupted stack looks
+like.**  Giving the product's array a sixteen-limb backing store and copying the
+first eight out does not fix the arithmetic, but it does change what the fault
+looks like: the panic and the data abort both go away, and the chain answers
+`verified no`.  That is not evidence about `mul_256_by_256`; it is evidence that
+the failure depends on the frame's layout, which is what a stack whose
+neighbour has already been overwritten does when a local moves.  Reading it as
+an overrun in the multiply is what the earlier entry did, and it is the reading
+this entry replaces.
 
 **The release build fails worse than the debug one.**  In the release profile the
 boot does not print the panic at all: the last line is the multicast exchange and
@@ -988,24 +1040,22 @@ has undefined behaviour, and a boot that stops without a word is what it looks
 like.  `check --machine aarch64 --profile release` fails with the serial log
 ending at that line.
 
-**What is left needs a debugger, and the record says so rather than guessing.**
-The failure moves with the binary: it is a bounds panic whose location is
-`ecdsa.rs:492:28` in one build and a data abort at `0x5`, `0x15`, `0x1d`, `0x25`
-or `0x2d` in another.  `src/arch/aarch64`'s data abort names `FAR_EL1`, and the
-faulting instruction is a load through a register that held a stack address a
-few instructions earlier.  Reading the source cannot say what wrote that
-register, and every static hypothesis tried so far has been wrong, which is why
-none of them is repeated here as a finding.
+**What is left is the allocator, and that is a different subsystem's change.**
+The next step is not a debugger on ECDSA: it is a test that allocates a block,
+writes its payload, and then walks the free lists, which is where the missing
+unlink shows up without a certificate anywhere in the picture.  The repair
+belongs to `libs/allocator` and to whoever writes that test, and this entry's
+job is to say that the crash was never in the cipher.
 
-A `gdb-multiarch` session is the next step, and it has a budget problem of its
-own that this entry records so the next reader does not spend a session on it:
-attaching to a running boot and interrupting after the fact works (that is where
-the register dump above came from), but a breakpoint on the panic does not reach
-`exercise_network` before a gate's timeout, because the emulator under software
-translation runs the thousands of ECDSA inversions slow enough that the wait is
-minutes per attempt.  The session needs the probe moved to the front of the
-boot, where the same fault is reachable in seconds, and that is a change to make
-in the session rather than here.
+Two things about the search are worth keeping.  The failure moves with the
+binary: it is a bounds panic at `ecdsa.rs:492:28` in one build and a data abort
+at `0x5`, `0x15`, `0x1d`, `0x25` or `0x2d` in another, and that variability is
+the corruption showing through, not five defects.  And `verify_kernel_heap` is
+the instrument that found it: it is what turned "a cipher crashes after the
+network" into "the heap is already broken before the network starts".  It costs
+a walk of every free list, it exists only under `debug_assertions`, and it is
+worth calling from any boot path that has just done something the allocator has
+not been asked to do before.
 
 **This is why `net::x509` has no boot probe.**  One would make every aarch64
 boot fail on a defect that is not this subsystem's, and the failure would be
