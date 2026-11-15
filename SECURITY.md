@@ -22,14 +22,14 @@ plans around it.
   kernel's are not.  In `kernel/src/address_space/`.
 
 - **W^X in the loader.**  An image segment that is both writable and executable
-  is refused rather than mapped.  In `kernel/src/loader.rs`.
+  is refused rather than mapped.  In `kernel/src/loader/mod.rs`.
 
 - **A default-refusing MAC policy.**  It labels subjects and objects, is asked
   before a file is opened or read, and refuses by default.  In
   `security/src/mac/`.
 
 - **Capabilities are descriptors.**  Every capability a program is given is a
-  descriptor it can be made to close.  In `kernel/src/syscall/table.rs`.
+  descriptor it can be made to close.  In `kernel/src/syscall/table/mod.rs`.
 
 ## What it does not have
 
@@ -50,7 +50,7 @@ recorded where its mechanism is:
 - **No X.509 parser, so no certificate is checked.**  A chain a peer sends is
   carried opaque and the Finished is verified against a key the caller supplies.
   A program that trusts a peer's Finished has authenticated the **handshake**,
-  not the peer's name.  `net/src/tls.rs`.
+  not the peer's name.  `net/src/tls/mod.rs`.
 
 - **`TlsConnect`'s boot probe proves agreement, not rejection.**  It runs both
   sides of a handshake against each other, so a wrong side never appears in it;

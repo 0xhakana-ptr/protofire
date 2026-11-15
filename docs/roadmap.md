@@ -304,7 +304,7 @@ The dependencies, in order:
    answers one ARP question and remembers nothing), ICMP as far as "port
    unreachable" needs, UDP with its checksum, then TCP's state machine.
 2. **The kernel** grows a socket table and the dispatch.  A socket is a handle
-   a program holds, and `Descriptor` in `kernel/src/syscall/table.rs` has two
+   a program holds, and `Descriptor` in `kernel/src/syscall/table/mod.rs` has two
    variants, `File` and `Pipe`, so this is where a third arrives.  The
    scheduler's parking machinery is already the right shape for a blocking
    `accept` and a blocking `recv`; nothing about it needs to change.
@@ -385,7 +385,7 @@ What landed, in the order a packet needs it:
 | the packet | `net/src/internet/ipv6.rs` | the fixed header, the extension-header chain walked to the first consumer, the fragment header reported rather than reassembled, and the forty-byte pseudo-header sum |
 | the messages | `net/src/internet/icmpv6.rs` | echo, the error types a sender reacts to, and the four NDP messages, neighbour and router, solicitation and advertisement, with the option walk |
 | what is remembered | `net/src/internet/ndp.rs` | a neighbour cache with three states, the duplicate-address check, and the two addresses a host computes rather than asks for |
-| the transports | `net/src/transport/udp.rs`, `net/src/transport/tcp.rs`, `net/src/address.rs` | an IPv6 writer and reader each, a **second function** rather than the IPv4 one with a flag, and an address type that carries its family so a socket and a connection can be keyed on either |
+| the transports | `net/src/transport/udp.rs`, `net/src/transport/tcp/mod.rs`, `net/src/address.rs` | an IPv6 writer and reader each, a **second function** rather than the IPv4 one with a flag, and an address type that carries its family so a socket and a connection can be keyed on either |
 | the interface | `kernel/src/net.rs` | a link-local address derived at install, the groups joined, the cache, and a demux branch that walks the chain before it reads a transport |
 | the program's view | `AbiInfo`-shaped record in `abi/src/network.rs` | `Ipv6Status` (197), a new number above the frozen boundary, because `NetworkStatus`'s fourteen address bytes are IPv4's |
 

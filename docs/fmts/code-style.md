@@ -72,7 +72,7 @@ of string literals (`format_strings = false`).
 `snake_case`, `install_global_unchecked`, `try_read_byte`.  **Constants and
 statics** are `SCREAMING_SNAKE_CASE`, `SYSCALL_COUNT`, `GLOBAL_TABLE`,
 `PERCPU_OFFSET_SCHEDULER`.  **Modules and files** are `snake_case`
-`block_cache.rs`, `pci_transport.rs`.
+`tcp_table.rs`, `pci_transport.rs`.
 
 Files are named after what they contain, in `snake_case`, with no camel case
 anywhere in the tree. A module directory with no `mod.rs` of its own uses
