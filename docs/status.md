@@ -937,17 +937,39 @@ skipped the rule for a chain of one.  Exempting by **position** is the fix: the
 leaf is index zero and nothing hangs below it, and every certificate above it
 vouched for the next one down.
 
-**A crypto defect this exposed, and did not fix.**  The aarch64 boot faults
-inside `ecdsa.rs`'s `mul_256_by_256` when a chain is verified: a data abort at
-address `0x15` in release, and `index out of bounds: the len is 8 but the index
-is 8` with three extra bytes.  Rewriting the function's `iter().enumerate()`
-loops as explicit `0..4` indices moved the symptom from an out-of-bounds panic
-to a data abort, which is what a compiler-visible bound did to an undefined
-behaviour.  **The defect is in `libs/crypto`, not in this module**, and it is
-its own change: fixing it here would put a cipher's bug in a certificate's
-commit, and leaving it unrecorded is how it survived to be found here.  For that
-reason `net::x509` has **no boot probe**: a probe would make every aarch64 boot
-fail on a defect that is not this subsystem's.
+**A crypto defect this exposed, and did not fix.**  On aarch64, verifying a
+chain faults inside `ecdsa_p256_verify`: a data abort whose faulting address is
+a small number that moves with the code above it, `0x5`, `0x15` or `0x1d`.  On
+x86_64 the same call returns the right answer, and `cargo test -p crypto` passes
+every one of its 64 tests on the host.
+
+What was **ruled out**, so the next reader does not repeat it:
+
+- **Not the arguments.**  Instrumented at the call: the key is 65 bytes and `r`
+  and `s` are 32 each, all printed before the fault.  It happens inside
+  `ecdsa_p256_verify` after every one of them was read.
+- **Not the stack.**  The probe's own frame sits at `0x4499ecec`, an ordinary
+  boot stack address, so the small faulting address is not a stack pointer that
+  ran off the end.
+- **Not the parser or the certificate.**  Both run first and print their own
+  checkpoints; the fault is the first ECDSA computation after the arguments.
+- **Not a dangling borrow in the call.**  `key`, `r` and `s` are `Vec`s alive at
+  the call, and binding each to a name changed nothing.
+
+What was **tried and did not fix it**: rewriting `mul_256_by_256`'s
+`iter().enumerate()` loops as explicit `0..4` indices (the index-overrun report
+became a data abort, which is what a compiler-visible bound does to undefined
+behaviour); accumulating each row in a `u128` so no carry could wrap; and
+binding `reduce_mod_n`'s wide temporary to a name instead of passing `&{...}` as
+an argument.
+
+**The defect is in `libs/crypto` and it is its own change.**  Fixing it here
+would put a cipher's bug in a certificate's commit, and the ruled-out list above
+is worth more to the next reader than a hurried patch.  `crypto`'s tests are
+host-only, which is why this survived: nothing in this tree had ever run ECDSA
+on aarch64 before this change called it.  For that reason `net::x509` has **no
+boot probe** -- one would make every aarch64 boot fail on a defect that is not
+this subsystem's -- and its 13 host tests are the whole of the evidence it has.
 
 What is not here: **revocation** (OCSP and CRLs are a network protocol and a
 distribution decision) and **validity windows** (the check needs a clock, and a
