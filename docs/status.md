@@ -1133,14 +1133,30 @@ that class after `ensure_init`, so whatever put the head back did not go through
 `insert_free_block`; which store did is not established, and it is the question
 the next attempt should answer.
 
-**The `protofire` reading is withdrawn.**  A previous entry reported
-`0x7269666f746f7270`, the first eight bytes of the volume label, standing in the
-free lists of a diskless boot.  Every non-test write of that label in the tree is
-a `copy_from_slice` into a slice, which panics rather than writing past its end,
-and the three runs of the corrected build that were checked report `0x1` and
-never the label.  The observation was made on a build carrying the sentinel
-arrays, whose layout differs from this one, and it is not reproducible here.  It
-is recorded as withdrawn so a later reader does not follow it.
+**The `protofire` reading is back, and it is reproducible.**  An earlier entry
+reported `0x7269666f746f7270`, the first eight bytes of the volume label, in the
+free lists; a later draft withdrew it on the strength of three runs that saw
+`0x1` instead.  That withdrawal was wrong.  The same build, run four times,
+reports the label four times, and a checkpoint pair puts it inside
+`MemoryBlockDevice::new`: a walk immediately before it survives, and a walk
+immediately after it finds `block 0x7269666f746f7270 outside heap`.
+
+The withdrawal's argument was that every write of the label in the tree is a
+`copy_from_slice` into a slice, which cannot silently run past its end.  That
+argument is right and does not apply, because nothing here writes the label past
+anything: the bytes in the free list are the **contents** of the `String`
+`name.to_string()` builds, and the only way eight bytes of a heap-resident string
+appear at `state + 112 + 5376` is for a store to have been given that address.
+A `debug_assert!` in `allocate` that every returned payload lies inside the heap
+never fires, so the allocator did not hand out the wrong address either.  What
+ships the string's bytes to the allocator's own state is therefore not the
+allocator and not PyroFS, and that is the narrowest this record has been.
+
+**A machine with no disk fails the same way, so nothing in virtio is involved.**
+Four runs with `virtio-blk-pci` attached and four with no disk at all, on one
+build, each reported the damage 4 of 4.  The diskless path takes
+`MemoryBlockDevice` and never touches PCI, DMA or a device queue, so the search
+has no business in the driver layer.
 
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
