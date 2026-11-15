@@ -959,9 +959,32 @@ What was **ruled out**, so the next reader does not repeat it:
 What was **tried and did not fix it**: rewriting `mul_256_by_256`'s
 `iter().enumerate()` loops as explicit `0..4` indices (the index-overrun report
 became a data abort, which is what a compiler-visible bound does to undefined
-behaviour); accumulating each row in a `u128` so no carry could wrap; and
-binding `reduce_mod_n`'s wide temporary to a name instead of passing `&{...}` as
-an argument.
+behaviour); accumulating each row in a `u128` so no carry could wrap; binding
+`reduce_mod_n`'s wide temporary to a name; `#[inline(never)]` on both arithmetic
+functions; and masking IRQs around the whole chain check, which rules out a trap
+context that fails to restore a register.
+
+**Where the disassembly puts it.**  Built without LTO so the symbols are whole,
+`ecdsa_p256_verify` faults at the four-limb comparison that follows its call to
+`reduce_512_mod`:
+
+```text
+3d4: bl   reduce_512_mod        ; the sret pointer arrives in x8
+3d8: mov  w8, #0x18             ; byte offset 24, the fourth limb
+3dc: add  x9, sp, #0x68         ; the returned value
+3e0: ldr  x10, [x19, x8]        ; x19 is the public key -- this is what faults
+3e4: ldr  x11, [x9, x8]
+```
+
+`reduce_512_mod` reads its input from `x0`, writes its result through `x8`, and
+touches no callee-saved register, so it cannot be the one that breaks `x19`.
+The faulting load is at `[x19, x8]` with `x8` = 24, and the fault address is
+always `8n + 5`: `0x5`, `0xd`, `0x15`, `0x1d`.  A `Fe256` is thirty-two bytes,
+so `x19` would have to sit at `8n - 19` for that to be its fourth limb -- a
+value with no meaning in this program, which says the register is not pointing
+at a `Fe256` at all by the time the load runs.  What writes it between the
+prologue's `mov x19, x2` and that load is not visible in the instruction stream,
+and that is the one fact a debugger answers and reading cannot.
 
 **The defect is in `libs/crypto` and it is its own change.**  Fixing it here
 would put a cipher's bug in a certificate's commit, and the ruled-out list above
