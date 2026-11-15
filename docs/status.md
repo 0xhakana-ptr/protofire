@@ -1051,6 +1051,25 @@ twice with a one-byte difference that does not touch the allocator, confirm the
 fault flips, and then use a hardware watchpoint on `free_lists[672]` under
 `gdb-multiarch`, which is the tool that does not perturb the layout at all.
 
+**The reproducer is six lines and no certificate.**  Two calls to
+`allocator::verify_kernel_heap` are enough with nothing else added:
+one immediately after `heap::bring_up` survives, and one immediately after
+`volume::mount_everything` panics with `block 0x1 outside heap`.  No `net::x509`,
+no ECDSA, no network card, no virtio driver in the picture beyond the disk the
+mount opens.  That is the thing to hand the next session, because every earlier
+description of this defect needed a certificate and a chain and a boot that ran
+long enough to reach them, and none of that is load bearing.
+
+It also says where the search should start.  `mount_everything` builds the
+PyroFS image, attaches the block device and does the rest of the mount, and an
+earlier bisect in this record already put the first break inside
+`volume::attach_device`'s call to `devices::find_virtio_block`, after the
+`Arc::new(MappedBar ..)` that the first BAR's mapping builds.  The damage is in
+that sequence and not anywhere in the network stack.  The earlier entries spent
+a session and a half on the network because a certificate was the first consumer
+big enough to fall over; the allocator was already broken before the first frame
+was sent.
+
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
 Both were true statements about what failed first, and neither was the cause.
