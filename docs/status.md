@@ -1158,6 +1158,37 @@ build, each reported the damage 4 of 4.  The diskless path takes
 `MemoryBlockDevice` and never touches PCI, DMA or a device queue, so the search
 has no business in the driver layer.
 
+**Three machines, one defect.**  The same two lines in `kernel_main` that walk
+the heap after `mount_everything` report the damage on x86_64 and on riscv64 as
+well as on aarch64, and on x86_64 they report it 3 of 3 from one build with the
+heap at a fixed address.  Nothing about this is aarch64 specific, and the reason
+aarch64 is where it was found is that aarch64's boot is the one whose later
+consumers were large enough to fall over.
+
+That matters for the work more than the diagnosis does.  x86_64 boots in seconds
+under the gate, its heap address is the same run to run, and the failure is
+deterministic there, so it is the machine to reproduce on.  Every earlier
+measurement in this record was taken on the slowest of the three.
+
+**The chain's head is valid and its first link is not.**  Reading the slot the
+walk complains about, with two words either side, gives:
+
+```text
+slot 0x4a25fb8, idx 672
+around: 0  0  0xa24a40  0  0
+```
+
+The slot holds `0xa24a40`, which is the heap's first block and a perfectly good
+address; the words around it are zero.  So the free list is not what was
+overwritten.  `0xa24a40` is a **free** block, correctly linked as the head of its
+class, and the word that is wrong is the one sixteen bytes into it, which is
+where `block_next_free` reads and where an allocated block's payload begins.
+That word holds whatever the last writer of the block's payload left there, and
+the block is free now, so either the payload was written after the block was
+returned to the list or the block was never taken off it.  The counters in the
+earlier entry say the removal happened and set the head to zero, which leaves
+the first: a payload write that arrives after the block is free again.
+
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
 Both were true statements about what failed first, and neither was the cause.
