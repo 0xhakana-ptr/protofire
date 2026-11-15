@@ -1101,6 +1101,47 @@ record, and it is why the audit above is worth more than the checkpoints: the
 address arithmetic is a fact about the image, and a checkpoint result is a fact
 about one build of it.
 
+**The gate keeps its debug assertions, so the index branch is ruled out.**  The
+gate boots `--profile debug`, which is `[profile.dev]`: `opt-level = 1`,
+`panic = "abort"`, and the default `debug-assertions = true`.  That was measured
+rather than read off the manifest, with a `debug_assert!(false)` in the boot
+that panicked.  So `list_index`'s `debug_assert!((FL_MIN..=FL_MAX).contains(&fl))`
+and `debug_assert!(sl < SL_COUNT)` are live in every boot this record describes,
+and an out-of-range index would panic inside `list_index` rather than leave a
+list corrupted for `scan_free_lists` to find.  **What is left is the other
+branch: a block address the allocator computed.**
+
+**The word that is wrong is the first block's link, and the removal that
+precedes it is clean.**  Three counters, one token each, on the list class the
+heap's whole size maps to:
+
+```text
+[672I block=0x40989a40 size=0x4000000 head=0x0]   ensure_init
+[672I block=0x40989a40 size=0x4000000 head=0x0]   a second insert of the same block
+[672R block=0x40989a40 next=0x0]                  removal, and the head becomes 0
+```
+
+The removal sets the head to `0`, which is what a correct unlink does.  The
+damage appears **after** it, and the word is not a stray pointer: reading it
+back gives `word = 0x1` at `slot = 0x40989a50`, which is `state.start + 16`, the
+`next_free` field of the heap's first block.  That block's header says
+`size = 0x40` and `used = true`: it was handed out at sixty-four bytes, its new
+owner wrote a reference count of one where the link is read, and the list head
+still named it.  A sixty-four-byte block does not belong on the class a whole
+64 MiB block is filed under.  The counters record one insert and one removal for
+that class after `ensure_init`, so whatever put the head back did not go through
+`insert_free_block`; which store did is not established, and it is the question
+the next attempt should answer.
+
+**The `protofire` reading is withdrawn.**  A previous entry reported
+`0x7269666f746f7270`, the first eight bytes of the volume label, standing in the
+free lists of a diskless boot.  Every non-test write of that label in the tree is
+a `copy_from_slice` into a slice, which panics rather than writing past its end,
+and the three runs of the corrected build that were checked report `0x1` and
+never the label.  The observation was made on a build carrying the sentinel
+arrays, whose layout differs from this one, and it is not reproducible here.  It
+is recorded as withdrawn so a later reader does not follow it.
+
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
 Both were true statements about what failed first, and neither was the cause.
