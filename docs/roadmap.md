@@ -351,7 +351,12 @@ lands before anything in the kernel depends on it.
   here to answer it; `net::tls` has the record layer, the key schedule and the
   handshake, and the boot proves both sides of a handshake agree.  No X.509
   parser exists, so a chain is carried opaque.  `docs/status.md` records all
-  three limits where the call is.
+  three limits where the call is.  `TrustAnchorAdd` (194) and
+  `TrustAnchorRemove` (195) are served as well, over `net::x509`, which parses a
+  real certificate chain, verifies its signatures and matches its names; that is
+  13 host tests against DER openssl wrote, and no boot probe, because the chain
+  check faults in this tree's ECDSA on aarch64 and that defect is its own
+  change.
 - **Routing.**  One interface, one address, one gateway.  A routing table is a
   decision for a tree with two networks.
 - **DNS beyond the literal.**  `ResolveHostname` (93) can answer from a hosts

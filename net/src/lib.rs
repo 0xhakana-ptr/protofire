@@ -147,10 +147,12 @@
 //! there are two interfaces, the route gains one field and the lookup one
 //! comparison.
 //!
-//! What is absent from [`tls`] is stated there: no X.509 parser, no PSK and no
-//! 0-RTT.  The record layer, the key schedule and the handshake messages are
-//! here, and a caller that needs a chain examined needs a parser this crate
-//! does not pretend to have.
+//! What is absent from [`tls`] is stated there: no PSK and no 0-RTT.  The
+//! record layer, the key schedule and the handshake messages are here, and so
+//! is [`x509`], which is the chain a handshake carries: the DER reader, the
+//! signature check, and the name matching that decides whether a certificate is
+//! for the host you meant.  What [`x509`] does not do is revocation and
+//! validity windows, and it says so where each would be checked.
 //!
 //! What is absent from the stack as a whole is shorter than it was: the 23
 //! protocol numbers above the frozen range are all served, and what remains is
@@ -209,6 +211,7 @@ pub mod multicast;
 pub mod route;
 pub mod tls;
 pub mod transport;
+pub mod x509;
 
 /// The internet layer's modules, at the crate root so a caller names the
 /// protocol and not its shelf.
@@ -250,6 +253,10 @@ pub use dccp::Table as DccpTable;
 pub use tls::Keys as TlsKeys;
 pub use tls::Schedule as TlsSchedule;
 pub use tls::Transcript;
+
+pub use x509::Anchors;
+pub use x509::Certificate;
+pub use x509::ChainError;
 
 pub use transport::local;
 pub use transport::options;

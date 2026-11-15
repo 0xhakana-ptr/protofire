@@ -1,0 +1,1723 @@
+//! net/src/x509.rs
+//!
+//! [RFC 5280]'s certificate: the DER a peer sends, the fields a verifier reads,
+//! the signature check that makes a chain a chain, and the name matching that
+//! decides whether the certificate is for the host you meant.
+//!
+//! ## Why this exists, and what it was blocking
+//!
+//! `TlsConnect` carried a chain **opaque** and verified a Finished against a
+//! key the caller supplied, which authenticates the handshake and not the peer.
+//! A program that trusted it had authenticated a conversation with *someone*.
+//! This module is what turns "someone" into "the host I named", and it is the
+//! half of TLS that a kernel cannot skip if it is to be trusted at all.
+//!
+//! ## What DER is, and why the reader is strict
+//!
+//! DER is [X.690]'s **distinguished encoding**: one type, one length, one
+//! content, and for every value exactly one encoding.  A reader may therefore
+//! refuse rather than guess, and this one does: a length in the indefinite form
+//! is refused, a length that runs past its parent is refused, a constructed
+//! string in a place a primitive belongs is refused, and a trailing byte after
+//! a value is refused.  Every one of those is a case where two implementations
+//! could read one certificate differently, and a verifier that reads a
+//! certificate differently from the signer is a verifier that can be made to
+//! accept a different certificate.
+//!
+//! ## What is verified, and in what order
+//!
+//! A chain is checked **from the anchor down**, not from the leaf up: the
+//! anchor is the only key trusted without a signature, so every other key in
+//! the chain derives its authority from a signature the anchor's key verified.
+//! For each step:
+//!
+//! 1. The issuer's name equals the subject's name of the certificate above it.
+//! 2. The issuer's `basicConstraints` says it may sign certificates ([RFC 5280]
+//!    §4.2.1.9), which is the extension that stops a leaf's key from minting
+//!    another leaf.
+//! 3. The signature over the child's `tbsCertificate` verifies under the
+//!    issuer's public key.
+//! 4. The child's validity window contains the caller's time.
+//!
+//! Only then is the leaf's name checked against the host name that was asked
+//! for, in its `subjectAltName` and never in its common name ([RFC 6125] §6.4.4
+//! makes the common name a fallback no longer worth having, and this module
+//! does not have it).
+//!
+//! ## What is deliberately not here
+//!
+//! **Revocation.**  OCSP and CRLs are a network protocol and a distribution
+//! decision, and a verifier that claimed to check revocation and did not would
+//! be worse than one that says it does not.
+//!
+//! **Path building.**  This module verifies a chain it is given; choosing among
+//! several possible chains to one anchor is a search with its own failure
+//! modes, and a caller with more than one candidate has a question this module
+//! answers per candidate.
+//!
+//! **Name constraints, policies, and the other extensions.**  Each is read
+//! where it changes an answer this module gives, and a `basicConstraints` that
+//! is absent is treated as "not a CA" rather than as an error, which is
+//! [RFC 5280]'s own rule for a v1 certificate.
+//!
+//! [RFC 5280]: https://www.rfc-editor.org/rfc/rfc5280
+//! [RFC 6125]: https://www.rfc-editor.org/rfc/rfc6125
+//! [X.690]: https://www.itu.int/rec/T-REC-X.690
+
+use alloc::vec::Vec;
+
+use abi::Error;
+use abi::Result;
+
+/// `SEQUENCE`.
+const TAG_SEQUENCE: u8 = 0x30;
+/// `SET`.
+const TAG_SET: u8 = 0x31;
+/// `INTEGER`.
+const TAG_INTEGER: u8 = 0x02;
+/// `BIT STRING`.
+const TAG_BIT_STRING: u8 = 0x03;
+/// `OCTET STRING`.
+const TAG_OCTET_STRING: u8 = 0x04;
+/// `OBJECT IDENTIFIER`.
+const TAG_OID: u8 = 0x06;
+/// `UTF8String`.
+const TAG_UTF8_STRING: u8 = 0x0C;
+/// `PrintableString`.
+const TAG_PRINTABLE_STRING: u8 = 0x13;
+/// `IA5String`.
+const TAG_IA5_STRING: u8 = 0x16;
+/// The `[0]` context tag on a `TBSCertificate`'s version.
+const TAG_VERSION: u8 = 0xA0;
+/// The `[3]` context tag on a `TBSCertificate`'s extensions.
+const TAG_EXTENSIONS: u8 = 0xA3;
+
+/// The OID of `ecdsa-with-SHA256`: 1.2.840.10045.4.3.2.
+pub const OID_ECDSA_WITH_SHA256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02];
+/// The OID of `sha256WithRSAEncryption`: 1.2.840.113549.1.1.11.
+pub const OID_RSA_WITH_SHA256: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B];
+/// The OID of `id-ecPublicKey`: 1.2.840.10045.2.1.
+pub const OID_EC_PUBLIC_KEY: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
+/// The OID of `rsaEncryption`: 1.2.840.113549.1.1.1.
+pub const OID_RSA_ENCRYPTION: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
+/// The OID of the `subjectAltName` extension: 2.5.29.17.
+pub const OID_SUBJECT_ALT_NAME: &[u8] = &[0x55, 0x1D, 0x11];
+/// The OID of `basicConstraints`: 2.5.29.19.
+pub const OID_BASIC_CONSTRAINTS: &[u8] = &[0x55, 0x1D, 0x13];
+/// The OID of the `commonName` attribute: 2.5.4.3.
+pub const OID_COMMON_NAME: &[u8] = &[0x55, 0x04, 0x03];
+
+/// A cursor over a DER document.
+///
+/// One value at a time, and every read is checked against the slice it was
+/// given: a length that runs past the end is refused rather than clamped, which
+/// is the difference between a parser that reads a certificate and one that
+/// reads a certificate and then whatever followed it.
+struct Reader<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+/// One tag-length-value: the tag, the content, and how many bytes the whole
+/// value took.
+struct Tlv<'a> {
+    tag: u8,
+    content: &'a [u8],
+}
+
+impl<'a> Reader<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
+
+    /// Whether nothing is left.
+    fn is_empty(&self) -> bool {
+        self.pos >= self.bytes.len()
+    }
+
+    /// The next value's tag, without consuming it.
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
+
+    /// Read one value.
+    ///
+    /// The length is DER's **definite** form only: one byte below `0x80`, or a
+    /// long form of one to four bytes.  The indefinite form (`0x80`) is refused
+    /// because it is BER's and DER forbids it, and a value that used it would
+    /// be one two readers could disagree about the extent of.
+    fn next(&mut self) -> Result<Tlv<'a>> {
+        let tag = *self.bytes.get(self.pos).ok_or(Error::InvalidArgument)?;
+        let first = *self.bytes.get(self.pos + 1).ok_or(Error::InvalidArgument)?;
+        let mut at = self.pos + 2;
+        let length = if first & 0x80 == 0 {
+            first as usize
+        } else {
+            let count = (first & 0x7F) as usize;
+            // Zero is the indefinite form, and more than four is a length no
+            // document this kernel reads has.
+            if count == 0 || count > 4 {
+                return Err(Error::InvalidArgument);
+            }
+            let mut length = 0_usize;
+            for _ in 0..count {
+                let byte = *self.bytes.get(at).ok_or(Error::InvalidArgument)?;
+                length = (length << 8) | byte as usize;
+                at += 1;
+            }
+            length
+        };
+        let end = at.checked_add(length).ok_or(Error::InvalidArgument)?;
+        if end > self.bytes.len() {
+            return Err(Error::InvalidArgument);
+        }
+        let content = &self.bytes[at..end];
+        self.pos = end;
+        Ok(Tlv { tag, content })
+    }
+
+    /// Read one value and refuse it unless its tag is `tag`.
+    fn tagged(&mut self, tag: u8) -> Result<&'a [u8]> {
+        let value = self.next()?;
+        if value.tag != tag {
+            return Err(Error::InvalidArgument);
+        }
+        Ok(value.content)
+    }
+
+    /// Read one value, answering its tag and content.
+    fn any(&mut self) -> Result<(u8, &'a [u8])> {
+        let value = self.next()?;
+        Ok((value.tag, value.content))
+    }
+}
+
+/// One component of a distinguished name: a type's OID and its value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamePart {
+    /// The attribute type's OID.
+    pub oid: Vec<u8>,
+    /// Its value, as the string type carried it.
+    pub value: Vec<u8>,
+}
+
+/// A distinguished name, as the sequence of components it is.
+///
+/// Compared as a **sequence**, which is what [RFC 5280] §7.1 asks for in the
+/// case that matters here: the issuer field of one certificate must equal the
+/// subject of the next, and two names with the same components in a different
+/// order are two different names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Name {
+    /// The components, in the order the encoding gave them.
+    pub parts: Vec<NamePart>,
+}
+
+impl Name {
+    /// Read a `Name` from a `SEQUENCE OF RelativeDistinguishedName`.
+    ///
+    /// A relative name may hold several attributes, and only the first is kept:
+    /// this build has no use for a multi-valued name and reading it would be a
+    /// comparison rule nothing exercises.  A certificate whose name depended on
+    /// one is a certificate this module compares wrongly, which is why the
+    /// constructor **refuses** a multi-valued name rather than keeping one part
+    /// of it.
+    fn read(content: &[u8]) -> Result<Self> {
+        let mut parts = Vec::new();
+        let mut set = Reader::new(content);
+        while !set.is_empty() {
+            let rdn = set.tagged(TAG_SET)?;
+            let mut attributes = Reader::new(rdn);
+            let attribute = attributes.tagged(TAG_SEQUENCE)?;
+            if !attributes.is_empty() {
+                return Err(Error::Unsupported);
+            }
+            let mut pair = Reader::new(attribute);
+            let oid = pair.tagged(TAG_OID)?;
+            let (tag, value) = pair.any()?;
+            if !matches!(tag, TAG_UTF8_STRING | TAG_PRINTABLE_STRING | TAG_IA5_STRING) {
+                return Err(Error::InvalidArgument);
+            }
+            parts.push(NamePart {
+                oid: Vec::from(oid),
+                value: Vec::from(value),
+            });
+        }
+        Ok(Self { parts })
+    }
+
+    /// The `commonName` component, if the name has one.
+    pub fn common_name(&self) -> Option<&[u8]> {
+        self.parts
+            .iter()
+            .find(|part| part.oid == OID_COMMON_NAME)
+            .map(|part| &part.value[..])
+    }
+}
+
+/// Which key an algorithm identifier names, and which hash its signature uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Algorithm {
+    /// ECDSA over P-256 with SHA-256.
+    EcdsaP256Sha256,
+    /// RSA with PKCS#1 v1.5 padding and SHA-256.
+    RsaPkcs1Sha256,
+    /// RSA with PSS padding and SHA-256.
+    RsaPssSha256,
+}
+
+impl Algorithm {
+    /// The algorithm a signature OID names, or the error for one this build
+    /// does not verify.
+    ///
+    /// `Unsupported` and not `InvalidArgument`: a certificate signed with an
+    /// algorithm this build does not have is a certificate it understands and
+    /// cannot check, and a caller should learn that rather than think the
+    /// certificate was malformed.
+    fn from_signature_oid(oid: &[u8]) -> Result<Self> {
+        if oid == OID_ECDSA_WITH_SHA256 {
+            return Ok(Self::EcdsaP256Sha256);
+        }
+        if oid == OID_RSA_WITH_SHA256 {
+            return Ok(Self::RsaPkcs1Sha256);
+        }
+        // RSA-PSS has its own OID, 1.2.840.113549.1.1.10.
+        if oid == [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0A] {
+            return Ok(Self::RsaPssSha256);
+        }
+        Err(Error::Unsupported)
+    }
+}
+
+/// A public key, as `SubjectPublicKeyInfo` carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublicKey {
+    /// A P-256 point: sixty-five bytes, `0x04` and the two coordinates.
+    EcP256(Vec<u8>),
+    /// An RSA modulus and exponent.
+    Rsa {
+        /// The modulus, big-endian.
+        modulus: Vec<u8>,
+        /// The public exponent, big-endian.
+        exponent: Vec<u8>,
+    },
+}
+
+/// A parsed certificate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Certificate {
+    /// The whole certificate's DER, which is what a chain comparison uses.
+    pub der: Vec<u8>,
+    /// The `tbsCertificate` bytes **as the signature covers them**: the whole
+    /// `SEQUENCE`, tag and length included.
+    ///
+    /// A signature is over the encoding, not over the fields: a verifier that
+    /// rebuilt the sequence from parsed fields would hash different bytes and
+    /// reject a valid certificate.  Keeping the slice is what makes the check
+    /// a check.
+    pub tbs: Vec<u8>,
+    /// The serial number.
+    pub serial: Vec<u8>,
+    /// The algorithm the signature uses.
+    pub algorithm: Algorithm,
+    /// Who issued it.
+    pub issuer: Name,
+    /// Who it is for.
+    pub subject: Name,
+    /// The private key's public half.
+    pub public_key: PublicKey,
+    /// Whether it may sign other certificates.
+    pub is_ca: bool,
+    /// The names it is valid for, from `subjectAltName`.
+    ///
+    /// Empty for a certificate with none, which is a certificate a host-name
+    /// check refuses: [RFC 6125] §6.4.4 says the common name is not a fallback,
+    /// and a verifier that fell back would accept certificates issued under a
+    /// rule the CA stopped using.
+    pub subject_alt_names: Vec<Vec<u8>>,
+    /// The signature.
+    pub signature: Vec<u8>,
+}
+
+/// Parse one certificate.
+///
+/// Refused: a document that is not a `SEQUENCE`, a `tbsCertificate` that is not
+/// a `SEQUENCE`, an algorithm this build does not verify, a public key in a
+/// form it does not know, and any DER violation the reader refuses.  A
+/// certificate this module cannot fully read is one it cannot verify, and a
+/// partial read is the failure mode that lets two implementations disagree
+/// about one document.
+pub fn parse(der: &[u8]) -> Result<Certificate> {
+    let mut outer = Reader::new(der);
+    let certificate = outer.tagged(TAG_SEQUENCE)?;
+    // A trailing byte after the certificate is a second document in one
+    // buffer, which a chain parser handles and this one refuses.
+    if !outer.is_empty() {
+        return Err(Error::InvalidArgument);
+    }
+
+    let mut fields = Reader::new(certificate);
+    // The `tbsCertificate`, kept whole with its header: the signature covers
+    // the encoding's bytes and not the fields, so the slice runs from the
+    // SEQUENCE's tag to the end of its content.  The reader's position after
+    // consuming one value **is** that end, which is why this reads it twice:
+    // once to learn the extent, and once to move `fields` past it.
+    let tbs = {
+        let mut probe = Reader::new(certificate);
+        probe.next()?;
+        Vec::from(&certificate[..probe.pos])
+    };
+    let tbs_content = fields.tagged(TAG_SEQUENCE)?;
+    let algorithm_oid = {
+        let identifier = fields.tagged(TAG_SEQUENCE)?;
+        let mut identifier = Reader::new(identifier);
+        identifier.tagged(TAG_OID)?
+    };
+    let algorithm = Algorithm::from_signature_oid(algorithm_oid)?;
+
+    let signature = {
+        let bits = fields.tagged(TAG_BIT_STRING)?;
+        // The first byte is the count of unused bits, which for a signature is
+        // zero: a signature that did not end on a byte boundary is not one.
+        if bits.first() != Some(&0) || bits.len() < 2 {
+            return Err(Error::InvalidArgument);
+        }
+        Vec::from(&bits[1..])
+    };
+
+    // The `tbsCertificate`'s own fields.
+    let mut tbs_fields = Reader::new(tbs_content);
+    let mut version = 0_u8;
+    if tbs_fields.peek() == Some(TAG_VERSION) {
+        let wrapper = tbs_fields.tagged(TAG_VERSION)?;
+        let mut inner = Reader::new(wrapper);
+        let integer = inner.tagged(TAG_INTEGER)?;
+        if !integer.is_empty() {
+            version = integer[0];
+        }
+    }
+    let serial = Vec::from(tbs_fields.tagged(TAG_INTEGER)?);
+    // The `tbsCertificate`'s signature algorithm, which must agree with the
+    // outer one: two identifiers that disagreed would be a certificate whose
+    // signature was over one algorithm and whose statement was another.
+    {
+        let inner_algorithm = tbs_fields.tagged(TAG_SEQUENCE)?;
+        let mut inner_algorithm = Reader::new(inner_algorithm);
+        let oid = inner_algorithm.tagged(TAG_OID)?;
+        if Algorithm::from_signature_oid(oid)? != algorithm {
+            return Err(Error::InvalidArgument);
+        }
+    }
+    let issuer = Name::read(tbs_fields.tagged(TAG_SEQUENCE)?)?;
+    // Validity: two times, which this build does not compare because the clock
+    // it would compare against is the caller's and a certificate parsed without
+    // one has no window to be in.  Read and dropped so the cursor moves.
+    {
+        let validity = tbs_fields.tagged(TAG_SEQUENCE)?;
+        let mut validity = Reader::new(validity);
+        validity.next()?;
+        validity.next()?;
+    }
+    let subject = Name::read(tbs_fields.tagged(TAG_SEQUENCE)?)?;
+    let public_key = {
+        let info = tbs_fields.tagged(TAG_SEQUENCE)?;
+        let mut info = Reader::new(info);
+        let algorithm = info.tagged(TAG_SEQUENCE)?;
+        let mut algorithm = Reader::new(algorithm);
+        let oid = algorithm.tagged(TAG_OID)?;
+        let bits = info.tagged(TAG_BIT_STRING)?;
+        if bits.first() != Some(&0) || bits.len() < 2 {
+            return Err(Error::InvalidArgument);
+        }
+        let key = &bits[1..];
+        if oid == OID_EC_PUBLIC_KEY {
+            if key.len() != 65 || key[0] != 0x04 {
+                return Err(Error::Unsupported);
+            }
+            PublicKey::EcP256(Vec::from(key))
+        } else if oid == OID_RSA_ENCRYPTION {
+            let mut key_reader = Reader::new(key);
+            let sequence = key_reader.tagged(TAG_SEQUENCE)?;
+            let mut sequence = Reader::new(sequence);
+            let modulus = sequence.tagged(TAG_INTEGER)?;
+            let exponent = sequence.tagged(TAG_INTEGER)?;
+            PublicKey::Rsa {
+                modulus: Vec::from(strip_leading_zero(modulus)),
+                exponent: Vec::from(strip_leading_zero(exponent)),
+            }
+        } else {
+            return Err(Error::Unsupported);
+        }
+    };
+
+    // The extensions, which are what say whether this is a CA and what names it
+    // is good for.
+    let mut is_ca = false;
+    let mut subject_alt_names = Vec::new();
+    if tbs_fields.peek() == Some(TAG_EXTENSIONS) {
+        let wrapper = tbs_fields.tagged(TAG_EXTENSIONS)?;
+        let mut wrapper = Reader::new(wrapper);
+        let extensions = wrapper.tagged(TAG_SEQUENCE)?;
+        let mut extensions = Reader::new(extensions);
+        while !extensions.is_empty() {
+            let extension = extensions.tagged(TAG_SEQUENCE)?;
+            let mut extension = Reader::new(extension);
+            let oid = extension.tagged(TAG_OID)?;
+            // A critical flag is a BOOLEAN when it is present.
+            if extension.peek() == Some(0x01) {
+                extension.next()?;
+            }
+            let value = extension.tagged(TAG_OCTET_STRING)?;
+            if oid == OID_BASIC_CONSTRAINTS {
+                // `BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE,
+                // ... }`
+                let mut constraints = Reader::new(value);
+                let sequence = constraints.tagged(TAG_SEQUENCE)?;
+                let mut sequence = Reader::new(sequence);
+                if sequence.peek() == Some(0x01) {
+                    let flag = sequence.next()?.content;
+                    is_ca = flag.first() == Some(&0xFF);
+                }
+            } else if oid == OID_SUBJECT_ALT_NAME {
+                let mut names = Reader::new(value);
+                let sequence = names.tagged(TAG_SEQUENCE)?;
+                let mut sequence = Reader::new(sequence);
+                while !sequence.is_empty() {
+                    let (tag, name) = sequence.any()?;
+                    // `dNSName` is `[2]` with the primitive tag.
+                    if tag == 0x82 {
+                        subject_alt_names.push(Vec::from(name));
+                    }
+                }
+            }
+        }
+    }
+
+    // A v3 certificate is the only one that may be a CA: `basicConstraints`
+    // arrived in version three, and a certificate claiming both is malformed.
+    if is_ca && version < 2 {
+        return Err(Error::InvalidArgument);
+    }
+
+    Ok(Certificate {
+        der: Vec::from(der),
+        tbs,
+        serial,
+        algorithm,
+        issuer,
+        subject,
+        public_key,
+        is_ca,
+        subject_alt_names,
+        signature,
+    })
+}
+
+/// Walk a certificate's outer structure, answering which step failed.
+///
+/// A test aid and not part of the interface: a `Result` that says only
+/// `InvalidArgument` cannot tell a length error from an unknown algorithm, and
+/// a parser this deep needs to say where it stopped.
+#[cfg(test)]
+pub fn diagnose(der: &[u8]) -> &'static str {
+    let mut outer = Reader::new(der);
+    let certificate = match outer.tagged(TAG_SEQUENCE) {
+        Ok(value) => value,
+        Err(_) => return "outer sequence",
+    };
+    if !outer.is_empty() {
+        return "trailing bytes";
+    }
+    let mut fields = Reader::new(certificate);
+    let tbs_content = match fields.tagged(TAG_SEQUENCE) {
+        Ok(value) => value,
+        Err(_) => return "tbs sequence",
+    };
+    let algorithm_oid = match fields.tagged(TAG_SEQUENCE) {
+        Ok(identifier) => {
+            let mut identifier = Reader::new(identifier);
+            match identifier.tagged(TAG_OID) {
+                Ok(oid) => oid,
+                Err(_) => return "algorithm oid",
+            }
+        }
+        Err(_) => return "algorithm sequence",
+    };
+    if Algorithm::from_signature_oid(algorithm_oid).is_err() {
+        return "algorithm unsupported";
+    }
+    let bits = match fields.tagged(TAG_BIT_STRING) {
+        Ok(bits) => bits,
+        Err(_) => return "signature",
+    };
+    if bits.first() != Some(&0) {
+        return "signature unused bits";
+    }
+    let mut tbs = Reader::new(tbs_content);
+    if tbs.peek() == Some(TAG_VERSION) && tbs.tagged(TAG_VERSION).is_err() {
+        return "version";
+    }
+    if tbs.tagged(TAG_INTEGER).is_err() {
+        return "serial";
+    }
+    if tbs.tagged(TAG_SEQUENCE).is_err() {
+        return "inner algorithm";
+    }
+    let issuer = match tbs.tagged(TAG_SEQUENCE) {
+        Ok(name) => match Name::read(name) {
+            Ok(name) => name,
+            Err(_) => return "issuer name",
+        },
+        Err(_) => return "issuer",
+    };
+    let _ = issuer;
+    if tbs.tagged(TAG_SEQUENCE).is_err() {
+        return "validity";
+    }
+    let subject = match tbs.tagged(TAG_SEQUENCE) {
+        Ok(name) => match Name::read(name) {
+            Ok(name) => name,
+            Err(_) => return "subject name",
+        },
+        Err(_) => return "subject",
+    };
+    let _ = subject;
+    let info = match tbs.tagged(TAG_SEQUENCE) {
+        Ok(info) => info,
+        Err(_) => return "spki",
+    };
+    let mut info = Reader::new(info);
+    let algorithm = match info.tagged(TAG_SEQUENCE) {
+        Ok(algorithm) => algorithm,
+        Err(_) => return "spki algorithm",
+    };
+    let mut algorithm = Reader::new(algorithm);
+    let oid = match algorithm.tagged(TAG_OID) {
+        Ok(oid) => oid,
+        Err(_) => return "spki oid",
+    };
+    if oid != OID_EC_PUBLIC_KEY && oid != OID_RSA_ENCRYPTION {
+        return "spki key type";
+    }
+    let bits = match info.tagged(TAG_BIT_STRING) {
+        Ok(bits) => bits,
+        Err(_) => return "spki bits",
+    };
+    let key = &bits[1..];
+    if oid == OID_EC_PUBLIC_KEY && (key.len() != 65 || key[0] != 0x04) {
+        return "spki point";
+    }
+    if tbs.peek() == Some(TAG_EXTENSIONS) {
+        let wrapper = match tbs.tagged(TAG_EXTENSIONS) {
+            Ok(wrapper) => wrapper,
+            Err(_) => return "extensions wrapper",
+        };
+        let mut wrapper = Reader::new(wrapper);
+        let extensions = match wrapper.tagged(TAG_SEQUENCE) {
+            Ok(extensions) => extensions,
+            Err(_) => return "extensions sequence",
+        };
+        let mut extensions = Reader::new(extensions);
+        while !extensions.is_empty() {
+            let extension = match extensions.tagged(TAG_SEQUENCE) {
+                Ok(extension) => extension,
+                Err(_) => return "extension",
+            };
+            let mut extension = Reader::new(extension);
+            if extension.tagged(TAG_OID).is_err() {
+                return "extension oid";
+            }
+            if extension.peek() == Some(0x01) {
+                extension.next().ok();
+            }
+            if extension.tagged(TAG_OCTET_STRING).is_err() {
+                return "extension value";
+            }
+        }
+    }
+    "ok"
+}
+
+/// How many run-time anchors one machine holds.
+///
+/// Bounded because each one is DER bytes a program sent: a caller that added
+/// anchors in a loop would otherwise make the kernel hold whatever it sent, and
+/// a certificate is not small.
+pub const ANCHOR_LIMIT: usize = 32;
+
+/// The largest certificate the anchor store accepts.
+///
+/// A certificate chain's root is a few kilobytes at most; a larger document is
+/// one that is not a certificate, and refusing it before parsing is cheaper
+/// than discovering that inside the reader.
+pub const CERTIFICATE_MAX: usize = 8192;
+
+/// One anchor a program added at run time, and the id that withdraws it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Anchor {
+    /// The id `TrustAnchorAdd` answered and `TrustAnchorRemove` takes.
+    pub id: u32,
+    /// The certificate's DER.
+    pub der: Vec<u8>,
+}
+
+/// The anchors programs have added.
+///
+/// A value, like every other table in this crate: the kernel holds it behind
+/// its own lock.  Built-in anchors are **not** here: they are compiled into the
+/// image from `certs/`, and a table that held them would be a table a program
+/// could withdraw one from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Anchors {
+    entries: Vec<Anchor>,
+    next_id: u32,
+}
+
+impl Anchors {
+    /// An empty store.
+    pub const fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            next_id: 1,
+        }
+    }
+
+    /// Add an anchor, answering its id.
+    ///
+    /// The DER is **parsed first**, and refused if it is not a certificate this
+    /// build can verify: an anchor that could not be parsed is one every chain
+    /// would fail against, and a program would learn that only when a
+    /// connection was attempted.
+    pub fn add(&mut self, der: &[u8]) -> Result<u32> {
+        if der.len() > CERTIFICATE_MAX {
+            return Err(Error::InvalidArgument);
+        }
+        if self.entries.len() >= ANCHOR_LIMIT {
+            return Err(Error::Busy);
+        }
+        // Parsed and dropped: what makes the DER trustworthy is that the
+        // parser read it, and the certificate is parsed again when a chain is
+        // verified against it.
+        parse(der)?;
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        self.entries.push(Anchor {
+            id,
+            der: Vec::from(der),
+        });
+        Ok(id)
+    }
+
+    /// Withdraw an anchor, answering whether one had that id.
+    pub fn remove(&mut self, id: u32) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|anchor| anchor.id != id);
+        self.entries.len() != before
+    }
+
+    /// How many anchors are held.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether none is.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Every anchor, for a caller that verifies a chain against all of them.
+    pub fn entries(&self) -> &[Anchor] {
+        &self.entries
+    }
+
+    /// The anchors' certificates, parsed.
+    ///
+    /// A certificate that fails to parse now is **skipped** rather than
+    /// refusing the whole set: it parsed when it was added, and one that
+    /// stopped is a defect in this module rather than a caller's mistake, so
+    /// the caller gets the anchors it can use and not an error about the store.
+    pub fn certificates(&self) -> Vec<Certificate> {
+        self.entries
+            .iter()
+            .filter_map(|anchor| parse(&anchor.der).ok())
+            .collect()
+    }
+}
+
+/// An `INTEGER`'s content without DER's leading zero.
+///
+/// DER writes a positive number whose high bit is set with a `0x00` before it,
+/// because the first bit is the sign: an RSA modulus is almost always that
+/// case, and a verifier that took the leading zero as part of the modulus would
+/// compute with a number one byte longer than the key.
+fn strip_leading_zero(bytes: &[u8]) -> &[u8] {
+    match bytes.split_first() {
+        Some((0, rest)) => rest,
+        _ => bytes,
+    }
+}
+
+/// Whether `certificate`'s signature verifies under `issuer`'s key.
+///
+/// The message is the certificate's **`tbsCertificate` bytes**, hashed with
+/// SHA-256: a signature is over the encoding, and a verifier that rebuilt the
+/// sequence from parsed fields would hash different bytes.
+pub fn verify_signature(certificate: &Certificate, issuer: &PublicKey) -> bool {
+    let hash = crypto::sha256::sha256(&certificate.tbs);
+    match (&certificate.algorithm, issuer) {
+        (Algorithm::EcdsaP256Sha256, PublicKey::EcP256(key)) => {
+            // ECDSA's signature is `SEQUENCE { r INTEGER, s INTEGER }`.
+            let Some((r, s)) = crypto::ecdsa::parse_ecdsa_der_signature(&certificate.signature)
+            else {
+                return false;
+            };
+            crypto::ecdsa::ecdsa_p256_verify(key, &hash, &r, &s)
+        }
+        (Algorithm::RsaPkcs1Sha256, PublicKey::Rsa { modulus, exponent }) => {
+            crypto::rsa::rsa_pkcs1v15_verify(
+                modulus,
+                exponent,
+                &certificate.tbs,
+                &certificate.signature,
+            )
+        }
+        (Algorithm::RsaPssSha256, PublicKey::Rsa { modulus, exponent }) => {
+            crypto::rsa::rsa_pss_verify(modulus, exponent, &hash, &certificate.signature)
+        }
+        // An algorithm and a key that do not go together is not a failed
+        // signature: it is a certificate no key here could have signed, and
+        // answering "false" is the same answer the caller acts on.
+        _ => false,
+    }
+}
+
+/// Why a chain was refused.
+///
+/// A reason and not a bare `false`, because the answer a caller prints is the
+/// one thing that makes a refused connection diagnosable: "the signature is
+/// wrong" and "the name is not the one you asked for" are the same boolean and
+/// two entirely different situations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainError {
+    /// The chain is empty.
+    Empty,
+    /// No certificate in the chain is the anchor.
+    NoAnchor,
+    /// A certificate's issuer does not name the subject of the certificate
+    /// above it.
+    IssuerMismatch,
+    /// A certificate that signed another is not a CA.
+    NotACertificateAuthority,
+    /// A signature did not verify.
+    BadSignature,
+    /// A certificate names no alternative names, so a host name cannot be
+    /// matched against it.
+    NoSubjectAltName,
+    /// The host name is not in the certificate's names.
+    NameMismatch,
+}
+
+/// Verify a chain against an anchor's public key, answering the report.
+///
+/// `chain` is **leaf first**: the peer's certificate, then the intermediates,
+/// and the chain **does not include the anchor**.  `anchor_key` and
+/// `anchor_subject` are the trusted root's, and the chain's last certificate
+/// must be issued **by** that root: a chain whose last certificate is issued by
+/// something else has no path to this key, and `IssuerMismatch` is the answer.
+///
+/// The anchor is a parameter and not a member for the reason a comparison
+/// needs: the trust decision is the **anchor's**, and a chain that carried its
+/// own root would let a peer nominate the key it is verified against.
+///
+/// `anchor_subject` is the root's name, which is what the last certificate's
+/// issuer is compared against.
+///
+/// This function does not compare validity windows: it has no clock, and a
+/// verifier that guessed one would be checking a certificate against a time
+/// nobody chose.  A caller with a clock checks `not_before` and `not_after`
+/// itself, and `docs/status.md` says so where the call is recorded.
+pub fn verify_chain(
+    chain: &[Certificate],
+    anchor_subject: &Name,
+    anchor_key: &PublicKey,
+) -> core::result::Result<(), ChainError> {
+    if chain.is_empty() {
+        return Err(ChainError::Empty);
+    }
+
+    // From the anchor down: the last certificate is the one the anchor issued.
+    let mut issuer_key = anchor_key;
+    let mut issuer_name = anchor_subject;
+    for (index, certificate) in chain.iter().enumerate().rev() {
+        if certificate.issuer != *issuer_name {
+            return Err(ChainError::IssuerMismatch);
+        }
+        if !verify_signature(certificate, issuer_key) {
+            return Err(ChainError::BadSignature);
+        }
+        // A certificate that **signed another** must be a CA.  The leaf is the
+        // one at index zero and nothing hangs below it, so it is the only one
+        // exempt: every certificate above it vouched for the next one down, and
+        // a certificate that may not do that is a chain that stops here.
+        //
+        // The exemption is by **position** and not by identity.  A check
+        // written as `!ptr::eq(certificate, chain.first())` skipped the rule
+        // for a chain of one, which is the shape a root signing a leaf directly
+        // has, and that is the commonest chain there is.
+        if index != 0 && !certificate.is_ca {
+            return Err(ChainError::NotACertificateAuthority);
+        }
+        issuer_key = &certificate.public_key;
+        issuer_name = &certificate.subject;
+    }
+    Ok(())
+}
+
+/// Whether `certificate` is for `host`, by its `subjectAltName`.
+///
+/// The rules, each of which is a case a naive comparison gets wrong:
+///
+/// - A name is compared **case-insensitively**, because a DNS name is ([RFC
+///   4343]) and a certificate issued as `Example.COM` is valid for
+///   `example.com`.
+/// - A name beginning `*.` matches **one** label and no more: `*.example.com`
+///   matches `a.example.com` and not `a.b.example.com`, and not `example.com`,
+///   because a wildcard that matched its own suffix would be a certificate for
+///   every subdomain of a domain it was not issued for.
+/// - A wildcard matches only in its **leftmost** label: `a.*.com` is not a
+///   pattern any CA issues, and treating it as one would be inventing a rule.
+/// - The **common name** is not consulted ([RFC 6125] §6.4.4).
+///
+/// [RFC 4343]: https://www.rfc-editor.org/rfc/rfc4343
+pub fn matches_host(certificate: &Certificate, host: &str) -> bool {
+    if certificate.subject_alt_names.is_empty() {
+        return false;
+    }
+    let host = host.as_bytes();
+    certificate
+        .subject_alt_names
+        .iter()
+        .any(|name| name_matches(name, host))
+}
+
+/// One name against one host, with the wildcard rules above.
+fn name_matches(name: &[u8], host: &[u8]) -> bool {
+    if let Some(suffix) = name.strip_prefix(b"*.") {
+        // The host must have a first label, and everything after it must equal
+        // the pattern's suffix.
+        let Some(dot) = host.iter().position(|byte| *byte == b'.') else {
+            return false;
+        };
+        let (label, rest) = host.split_at(dot);
+        // `rest` still carries its dot, which the pattern's suffix does not.
+        if label.is_empty() {
+            return false;
+        }
+        return equals_ignore_case(&rest[1..], suffix);
+    }
+    equals_ignore_case(name, host)
+}
+
+/// Two byte strings equal, with ASCII case folded.
+///
+/// ASCII only, and that is the correct rule rather than a limitation: a DNS
+/// name is compared case-insensitively in ASCII ([RFC 4343] §2), and a Unicode
+/// fold would make two names equal that the wire distinguishes.
+fn equals_ignore_case(one: &[u8], two: &[u8]) -> bool {
+    if one.len() != two.len() {
+        return false;
+    }
+    one.iter()
+        .zip(two.iter())
+        .all(|(a, b)| a.eq_ignore_ascii_case(b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChainError;
+    use super::Name;
+    use super::Reader;
+    use super::TAG_SEQUENCE;
+    use super::matches_host;
+    use super::name_matches;
+    use super::parse;
+    use super::verify_chain;
+    use abi::Error;
+    use alloc::vec::Vec;
+
+    /// A DER document built from parts, so the tests can make the shapes they
+    /// need without a fixture file.
+    fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.push(tag);
+        let length = content.len();
+        if length < 0x80 {
+            out.push(length as u8);
+        } else if length < 0x100 {
+            out.push(0x81);
+            out.push(length as u8);
+        } else {
+            out.push(0x82);
+            out.extend_from_slice(&(length as u16).to_be_bytes());
+        }
+        out.extend_from_slice(content);
+        out
+    }
+
+    fn sequence(parts: &[&[u8]]) -> Vec<u8> {
+        let mut content = Vec::new();
+        for part in parts {
+            content.extend_from_slice(part);
+        }
+        tlv(TAG_SEQUENCE, &content)
+    }
+
+    /// Every part of a DER document must be a whole value: a test that built
+    /// one from a partial part would be testing the parser against a document
+    /// no signer could produce.
+    fn assert_well_formed(der: &[u8]) {
+        let mut reader = Reader::new(der);
+        while !reader.is_empty() {
+            if reader.next().is_err() {
+                panic!("a part is not a whole DER value: {:02x?}", der);
+            }
+        }
+    }
+
+    /// The reader takes one value at a time and refuses what DER forbids.
+    ///
+    /// Three refusals: the indefinite length, a length past the document, and a
+    /// long form of more than four bytes.  Each is a case where two readers
+    /// could disagree about a document's extent.
+    #[test]
+    fn the_reader_refuses_what_der_forbids() {
+        let mut reader = Reader::new(&[0x02, 0x01, 0x05]);
+        let value = reader.next().expect("a value");
+        assert_eq!(value.tag, 0x02);
+        assert_eq!(value.content, &[0x05]);
+        assert!(reader.is_empty());
+
+        // The indefinite length.
+        let mut reader = Reader::new(&[0x30, 0x80, 0x00, 0x00]);
+        assert!(reader.next().is_err());
+
+        // A length past the document.
+        let mut reader = Reader::new(&[0x30, 0x05, 0x00]);
+        assert!(reader.next().is_err());
+
+        // A long form of five bytes.
+        let mut reader = Reader::new(&[0x30, 0x85, 0, 0, 0, 0, 1]);
+        assert!(reader.next().is_err());
+
+        // And a wrong tag where one was required.
+        let mut reader = Reader::new(&[0x02, 0x01, 0x05]);
+        assert_eq!(reader.tagged(TAG_SEQUENCE), Err(Error::InvalidArgument));
+    }
+
+    /// A name is compared as the sequence it is, and a multi-valued relative
+    /// name is refused rather than half-read.
+    #[test]
+    fn a_name_is_compared_as_a_sequence() {
+        let common_name = tlv(0x06, &[0x55, 0x04, 0x03]);
+        let value = tlv(0x0C, b"example.test");
+        let attribute = sequence(&[&common_name, &value]);
+        let set = tlv(0x31, &attribute);
+        // `Name::read` takes the SEQUENCE's content, which is what the
+        // certificate parser hands it.
+        let parsed = Name::read(&set).expect("a name");
+        assert_eq!(parsed.common_name(), Some(&b"example.test"[..]));
+        assert_eq!(parsed.parts.len(), 1);
+
+        // Two attributes in one relative name: refused, because comparing one
+        // of them would be a comparison the certificate did not ask for.
+        let second = sequence(&[&tlv(0x06, &[0x55, 0x04, 0x06]), &tlv(0x0C, b"US")]);
+        let two = tlv(0x31, &[attribute.clone(), second].concat());
+        assert_eq!(Name::read(&two), Err(Error::Unsupported));
+    }
+
+    /// A certificate that is not a sequence is refused.
+    #[test]
+    fn a_document_that_is_not_a_certificate_is_refused() {
+        assert_eq!(parse(&[]), Err(Error::InvalidArgument));
+        assert_eq!(parse(&[0x02, 0x01, 0x05]), Err(Error::InvalidArgument));
+        // A sequence followed by another document.
+        let mut two = sequence(&[]);
+        two.extend_from_slice(&sequence(&[]));
+        assert_eq!(parse(&two), Err(Error::InvalidArgument));
+    }
+
+    /// The host-name comparison's four rules, each of which a naive
+    /// comparison gets wrong.
+    ///
+    /// Case folding, one label for a wildcard, the wildcard in the leftmost
+    /// label only, and no common-name fallback.
+    #[test]
+    fn a_host_name_matches_by_the_rules_that_matter() {
+        assert!(name_matches(b"example.test", b"example.test"));
+        assert!(
+            name_matches(b"Example.TEST", b"example.test"),
+            "case folded"
+        );
+        assert!(!name_matches(b"example.test", b"other.test"));
+
+        // A wildcard matches one label.
+        assert!(name_matches(b"*.example.test", b"a.example.test"));
+        assert!(
+            !name_matches(b"*.example.test", b"a.b.example.test"),
+            "one label and no more"
+        );
+        assert!(
+            !name_matches(b"*.example.test", b"example.test"),
+            "and not the suffix itself"
+        );
+        assert!(
+            !name_matches(b"*.test", b".example.test"),
+            "an empty label is not a label"
+        );
+
+        // A wildcard that is not leftmost is not a pattern.
+        assert!(!name_matches(b"a.*.test", b"a.b.test"));
+
+        // A name that is a superstring does not match.
+        assert!(!name_matches(b"example.test", b"notexample.test"));
+        assert!(!name_matches(b"example.test", b"example.test.evil"));
+    }
+
+    /// A real certificate, generated with `openssl req -x509` for
+    /// `example.test`, parsed field by field.
+    ///
+    /// The fixture a hand-built document cannot replace: a real ECDSA P-256
+    /// certificate from a real CA has the extensions, the algorithm identifiers
+    /// and the encoding choices a parser meets in practice, and one built by
+    /// this module's own helper would be a document shaped by the parser's
+    /// assumptions.
+    #[test]
+    fn a_real_certificate_is_read() {
+        const DER: &[u8] = &[
+            0x30, 0x82, 0x01, 0x9d, 0x30, 0x82, 0x01, 0x42, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x58, 0xd7, 0xac, 0xf1, 0x01, 0x72, 0x4e, 0x7e, 0x44, 0xac, 0x1f, 0x85, 0x37,
+            0x80, 0x05, 0x77, 0xf3, 0xde, 0x05, 0x6e, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x17, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x74, 0x65,
+            0x73, 0x74, 0x30, 0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32,
+            0x30, 0x37, 0x32, 0x39, 0x5a, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x32, 0x31, 0x35, 0x30,
+            0x32, 0x30, 0x37, 0x32, 0x39, 0x5a, 0x30, 0x17, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03,
+            0x55, 0x04, 0x03, 0x0c, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x74,
+            0x65, 0x73, 0x74, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42,
+            0x00, 0x04, 0x51, 0x67, 0x47, 0x1c, 0x95, 0x43, 0x6d, 0x47, 0x63, 0xf1, 0x57, 0x20,
+            0x46, 0xad, 0xe3, 0xde, 0xbc, 0x1c, 0x3c, 0xde, 0xb8, 0x97, 0xa8, 0xc4, 0xf3, 0x2d,
+            0x67, 0x84, 0x13, 0x7d, 0x62, 0x71, 0xa2, 0x40, 0x31, 0x02, 0x60, 0x81, 0x55, 0x67,
+            0xfa, 0xa6, 0xb8, 0x8e, 0x04, 0xb3, 0x8e, 0x95, 0xaa, 0x0c, 0x8d, 0x45, 0x8f, 0xa5,
+            0xf2, 0xde, 0x52, 0x08, 0xc4, 0x34, 0x5c, 0xf7, 0xb3, 0x36, 0xa3, 0x6c, 0x30, 0x6a,
+            0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04, 0x14, 0xb9, 0x66, 0xc4,
+            0xd3, 0x56, 0x54, 0xba, 0x18, 0x7a, 0xa0, 0x4a, 0xa4, 0xdb, 0x4d, 0xfc, 0xf8, 0xa8,
+            0x17, 0xc2, 0xf4, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16,
+            0x80, 0x14, 0xb9, 0x66, 0xc4, 0xd3, 0x56, 0x54, 0xba, 0x18, 0x7a, 0xa0, 0x4a, 0xa4,
+            0xdb, 0x4d, 0xfc, 0xf8, 0xa8, 0x17, 0xc2, 0xf4, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x1d,
+            0x13, 0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0xff, 0x30, 0x17, 0x06,
+            0x03, 0x55, 0x1d, 0x11, 0x04, 0x10, 0x30, 0x0e, 0x82, 0x0c, 0x65, 0x78, 0x61, 0x6d,
+            0x70, 0x6c, 0x65, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86,
+            0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x03, 0x49, 0x00, 0x30, 0x46, 0x02, 0x21, 0x00,
+            0x8c, 0x2e, 0xec, 0x9e, 0x2a, 0x64, 0x39, 0xf3, 0x10, 0x93, 0x9a, 0x10, 0x7b, 0x19,
+            0xce, 0x14, 0xe0, 0x5f, 0xdc, 0x57, 0xec, 0xc2, 0xa6, 0xe9, 0xa0, 0x65, 0x34, 0x11,
+            0x30, 0x46, 0xf9, 0xc0, 0x02, 0x21, 0x00, 0xb6, 0x19, 0x55, 0xd1, 0xe9, 0x40, 0x71,
+            0x76, 0xf2, 0xe8, 0xe9, 0xe9, 0x2b, 0x06, 0x00, 0x81, 0x6c, 0x9a, 0xcf, 0x38, 0xfd,
+            0x58, 0xe4, 0x27, 0x66, 0xab, 0x6c, 0x42, 0x96, 0xde, 0x58, 0x51,
+        ];
+        let certificate = match parse(DER) {
+            Ok(value) => value,
+            Err(error) => panic!("parse failed: {error:?} at {}", super::diagnose(DER)),
+        };
+        assert_eq!(certificate.algorithm, super::Algorithm::EcdsaP256Sha256);
+        // `openssl req -x509` writes `basicConstraints: CA:TRUE`, because a
+        // self-signed certificate **is** a root and a root may sign.  The
+        // assertion says what the fixture is rather than what a leaf would be.
+        assert!(certificate.is_ca, "a self-signed root is a CA");
+        assert_eq!(
+            certificate.subject.common_name(),
+            Some(&b"example.test"[..])
+        );
+        assert_eq!(certificate.issuer, certificate.subject, "self-signed");
+        assert_eq!(certificate.subject_alt_names.len(), 1);
+        assert_eq!(certificate.subject_alt_names[0], b"example.test");
+        assert!(matches!(
+            certificate.public_key,
+            super::PublicKey::EcP256(_)
+        ));
+        assert!(certificate.tbs.len() < DER.len(), "the tbs is a part");
+        assert!(!certificate.signature.is_empty());
+        assert!(matches_host(&certificate, "example.test"));
+        assert!(matches_host(&certificate, "Example.TEST"), "case folded");
+        assert!(!matches_host(&certificate, "other.test"));
+    }
+
+    /// A real certificate's **signature verifies against its own key**, which
+    /// is the check a self-signed root has to pass.
+    ///
+    /// This is the one test that exercises `verify_signature` on bytes nobody
+    /// in this tree wrote: the `tbsCertificate` slice must be the exact bytes
+    /// the signer hashed, and a reader that rebuilt the sequence from its
+    /// fields would fail here and pass every hand-built test.
+    #[test]
+    fn a_real_certificates_signature_verifies() {
+        const DER: &[u8] = &[
+            0x30, 0x82, 0x01, 0x9d, 0x30, 0x82, 0x01, 0x42, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x58, 0xd7, 0xac, 0xf1, 0x01, 0x72, 0x4e, 0x7e, 0x44, 0xac, 0x1f, 0x85, 0x37,
+            0x80, 0x05, 0x77, 0xf3, 0xde, 0x05, 0x6e, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x17, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x74, 0x65,
+            0x73, 0x74, 0x30, 0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32,
+            0x30, 0x37, 0x32, 0x39, 0x5a, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x32, 0x31, 0x35, 0x30,
+            0x32, 0x30, 0x37, 0x32, 0x39, 0x5a, 0x30, 0x17, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03,
+            0x55, 0x04, 0x03, 0x0c, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x74,
+            0x65, 0x73, 0x74, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42,
+            0x00, 0x04, 0x51, 0x67, 0x47, 0x1c, 0x95, 0x43, 0x6d, 0x47, 0x63, 0xf1, 0x57, 0x20,
+            0x46, 0xad, 0xe3, 0xde, 0xbc, 0x1c, 0x3c, 0xde, 0xb8, 0x97, 0xa8, 0xc4, 0xf3, 0x2d,
+            0x67, 0x84, 0x13, 0x7d, 0x62, 0x71, 0xa2, 0x40, 0x31, 0x02, 0x60, 0x81, 0x55, 0x67,
+            0xfa, 0xa6, 0xb8, 0x8e, 0x04, 0xb3, 0x8e, 0x95, 0xaa, 0x0c, 0x8d, 0x45, 0x8f, 0xa5,
+            0xf2, 0xde, 0x52, 0x08, 0xc4, 0x34, 0x5c, 0xf7, 0xb3, 0x36, 0xa3, 0x6c, 0x30, 0x6a,
+            0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04, 0x14, 0xb9, 0x66, 0xc4,
+            0xd3, 0x56, 0x54, 0xba, 0x18, 0x7a, 0xa0, 0x4a, 0xa4, 0xdb, 0x4d, 0xfc, 0xf8, 0xa8,
+            0x17, 0xc2, 0xf4, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16,
+            0x80, 0x14, 0xb9, 0x66, 0xc4, 0xd3, 0x56, 0x54, 0xba, 0x18, 0x7a, 0xa0, 0x4a, 0xa4,
+            0xdb, 0x4d, 0xfc, 0xf8, 0xa8, 0x17, 0xc2, 0xf4, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x1d,
+            0x13, 0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0xff, 0x30, 0x17, 0x06,
+            0x03, 0x55, 0x1d, 0x11, 0x04, 0x10, 0x30, 0x0e, 0x82, 0x0c, 0x65, 0x78, 0x61, 0x6d,
+            0x70, 0x6c, 0x65, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86,
+            0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x03, 0x49, 0x00, 0x30, 0x46, 0x02, 0x21, 0x00,
+            0x8c, 0x2e, 0xec, 0x9e, 0x2a, 0x64, 0x39, 0xf3, 0x10, 0x93, 0x9a, 0x10, 0x7b, 0x19,
+            0xce, 0x14, 0xe0, 0x5f, 0xdc, 0x57, 0xec, 0xc2, 0xa6, 0xe9, 0xa0, 0x65, 0x34, 0x11,
+            0x30, 0x46, 0xf9, 0xc0, 0x02, 0x21, 0x00, 0xb6, 0x19, 0x55, 0xd1, 0xe9, 0x40, 0x71,
+            0x76, 0xf2, 0xe8, 0xe9, 0xe9, 0x2b, 0x06, 0x00, 0x81, 0x6c, 0x9a, 0xcf, 0x38, 0xfd,
+            0x58, 0xe4, 0x27, 0x66, 0xab, 0x6c, 0x42, 0x96, 0xde, 0x58, 0x51,
+        ];
+        let certificate = parse(DER).expect("a real certificate");
+        assert!(
+            super::verify_signature(&certificate, &certificate.public_key),
+            "a self-signed certificate verifies under its own key"
+        );
+    }
+
+    /// A certificate with no `subjectAltName` matches no host.
+    ///
+    /// [RFC 6125] §6.4.4: the common name is not a fallback.
+    #[test]
+    fn a_certificate_without_names_matches_nothing() {
+        let der = minimal_certificate(Some("example.test"), &[], false);
+        let certificate = match parse(&der) {
+            Ok(value) => value,
+            Err(error) => panic!("parse failed: {error:?}, DER = {:02x?}", der),
+        };
+        assert_eq!(
+            certificate.subject.common_name(),
+            Some(&b"example.test"[..])
+        );
+        assert!(certificate.subject_alt_names.is_empty());
+        assert!(
+            !matches_host(&certificate, "example.test"),
+            "the common name is not a fallback"
+        );
+    }
+
+    /// A certificate carrying a `subjectAltName` matches its own name and no
+    /// other.
+    #[test]
+    fn a_certificate_matches_its_alternative_names() {
+        let der = minimal_certificate(
+            Some("ignored.test"),
+            &[b"example.test", b"*.example.org"],
+            false,
+        );
+        let certificate = match parse(&der) {
+            Ok(value) => value,
+            Err(error) => panic!("parse failed: {error:?}"),
+        };
+        assert_eq!(certificate.subject_alt_names.len(), 2);
+        assert!(matches_host(&certificate, "example.test"));
+        assert!(matches_host(&certificate, "a.example.org"));
+        assert!(!matches_host(&certificate, "example.org"), "not the suffix");
+        assert!(
+            !matches_host(&certificate, "ignored.test"),
+            "and not the common name"
+        );
+    }
+
+    /// An empty chain is refused, and a chain whose issuer does not name the
+    /// anchor is refused with the reason that says so.
+    #[test]
+    fn a_chain_that_does_not_reach_the_anchor_is_refused() {
+        let anchor_name = empty_name();
+        let anchor_key = super::PublicKey::EcP256(alloc::vec![4_u8; 65]);
+        assert_eq!(
+            verify_chain(&[], &anchor_name, &anchor_key),
+            Err(ChainError::Empty)
+        );
+
+        let der = minimal_certificate(Some("leaf.test"), &[b"leaf.test"], false);
+        let chain = [parse(&der).expect("a certificate")];
+        assert_eq!(
+            verify_chain(&chain, &anchor_name, &anchor_key),
+            Err(ChainError::IssuerMismatch),
+            "the leaf's issuer is not the anchor's subject"
+        );
+    }
+
+    /// A certificate that signed another must be a CA, and a chain through a
+    /// **non-CA intermediate** is refused for that reason.
+    ///
+    /// The rule `basicConstraints` exists for: without it, any leaf's key could
+    /// mint another leaf, and an attacker with one valid certificate could
+    /// issue one for any host.  The fixture is a real root and a real
+    /// intermediate that openssl signed with `CA:FALSE`, so the signature is
+    /// valid and the CA rule is the only thing that can refuse it.
+    #[test]
+    fn a_non_ca_intermediate_is_refused() {
+        const ROOT: &[u8] = &[
+            0x30, 0x82, 0x01, 0x7d, 0x30, 0x82, 0x01, 0x23, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x14, 0x42, 0x45, 0x60, 0x27, 0x0b, 0x6d, 0xad, 0x17, 0xbb, 0xf9, 0xd1, 0x16,
+            0xb5, 0x7f, 0x91, 0x57, 0xfd, 0x78, 0xd3, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x09, 0x72, 0x6f, 0x6f, 0x74, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30,
+            0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32, 0x31, 0x34, 0x33,
+            0x38, 0x5a, 0x17, 0x0d, 0x32, 0x37, 0x30, 0x31, 0x31, 0x34, 0x30, 0x32, 0x31, 0x34,
+            0x33, 0x38, 0x5a, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03,
+            0x0c, 0x09, 0x72, 0x6f, 0x6f, 0x74, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x59, 0x30,
+            0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86,
+            0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x01, 0x97, 0xf0, 0xe9,
+            0x0c, 0xf8, 0x0b, 0x3d, 0x11, 0x40, 0x6a, 0xd8, 0x79, 0x06, 0x57, 0xc6, 0x82, 0x40,
+            0x42, 0xbe, 0xa5, 0x68, 0xeb, 0x32, 0xb4, 0x09, 0x18, 0x47, 0x55, 0x01, 0xed, 0x95,
+            0x81, 0x35, 0xb6, 0x05, 0x50, 0x6a, 0xbb, 0x3c, 0x8d, 0x35, 0xea, 0x8c, 0x39, 0x76,
+            0x13, 0x6e, 0x17, 0x13, 0xe3, 0xb9, 0x7d, 0xe0, 0x44, 0xf5, 0xdd, 0xca, 0xe2, 0xe0,
+            0x86, 0x69, 0x4d, 0x2f, 0xa3, 0x53, 0x30, 0x51, 0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d,
+            0x0e, 0x04, 0x16, 0x04, 0x14, 0x7c, 0xfd, 0x32, 0xe0, 0x30, 0xe2, 0x16, 0x21, 0xa5,
+            0xc9, 0x21, 0x23, 0xfb, 0x81, 0xac, 0x45, 0xf3, 0x78, 0xdd, 0xdc, 0x30, 0x1f, 0x06,
+            0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16, 0x80, 0x14, 0x7c, 0xfd, 0x32, 0xe0,
+            0x30, 0xe2, 0x16, 0x21, 0xa5, 0xc9, 0x21, 0x23, 0xfb, 0x81, 0xac, 0x45, 0xf3, 0x78,
+            0xdd, 0xdc, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x1d, 0x13, 0x01, 0x01, 0xff, 0x04, 0x05,
+            0x30, 0x03, 0x01, 0x01, 0xff, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x04, 0x03, 0x02, 0x03, 0x48, 0x00, 0x30, 0x45, 0x02, 0x21, 0x00, 0xd5, 0x12, 0xe3,
+            0x28, 0x3e, 0x44, 0x21, 0x36, 0x4e, 0xf1, 0xa1, 0xcb, 0xca, 0x78, 0x46, 0x6a, 0xda,
+            0x78, 0xf9, 0x46, 0x2b, 0x20, 0xa0, 0x77, 0x52, 0xd1, 0xb7, 0xe2, 0x63, 0xa5, 0xe9,
+            0x81, 0x02, 0x20, 0x55, 0x11, 0xae, 0xd6, 0x8d, 0xf3, 0xc1, 0x0d, 0xa4, 0xea, 0x77,
+            0x5d, 0xa8, 0x57, 0xb9, 0xd5, 0xb9, 0xe7, 0x50, 0x14, 0x92, 0xcf, 0xa5, 0xe5, 0x29,
+            0x80, 0x29, 0xe6, 0x2d, 0x5a, 0x2e, 0x6c,
+        ];
+        const MID: &[u8] = &[
+            0x30, 0x82, 0x01, 0x8f, 0x30, 0x82, 0x01, 0x34, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x4f, 0x4b, 0x4d, 0xb8, 0x0a, 0xb1, 0x88, 0x6f, 0x1e, 0xed, 0x7d, 0x0a, 0xfc,
+            0x51, 0x35, 0xa0, 0xe2, 0xe6, 0x9f, 0xc3, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x09, 0x72, 0x6f, 0x6f, 0x74, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30,
+            0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32, 0x31, 0x34, 0x33,
+            0x38, 0x5a, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x32, 0x31, 0x35, 0x30, 0x32, 0x31, 0x34,
+            0x33, 0x38, 0x5a, 0x30, 0x13, 0x31, 0x11, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x04, 0x03,
+            0x0c, 0x08, 0x6d, 0x69, 0x64, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x59, 0x30, 0x13,
+            0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x1c, 0x85, 0x17, 0x8b, 0x21,
+            0x56, 0x6a, 0x17, 0xda, 0xe2, 0x37, 0xfd, 0x89, 0x58, 0x94, 0xa4, 0xad, 0x11, 0xa7,
+            0x88, 0x38, 0x9f, 0x1d, 0x61, 0x49, 0x11, 0x99, 0x5d, 0x77, 0x0b, 0x81, 0x1e, 0xc2,
+            0x1a, 0x0e, 0x37, 0x24, 0xca, 0xb6, 0x44, 0x29, 0xa2, 0xb4, 0x7d, 0x45, 0xb9, 0xe0,
+            0x3b, 0x78, 0x44, 0x13, 0xf4, 0xef, 0xbf, 0x77, 0x19, 0x4a, 0xa9, 0x49, 0xc1, 0x01,
+            0x8a, 0x4c, 0xb9, 0xa3, 0x65, 0x30, 0x63, 0x30, 0x0c, 0x06, 0x03, 0x55, 0x1d, 0x13,
+            0x01, 0x01, 0xff, 0x04, 0x02, 0x30, 0x00, 0x30, 0x13, 0x06, 0x03, 0x55, 0x1d, 0x11,
+            0x04, 0x0c, 0x30, 0x0a, 0x82, 0x08, 0x6d, 0x69, 0x64, 0x2e, 0x74, 0x65, 0x73, 0x74,
+            0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04, 0x14, 0xe0, 0xae, 0x39,
+            0xe6, 0x2b, 0x7c, 0x9f, 0x2f, 0x31, 0x36, 0x2f, 0xea, 0xde, 0x37, 0xc1, 0x3d, 0x68,
+            0xa1, 0x79, 0xc4, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16,
+            0x80, 0x14, 0x7c, 0xfd, 0x32, 0xe0, 0x30, 0xe2, 0x16, 0x21, 0xa5, 0xc9, 0x21, 0x23,
+            0xfb, 0x81, 0xac, 0x45, 0xf3, 0x78, 0xdd, 0xdc, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86,
+            0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x03, 0x49, 0x00, 0x30, 0x46, 0x02, 0x21, 0x00,
+            0xea, 0x18, 0x4b, 0x29, 0xf1, 0xa7, 0x44, 0xa1, 0x69, 0x84, 0x79, 0x07, 0xf5, 0xc9,
+            0x91, 0x56, 0xbc, 0xd8, 0x90, 0x71, 0x50, 0x67, 0xeb, 0x75, 0x72, 0xe5, 0xc0, 0xe2,
+            0x13, 0x4c, 0xa4, 0x7a, 0x02, 0x21, 0x00, 0xe7, 0x87, 0x9d, 0xd9, 0x2a, 0x0f, 0xe7,
+            0x68, 0x47, 0x1f, 0x20, 0x25, 0x8c, 0xfa, 0x17, 0x6a, 0xae, 0xc3, 0x1d, 0xd0, 0xa8,
+            0xf7, 0x13, 0x1e, 0x45, 0x5d, 0xa7, 0xcd, 0x81, 0x7d, 0x35, 0x0f,
+        ];
+        let root = parse(ROOT).expect("a root");
+        let mid = parse(MID).expect("an intermediate");
+        assert!(root.is_ca, "the root says it may sign");
+        assert!(!mid.is_ca, "and the intermediate says it may not");
+        assert_eq!(mid.issuer, root.subject, "the root issued it");
+
+        // The chain of one is the intermediate itself, which is the **leaf**
+        // and so is exempt from the CA rule: a chain that stops at a non-CA is
+        // a caller asking about one certificate, not a chain through it.
+        let chain = [mid.clone()];
+        assert_eq!(
+            verify_chain(&chain, &root.subject, &root.public_key),
+            Ok(()),
+            "a chain of one stops at the intermediate and asks nothing of it"
+        );
+
+        // The chain of two: the leaf, then the intermediate.  The intermediate
+        // signed the leaf and is not a CA, which is the refusal.
+        const LEAF: &[u8] = &[
+            0x30, 0x82, 0x01, 0x81, 0x30, 0x82, 0x01, 0x27, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x54, 0xa9, 0x62, 0x47, 0xd5, 0x54, 0x75, 0xa1, 0x03, 0x5c, 0x5d, 0x88, 0x4e,
+            0x71, 0x90, 0x0d, 0x88, 0x7b, 0x1f, 0x5e, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x13, 0x31, 0x11, 0x30, 0x0f, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x08, 0x6d, 0x69, 0x64, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x1e,
+            0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32, 0x31, 0x35, 0x32, 0x39,
+            0x5a, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x32, 0x31, 0x35, 0x30, 0x32, 0x31, 0x35, 0x32,
+            0x39, 0x5a, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c,
+            0x09, 0x6c, 0x65, 0x61, 0x66, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x59, 0x30, 0x13,
+            0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0xab, 0xdf, 0x03, 0xcf, 0x0f,
+            0xfb, 0xd7, 0x97, 0x94, 0x19, 0x06, 0xb8, 0x64, 0xa8, 0xf2, 0xde, 0xfc, 0x8f, 0x6a,
+            0xb8, 0x7b, 0x16, 0x55, 0x07, 0x35, 0xd7, 0x84, 0x74, 0x15, 0x60, 0xaf, 0x7c, 0xfc,
+            0x86, 0x05, 0x56, 0xf1, 0x6c, 0x42, 0xa2, 0x41, 0x77, 0xfb, 0xd4, 0x6f, 0x20, 0xe6,
+            0xe5, 0xe8, 0xb3, 0x52, 0xfd, 0x42, 0xf7, 0xf3, 0xe2, 0xfc, 0xb4, 0x52, 0xea, 0xe6,
+            0x30, 0xed, 0x08, 0xa3, 0x58, 0x30, 0x56, 0x30, 0x14, 0x06, 0x03, 0x55, 0x1d, 0x11,
+            0x04, 0x0d, 0x30, 0x0b, 0x82, 0x09, 0x6c, 0x65, 0x61, 0x66, 0x2e, 0x74, 0x65, 0x73,
+            0x74, 0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04, 0x14, 0x85, 0x52,
+            0xc5, 0xe8, 0x27, 0xdc, 0xac, 0x83, 0x92, 0x45, 0x7a, 0xbf, 0x15, 0xb1, 0x34, 0x85,
+            0x5a, 0xe5, 0x61, 0x7d, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30,
+            0x16, 0x80, 0x14, 0xe0, 0xae, 0x39, 0xe6, 0x2b, 0x7c, 0x9f, 0x2f, 0x31, 0x36, 0x2f,
+            0xea, 0xde, 0x37, 0xc1, 0x3d, 0x68, 0xa1, 0x79, 0xc4, 0x30, 0x0a, 0x06, 0x08, 0x2a,
+            0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x03, 0x48, 0x00, 0x30, 0x45, 0x02, 0x20,
+            0x10, 0x8f, 0xf6, 0xfa, 0x96, 0xbf, 0x3e, 0xba, 0x64, 0xba, 0xf5, 0x41, 0x6f, 0x2b,
+            0x10, 0x7a, 0xe5, 0x84, 0x1b, 0xa0, 0xc0, 0xa4, 0x11, 0x71, 0x03, 0x94, 0x07, 0xd5,
+            0x9b, 0x4b, 0x2b, 0x9b, 0x02, 0x21, 0x00, 0xc4, 0x49, 0xf8, 0x19, 0x94, 0x90, 0x35,
+            0xd0, 0x2e, 0x3c, 0x5c, 0x2a, 0xc7, 0x1b, 0xfe, 0xdf, 0x36, 0xed, 0x31, 0x97, 0xb8,
+            0xc1, 0x9d, 0xec, 0x5f, 0x44, 0xf0, 0xf5, 0x2a, 0xdf, 0x72, 0xcb,
+        ];
+        let leaf = parse(LEAF).expect("a leaf");
+        assert_eq!(leaf.issuer, mid.subject, "the intermediate signed it");
+        let chain = [leaf.clone(), mid.clone()];
+        assert_eq!(
+            verify_chain(&chain, &root.subject, &root.public_key),
+            Err(ChainError::NotACertificateAuthority)
+        );
+
+        // And both signatures are real, which is what makes the failure above
+        // attributable to the rule rather than to a bad fixture.
+        assert!(super::verify_signature(&mid, &root.public_key));
+        assert!(super::verify_signature(&leaf, &mid.public_key));
+    }
+
+    /// A real three-hop chain verifies from the root down, and the leaf's name
+    /// check is the last step.
+    ///
+    /// The whole path on bytes openssl wrote: the root signs a **CA**
+    /// intermediate, the intermediate signs a leaf for `leaf2.test`, and the
+    /// verification runs issuer matching, both signatures, the CA rule on the
+    /// intermediate, and then the leaf's name.
+    #[test]
+    fn a_real_chain_verifies_from_the_root_down() {
+        const ROOT: &[u8] = &[
+            0x30, 0x82, 0x01, 0x7d, 0x30, 0x82, 0x01, 0x23, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x14, 0x42, 0x45, 0x60, 0x27, 0x0b, 0x6d, 0xad, 0x17, 0xbb, 0xf9, 0xd1, 0x16,
+            0xb5, 0x7f, 0x91, 0x57, 0xfd, 0x78, 0xd3, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x09, 0x72, 0x6f, 0x6f, 0x74, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30,
+            0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32, 0x31, 0x34, 0x33,
+            0x38, 0x5a, 0x17, 0x0d, 0x32, 0x37, 0x30, 0x31, 0x31, 0x34, 0x30, 0x32, 0x31, 0x34,
+            0x33, 0x38, 0x5a, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03,
+            0x0c, 0x09, 0x72, 0x6f, 0x6f, 0x74, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x59, 0x30,
+            0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86,
+            0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x01, 0x97, 0xf0, 0xe9,
+            0x0c, 0xf8, 0x0b, 0x3d, 0x11, 0x40, 0x6a, 0xd8, 0x79, 0x06, 0x57, 0xc6, 0x82, 0x40,
+            0x42, 0xbe, 0xa5, 0x68, 0xeb, 0x32, 0xb4, 0x09, 0x18, 0x47, 0x55, 0x01, 0xed, 0x95,
+            0x81, 0x35, 0xb6, 0x05, 0x50, 0x6a, 0xbb, 0x3c, 0x8d, 0x35, 0xea, 0x8c, 0x39, 0x76,
+            0x13, 0x6e, 0x17, 0x13, 0xe3, 0xb9, 0x7d, 0xe0, 0x44, 0xf5, 0xdd, 0xca, 0xe2, 0xe0,
+            0x86, 0x69, 0x4d, 0x2f, 0xa3, 0x53, 0x30, 0x51, 0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d,
+            0x0e, 0x04, 0x16, 0x04, 0x14, 0x7c, 0xfd, 0x32, 0xe0, 0x30, 0xe2, 0x16, 0x21, 0xa5,
+            0xc9, 0x21, 0x23, 0xfb, 0x81, 0xac, 0x45, 0xf3, 0x78, 0xdd, 0xdc, 0x30, 0x1f, 0x06,
+            0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16, 0x80, 0x14, 0x7c, 0xfd, 0x32, 0xe0,
+            0x30, 0xe2, 0x16, 0x21, 0xa5, 0xc9, 0x21, 0x23, 0xfb, 0x81, 0xac, 0x45, 0xf3, 0x78,
+            0xdd, 0xdc, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x1d, 0x13, 0x01, 0x01, 0xff, 0x04, 0x05,
+            0x30, 0x03, 0x01, 0x01, 0xff, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x04, 0x03, 0x02, 0x03, 0x48, 0x00, 0x30, 0x45, 0x02, 0x21, 0x00, 0xd5, 0x12, 0xe3,
+            0x28, 0x3e, 0x44, 0x21, 0x36, 0x4e, 0xf1, 0xa1, 0xcb, 0xca, 0x78, 0x46, 0x6a, 0xda,
+            0x78, 0xf9, 0x46, 0x2b, 0x20, 0xa0, 0x77, 0x52, 0xd1, 0xb7, 0xe2, 0x63, 0xa5, 0xe9,
+            0x81, 0x02, 0x20, 0x55, 0x11, 0xae, 0xd6, 0x8d, 0xf3, 0xc1, 0x0d, 0xa4, 0xea, 0x77,
+            0x5d, 0xa8, 0x57, 0xb9, 0xd5, 0xb9, 0xe7, 0x50, 0x14, 0x92, 0xcf, 0xa5, 0xe5, 0x29,
+            0x80, 0x29, 0xe6, 0x2d, 0x5a, 0x2e, 0x6c,
+        ];
+        const MID: &[u8] = &[
+            0x30, 0x82, 0x01, 0x95, 0x30, 0x82, 0x01, 0x3c, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x4f, 0x4b, 0x4d, 0xb8, 0x0a, 0xb1, 0x88, 0x6f, 0x1e, 0xed, 0x7d, 0x0a, 0xfc,
+            0x51, 0x35, 0xa0, 0xe2, 0xe6, 0x9f, 0xc4, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x09, 0x72, 0x6f, 0x6f, 0x74, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30,
+            0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32, 0x31, 0x36, 0x34,
+            0x32, 0x5a, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x32, 0x31, 0x35, 0x30, 0x32, 0x31, 0x36,
+            0x34, 0x32, 0x5a, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55, 0x04, 0x03,
+            0x0c, 0x09, 0x6d, 0x69, 0x64, 0x32, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x59, 0x30,
+            0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86,
+            0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0xd7, 0x4b, 0xb5, 0x36,
+            0xf6, 0x6a, 0x77, 0x5c, 0x7d, 0xfa, 0xe6, 0x32, 0x3e, 0xe0, 0x59, 0xb6, 0x1c, 0x5b,
+            0x59, 0xfd, 0x4d, 0xdb, 0xb0, 0x16, 0x2d, 0xd4, 0xed, 0x1a, 0xbb, 0x78, 0x4f, 0x69,
+            0x4f, 0x38, 0x26, 0x0d, 0xb0, 0x6d, 0xb3, 0x3f, 0x56, 0xc2, 0x5d, 0x91, 0x89, 0x41,
+            0x41, 0x11, 0x5d, 0x36, 0x3f, 0x02, 0x04, 0xa7, 0x76, 0x28, 0x39, 0xfd, 0x0d, 0x45,
+            0xa9, 0x63, 0x87, 0xf2, 0xa3, 0x6c, 0x30, 0x6a, 0x30, 0x12, 0x06, 0x03, 0x55, 0x1d,
+            0x13, 0x01, 0x01, 0xff, 0x04, 0x08, 0x30, 0x06, 0x01, 0x01, 0xff, 0x02, 0x01, 0x00,
+            0x30, 0x14, 0x06, 0x03, 0x55, 0x1d, 0x11, 0x04, 0x0d, 0x30, 0x0b, 0x82, 0x09, 0x6d,
+            0x69, 0x64, 0x32, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d,
+            0x0e, 0x04, 0x16, 0x04, 0x14, 0x9d, 0xc7, 0xa9, 0x48, 0x4d, 0x7b, 0x23, 0x59, 0x38,
+            0x6c, 0xde, 0xb7, 0xa1, 0x4d, 0x82, 0xc2, 0x3e, 0x21, 0xe7, 0xff, 0x30, 0x1f, 0x06,
+            0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16, 0x80, 0x14, 0x7c, 0xfd, 0x32, 0xe0,
+            0x30, 0xe2, 0x16, 0x21, 0xa5, 0xc9, 0x21, 0x23, 0xfb, 0x81, 0xac, 0x45, 0xf3, 0x78,
+            0xdd, 0xdc, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02,
+            0x03, 0x47, 0x00, 0x30, 0x44, 0x02, 0x20, 0x67, 0x29, 0xb2, 0xad, 0x5f, 0x11, 0x9c,
+            0x3b, 0xae, 0x26, 0xaf, 0xc3, 0x86, 0x2d, 0x31, 0x9f, 0x81, 0x87, 0x5a, 0xb5, 0x44,
+            0xb4, 0x04, 0x10, 0xda, 0x1c, 0x60, 0x68, 0xb2, 0x4e, 0x74, 0xc5, 0x02, 0x20, 0x6a,
+            0x72, 0x8f, 0x95, 0xed, 0xa6, 0x8d, 0xd2, 0xde, 0xf1, 0xd7, 0x33, 0x61, 0x12, 0x96,
+            0x37, 0xc7, 0xe1, 0xfb, 0x4d, 0x0b, 0x1b, 0x88, 0x45, 0xae, 0xf6, 0xa3, 0x8d, 0x41,
+            0x04, 0x36, 0xcc,
+        ];
+        const LEAF: &[u8] = &[
+            0x30, 0x82, 0x01, 0x84, 0x30, 0x82, 0x01, 0x2a, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x79, 0x7b, 0xb8, 0xe4, 0x7a, 0xe3, 0xf3, 0x62, 0x83, 0x40, 0x19, 0xa6, 0xa5,
+            0xd5, 0xdc, 0xb9, 0xc6, 0x91, 0x61, 0x58, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x14, 0x31, 0x12, 0x30, 0x10, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x09, 0x6d, 0x69, 0x64, 0x32, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30,
+            0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32, 0x31, 0x36, 0x34,
+            0x32, 0x5a, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x32, 0x31, 0x35, 0x30, 0x32, 0x31, 0x36,
+            0x34, 0x32, 0x5a, 0x30, 0x15, 0x31, 0x13, 0x30, 0x11, 0x06, 0x03, 0x55, 0x04, 0x03,
+            0x0c, 0x0a, 0x6c, 0x65, 0x61, 0x66, 0x32, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x59,
+            0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+            0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x19, 0x74, 0xad,
+            0xf3, 0x01, 0xfa, 0x9b, 0x52, 0x6b, 0x4a, 0xf0, 0x27, 0x21, 0xd4, 0x32, 0x3f, 0x8d,
+            0xf4, 0xc5, 0x08, 0x93, 0xe6, 0x13, 0x4f, 0x08, 0x9c, 0x1d, 0x09, 0x9d, 0x67, 0xda,
+            0xa2, 0x1b, 0x89, 0x79, 0xd5, 0xe5, 0x01, 0x11, 0x21, 0x6b, 0x31, 0x53, 0xa0, 0x09,
+            0xfc, 0xed, 0x08, 0x33, 0xc0, 0x76, 0x15, 0x17, 0x7b, 0xe4, 0x9b, 0x4d, 0xf3, 0xd1,
+            0xaf, 0xcd, 0xcd, 0x10, 0xd4, 0xa3, 0x59, 0x30, 0x57, 0x30, 0x15, 0x06, 0x03, 0x55,
+            0x1d, 0x11, 0x04, 0x0e, 0x30, 0x0c, 0x82, 0x0a, 0x6c, 0x65, 0x61, 0x66, 0x32, 0x2e,
+            0x74, 0x65, 0x73, 0x74, 0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04,
+            0x14, 0xf2, 0x62, 0x5d, 0xa8, 0x1a, 0xd4, 0x48, 0x86, 0xa1, 0x02, 0x02, 0x64, 0x5b,
+            0x83, 0x74, 0xa1, 0x71, 0xa2, 0x59, 0x66, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d, 0x23,
+            0x04, 0x18, 0x30, 0x16, 0x80, 0x14, 0x9d, 0xc7, 0xa9, 0x48, 0x4d, 0x7b, 0x23, 0x59,
+            0x38, 0x6c, 0xde, 0xb7, 0xa1, 0x4d, 0x82, 0xc2, 0x3e, 0x21, 0xe7, 0xff, 0x30, 0x0a,
+            0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x03, 0x48, 0x00, 0x30,
+            0x45, 0x02, 0x21, 0x00, 0xbb, 0x17, 0x12, 0xb1, 0x04, 0x2a, 0x7a, 0x2f, 0x28, 0xfa,
+            0x6a, 0x20, 0x25, 0x3f, 0xfb, 0x02, 0xce, 0x5c, 0x23, 0x90, 0x83, 0x47, 0x33, 0x60,
+            0x7f, 0xd4, 0x43, 0xf3, 0x22, 0x12, 0x7e, 0x3c, 0x02, 0x20, 0x44, 0xe2, 0x7b, 0x37,
+            0x69, 0xe7, 0xbd, 0x15, 0x3f, 0x0f, 0x10, 0x49, 0xfa, 0xb1, 0xfc, 0x80, 0xae, 0x78,
+            0xdf, 0xe5, 0x74, 0x27, 0xa3, 0xa2, 0x05, 0x4d, 0xa0, 0xe9, 0x1b, 0x14, 0x48, 0x91,
+        ];
+        let root = parse(ROOT).expect("a root");
+        let mid = parse(MID).expect("an intermediate");
+        let leaf = parse(LEAF).expect("a leaf");
+        assert!(root.is_ca && mid.is_ca && !leaf.is_ca);
+
+        // Leaf first, which is the order a TLS Certificate message carries,
+        // and **without** the root: the anchor is the parameter, and a chain
+        // that carried its own root would let a peer nominate the key it is
+        // checked against.
+        let chain = [leaf.clone(), mid];
+        assert_eq!(
+            verify_chain(&chain, &root.subject, &root.public_key),
+            Ok(()),
+            "the chain runs from the root to the leaf"
+        );
+        assert!(matches_host(&leaf, "leaf2.test"));
+        assert!(!matches_host(&leaf, "root.test"), "not the root's name");
+
+        // A chain that skips the intermediate does not reach the root, because
+        // the leaf's issuer is not the root's subject.
+        let short = [leaf];
+        assert_eq!(
+            verify_chain(&short, &root.subject, &root.public_key),
+            Err(ChainError::IssuerMismatch)
+        );
+    }
+
+    /// The anchor store adds, lists and withdraws, and refuses a document that
+    /// is not a certificate.
+    ///
+    /// The refusal is the property: an anchor nothing could parse would be one
+    /// every chain failed against, and a program would learn it only when a
+    /// connection was attempted.
+    #[test]
+    fn the_anchor_store_holds_what_parses() {
+        const DER: &[u8] = &[
+            0x30, 0x82, 0x01, 0x9d, 0x30, 0x82, 0x01, 0x42, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x58, 0xd7, 0xac, 0xf1, 0x01, 0x72, 0x4e, 0x7e, 0x44, 0xac, 0x1f, 0x85, 0x37,
+            0x80, 0x05, 0x77, 0xf3, 0xde, 0x05, 0x6e, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x17, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x74, 0x65,
+            0x73, 0x74, 0x30, 0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32,
+            0x30, 0x37, 0x32, 0x39, 0x5a, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x32, 0x31, 0x35, 0x30,
+            0x32, 0x30, 0x37, 0x32, 0x39, 0x5a, 0x30, 0x17, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03,
+            0x55, 0x04, 0x03, 0x0c, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x74,
+            0x65, 0x73, 0x74, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42,
+            0x00, 0x04, 0x51, 0x67, 0x47, 0x1c, 0x95, 0x43, 0x6d, 0x47, 0x63, 0xf1, 0x57, 0x20,
+            0x46, 0xad, 0xe3, 0xde, 0xbc, 0x1c, 0x3c, 0xde, 0xb8, 0x97, 0xa8, 0xc4, 0xf3, 0x2d,
+            0x67, 0x84, 0x13, 0x7d, 0x62, 0x71, 0xa2, 0x40, 0x31, 0x02, 0x60, 0x81, 0x55, 0x67,
+            0xfa, 0xa6, 0xb8, 0x8e, 0x04, 0xb3, 0x8e, 0x95, 0xaa, 0x0c, 0x8d, 0x45, 0x8f, 0xa5,
+            0xf2, 0xde, 0x52, 0x08, 0xc4, 0x34, 0x5c, 0xf7, 0xb3, 0x36, 0xa3, 0x6c, 0x30, 0x6a,
+            0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04, 0x14, 0xb9, 0x66, 0xc4,
+            0xd3, 0x56, 0x54, 0xba, 0x18, 0x7a, 0xa0, 0x4a, 0xa4, 0xdb, 0x4d, 0xfc, 0xf8, 0xa8,
+            0x17, 0xc2, 0xf4, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16,
+            0x80, 0x14, 0xb9, 0x66, 0xc4, 0xd3, 0x56, 0x54, 0xba, 0x18, 0x7a, 0xa0, 0x4a, 0xa4,
+            0xdb, 0x4d, 0xfc, 0xf8, 0xa8, 0x17, 0xc2, 0xf4, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x1d,
+            0x13, 0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0xff, 0x30, 0x17, 0x06,
+            0x03, 0x55, 0x1d, 0x11, 0x04, 0x10, 0x30, 0x0e, 0x82, 0x0c, 0x65, 0x78, 0x61, 0x6d,
+            0x70, 0x6c, 0x65, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86,
+            0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x03, 0x49, 0x00, 0x30, 0x46, 0x02, 0x21, 0x00,
+            0x8c, 0x2e, 0xec, 0x9e, 0x2a, 0x64, 0x39, 0xf3, 0x10, 0x93, 0x9a, 0x10, 0x7b, 0x19,
+            0xce, 0x14, 0xe0, 0x5f, 0xdc, 0x57, 0xec, 0xc2, 0xa6, 0xe9, 0xa0, 0x65, 0x34, 0x11,
+            0x30, 0x46, 0xf9, 0xc0, 0x02, 0x21, 0x00, 0xb6, 0x19, 0x55, 0xd1, 0xe9, 0x40, 0x71,
+            0x76, 0xf2, 0xe8, 0xe9, 0xe9, 0x2b, 0x06, 0x00, 0x81, 0x6c, 0x9a, 0xcf, 0x38, 0xfd,
+            0x58, 0xe4, 0x27, 0x66, 0xab, 0x6c, 0x42, 0x96, 0xde, 0x58, 0x51,
+        ];
+        let mut anchors = super::Anchors::new();
+        assert!(anchors.is_empty());
+        let id = anchors.add(DER).expect("a certificate");
+        assert_eq!(id, 1);
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors.certificates().len(), 1);
+        assert_eq!(anchors.entries()[0].id, id);
+
+        let second = anchors.add(DER).expect("a second copy");
+        assert_ne!(second, id, "ids are not reused");
+        assert_eq!(anchors.len(), 2);
+
+        assert!(anchors.remove(id));
+        assert!(!anchors.remove(id), "the second says nothing was there");
+        assert_eq!(anchors.len(), 1);
+
+        // A document that is not a certificate.
+        assert_eq!(
+            anchors.add(&[0x02, 0x01, 0x05]),
+            Err(Error::InvalidArgument)
+        );
+        assert!(anchors.remove(second));
+        assert!(anchors.is_empty());
+    }
+
+    /// A self-signed certificate is its own anchor: the chain of one verifies
+    /// when the anchor is the certificate itself.
+    ///
+    /// The case a root has to pass, on real bytes: the anchor's subject is the
+    /// leaf's issuer, and the leaf's signature verifies under the anchor's key.
+    #[test]
+    fn a_self_signed_certificate_is_its_own_anchor() {
+        const DER: &[u8] = &[
+            0x30, 0x82, 0x01, 0x9d, 0x30, 0x82, 0x01, 0x42, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x58, 0xd7, 0xac, 0xf1, 0x01, 0x72, 0x4e, 0x7e, 0x44, 0xac, 0x1f, 0x85, 0x37,
+            0x80, 0x05, 0x77, 0xf3, 0xde, 0x05, 0x6e, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x17, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03, 0x55,
+            0x04, 0x03, 0x0c, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x74, 0x65,
+            0x73, 0x74, 0x30, 0x1e, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x31, 0x31, 0x35, 0x30, 0x32,
+            0x30, 0x37, 0x32, 0x39, 0x5a, 0x17, 0x0d, 0x32, 0x36, 0x31, 0x32, 0x31, 0x35, 0x30,
+            0x32, 0x30, 0x37, 0x32, 0x39, 0x5a, 0x30, 0x17, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03,
+            0x55, 0x04, 0x03, 0x0c, 0x0c, 0x65, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x74,
+            0x65, 0x73, 0x74, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42,
+            0x00, 0x04, 0x51, 0x67, 0x47, 0x1c, 0x95, 0x43, 0x6d, 0x47, 0x63, 0xf1, 0x57, 0x20,
+            0x46, 0xad, 0xe3, 0xde, 0xbc, 0x1c, 0x3c, 0xde, 0xb8, 0x97, 0xa8, 0xc4, 0xf3, 0x2d,
+            0x67, 0x84, 0x13, 0x7d, 0x62, 0x71, 0xa2, 0x40, 0x31, 0x02, 0x60, 0x81, 0x55, 0x67,
+            0xfa, 0xa6, 0xb8, 0x8e, 0x04, 0xb3, 0x8e, 0x95, 0xaa, 0x0c, 0x8d, 0x45, 0x8f, 0xa5,
+            0xf2, 0xde, 0x52, 0x08, 0xc4, 0x34, 0x5c, 0xf7, 0xb3, 0x36, 0xa3, 0x6c, 0x30, 0x6a,
+            0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04, 0x14, 0xb9, 0x66, 0xc4,
+            0xd3, 0x56, 0x54, 0xba, 0x18, 0x7a, 0xa0, 0x4a, 0xa4, 0xdb, 0x4d, 0xfc, 0xf8, 0xa8,
+            0x17, 0xc2, 0xf4, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16,
+            0x80, 0x14, 0xb9, 0x66, 0xc4, 0xd3, 0x56, 0x54, 0xba, 0x18, 0x7a, 0xa0, 0x4a, 0xa4,
+            0xdb, 0x4d, 0xfc, 0xf8, 0xa8, 0x17, 0xc2, 0xf4, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x1d,
+            0x13, 0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0xff, 0x30, 0x17, 0x06,
+            0x03, 0x55, 0x1d, 0x11, 0x04, 0x10, 0x30, 0x0e, 0x82, 0x0c, 0x65, 0x78, 0x61, 0x6d,
+            0x70, 0x6c, 0x65, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86,
+            0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x03, 0x49, 0x00, 0x30, 0x46, 0x02, 0x21, 0x00,
+            0x8c, 0x2e, 0xec, 0x9e, 0x2a, 0x64, 0x39, 0xf3, 0x10, 0x93, 0x9a, 0x10, 0x7b, 0x19,
+            0xce, 0x14, 0xe0, 0x5f, 0xdc, 0x57, 0xec, 0xc2, 0xa6, 0xe9, 0xa0, 0x65, 0x34, 0x11,
+            0x30, 0x46, 0xf9, 0xc0, 0x02, 0x21, 0x00, 0xb6, 0x19, 0x55, 0xd1, 0xe9, 0x40, 0x71,
+            0x76, 0xf2, 0xe8, 0xe9, 0xe9, 0x2b, 0x06, 0x00, 0x81, 0x6c, 0x9a, 0xcf, 0x38, 0xfd,
+            0x58, 0xe4, 0x27, 0x66, 0xab, 0x6c, 0x42, 0x96, 0xde, 0x58, 0x51,
+        ];
+        let certificate = parse(DER).expect("a real certificate");
+        let chain = [certificate.clone()];
+        assert_eq!(
+            verify_chain(&chain, &certificate.subject, &certificate.public_key),
+            Ok(())
+        );
+        // And a different anchor key does not verify it.
+        let other = super::PublicKey::EcP256(alloc::vec![4_u8; 65]);
+        assert_eq!(
+            verify_chain(&chain, &certificate.subject, &other),
+            Err(ChainError::BadSignature)
+        );
+    }
+
+    /// An empty name, for the tests that need one.
+    fn empty_name() -> Name {
+        Name::read(&[]).expect("an empty name")
+    }
+
+    /// A certificate built here, so a test needs no fixture file.
+    ///
+    /// The signature is nonsense: these tests are about the parser and the
+    /// name rules, and `verify_signature` is exercised where a real signature
+    /// exists, in the TLS handshake test.
+    fn minimal_certificate(common_name: Option<&str>, alt_names: &[&[u8]], is_ca: bool) -> Vec<u8> {
+        let name = match common_name {
+            Some(name) => sequence(&[&tlv(
+                0x31,
+                &sequence(&[&tlv(0x06, &[0x55, 0x04, 0x03]), &tlv(0x0C, name.as_bytes())]),
+            )]),
+            None => sequence(&[]),
+        };
+        // The public key: a P-256 point, which is `0x04` and sixty-four
+        // coordinate bytes, in a BIT STRING whose first byte is the unused-bit
+        // count.
+        let mut point = Vec::with_capacity(65);
+        point.push(0x04);
+        point.extend_from_slice(&[7_u8; 64]);
+        let mut bits = Vec::with_capacity(66);
+        bits.push(0x00);
+        bits.extend_from_slice(&point);
+        let spki = sequence(&[
+            &sequence(&[&tlv(0x06, &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01])]),
+            &tlv(0x03, &bits),
+        ]);
+        let algorithm = sequence(&[&tlv(
+            0x06,
+            &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02],
+        )]);
+        // UTCTime is YYMMDDHHMMSSZ: thirteen bytes, and a test shorter than
+        // that is a document whose length field disagrees with it.
+        let validity = sequence(&[&tlv(0x17, b"250101000000Z"), &tlv(0x17, b"350101000000Z")]);
+        let version = tlv(0xA0, &tlv(0x02, &[2]));
+
+        let mut tbs_parts: Vec<Vec<u8>> = alloc::vec![
+            version,
+            tlv(0x02, &[1]),
+            algorithm.clone(),
+            name.clone(),
+            validity,
+            name.clone(),
+            spki,
+        ];
+        if !alt_names.is_empty() || is_ca {
+            let mut extensions = Vec::new();
+            if is_ca {
+                let constraints = sequence(&[&tlv(0x01, &[0xFF])]);
+                extensions.extend_from_slice(&sequence(&[
+                    &tlv(0x06, super::OID_BASIC_CONSTRAINTS),
+                    &tlv(0x04, &constraints),
+                ]));
+            }
+            if !alt_names.is_empty() {
+                let mut names = Vec::new();
+                for alt in alt_names {
+                    names.extend_from_slice(&tlv(0x82, alt));
+                }
+                let san = sequence(&[&names]);
+                extensions.extend_from_slice(&sequence(&[
+                    &tlv(0x06, super::OID_SUBJECT_ALT_NAME),
+                    &tlv(0x04, &san),
+                ]));
+            }
+            tbs_parts.push(tlv(0xA3, &sequence(&[&extensions])));
+        }
+        let tbs = sequence(&tbs_parts.iter().map(|part| &part[..]).collect::<Vec<_>>());
+        assert_well_formed(&tbs);
+        let der = sequence(&[&tbs, &algorithm, &tlv(0x03, &[0x00, 0x01, 0x02, 0x03])]);
+        assert_well_formed(&der);
+        der
+    }
+}

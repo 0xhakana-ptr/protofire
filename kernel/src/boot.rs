@@ -371,6 +371,17 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::TlsConnect,
         crate::syscall::tls_connect,
     );
+    // The trust anchors a program adds at run time.  They are separate from
+    // the built-in set `certs/` compiles in, and nothing here can withdraw one
+    // of those: a program's anchor is its own trust decision.
+    table.register(
+        ::syscall::SyscallNumber::TrustAnchorAdd,
+        crate::syscall::trust_anchor_add,
+    );
+    table.register(
+        ::syscall::SyscallNumber::TrustAnchorRemove,
+        crate::syscall::trust_anchor_remove,
+    );
     table.register(
         ::syscall::SyscallNumber::MacSetMode,
         crate::syscall::mac_set_mode,

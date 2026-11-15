@@ -1554,6 +1554,57 @@ pub fn serve(call: arch::CallFrame, frame: &mut arch::Context) -> arch::CallOutc
         return outcome;
     }
 
+    // `TrustAnchorAdd` names a DER document, so its buffer is borrowed the way
+    // every other record-shaped call's is.  `TrustAnchorRemove` names a word
+    // and is in the branch below with the others.
+    if number == SyscallNumber::TrustAnchorAdd as usize {
+        let (record, length) = (call.arguments[0], call.arguments[1]);
+        if length == 0
+            || length > net::x509::CERTIFICATE_MAX
+            || !crate::address_space::is_user_range(record, length)
+        {
+            return CallOutcome::Return(abi::syscall::encode_error(abi::Error::InvalidArgument));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The handler copies the
+        // document and reads nothing past the length checked above.
+        let buffer = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(buffer));
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" trusted a root certificate, ");
+            if refused {
+                arch::serial::write_str("refused\n");
+            } else {
+                arch::serial::write_str("id ");
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return outcome;
+    }
+
+    if number == SyscallNumber::TrustAnchorRemove as usize {
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome {
+            let refused = abi::syscall::is_error_status(answer);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" withdrew a root certificate");
+            arch::serial::write_str(if refused { ", refused\n" } else { "\n" });
+        }
+        return outcome;
+    }
+
     // `TlsConnect` names a host with a pointer and a length, so it is copied
     // the way a path is.  Its answer is a word: a refusal here, because the
     // hello it builds has no peer in this machine.

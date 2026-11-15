@@ -391,6 +391,22 @@ the way a pipe's reader parks, and answers zero, end of file, once the
 stream's connection is gone, which an orderly close's last acknowledgement
 is what leaves behind.
 
+**`TrustAnchorAdd`** (194), `a0` the DER; `a1` its length, at most
+`CERTIFICATE_MAX`; `a2`-`a5` reserved zero.  Answers the id
+`TrustAnchorRemove` takes.  The document is **parsed before it is stored**: an
+anchor nothing could parse is one every chain would fail against, and a program
+would learn that only when a connection was attempted.  The DER is copied, not
+borrowed.
+
+**`TrustAnchorRemove`** (195), `a0` the id; `a1`-`a5` reserved zero.  Answers
+zero, or `NotFound` when no anchor had that id: "it is not trusted" and "I
+withdrew what you asked for" are different answers, and the second is the one a
+program acts on.
+
+A run-time anchor is the **caller's own trust decision** and sits beside the
+built-in set rather than in it: `certs/` is compiled into the image, and no call
+can withdraw one of those.
+
 **`TlsConnect`** (121) is the one call in this range whose protocol half is
 served and whose **use** cannot be.  It opens a stream to the host a name
 resolves to, builds a TLS 1.3 ClientHello, sends it, and answers `Unsupported`.

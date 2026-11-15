@@ -2210,6 +2210,48 @@ fn read_random() -> Result<[u8; 32]> {
     Ok(random)
 }
 
+/// Trust a DER-encoded root certificate at run time.
+///
+/// Arguments: the DER, its length, then four reserved slots that must be zero.
+/// Answers the id `TrustAnchorRemove` takes.
+///
+/// The DER is **parsed before it is stored**: an anchor nothing could parse is
+/// one every chain would fail against, and a program would learn that only when
+/// a connection was attempted.  The certificate is copied, not borrowed: a
+/// pointer into the caller's memory that outlived the call would be a dangling
+/// reference the moment the buffer went away.
+pub fn trust_anchor_add(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 2)?;
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    if buffer.is_empty() || buffer.len() > net::x509::CERTIFICATE_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let id = crate::net::trust_anchor_add(buffer)?;
+    Ok(Dispatch::complete(id as usize))
+}
+
+/// Withdraw a run-time trust anchor by id.
+///
+/// Arguments: the id, then five reserved slots.  Answers zero, or `NotFound`
+/// when no anchor had that id: "it is not trusted" and "I withdrew what you
+/// asked for" are different answers, and the second is the one a program acts
+/// on.
+pub fn trust_anchor_remove(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let id = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if id > u32::MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    crate::net::trust_anchor_remove(id as u32)?;
+    Ok(Dispatch::complete(0))
+}
+
 /// The socket a descriptor names, or the error that says why there is none.
 ///
 /// A descriptor that names a file or a pipe is `InvalidArgument` and not

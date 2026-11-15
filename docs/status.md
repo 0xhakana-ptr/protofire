@@ -904,6 +904,58 @@ being refused, and an all-zero X25519 output refused as [RFC 7748] §6.1 require
 [RFC 8446]: https://www.rfc-editor.org/rfc/rfc8446
 [RFC 7748]: https://www.rfc-editor.org/rfc/rfc7748
 
+**X.509: the certificate chain TLS was missing, on host tests.**  `net::x509`
+is [RFC 5280]'s certificate: a strict DER reader, the fields a verifier reads,
+the signature check that makes a chain a chain, and the name matching that
+decides whether the certificate is for the host you meant.  `TrustAnchorAdd`
+(194) and `TrustAnchorRemove` (195) are served too, so a program can add a root
+and withdraw it.
+
+Thirteen host tests, and the ones that matter are against **real certificates**:
+a self-signed root for `example.test`, a root that signs a CA intermediate that
+signs a leaf, and a root that signs a `CA:FALSE` intermediate.  Each is DER
+openssl wrote, and a document built by this tree's own helper would be one
+shaped by the parser's assumptions.
+
+What the tests establish, and each was mutation-checked:
+
+  * a real certificate parses, its **signature verifies under its own key**, and
+    a self-signed certificate is its own anchor;
+  * a three-hop chain verifies from the root down, and the same chain with an
+    intermediate missing is `IssuerMismatch`;
+  * a `CA:FALSE` intermediate that signed a leaf is
+    `NotACertificateAuthority`, and both signatures in that fixture are real, so
+    the refusal is attributable to the rule and not to a bad fixture;
+  * the name rules: case folding, one label for a wildcard, the wildcard only
+    leftmost, and **no common-name fallback**;
+  * the DER reader refuses the indefinite length, a length past the document, a
+    long form of more than four bytes, and a multi-valued relative name.
+
+**A defect found in the chain check, and fixed here.**  The CA rule was written
+as "every certificate except `chain.first()` must be a CA", which by identity
+skipped the rule for a chain of one.  Exempting by **position** is the fix: the
+leaf is index zero and nothing hangs below it, and every certificate above it
+vouched for the next one down.
+
+**A crypto defect this exposed, and did not fix.**  The aarch64 boot faults
+inside `ecdsa.rs`'s `mul_256_by_256` when a chain is verified: a data abort at
+address `0x15` in release, and `index out of bounds: the len is 8 but the index
+is 8` with three extra bytes.  Rewriting the function's `iter().enumerate()`
+loops as explicit `0..4` indices moved the symptom from an out-of-bounds panic
+to a data abort, which is what a compiler-visible bound did to an undefined
+behaviour.  **The defect is in `libs/crypto`, not in this module**, and it is
+its own change: fixing it here would put a cipher's bug in a certificate's
+commit, and leaving it unrecorded is how it survived to be found here.  For that
+reason `net::x509` has **no boot probe**: a probe would make every aarch64 boot
+fail on a defect that is not this subsystem's.
+
+What is not here: **revocation** (OCSP and CRLs are a network protocol and a
+distribution decision) and **validity windows** (the check needs a clock, and a
+verifier that guessed one would check a certificate against a time nobody
+chose).
+
+[RFC 5280]: https://www.rfc-editor.org/rfc/rfc5280
+
 **The timeout is measured now, not assumed.**  `RTO_INITIAL_MICROS` was the
 timeout for every stream on every path, and one second is right for no path: a
 machine on a fast wire retransmits a segment that was merely in flight, and one

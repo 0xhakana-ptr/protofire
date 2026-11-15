@@ -2875,6 +2875,32 @@ fn send_dccp_bytes(segment: &[u8], peer: net::address::Address, local: [u8; 4]) 
     }
 }
 
+/// The trust anchors programs have added at run time.
+///
+/// Separate from the built-in set, which is compiled from `certs/` and which no
+/// call can change: a program's anchor is its own trust decision, and a table
+/// that mixed the two would let a program withdraw one the image was built to
+/// trust.
+static ANCHORS: Mutex<net::x509::Anchors> = Mutex::new(net::x509::Anchors::new());
+
+/// Trust a DER-encoded root, answering the id that withdraws it.
+pub fn trust_anchor_add(der: &[u8]) -> Result<u32> {
+    ANCHORS.lock().add(der)
+}
+
+/// Withdraw an anchor by id, answering whether one had it.
+pub fn trust_anchor_remove(id: u32) -> Result<()> {
+    if !ANCHORS.lock().remove(id) {
+        return Err(Error::NotFound);
+    }
+    Ok(())
+}
+
+/// How many run-time anchors are held, for a boot's own report.
+pub fn trust_anchor_count() -> usize {
+    ANCHORS.lock().len()
+}
+
 /// IPsec's two databases.
 ///
 /// The encapsulation is [`net::ipsec`]'s and the lock is here, the arrangement
