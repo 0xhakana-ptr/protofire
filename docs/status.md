@@ -1350,9 +1350,46 @@ at 672  size 0x40  next 0xa23a80  next_size 0x40  next_used true
 `0xa23a40 + 0x40` is `0xa23a80` and that block's own header agrees, and the one
 after it is in use too.  So the heap's physical structure around the bad entry is
 sound and the damage is one list entry, not a boundary arithmetic that drifted.
-That is the difference between a repair and a rewrite: the algorithm walks the
-chain correctly, and one store put a used block's address where a free list's
-head belongs.  A rewrite would move that store rather than remove it.
+
+**The answer: there are two allocators, and the checker inspects the one nothing
+uses.**  `kernel/src/lib.rs` declares the `#[global_allocator]` as its own
+`KernelGlobalAllocator`, `GLOBAL_ALLOCATOR`, and `libs/allocator`'s wrapper keeps
+a second one, `HEAP_MODEL`, which `HeapAllocator` and `verify_kernel_heap` go
+through.  Both lay their free lists over the same `KERNEL_HEAP` array, and only
+the first is ever asked for memory:
+
+```text
+model state 0x4a25a48   global state 0xa24008
+model remaining 67108864
+model remaining after mount 67108864
+```
+
+The second number is the whole answer.  `HEAP_MODEL` never allocates anything, so
+its `free_lists` still describe the heap as one free 64 MiB block.  The global
+allocator, which every `Vec` and `Box` in the kernel goes through, has been
+carving that same memory for the whole boot.  So `verify_kernel_heap` walks a
+bookkeeping record that stopped being true at the first allocation, and reports a
+free list naming a block marked in use because the block really is in use, by the
+other allocator.
+
+Nothing was ever corrupt.  Every symptom in this record, from the ECDSA index to
+the release build's silence, is what a stale second view of one heap does when
+something finally reads it.
+
+That also explains the two properties that made this so hard to chase.  It is
+layout sensitive because whether the stale view's first block has been handed out
+yet depends on the allocation sequence, and every diagnostic that allocated moved
+that sequence.  And `heap_audit` never reported anything because it audits the
+global allocator, which is the one that is right.
+
+**What the repair is.**  One allocator, not two: the kernel's
+`#[global_allocator]` and the wrapper's model have to be the same object, so a
+check and an allocation read one set of free lists.  `HeapAllocator` becomes a
+handle over the global one rather than a second instance with its own state, and
+a host test binary keeps a model of its own because it can install one.  That is
+a change to `libs/allocator` and `kernel/src/lib.rs` together, and it is not made
+here: this entry records the cause and the checker that will say whether the
+repair worked.
 
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
