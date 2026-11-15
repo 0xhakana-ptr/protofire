@@ -619,6 +619,41 @@ pub(crate) unsafe fn check_invariants(state: &AllocatorState) -> Result<(), Heap
             });
         }
 
+        // The free lists, which the walk above cannot see.
+        //
+        // A physical walk validates every header and every boundary between
+        // them, and a heap can pass it while a free list names a block that is
+        // marked in use: the headers are all exactly right and the list is the
+        // one structure nobody reads unless something follows it.  That
+        // asymmetry is what let a list naming a used block survive a walk that
+        // ran after every allocation and every release, so this checks both.
+        for at in 0..FREE_LISTS_COUNT {
+            let mut node = state.free_lists[at];
+            let mut steps = 0;
+            while node != 0 {
+                if node < state.start || node >= state.end {
+                    return Err(HeapDefect {
+                        address: node,
+                        reason: "a free list names a block outside the heap",
+                    });
+                }
+                if block_is_used(node) {
+                    return Err(HeapDefect {
+                        address: node,
+                        reason: "a free list names a block marked in use",
+                    });
+                }
+                steps += 1;
+                if steps > FREE_LISTS_COUNT * 16 {
+                    return Err(HeapDefect {
+                        address: node,
+                        reason: "a free list does not terminate",
+                    });
+                }
+                node = block_next_free(node);
+            }
+        }
+
         Ok(())
     }
 }

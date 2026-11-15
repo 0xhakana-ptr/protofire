@@ -661,4 +661,58 @@ mod tests {
             "heap free count did not return to its initial value"
         );
     }
+
+    /// A free list that names a block marked in use is reported, and the
+    /// physical walk alone would not have seen it.
+    ///
+    /// This is the shape the aarch64 and x86_64 boots produce: every header is
+    /// exactly right, every boundary agrees with its successor, and the only
+    /// thing wrong is that one list names a block whose own flag says it is
+    /// somebody's.  A check that walks the physical chain cannot see that,
+    /// which is why the walk after every allocation reported clean on a heap
+    /// whose next walk panicked.
+    #[test]
+    fn a_free_list_naming_a_used_block_is_reported() {
+        let _model_guard = TEST_MODEL_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        heap_model().ensure_init();
+
+        let profiler = AllocProfiler::new();
+        let layout = Layout::from_size_align(64, 16).unwrap();
+        let mut pointer: *mut u8 = core::ptr::null_mut();
+        // SAFETY: `with_state` holds the model's own lock while this closure
+        // runs, which is the exclusive access the `*_locked` entry points
+        // require.
+        heap_model().with_state(|state| unsafe {
+            pointer = KernelGlobalAllocator::allocate_locked(state, layout, &profiler);
+            assert!(!pointer.is_null());
+            assert_eq!(check_invariants(state), Ok(()));
+
+            // The block the allocation carved, and the class its own size
+            // maps to.  Linking it as that class's head is exactly what the
+            // boot was found doing.
+            let block = (pointer as usize) - HEADER_SIZE;
+            let (fl, sl) = mapping(block_size(block));
+            let idx = list_index(fl, sl);
+            let saved = state.free_lists[idx];
+            state.free_lists[idx] = block;
+
+            match check_invariants(state) {
+                Err(defect) => assert!(
+                    defect.reason.contains("marked in use"),
+                    "the walk should name the used flag, not {:?}",
+                    defect.reason
+                ),
+                Ok(()) => panic!("a list naming a used block walked clean"),
+            }
+
+            state.free_lists[idx] = saved;
+            assert_eq!(check_invariants(state), Ok(()));
+            assert!(KernelGlobalAllocator::deallocate_locked(
+                state, pointer, &profiler
+            ));
+            assert_eq!(check_invariants(state), Ok(()));
+        });
+    }
 }

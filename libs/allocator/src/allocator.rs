@@ -25,6 +25,8 @@ use super::tlsf::block_set_prev_phys_of_next;
 use super::tlsf::block_set_size;
 use super::tlsf::block_set_used;
 use super::tlsf::block_size;
+#[cfg(debug_assertions)]
+use super::tlsf::check_invariants;
 use super::tlsf::coalesce;
 use super::tlsf::find_suitable_block;
 use super::tlsf::insert_free_block;
@@ -487,6 +489,16 @@ impl KernelGlobalAllocator {
         // SAFETY: the walk runs inside `with_state`, so it holds the
         // allocator's lock and the lists it reads cannot change underneath it.
         self.with_state(|state| unsafe {
+            // Both structures, because either can be wrong while the other is
+            // right, and a checker that reads one reports a clean heap for a
+            // heap whose other structure names a block somebody owns.
+            if let Err(defect) = check_invariants(state) {
+                crate::diag::write(format_args!(
+                    "[heap  ] {} at 0x{:x}",
+                    defect.reason, defect.address
+                ));
+                panic!("verify_kernel_heap: {:?}", defect);
+            }
             scan_free_lists(state);
         });
     }

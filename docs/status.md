@@ -1283,6 +1283,77 @@ arithmetic did too.  Every measurement in this entry that is worth having was
 taken with a panic on x86_64, which boots in seconds and fails at a fixed
 address.
 
+**The previous tree has the same code, and never looked.**  The previous tree's
+heap module, a pair of files named `tlsf` and `allocator` under its own memory
+directory, is read-only source material and not part of this one, so its paths
+are not written here.  Against this tree's `libs/allocator` it differs in comment
+wording, in `println!` becoming `diag::write`, and in one compile-time assert;
+the allocator differs in how the lock is spelled, `UnsafeCell` and an `AtomicBool`
+in that tree against `sync::SpinLock` here, and in nothing else.
+`MemoryBlockDevice` is byte for byte the same, fields, order and constructor.
+With those files equal and the mount path equal, the defect is in code both trees
+share, so the previous tree has it too.
+
+What the previous tree does not have is a call to `verify_kernel_heap` anywhere
+in its sources.  The function exists there, and nothing invokes it, so the
+attributes below were never checked on a boot: the physical walk every boot does
+was always clean, and the free lists were only ever read by code that had a
+reason to follow one, which is the same asymmetry that let this defect survive
+here until a walk was added.
+
+That answers a question worth asking and does not move the search: the defect is
+not new, so it is not a regression from this tree's restructure, and looking for
+what the restructure broke would be looking in the wrong place.
+
+**The checker now looks at both structures.**  `check_invariants` walked only the
+physical chain, which is the reason a walk after every allocation reported clean
+on a heap whose next walk panicked: the headers and the boundaries between them
+were all exactly right, and the list naming a used block was the one structure
+nobody read.  It walks the free lists now, and reports the defect as
+`a free list names a block marked in use` rather than leaving the next walk to
+trip over an address.
+
+`a_free_list_naming_a_used_block_is_reported` links a freshly carved block as
+the head of its own class's list and asserts the walk names the used flag rather
+than passing.  Removing the check makes that test fail with
+`a list naming a used block walked clean`, so the test is doing the work it says.
+
+With the checker widened, `heap_audit` was turned on for a boot: it audits after
+every allocation and every release and reports the first operation that sees
+damage.  It reported nothing, which is this record's contradiction stated with
+the allocator's own instrument instead of a hand-written panic.  The write is not
+inside an allocation or a release, and every later attempt should start from
+that.
+
+**And the boot's own check was reading one structure too.**  `verify_kernel_heap`
+called `scan_free_lists` and nothing else, while `check_invariants` was reached
+only from the audit and the damage report, so the widened check above would
+never have run on a boot.  It runs both now, and the boot reports:
+
+```text
+a free list names a block marked in use
+verify_kernel_heap: HeapDefect { address: 10631744, reason: "a free list names a block marked in use" }
+```
+
+`10631744` is `0xa23a40`, the heap's first block, named by the class a whole
+64 MiB block is filed under while its own header says it is in use.  That is the
+whole of what this record knows, said by the allocator's own invariant rather
+than by a probe, and it is the sentence a fix has to answer.
+
+**Its neighbours are exactly right.**  Reading the block and the one the
+boundary arithmetic names gives:
+
+```text
+at 672  size 0x40  next 0xa23a80  next_size 0x40  next_used true
+```
+
+`0xa23a40 + 0x40` is `0xa23a80` and that block's own header agrees, and the one
+after it is in use too.  So the heap's physical structure around the bad entry is
+sound and the damage is one list entry, not a boundary arithmetic that drifted.
+That is the difference between a repair and a rewrite: the algorithm walks the
+chain correctly, and one store put a used block's address where a free list's
+head belongs.  A rewrite would move that store rather than remove it.
+
 **The trigger moved twice, and the earlier entries' answers were younger
 symptoms.**  The first entry said `libs/crypto`; the second said `ping_gateway`.
 Both were true statements about what failed first, and neither was the cause.
