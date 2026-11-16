@@ -1,6 +1,6 @@
 [package]
-description = "a Sync-capable UnsafeCell for the statics a kernel needs"
 name = "cell"
+description = "a Sync-capable UnsafeCell for the statics a kernel needs"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

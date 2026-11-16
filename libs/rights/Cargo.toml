@@ -1,6 +1,6 @@
 [package]
-description = "the flags a handle will carry, reserved"
 name = "rights"
+description = "the flags a handle will carry, reserved"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

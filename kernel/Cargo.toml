@@ -1,6 +1,6 @@
 [package]
-description = "the core: scheduling, processes, address spaces, the syscalls"
 name = "kernel"
+description = "the core: scheduling, processes, address spaces, the syscalls"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

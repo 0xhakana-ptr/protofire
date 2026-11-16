@@ -1,6 +1,6 @@
 [package]
-description = "the frequency governor policy"
 name = "power"
+description = "the frequency governor policy"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

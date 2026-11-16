@@ -1,6 +1,6 @@
 [package]
-description = "the request/completion model and its Service trait"
 name = "async_io"
+description = "the request/completion model and its Service trait"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

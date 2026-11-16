@@ -1,6 +1,6 @@
 [package]
-description = "the spinlock that masks interrupts"
 name = "sync"
+description = "the spinlock that masks interrupts"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

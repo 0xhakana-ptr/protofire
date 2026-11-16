@@ -1,6 +1,6 @@
 [package]
-description = "the image's entry: what a boot does once a machine runs Rust"
 name = "bootloader"
+description = "the image's entry: what a boot does once a machine runs Rust"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

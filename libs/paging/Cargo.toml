@@ -1,6 +1,6 @@
 [package]
-description = "a page table and the arithmetic that walks one"
 name = "paging"
+description = "a page table and the arithmetic that walks one"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

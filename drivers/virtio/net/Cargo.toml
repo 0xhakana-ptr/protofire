@@ -1,6 +1,6 @@
 [package]
-description = "the virtio network card"
 name = "virtio_net"
+description = "the virtio network card"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

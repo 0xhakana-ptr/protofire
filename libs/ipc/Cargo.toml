@@ -1,6 +1,6 @@
 [package]
-description = "the pipe's byte ring"
 name = "ipc"
+description = "the pipe's byte ring"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -1,6 +1,6 @@
 [package]
-description = "a character grid over a framebuffer, and the font it draws with"
 name = "text"
+description = "a character grid over a framebuffer, and the font it draws with"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

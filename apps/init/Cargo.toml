@@ -1,6 +1,6 @@
 [package]
-description = "the first program: execs from the kernel's own filesystem, spawns the shell"
 name = "init"
+description = "the first program: execs from the kernel's own filesystem, spawns the shell"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

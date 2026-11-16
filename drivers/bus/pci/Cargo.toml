@@ -1,6 +1,6 @@
 [package]
-description = "the PCI bus: ECAM, capability walks, BARs, MSI-X"
 name = "pci"
+description = "the PCI bus: ECAM, capability walks, BARs, MSI-X"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

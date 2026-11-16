@@ -1,6 +1,6 @@
 [package]
-description = "the second program: a shell something other than the boot can start"
 name = "shell"
+description = "the second program: a shell something other than the boot can start"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

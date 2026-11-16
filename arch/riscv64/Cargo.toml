@@ -1,6 +1,6 @@
 [package]
-description = "the riscv64 machine"
 name = "arch_riscv64"
+description = "the riscv64 machine"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

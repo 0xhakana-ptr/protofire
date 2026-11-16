@@ -1,6 +1,6 @@
 [package]
-description = "Unicode conversion and normalisation, with no filesystem in it"
 name = "unicode"
+description = "Unicode conversion and normalisation, with no filesystem in it"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

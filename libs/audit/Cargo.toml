@@ -1,6 +1,6 @@
 [package]
-description = "the audit record: its layout, its events, the ring buffer"
 name = "audit"
+description = "the audit record: its layout, its events, the ring buffer"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

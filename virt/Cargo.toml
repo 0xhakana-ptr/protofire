@@ -1,6 +1,6 @@
 [package]
-description = "reserved for virtualisation: the guest/host question, argued"
 name = "virt"
+description = "reserved for virtualisation: the guest/host question, argued"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

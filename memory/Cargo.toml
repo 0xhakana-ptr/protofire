@@ -1,6 +1,6 @@
 [package]
-description = "the frame pool and the pools that hand out numbered regions"
 name = "memory"
+description = "the frame pool and the pools that hand out numbered regions"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

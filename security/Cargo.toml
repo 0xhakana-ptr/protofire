@@ -1,6 +1,6 @@
 [package]
-description = "identities, the token a request runs as, and the MAC policy"
 name = "security"
+description = "identities, the token a request runs as, and the MAC policy"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

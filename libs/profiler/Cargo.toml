@@ -1,6 +1,6 @@
 [package]
-description = "operation counters, compiled out when nobody asked"
 name = "profiler"
+description = "operation counters, compiled out when nobody asked"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

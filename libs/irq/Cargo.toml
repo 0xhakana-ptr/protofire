@@ -1,6 +1,6 @@
 [package]
-description = "the handler table and its dispatch"
 name = "irq"
+description = "the handler table and its dispatch"
 version = "0.1.0"
 edition = "2024"
 authors.workspace = true

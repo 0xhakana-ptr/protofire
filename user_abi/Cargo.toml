@@ -1,6 +1,6 @@
 [package]
-description = "the program's half of the ABI: one gate per machine, the wrappers"
 name = "user_abi"
+description = "the program's half of the ABI: one gate per machine, the wrappers"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

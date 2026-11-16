@@ -1,6 +1,6 @@
 [package]
-description = "the virtio framework: queues, negotiation, transport"
 name = "virtio_core"
+description = "the virtio framework: queues, negotiation, transport"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

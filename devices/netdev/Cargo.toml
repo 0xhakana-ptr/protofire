@@ -1,6 +1,6 @@
 [package]
-description = "what a network card is, as the stack above it needs one"
 name = "netdev"
+description = "what a network card is, as the stack above it needs one"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

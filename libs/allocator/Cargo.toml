@@ -1,6 +1,6 @@
 [package]
-description = "the TLSF heap"
 name = "allocator"
+description = "the TLSF heap"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

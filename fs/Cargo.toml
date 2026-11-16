@@ -1,6 +1,6 @@
 [package]
-description = "the VFS and its filesystems: PyroFS, tmpfs, ISO 9660"
 name = "fs"
+description = "the VFS and its filesystems: PyroFS, tmpfs, ISO 9660"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

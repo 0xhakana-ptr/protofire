@@ -1,6 +1,6 @@
 [package]
-description = "the disk interface: what a driver implements, what a filesystem reads"
 name = "block"
+description = "the disk interface: what a driver implements, what a filesystem reads"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

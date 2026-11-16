@@ -1,6 +1,6 @@
 [package]
-description = "the wire format: numbers, records, errors"
 name = "abi"
+description = "the wire format: numbers, records, errors"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

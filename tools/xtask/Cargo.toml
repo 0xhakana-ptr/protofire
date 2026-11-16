@@ -1,6 +1,6 @@
 [package]
-description = "the build tool: the gates, the images, the smokes"
 name = "xtask"
+description = "the build tool: the gates, the images, the smokes"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

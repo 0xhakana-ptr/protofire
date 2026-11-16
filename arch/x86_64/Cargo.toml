@@ -1,6 +1,6 @@
 [package]
-description = "the x86_64 machine"
 name = "arch_x86_64"
+description = "the x86_64 machine"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

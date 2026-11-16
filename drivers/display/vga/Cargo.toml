@@ -1,6 +1,6 @@
 [package]
-description = "the bochs-display register block and the display record its consumers share"
 name = "vga"
+description = "the bochs-display register block and the display record its consumers share"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

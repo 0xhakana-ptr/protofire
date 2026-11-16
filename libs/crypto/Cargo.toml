@@ -1,6 +1,6 @@
 [package]
-description = "the ciphers and hashes behind the random generator"
 name = "crypto"
+description = "the ciphers and hashes behind the random generator"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
