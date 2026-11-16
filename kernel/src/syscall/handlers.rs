@@ -222,6 +222,45 @@ pub fn set_length(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Re
     Ok(Dispatch::complete(0))
 }
 
+/// Move a descriptor's position, and answer where it now is.
+///
+/// Arguments: the descriptor, the offset as a **signed** word, the whence
+/// value, then three reserved slots that must be zero.  Answers the new
+/// position, not zero: a caller that seeks to the end needs the size, and the
+/// only call that would give it is this one's answer.
+///
+/// The offset is read as `i64` because that is what it is: a seek backwards
+/// from the current position is a negative distance, and reading the word as
+/// unsigned would turn `-1` into 18446744073709551615 and refuse a call that
+/// asked to step back one byte.  The ABI's `a1` is one machine word, so the
+/// narrowing is the call's own contract rather than a loss.
+///
+/// The five whence values are [`fs_abi::SEEK_SET`], [`fs_abi::SEEK_CUR`],
+/// [`fs_abi::SEEK_END`], [`fs_abi::SEEK_DATA`] and [`fs_abi::SEEK_HOLE`].  A
+/// value outside them is refused rather than treated as `SEEK_SET`: a whence
+/// this build does not know is a caller that meant something else.
+///
+/// The table method holds the arithmetic and the extent questions; this is the
+/// argument reading.  A seek needs no buffer and no path, which is why it is
+/// one of the few file calls with neither.
+pub fn seek(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor_index = arguments.context.arg(0);
+    // The word is the ABI's, and a negative distance is what `SEEK_CUR` with
+    // `-1` means: read it signed, which is also what the answer's arithmetic
+    // needs.
+    let offset = arguments.context.arg(1) as i64;
+    let whence = arguments.context.arg(2);
+    validate_zeroed_args(arguments.context, 3)?;
+
+    let position = table.seek_at(
+        descriptor_index,
+        offset,
+        whence,
+        arguments.context.caller_pid,
+    )?;
+    Ok(Dispatch::complete(position as usize))
+}
+
 /// Report a path's kind and size.
 ///
 /// Arguments: the path, the record, its length, then three reserved slots

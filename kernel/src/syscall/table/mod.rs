@@ -22,6 +22,7 @@ use security::mac;
 use abi::Error;
 use abi::Result;
 use abi::fs as fs_abi;
+use fs::ExtentKind;
 use fs::MountTable;
 use fs::VNode;
 use syscall::SyscallContext;
@@ -1020,6 +1021,96 @@ impl SyscallTable {
         }
 
         node.set_len(length)
+    }
+
+    /// Move a descriptor's position, and answer where it now is.
+    ///
+    /// Five readings of the offset, and the two families differ in more than
+    /// their arithmetic:
+    ///
+    /// `SEEK_SET`, `SEEK_CUR` and `SEEK_END` are a **distance** from a base,
+    /// so the offset is signed and a result below zero is refused rather than
+    /// wrapped.  The arithmetic goes through `i128` so that neither a base
+    /// near `u64::MAX` nor an offset near `i64::MIN` can overflow the sum; an
+    /// offset that does not fit is `InvalidArgument`, which is a word the
+    /// caller can act on.
+    ///
+    /// A position **past the end of the file** is legal and stays.  POSIX
+    /// permits it, and this tree's writes already read a position past the end
+    /// as end of file; refusing it here would be a rule the read path does not
+    /// keep, and a caller seeking to `size + n` to reserve is a caller the
+    /// write path serves.
+    ///
+    /// `SEEK_DATA` and `SEEK_HOLE` are not distances: their offset is
+    /// absolute, the answer is the node's, and the position **moves to the
+    /// answer**, which is what makes them a seek rather than a query.  An
+    /// offset past the end is refused, and a node with nothing to report
+    /// answers `NotFound` and leaves the position alone, the way a refused
+    /// seek does.  A node that cannot say where its holes are refuses with
+    /// `NotImplemented`, which is a different claim from "there are none".
+    ///
+    /// The right is the reader's: a seek moves where the next read starts and
+    /// says nothing about the bytes, so a descriptor opened read-only may seek.
+    /// A pipe end and a socket are refused, because neither has a position.
+    pub(crate) fn seek_at(
+        &mut self,
+        descriptor_index: usize,
+        offset: i64,
+        whence: usize,
+        caller: Option<u32>,
+    ) -> Result<u64> {
+        self.check_owner(descriptor_index, caller)?;
+        let descriptor = self
+            .descriptors
+            .get_mut(descriptor_index)
+            .ok_or(Error::InvalidArgument)?
+            .as_mut()
+            .ok_or(Error::InvalidArgument)?;
+
+        let Descriptor::File {
+            node,
+            offset: position,
+            ..
+        } = descriptor
+        else {
+            return Err(Error::InvalidArgument);
+        };
+
+        // The two extent questions first, because their offset is absolute and
+        // they answer the node's number rather than a sum.
+        let extent = match whence {
+            fs_abi::SEEK_DATA => Some(ExtentKind::Data),
+            fs_abi::SEEK_HOLE => Some(ExtentKind::Hole),
+            _ => None,
+        };
+        if let Some(kind) = extent {
+            let start = u64::try_from(offset).map_err(|_| Error::InvalidArgument)?;
+            if start > node.size() as u64 {
+                return Err(Error::InvalidArgument);
+            }
+            let at = node.next_extent(start, kind)?.ok_or(Error::NotFound)?;
+            *position = at;
+            return Ok(at);
+        }
+
+        let base = match whence {
+            fs_abi::SEEK_SET => 0_i128,
+            fs_abi::SEEK_CUR => *position as i128,
+            fs_abi::SEEK_END => node.size() as i128,
+            _ => return Err(Error::InvalidArgument),
+        };
+        let next = base
+            .checked_add(offset as i128)
+            .ok_or(Error::InvalidArgument)?;
+        // One conversion refuses both ends: a sum below zero and a sum above
+        // `u64::MAX` are both outside the range a position can hold, so the
+        // refusal is `try_from`'s rather than a comparison beside it.  A
+        // `next < 0` check before this was written, and no test could tell it
+        // was there: deleting it changed nothing, which is what a redundant
+        // refusal looks like from the outside.
+        let next = u64::try_from(next).map_err(|_| Error::InvalidArgument)?;
+        *position = next;
+        Ok(next)
     }
 }
 

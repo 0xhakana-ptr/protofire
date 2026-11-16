@@ -446,6 +446,13 @@ impl Machine {
                 // the wrong anchor ends the program instead.
                 ("protofire: process 1 stat'd descriptor ", false),
                 ("protofire: process 1 listed descriptor ", false),
+                // The seek, twice: from the end and backwards from where it
+                // landed. A prefix because the position is the answer and the
+                // number is the file's; what the program does with it, a read
+                // of one byte compared against `fi`, is what turns the line
+                // into evidence that the position moved rather than being
+                // reported.
+                ("protofire: process 1 seeked descriptor ", false),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,
@@ -1284,6 +1291,13 @@ impl Machine {
                     // that answered the wrong anchor ends the program instead.
                     ("protofire: process 1 stat'd descriptor ", false),
                     ("protofire: process 1 listed descriptor ", false),
+                    // The seek, twice: from the end and backwards from where it
+                    // landed. A prefix because the position is the answer and
+                    // the number is the file's; what the program does with it,
+                    // a read of one byte compared against `fi`, is what turns
+                    // the line into evidence that the position moved rather
+                    // than being reported.
+                    ("protofire: process 1 seeked descriptor ", false),
                     (
                         "protofire: process 1 renamed note.txt via descriptor ",
                         false,
@@ -1775,6 +1789,13 @@ impl Machine {
                 // the wrong anchor ends the program instead.
                 ("protofire: process 1 stat'd descriptor ", false),
                 ("protofire: process 1 listed descriptor ", false),
+                // The seek, twice: from the end and backwards from where it
+                // landed. A prefix because the position is the answer and the
+                // number is the file's; what the program does with it, a read
+                // of one byte compared against `fi`, is what turns the line
+                // into evidence that the position moved rather than being
+                // reported.
+                ("protofire: process 1 seeked descriptor ", false),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,

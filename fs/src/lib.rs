@@ -73,6 +73,7 @@ pub use profiler::FsProfilerSnapshot;
 pub use stats::CacheStats;
 pub use tmpfs::TmpFsVolume;
 pub use types::*;
+pub use vnode::ExtentKind;
 pub use vnode::VNode;
 
 #[cfg(test)]

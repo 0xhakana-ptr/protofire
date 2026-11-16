@@ -271,6 +271,34 @@ pub(crate) fn serve_io(
         }
         return Some(outcome);
     }
+    if number == SyscallNumber::Seek as usize {
+        // `Seek(descriptor, offset, whence)`: the second call of this family
+        // that takes no pointer.  The offset is a **signed** word, which is
+        // the ABI's shape and not this branch's choice, so it is passed
+        // through as the caller sent it and the handler reads the sign.
+        //
+        // The line names both the initial position the caller asked for and
+        // the one the call answered, because a seek's answer **is** the new
+        // position: a line that printed only zero would be indistinguishable
+        // from a call that did nothing, and the two differ by the whole of
+        // what the call is for.
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" seeked descriptor ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str(" to ");
+            arch::serial::write_u32(answer as u32);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::Write as usize {
         // The no-length case: a `Write` whose third argument is zero names no
         // bytes, so it is not a write, and it is the announcement.

@@ -80,6 +80,7 @@ fn writable() -> SyscallTable {
     table.register(SyscallNumber::RemovePathAt, remove_path_at);
     table.register(SyscallNumber::RenameAt, rename_at);
     table.register(SyscallNumber::SetLength, set_length);
+    table.register(SyscallNumber::Seek, seek);
     table.register(SyscallNumber::StatFd, stat_fd);
     table.register(SyscallNumber::ReadDirFd, read_dir_fd);
     table.register(SyscallNumber::Close, close);
@@ -398,6 +399,136 @@ fn one_process_cannot_truncate_another_process_descriptor() {
         Err(Error::InvalidArgument)
     );
     assert_eq!(set_length_as(&mut table, theirs, 0, Some(8)), Ok(()));
+}
+
+/// Seek through the registry: `Seek(descriptor, offset, whence)`.
+fn seek_as(table: &mut SyscallTable, descriptor: usize, offset: i64, whence: usize) -> Result<u64> {
+    let mut context = SyscallContext::new(
+        SyscallNumber::Seek as usize,
+        [descriptor, offset as usize, whence, 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    Ok(table.dispatch(&mut arguments)?.value as u64)
+}
+
+/// A seek from each of the three distance bases lands where it says.
+///
+/// One test for the three because they share one arithmetic: a base, a signed
+/// offset, and a position.  A handler that read the offset unsigned would
+/// still pass `SEEK_SET` with a small offset and fail only the backward step,
+/// which is why that step is here.
+#[test]
+fn a_seek_lands_at_the_offset_from_each_base() {
+    let mut table = writable();
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    let descriptor = open_path(&mut table, "/note.txt", flags).expect("create and open");
+    assert_eq!(
+        write_as(&mut table, descriptor, b"0123456789", None),
+        Ok(10)
+    );
+
+    // Absolute.
+    assert_eq!(seek_as(&mut table, descriptor, 3, fs_abi::SEEK_SET), Ok(3));
+    // From the current position, forwards.
+    assert_eq!(seek_as(&mut table, descriptor, 2, fs_abi::SEEK_CUR), Ok(5));
+    // Backwards, which is the case an unsigned offset cannot express.
+    assert_eq!(seek_as(&mut table, descriptor, -3, fs_abi::SEEK_CUR), Ok(2));
+    // From the end, backwards.
+    assert_eq!(seek_as(&mut table, descriptor, -4, fs_abi::SEEK_END), Ok(6));
+    // From the end, past it: legal, and the position stays there.
+    assert_eq!(seek_as(&mut table, descriptor, 5, fs_abi::SEEK_END), Ok(15));
+}
+
+/// A seek to a negative position is refused and leaves the position alone.
+///
+/// The refusal is the arithmetic's, not the file's: seeking before the start
+/// is not a place a read could start, and a wrapped `u64` would be an enormous
+/// offset that a later read would report as end of file, which is a plausible
+/// answer to a call that should have been refused.
+#[test]
+fn a_seek_before_the_start_is_refused() {
+    let mut table = writable();
+    let descriptor = open_path(
+        &mut table,
+        "/note.txt",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("create");
+    assert_eq!(write_as(&mut table, descriptor, b"abc", None), Ok(3));
+    assert_eq!(seek_as(&mut table, descriptor, 2, fs_abi::SEEK_SET), Ok(2));
+
+    assert_eq!(
+        seek_as(&mut table, descriptor, -5, fs_abi::SEEK_CUR),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(
+        seek_as(&mut table, descriptor, -1, fs_abi::SEEK_SET),
+        Err(Error::InvalidArgument)
+    );
+    // The refusals left the position where it was, which the next read proves.
+    let mut one = [0u8; 1];
+    assert_eq!(
+        read_into(&mut table, descriptor, READ_OFFSET_CURRENT, &mut one),
+        Ok(1)
+    );
+    assert_eq!(&one, b"c");
+}
+
+/// A seek from an unknown whence is refused rather than treated as absolute.
+#[test]
+fn a_seek_with_an_unknown_whence_is_refused() {
+    let mut table = writable();
+    let descriptor = open_path(
+        &mut table,
+        "/note.txt",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("create");
+
+    assert_eq!(
+        seek_as(&mut table, descriptor, 0, 99),
+        Err(Error::InvalidArgument)
+    );
+}
+
+/// `SEEK_DATA` and `SEEK_HOLE` answer the node's extent, not a distance.
+///
+/// A node with no holes is the default `next_extent`: every byte below the
+/// size is data, and the end of the file is the hole.  The two calls are not
+/// distance seeks, so they are checked through the same call as the three that
+/// are, and their answers are byte offsets rather than sums.
+#[test]
+fn a_seek_to_an_extent_answers_the_node_position() {
+    let mut table = writable();
+    let descriptor = open_path(
+        &mut table,
+        "/note.txt",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("create");
+    assert_eq!(
+        write_as(&mut table, descriptor, b"0123456789", None),
+        Ok(10)
+    );
+
+    assert_eq!(seek_as(&mut table, descriptor, 4, fs_abi::SEEK_DATA), Ok(4));
+    // A file that is all data has one hole, and it is the end of the file.
+    assert_eq!(
+        seek_as(&mut table, descriptor, 0, fs_abi::SEEK_HOLE),
+        Ok(10)
+    );
+
+    // Past the end there is no extent of either kind, and the answer is the
+    // one a range past the end gets rather than a position.
+    assert_eq!(
+        seek_as(&mut table, descriptor, 11, fs_abi::SEEK_DATA),
+        Err(Error::InvalidArgument)
+    );
 }
 
 /// A descriptor opened read-only refuses a write, and stays readable.

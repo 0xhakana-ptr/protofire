@@ -119,6 +119,7 @@ pub use handlers::rename;
 pub use handlers::rename_at;
 #[cfg(target_os = "none")]
 pub use handlers::resolve_hostname;
+pub use handlers::seek;
 pub use handlers::send_raw_packet;
 pub use handlers::send_to_udp;
 pub use handlers::set_host_name;

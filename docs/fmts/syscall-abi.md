@@ -210,6 +210,12 @@ The calls a ring-3 program can make today, and the slots each carries.
   `a2`-`a5` reserved zero.  Answers zero.  The descriptor must have been opened
   for writing, and its own position does not move, so a caller that writes,
   truncates and writes again appends rather than overwriting.
+- **`Seek`**, `a0` the descriptor; `a1` the offset, a **signed** word;
+  `a2` the whence, one of `SEEK_SET`, `SEEK_CUR`, `SEEK_END`, `SEEK_DATA` and
+  `SEEK_HOLE`; `a3`-`a5` reserved zero.  Answers the new position, not zero.  A
+  position past the end of the file is legal and stays; one before the start is
+  refused.  The two extent values are absolute rather than distances, and their
+  answer is the first byte of data or of a hole at or after the offset.
 - **`ExecProcess`**, `a0` the path, a NUL-terminated string in the caller's
   memory naming the file the process becomes; `a1`-`a5` reserved zero.
 - **`Mmap`**, `a0` an address hint, or zero for "anywhere"; `a1` the length in

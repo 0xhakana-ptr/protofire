@@ -51,6 +51,10 @@ use user_abi::OPEN_WRITE_CREATE;
 #[cfg(target_os = "none")]
 use user_abi::PROT_READ_WRITE;
 #[cfg(target_os = "none")]
+use user_abi::SEEK_CUR;
+#[cfg(target_os = "none")]
+use user_abi::SEEK_END;
+#[cfg(target_os = "none")]
 use user_abi::SIGUSR1;
 #[cfg(target_os = "none")]
 use user_abi::SYSTEM_INFO_SCHEDULER;
@@ -125,6 +129,8 @@ use user_abi::sys_remove_path_at;
 use user_abi::sys_rename_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_resolve_hostname;
+#[cfg(target_os = "none")]
+use user_abi::sys_seek;
 #[cfg(target_os = "none")]
 use user_abi::sys_send_raw_packet;
 #[cfg(target_os = "none")]
@@ -391,6 +397,45 @@ pub extern "C" fn _start() -> ! {
     if !lists_name(&listed, listed_bytes, ANCHORED_NAME) {
         sys_exit(242);
     }
+
+    // The seek, on a fresh descriptor so nothing above depends on where it
+    // leaves the position.  Two of the five whence values are checked, and
+    // the pair is chosen because they are the two an unsigned offset cannot
+    // express: from the end (a distance this program did not compute as an
+    // absolute) and backwards from the current position.
+    //
+    // The read after each seek is the proof the position moved: the bytes that
+    // come back are the ones at the offset the answer named, so a seek that
+    // answered a number without moving would read from the wrong place.
+    //
+    // The file is the one this program wrote as `five` and truncated to two
+    // bytes above, so its content is `fi` and its last byte sits at one.
+    let seeker = insist(sys_open_at(
+        notes,
+        ANCHORED_NAME.as_ptr() as usize,
+        OPEN_READ,
+    ));
+    let at_end = insist(sys_seek(seeker, -1, SEEK_END));
+    if at_end != 1 {
+        sys_exit(243);
+    }
+    let mut tail = [0u8; 1];
+    if insist(sys_read(seeker, &mut tail)) != 1 || tail[0] != b'i' {
+        sys_exit(244);
+    }
+
+    // Two back from here: the read above left the position at two, so this
+    // lands on the first byte.  The step is what makes the case a *negative*
+    // offset from the current position rather than an absolute one.
+    let back = insist(sys_seek(seeker, -2, SEEK_CUR));
+    if back != 0 {
+        sys_exit(245);
+    }
+    let mut head = [0u8; 1];
+    if insist(sys_read(seeker, &mut head)) != 1 || head[0] != b'f' {
+        sys_exit(246);
+    }
+    insist(sys_close(seeker));
 
     // The rename, each side anchored at the `/tmp` descriptor: both names
     // resolve into the same filesystem, which is what a rename requires

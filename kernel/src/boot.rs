@@ -254,6 +254,10 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::ReadDirFd,
         crate::syscall::read_dir_fd,
     );
+    // The seek.  It answers a position rather than a status, which is why the
+    // ABI has it return the new offset: a caller that sought to the end needs
+    // the size, and no other call in this group gives it.
+    table.register(::syscall::SyscallNumber::Seek, crate::syscall::seek);
     table.register(
         ::syscall::SyscallNumber::CreateDir,
         crate::syscall::create_dir,

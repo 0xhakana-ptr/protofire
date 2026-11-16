@@ -59,6 +59,8 @@ pub const SYS_WRITE: usize = SyscallNumber::Write as usize;
 pub const SYS_CLOSE: usize = SyscallNumber::Close as usize;
 /// `SetLength`, a descriptor's new length.
 pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
+/// `Seek`, a descriptor's new position.
+pub const SYS_SEEK: usize = SyscallNumber::Seek as usize;
 /// `Stat`, by path.
 pub const SYS_STAT: usize = SyscallNumber::Stat as usize;
 /// `ReadDir`, by path and index.
@@ -230,6 +232,16 @@ pub const TIME_RECORD_BYTES: usize = core::mem::size_of::<abi::time::TimeRecord>
 pub const OPEN_READ: usize = abi::fs::OPEN_FLAG_READ;
 /// Open for writing, creating the file when it is not there.
 pub const OPEN_WRITE_CREATE: usize = abi::fs::OPEN_FLAG_WRITE | abi::fs::OPEN_FLAG_CREATE;
+/// `Seek` from an absolute offset.
+pub const SEEK_SET: usize = abi::fs::SEEK_SET;
+/// `Seek` from the current position, forwards or back.
+pub const SEEK_CUR: usize = abi::fs::SEEK_CUR;
+/// `Seek` from the end of the file, forwards or back.
+pub const SEEK_END: usize = abi::fs::SEEK_END;
+/// `Seek` to the first byte of data at or after an absolute offset.
+pub const SEEK_DATA: usize = abi::fs::SEEK_DATA;
+/// `Seek` to the first byte of a hole at or after an absolute offset.
+pub const SEEK_HOLE: usize = abi::fs::SEEK_HOLE;
 /// Readable and writable, and not executable: the kernel refuses
 /// write-xor-execute together, and a page of data is not a page of code.
 pub const PROT_READ_WRITE: usize = abi::memory::PROT_READ | abi::memory::PROT_WRITE;
@@ -440,6 +452,16 @@ pub fn sys_close(descriptor: usize) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_set_length(descriptor: usize, length: usize) -> usize {
     syscall6(SYS_SET_LENGTH, descriptor, length, 0, 0, 0, 0)
+}
+
+/// `seek(descriptor, offset, whence)`: the new position.
+///
+/// The offset is signed, so a caller steps backwards by passing a negative
+/// one; the word travels as a `usize` because that is the register's width,
+/// and the kernel reads the sign back.
+#[cfg(target_os = "none")]
+pub fn sys_seek(descriptor: usize, offset: i64, whence: usize) -> usize {
+    syscall6(SYS_SEEK, descriptor, offset as usize, whence, 0, 0, 0)
 }
 
 /// `stat(path, record)`: zero, with the record filled.
