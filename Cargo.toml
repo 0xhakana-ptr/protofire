@@ -26,6 +26,7 @@ members = [
     "drivers/display/text",
     "drivers/storage/nvme",
     "drivers/storage/ahci",
+    "drivers/usb/xhci",
     "drivers/display/vga",
     "drivers/net/e1000",
     "libs/allocator",

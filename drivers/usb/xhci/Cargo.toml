@@ -1,0 +1,24 @@
+[package]
+name = "xhci"
+description = "the xHCI wire format: the register maps, the TRB and its types, the event ring's entry, and the USB structures"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The xHCI wire format and register maps: BAR0's capability and operational
+# registers, a port's PORTSC, the runtime registers and the doorbell array,
+# the TRB and its types, the event ring segment table entry, the USB
+# descriptors and setup packets, and the ring arithmetic a producer needs.
+#
+# It names nothing of this tree, which is what lets every offset, every bit
+# position and every structure size be checked on a host.  A TRB is 16 bytes
+# wherever it is built, so the layout is a fact about a specification rather
+# than about a machine, and the controller that drives it is the machine's
+# half.  This is a relocation of the previous tree's 1,177-line
+# xhci_protocol.rs, whose controller -- 3,451 lines beside it -- becomes this
+# tree's kernel file next.
+[dependencies]
+
+# The tests build page-shaped descriptors and ring-shaped command tables,
+# which needs a buffer; nothing in the crate itself does.

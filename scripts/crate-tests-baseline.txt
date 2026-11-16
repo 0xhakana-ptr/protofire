@@ -72,6 +72,7 @@ unicode              4628   31
 user_abi              687    1 # fell from 2 in the change that derives the numbering from `abi`: the identity test became a compile error there, and the frozen literals are the one test left
 nvme                  863   20
 ahci                  927   24
+xhci                 1233   24
 text                  430   18
 vga                   782   14
 virt                   62    0 # exempt: a design argument and no code; the day it has a value to assert, this row loses the note

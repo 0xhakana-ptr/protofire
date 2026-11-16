@@ -75,6 +75,17 @@
 # driver got wrong are both assertions here.
 0 ahci
 
+# `xhci` is the USB host controller's wire format: BAR0's register maps, a
+# port's PORTSC, the runtime registers and the doorbell array, the TRB and its
+# types, the event ring segment table entry, and the USB descriptors and setup
+# packets a device is spoken to through.  It is a relocation of the previous
+# tree's 1,177-line xhci_protocol.rs, and it names nothing for the same reason
+# its three siblings do not: the scratchpad count's two halves, the hub's
+# change-bit selector at 20, and an interrupt endpoint's Interval exponent are
+# facts a host test holds, and the controller that drives them is the machine's
+# half.
+0 xhci
+
 # ── Layer 1: the wire format ────────────────────────────────────────────────
 #
 # `abi` is what the kernel and a program both compile against: the error type and
