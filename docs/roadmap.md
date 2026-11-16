@@ -912,6 +912,33 @@ size.
    more register -- but QEMU's own NVMe trace, which says what the device did
    with the command rather than what the driver expected.
 
+   **That fourth answer was the doorbell address, and it was wrong here rather
+   than in the controller.**  `nvme::doorbell` laid the array out as "every
+   submission queue's, then every completion queue's", which puts queue 1's
+   submission tail exactly where queue 0's completion head is: the driver rang
+   `0x1004` when it meant to submit on queue 1, the controller read that as
+   completion queue 0's head advancing -- a completion nobody was waiting for --
+   and the command sat in a ring nothing would look at.  A defect that produces
+   a timeout and names nothing, which is why three rounds of printing registers
+   did not find it.
+
+   NVMe 1.0 §3.1.9 **interleaves** the two:
+   `SQ y Tail = 0x1000 + 2y*(4 << DSTRD)`, `CQ y Head = 0x1000 + (2y+1)*(4 <<
+   DSTRD)`.  That was checked against two independent implementations rather
+   than against one reading of the specification: QEMU dispatches a submission
+   doorbell as `(addr - 0x1000) >> 3` and a completion as
+   `(addr - 0x1004) >> 3`, and Linux's driver computes
+   `q_db = &dbs[qid * 2 * db_stride]` for a submission queue and writes the
+   completion head at `q_db + db_stride`.  Both are this formula at `DSTRD`
+   zero.
+
+   The helper had taken the queue **count** as its stride on the belief that the
+   two groups were laid out one after the other, and its test asserted that
+   layout as four literals -- a test that pins a wrong formula is one that makes
+   the wrong formula look measured.  The replacement asserts the invariant
+   instead: no submission doorbell of any queue in `0..64` equals any completion
+   doorbell, and the stride is `CAP`'s own bits 35:32.
+
    The record's layout had a defect of its own to avoid: `#[repr(C)]` pads the
    three 64-bit words to the name field's **aligned** end, which for a 63-byte
    name is offset 64 and not 63.  A handler that added 63 would put every word

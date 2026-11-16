@@ -105,21 +105,47 @@ pub const DEFAULT_QUEUE_SIZE: usize = 64;
 
 /// Where a queue's doorbell is, in BAR0.
 ///
-/// Submission queues are `0x1000 + 4*qid`, and completion queues come after
-/// every submission queue the controller has, which is `0x1000 + 4*(qid +
-/// queue_count)`.  The `queue_count` is the device's, from `CAP`'s `MQES`, so
-/// the caller passes it rather than this function guessing.
+/// NVMe 1.0 §3.1.9 gives the two formulae, and they **interleave**:
 ///
-/// Getting this wrong is a driver that rings another queue's bell: the command
-/// sits in a ring nobody is watching and the wait times out, which is why the
-/// stride is a function with the count as an argument rather than a constant.
-pub const fn doorbell(queue: u16, is_completion: bool, queue_count: u16) -> usize {
-    let index = if is_completion {
-        queue_count as usize + queue as usize
-    } else {
-        queue as usize
-    };
-    NVME_DOORBELL_BASE + index * 4
+/// ```text
+/// SQ y Tail Doorbell = 0x1000 + (2y    ) * (4 << DSTRD)
+/// CQ y Head Doorbell = 0x1000 + (2y + 1) * (4 << DSTRD)
+/// ```
+///
+/// One queue's two doorbells are adjacent, and a queue's pair sits one stride
+/// apart from the next queue's.  This is not "every submission queue, then
+/// every completion queue": that layout puts queue 1's submission doorbell
+/// exactly where queue 0's completion doorbell is, so a driver that ringed
+/// "submission queue 1" wrote the completion head of queue 0.  QEMU's own
+/// dispatch is the check: it reads a doorbell's queue id as
+/// `(addr - 0x1000) >> 3`, and a completion's as `(addr - 0x1004) >> 3`, which
+/// is this formula with `DSTRD` zero.
+///
+/// `dstrd` is `CAP`'s bits 35:32, which the controller reports because it is
+/// the device's stride and not a constant.  The previous version took the queue
+/// count instead, on the belief that the two groups were laid out one after the
+/// other, and its test asserted that layout.
+pub const fn doorbell(queue: u16, is_completion: bool, dstrd: u32) -> usize {
+    let stride = 4usize << dstrd;
+    let index = queue as usize * 2 + if is_completion { 1 } else { 0 };
+    NVME_DOORBELL_BASE + index * stride
+}
+
+/// Where `CAP`'s `DSTRD` field begins.
+///
+/// The field is bits 35:32: the doorbell stride as a power of two on top of the
+/// four bytes a doorbell is.
+pub const CAP_DSTRD_SHIFT: u32 = 32;
+
+/// The mask over `CAP`'s `DSTRD` field.
+pub const CAP_DSTRD_MASK: u64 = 0xF;
+
+/// The doorbell stride a `CAP` value asks for.
+///
+/// Separate from [`doorbell`] so a caller decodes the controller's own number
+/// once, at probe, and passes the same one to every ring.
+pub const fn doorbell_stride(cap: u64) -> u32 {
+    ((cap >> CAP_DSTRD_SHIFT) & CAP_DSTRD_MASK) as u32
 }
 
 /// The PRP entries for a run of `bytes` out of a buffer that starts at `base`.
@@ -189,21 +215,70 @@ mod tests {
         assert_eq!(NVM_READ, 0x02);
     }
 
-    /// A completion queue's doorbell comes after every submission queue's.
+    /// A queue's two doorbells are adjacent, and the next queue's pair follows.
     ///
-    /// With four queues, submission 0 is at `0x1000` and completion 0 at
-    /// `0x1010`.  A driver that gave both the same stride would ring the
-    /// submission doorbell when it meant to report a completion, and the
-    /// controller would read a command from a ring the driver never wrote.
+    /// With `DSTRD` zero a doorbell is four bytes: queue 0's tail is at
+    /// `0x1000` and its head at `0x1004`, queue 1's tail at `0x1008` and its
+    /// head at `0x100c`.  The numbers are QEMU's own dispatch read backwards:
+    /// it takes a submission doorbell's queue id as `(addr - 0x1000) >> 3` and
+    /// a completion's as `(addr - 0x1004) >> 3`, and both answer the queue the
+    /// formula above names.
+    ///
+    /// The version this replaced laid the groups out separately, so
+    /// `doorbell(1, false, 4)` answered `0x1004` -- **completion queue 0's
+    /// head** -- and the test below asserted that.  A driver ringing that when
+    /// it meant to submit tells the controller a completion was taken from a
+    /// queue nothing had put anything on, and the command sits in a ring nobody
+    /// reads.  That is the defect the controller's I/O timeout turned out to
+    /// be.
     #[test]
-    fn a_completion_doorbell_follows_every_submission_doorbell() {
-        assert_eq!(doorbell(0, false, 4), 0x1000);
-        assert_eq!(doorbell(1, false, 4), 0x1004);
-        assert_eq!(doorbell(0, true, 4), 0x1010);
-        assert_eq!(doorbell(1, true, 4), 0x1014);
-        // The I/O pair a driver creates first, on a controller with two queues.
-        assert_eq!(doorbell(1, false, 2), 0x1004);
-        assert_eq!(doorbell(1, true, 2), 0x100C);
+    fn a_queues_two_doorbells_are_adjacent() {
+        assert_eq!(doorbell(0, false, 0), 0x1000);
+        assert_eq!(doorbell(0, true, 0), 0x1004);
+        assert_eq!(doorbell(1, false, 0), 0x1008);
+        assert_eq!(doorbell(1, true, 0), 0x100c);
+        assert_eq!(doorbell(4, false, 0), 0x1020);
+        assert_eq!(doorbell(4, true, 0), 0x1024);
+    }
+
+    /// No submission doorbell ever lands on a completion doorbell.
+    ///
+    /// This is the invariant the interleaved layout exists for, stated as a
+    /// search rather than as four literals: over every queue a controller can
+    /// have, the two sets do not meet.  A layout where they meet is one where a
+    /// driver's submit is silently a completion acknowledged, which is the
+    /// failure that reads as a timeout and names nothing.
+    #[test]
+    fn the_two_doorbell_sets_are_disjoint() {
+        for queue in 0..64u16 {
+            let submission = doorbell(queue, false, 0);
+            for other in 0..64u16 {
+                assert_ne!(
+                    submission,
+                    doorbell(other, true, 0),
+                    "submission queue {queue} and completion queue {other} share a doorbell"
+                );
+            }
+        }
+    }
+
+    /// `DSTRD` widens the stride, and it is the controller's number.
+    ///
+    /// Bits 35:32 of `CAP` are the stride as a power of two on top of the four
+    /// bytes a doorbell is, so `DSTRD = 2` makes each doorbell sixteen bytes
+    /// and a queue's pair sixty-four apart from the next.  A driver that
+    /// assumed four would ring inside a neighbour's register on a device that
+    /// reported anything else.
+    #[test]
+    fn the_stride_comes_from_cap() {
+        assert_eq!(doorbell_stride(0), 0);
+        assert_eq!(doorbell_stride(CAP_DSTRD_MASK << CAP_DSTRD_SHIFT), 0xF);
+
+        // DSTRD = 2: a doorbell is 16 bytes.
+        assert_eq!(doorbell(0, false, 2), 0x1000);
+        assert_eq!(doorbell(0, true, 2), 0x1010);
+        assert_eq!(doorbell(1, false, 2), 0x1020);
+        assert_eq!(doorbell(1, true, 2), 0x1030);
     }
 
     /// One page of data is PRP1 alone.
