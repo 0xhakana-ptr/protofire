@@ -57,6 +57,7 @@
 extern crate alloc;
 
 pub mod address_space;
+pub mod block_devices;
 pub mod boot;
 pub mod boot_pages;
 pub mod console;

@@ -898,6 +898,143 @@ fn read_console_answers_nothing_rather_than_refusing() {
     );
 }
 
+/// `ListBlockDevices` fills the record at the ABI's own offsets.
+///
+/// The layout is the assertion: the three words go after the name's *aligned*
+/// end and not its end, so a handler that added 63 would write every word one
+/// byte early.  Parsing by offset is what a program does, so parsing by offset
+/// is what the test does.
+#[test]
+fn list_block_devices_fills_the_record_at_the_abis_offsets() {
+    crate::block_devices::clear();
+    assert!(crate::block_devices::record("virtio-blk", 512, 4096, false));
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::ListBlockDevices, list_block_devices);
+
+    let mut record = [0u8; fs_abi::BLOCK_DEVICE_INFO_RECORD_SIZE];
+    let mut context = SyscallContext::new(
+        SyscallNumber::ListBlockDevices as usize,
+        [0, record.as_mut_ptr() as usize, record.len(), 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(&mut record),
+    };
+    assert_eq!(
+        table
+            .dispatch(&mut arguments)
+            .map(|dispatch| dispatch.value),
+        Ok(0)
+    );
+
+    let name_end = record
+        .iter()
+        .position(|&byte| byte == 0)
+        .expect("terminator");
+    assert_eq!(&record[..name_end], b"virtio-blk");
+
+    let word = |at: usize| u64::from_le_bytes(record[at..at + 8].try_into().expect("eight"));
+    assert_eq!(
+        word(fs_abi::BLOCK_DEVICE_INFO_RECORD_BLOCK_SIZE_OFFSET),
+        512
+    );
+    assert_eq!(
+        word(fs_abi::BLOCK_DEVICE_INFO_RECORD_BLOCK_COUNT_OFFSET),
+        4096
+    );
+    assert_eq!(word(fs_abi::BLOCK_DEVICE_INFO_RECORD_READ_ONLY_OFFSET), 0);
+
+    crate::block_devices::clear();
+}
+
+/// An index past the end answers `NotFound` rather than a zeroed record.
+#[test]
+fn list_block_devices_past_the_end_is_not_found() {
+    crate::block_devices::clear();
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::ListBlockDevices, list_block_devices);
+
+    let mut record = [0u8; fs_abi::BLOCK_DEVICE_INFO_RECORD_SIZE];
+    let mut context = SyscallContext::new(
+        SyscallNumber::ListBlockDevices as usize,
+        [0, record.as_mut_ptr() as usize, record.len(), 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(&mut record),
+    };
+    assert_eq!(
+        table.dispatch(&mut arguments),
+        Err(Error::NotFound),
+        "an empty list has no index zero either"
+    );
+}
+
+/// A record buffer too small is refused rather than partly filled.
+#[test]
+fn list_block_devices_refuses_a_short_record() {
+    crate::block_devices::clear();
+    assert!(crate::block_devices::record("disk", 512, 1, false));
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::ListBlockDevices, list_block_devices);
+
+    let mut record = [0u8; 16];
+    let mut context = SyscallContext::new(
+        SyscallNumber::ListBlockDevices as usize,
+        [0, record.as_mut_ptr() as usize, record.len(), 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(&mut record),
+    };
+    assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
+
+    crate::block_devices::clear();
+}
+
+/// `Sync` answers zero and refuses a reserved argument.
+///
+/// The flush itself has nothing a test can read back, so what is asserted is
+/// that the call reaches the namespace and answers: a `Sync` that refused for a
+/// missing namespace would be a different word, and this one has one.
+#[test]
+fn sync_answers_zero_over_the_namespace() {
+    let mut table = writable();
+    table.register(SyscallNumber::Sync, sync);
+
+    let mut context = SyscallContext::new(SyscallNumber::Sync as usize, [0; 6]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    assert_eq!(
+        table
+            .dispatch(&mut arguments)
+            .map(|dispatch| dispatch.value),
+        Ok(0)
+    );
+
+    // A reserved slot that is not zero is refused.
+    let mut context = SyscallContext::new(SyscallNumber::Sync as usize, [1, 0, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
+}
+
 /// A punch reaches the node exactly once, with the range the caller named.
 ///
 /// The node counts its `punch_hole` calls, so a handler that answered zero

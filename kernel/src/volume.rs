@@ -95,6 +95,23 @@ pub fn mount_everything() -> fs::MountTable {
         probe_device(&device);
     }
 
+    // The list a program can ask for, filled from the device the boot actually
+    // attached.  Recorded before the filesystem opens it, so a mount that fails
+    // still leaves a machine whose disk is named rather than a machine with no
+    // disks at all.
+    let listed = crate::block_devices::record(
+        device.name(),
+        device.block_size(),
+        device.block_count(),
+        device.is_read_only(),
+    );
+    arch::serial::write_str("protofire: block devices listed ");
+    arch::serial::write_u32(crate::block_devices::count() as u32);
+    if !listed {
+        arch::serial::write_str(", and the list was FULL: this machine has a disk it cannot name");
+    }
+    arch::serial::write_str("\n");
+
     format_if_empty(&device, &image, source);
     let volume = open_volume(device);
 

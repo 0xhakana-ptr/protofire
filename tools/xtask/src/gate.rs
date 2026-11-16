@@ -868,6 +868,16 @@ impl Machine {
                 // sink the kernel's own lines do.
                 ("protofire: screen installed, 128 by 48 cell(s)", true),
                 ("protofire: init says this through write_debug", true),
+                // The device list and the whole-machine flush.  The count is
+                // what the boot recorded, and the two program lines are the
+                // calls answering through the dispatcher rather than the
+                // fallthrough.
+                ("protofire: block devices listed 1", true),
+                ("protofire: process 1 listed block device 0", true),
+                (
+                    "protofire: process 1 flushed every mounted filesystem",
+                    true,
+                ),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,

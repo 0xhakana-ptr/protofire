@@ -285,6 +285,24 @@ pub struct BlockDeviceInfoRecord {
     pub read_only: u64,
 }
 
+/// The record's size on the wire.
+///
+/// `#[repr(C)]` pads: the three words after the name are 64-bit, so the struct
+/// is the name rounded up to eight bytes plus twenty-four.  A handler that
+/// wrote the fields at `name_len + 0/8/16` without the rounding would put them
+/// where the struct does not have them, which is why this is computed from the
+/// layout rather than from the field order.
+pub const BLOCK_DEVICE_INFO_RECORD_SIZE: usize = size_of::<BlockDeviceInfoRecord>();
+/// Where the block size is, inside the record.
+pub const BLOCK_DEVICE_INFO_RECORD_BLOCK_SIZE_OFFSET: usize =
+    offset_of!(BlockDeviceInfoRecord, block_size);
+/// Where the block count is.
+pub const BLOCK_DEVICE_INFO_RECORD_BLOCK_COUNT_OFFSET: usize =
+    offset_of!(BlockDeviceInfoRecord, block_count);
+/// Where the read-only flag is.
+pub const BLOCK_DEVICE_INFO_RECORD_READ_ONLY_OFFSET: usize =
+    offset_of!(BlockDeviceInfoRecord, read_only);
+
 impl Default for BlockDeviceInfoRecord {
     fn default() -> Self {
         Self {

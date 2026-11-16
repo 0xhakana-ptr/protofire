@@ -116,6 +116,8 @@ use user_abi::sys_get_time_of_day;
 #[cfg(target_os = "none")]
 use user_abi::sys_ipv6_status;
 #[cfg(target_os = "none")]
+use user_abi::sys_list_block_devices;
+#[cfg(target_os = "none")]
 use user_abi::sys_listen_tcp;
 #[cfg(target_os = "none")]
 use user_abi::sys_mmap;
@@ -173,6 +175,8 @@ use user_abi::sys_stat;
 use user_abi::sys_stat_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_stat_fd;
+#[cfg(target_os = "none")]
+use user_abi::sys_sync;
 #[cfg(target_os = "none")]
 use user_abi::sys_system_info;
 #[cfg(target_os = "none")]
@@ -403,6 +407,46 @@ pub extern "C" fn _start() -> ! {
     if typed != 0 {
         sys_exit(255);
     }
+
+    // The device list and the whole-machine flush.  The record is the ABI's
+    // `BlockDeviceInfoRecord`, read field by field at the offsets the ABI
+    // publishes, so a handler that wrote the words where `#[repr(C)]` does not
+    // put them fails here rather than passing a plausible-looking answer.
+    let mut disk = [0u8; user_abi::BLOCK_DEVICE_INFO_RECORD_SIZE];
+    insist(sys_list_block_devices(0, &mut disk));
+    let block_size = u64::from_le_bytes(
+        disk[user_abi::BLOCK_DEVICE_INFO_BLOCK_SIZE_OFFSET
+            ..user_abi::BLOCK_DEVICE_INFO_BLOCK_SIZE_OFFSET + 8]
+            .try_into()
+            .expect("eight bytes"),
+    );
+    let block_count = u64::from_le_bytes(
+        disk[user_abi::BLOCK_DEVICE_INFO_BLOCK_COUNT_OFFSET
+            ..user_abi::BLOCK_DEVICE_INFO_BLOCK_COUNT_OFFSET + 8]
+            .try_into()
+            .expect("eight bytes"),
+    );
+    // The disk this boot attached, as the driver describes it: sectors of 512
+    // bytes, a positive count, and writable.  The count is asserted as "above
+    // zero" rather than as a number because it belongs to the image.
+    if block_size != 512
+        || block_count == 0
+        || disk[user_abi::BLOCK_DEVICE_INFO_READ_ONLY_OFFSET] != 0
+    {
+        sys_exit(222);
+    }
+    // The name in the record is NUL-terminated and non-empty: a device with no
+    // name is a record the handler answered without filling.
+    if disk[0] == 0 {
+        sys_exit(223);
+    }
+    // A second device is one this machine does not have, and the answer is the
+    // one a list's end gets rather than a zeroed record.
+    if !user_abi::is_error_status(sys_list_block_devices(1, &mut disk)) {
+        sys_exit(224);
+    }
+    // Every mounted filesystem flushed, in one call.
+    insist(sys_sync());
 
     // The listing: one entry of the directory, by index, parsed the way the
     // ABI's record says, four words, then the name where the third word

@@ -205,6 +205,13 @@ The calls a ring-3 program can make today, and the slots each carries.
   `a1` the flags; `a2`-`a3` reserved zero.
 - **`Read`**, `a0` the descriptor; `a1` the offset, or `READ_OFFSET_CURRENT`;
   `a2` the buffer; `a3` its length; `a4`-`a5` reserved zero.
+- **`ListBlockDevices`**, `a0` the index; `a1` the record; `a2` its length, at
+  least `BLOCK_DEVICE_INFO_RECORD_SIZE`; `a3`-`a5` reserved zero.  Answers zero,
+  with the ABI's `BlockDeviceInfoRecord` filled.  An index past the end answers
+  `NotFound`.
+- **`Sync`**, `a0`-`a5` reserved zero.  Answers zero once every mounted
+  filesystem has flushed to its device.  The whole-machine call, where `Fsync`
+  is the per-descriptor one.
 - **`WriteDebug`**, `a0` the buffer; `a1` its length; `a2`-`a5` reserved zero.
   Answers the bytes taken.  The program's own bytes into the kernel's log, for
   the caller that has opened nothing yet and so cannot use `Write`.

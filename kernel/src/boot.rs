@@ -263,6 +263,14 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::ReadConsole,
         crate::syscall::read_console,
     );
+    // The device list and the whole-machine flush.  `ListBlockDevices` answers
+    // the disks the boot found, in the order it found them, and `Sync` is the
+    // explicit half of durability where `Fsync` is the per-file half.
+    table.register(
+        ::syscall::SyscallNumber::ListBlockDevices,
+        crate::syscall::list_block_devices,
+    );
+    table.register(::syscall::SyscallNumber::Sync, crate::syscall::sync);
     table.register(::syscall::SyscallNumber::Close, crate::syscall::close);
     // The truncate.  A number the ABI froze at twenty and this table served
     // nothing for until now: `VNode::set_len` existed and no program could

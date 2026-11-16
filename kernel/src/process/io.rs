@@ -235,6 +235,53 @@ pub(crate) fn serve_io(
         let _ = &mut context;
         return Some(CallOutcome::Return(length));
     }
+    if number == SyscallNumber::ListBlockDevices as usize {
+        // `ListBlockDevices(index, record, length)`: one disk this boot found,
+        // described into the caller's buffer.  The buffer is a ring-3 address,
+        // so the range is checked before the registry sees it.
+        let buffer = call.arguments[1];
+        let length = call.arguments[2];
+        if length == 0 || !crate::address_space::is_user_range(buffer, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window, which `is_user_range`
+        // checked, and the pages behind it are the calling task's own
+        // mappings.  The handler writes the record and nothing past it.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(destination));
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" listed block device ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::Sync as usize {
+        // `Sync()`: every mounted filesystem flushed to its device.  No
+        // pointer, so the registry is reached directly, and the reserved slots
+        // are the handler's to refuse.
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" flushed every mounted filesystem\n");
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::ReadConsole as usize {
         // `ReadConsole(buffer, length)`: the line a reader typed.  This machine
         // has no input device yet, so the handler answers zero, and the branch

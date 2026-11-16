@@ -33,11 +33,11 @@ echo "missing  $(comm -13 /tmp/served.txt /tmp/declared.txt | wc -l)"
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **100 of the 196 numbers are served**, after the memory,
+Four machines boot, and **102 of the 196 numbers are served**, after the memory,
 filesystem, process, time and network levels.  That is the number the census
 command above answers, and it is the one to re-take rather than trust.
 
-The boot's own line, `syscall table installed, 79 number(s) served`, counts
+The boot's own line, `syscall table installed, 81 number(s) served`, counts
 only the registry's half, the numbers whose handler functions live in
 `boot.rs`'s table.  The rest are the ones `process/` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
@@ -157,7 +157,7 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 196 numbers, **100 are served**.  The 96 that are not fall into these
+Of 196 numbers, **102 are served**.  The 94 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
 The network has no row, which is the change since this table was first taken:
 each of its 43 numbers is served, so nothing from it is left to list.
@@ -173,11 +173,10 @@ each of its 43 numbers is served, so nothing from it is left to list.
 | io_uring (`IoUringSetup`, `IoUringEnter`) | 2 | none, and it is a second way to do what the calls above already do |
 | GPU (`GpuCtxCreate`, `GpuCtxDestroy`, `GpuDeviceInfo`, `GpuResCreate3d`, `GpuResUnref`, `GpuSetScanout`, `GpuSubmit3d`, `GpuTransferFromHost3d`, `GpuTransferToHost3d`) | 9 | none, a VIRGL context over a device this tree does not have |
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
-| the block devices a boot found (`ListBlockDevices`, `Sync`) | 2 | the registry of devices exists and answers `SystemInfo`; what is missing is the list |
 | extended attributes (`SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`) | 4 | every filesystem that has them implements them; what is missing is the wire format for a packed list |
 | power, audit, policy and packages (`Cpufreq*`, `Audit*`, `MacSetPathType`, `ServiceDeclare`, `ServiceStartAll`, `InstallPackage`) | 11 | `power`'s governors and `audit`'s ring exist; the calls do not |
 
-The twelve rows sum to exactly 96, because each number is assigned to one row by
+The twelve rows sum to exactly 94, because each number is assigned to one row by
 name, the edges between families (`ListThreads` is process introspection *and*
 scheduling) are settled by where the row's handler would live, and that
 assignment is the census's one judgement call.  The counts come from matching
@@ -691,7 +690,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
 | `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; Level 7 states the order, and its first item, the flush, has landed |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial**, 100 of 196 numbers |
+| `syscall` | 15,647 | **partial**, 102 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
@@ -713,8 +712,8 @@ number's presence as a capability is the mistake this tree's `Handler::Unimpleme
 exists to avoid.
 
 This tree declares **196**, the same 194 plus `WaitProcessOf` (196) and
-`Ipv6Status` (197), with the same two retirements, and serves **100** of them.
-The other 96 are what the levels below are about.
+`Ipv6Status` (197), with the same two retirements, and serves **102** of them.
+The other 94 are what the levels below are about.
 
 That single number is the clearest statement of what is left.  The old tree's
 15,647-line syscall tree is the work list, and its modules are named by what
@@ -873,6 +872,25 @@ size.
    format table row the namespace selects instead of answering 512 from a
    constant.  The controller half, mapping BAR0, driving the queues and claiming
    a message, is what is left.
+
+   **Two numbers came with the device list**, as this tree's rule asks when a
+   change touches them:
+
+   - `ListBlockDevices` (79), one disk the boot found, by index.  The list is
+     `kernel/block_devices`, a fixed array the boot fills as it attaches each
+     device: the ABI's index is "which of the devices this boot found", and a
+     fixed array makes "the list is full" a state the code names rather than a
+     silent drop.  It answers the **devices**, not the filesystems, so a disk
+     nobody mounted still has a name and a size.
+   - `Sync` (72), every mounted filesystem flushed in one call.  It is the
+     whole-machine half of durability where a descriptor's `Fsync` is the
+     per-file half, and the mount table grew `sync_all` for it.
+
+   The record's layout had a defect of its own to avoid: `#[repr(C)]` pads the
+   three 64-bit words to the name field's **aligned** end, which for a 63-byte
+   name is offset 64 and not 63.  A handler that added 63 would put every word
+   one byte early and no field would read as the number it was given, so the
+   offsets come from the type's own layout rather than from the field order.
 3. **`ahci`.**  Worth stating precisely, because the roadmap used to imply it
    was a driver crate like the others: **the old tree had no `drivers/ahci`.**
    It was the previous tree's x86_64 architecture crate's `ata` module, 1,144

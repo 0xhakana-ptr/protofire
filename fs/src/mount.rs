@@ -153,6 +153,37 @@ impl MountTable {
             .collect()
     }
 
+    /// Flush every mounted filesystem to its device, answering how many were
+    /// asked.
+    ///
+    /// What `Sync` is: the explicit half of durability, where a descriptor's
+    /// `Fsync` is the per-file half.  Each entry point is the filesystem's own
+    /// `sync`, which for a volume with a block cache is "write the dirty blocks
+    /// and flush the device" and for the tmpfs is nothing, because its bytes
+    /// are the only copy there is.
+    ///
+    /// A filesystem that refuses does not stop the others: the answer is the
+    /// first error, and the count is of the ones that were asked.  Stopping at
+    /// the first failure would leave the rest dirty for a reason a caller
+    /// cannot see, and "one of them refused" is the fact that matters.
+    ///
+    /// The answer is a `Result` of the count rather than of `()` because a
+    /// caller wants both: whether everything flushed, and how many there were.
+    pub fn sync_all(&self) -> abi::Result<usize> {
+        let mut asked = 0;
+        let mut first_error = None;
+        for mount in &self.mounts {
+            asked += 1;
+            if let Err(error) = mount.fs.sync() {
+                first_error.get_or_insert(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(asked),
+        }
+    }
+
     /// How many filesystems are mounted.
     pub fn len(&self) -> usize {
         self.mounts.len()

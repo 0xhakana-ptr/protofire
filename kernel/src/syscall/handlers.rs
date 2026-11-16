@@ -261,6 +261,70 @@ pub fn seek(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     Ok(Dispatch::complete(position as usize))
 }
 
+/// List one of the block devices this boot found.
+///
+/// Arguments: the index, the record, its length, then three reserved slots that
+/// must be zero.  Answers zero, with the ABI's
+/// [`fs_abi::BlockDeviceInfoRecord`] filled.
+///
+/// The index is "which of the devices this boot found", in the order it found
+/// them, and an index past the end answers `NotFound` rather than a zeroed
+/// record: a record with no name and no blocks would be a device a program
+/// prints as real.
+///
+/// This answers the **devices**, not the filesystems.  A disk nobody mounted
+/// has a name and a size and no mount point, and it is exactly the disk a
+/// program asking this question wants to learn about.
+pub fn list_block_devices(
+    _table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let index = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 3)?;
+
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < fs_abi::BLOCK_DEVICE_INFO_RECORD_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let device = crate::block_devices::get(index).ok_or(Error::NotFound)?;
+
+    // The record's arithmetic is the ABI's, taken from the type's own layout
+    // rather than from the field order.  `#[repr(C)]` pads the three 64-bit
+    // words to the name field's aligned end, which for a 63-byte name is offset
+    // 64 and not 63: a handler that added 63 would put every word one byte
+    // early, and no field would read as the number it was given.
+    let name = &mut buffer[..fs_abi::BLOCK_DEVICE_NAME_MAX];
+    name.copy_from_slice(&device.name);
+    buffer[fs_abi::BLOCK_DEVICE_INFO_RECORD_BLOCK_SIZE_OFFSET
+        ..fs_abi::BLOCK_DEVICE_INFO_RECORD_BLOCK_SIZE_OFFSET + 8]
+        .copy_from_slice(&device.block_size.to_le_bytes());
+    buffer[fs_abi::BLOCK_DEVICE_INFO_RECORD_BLOCK_COUNT_OFFSET
+        ..fs_abi::BLOCK_DEVICE_INFO_RECORD_BLOCK_COUNT_OFFSET + 8]
+        .copy_from_slice(&device.block_count.to_le_bytes());
+    buffer[fs_abi::BLOCK_DEVICE_INFO_RECORD_READ_ONLY_OFFSET
+        ..fs_abi::BLOCK_DEVICE_INFO_RECORD_READ_ONLY_OFFSET + 8]
+        .copy_from_slice(&(device.read_only as u64).to_le_bytes());
+    Ok(Dispatch::complete(0))
+}
+
+/// Flush every mounted filesystem to its device.
+///
+/// Arguments: five reserved slots that must be zero.  Answers zero.
+///
+/// This is the whole-machine `sync`, where `Fsync` is the per-descriptor one.
+/// A caller that wrote through several files and wants them all durable asks
+/// this rather than holding a descriptor for each.
+pub fn sync(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    validate_zeroed_args(arguments.context, 0)?;
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    namespace.sync_all()?;
+    Ok(Dispatch::complete(0))
+}
+
 /// Write the caller's bytes to the kernel's own log.
 ///
 /// Arguments: the buffer, its length, then four reserved slots that must be

@@ -53,6 +53,10 @@ pub const SYS_OPEN: usize = SyscallNumber::Open as usize;
 pub const SYS_EXIT: usize = SyscallNumber::Exit as usize;
 /// `WriteDebug`, a program's own bytes into the kernel's log.
 pub const SYS_WRITE_DEBUG: usize = SyscallNumber::WriteDebug as usize;
+/// `ListBlockDevices`, one disk the boot found.
+pub const SYS_LIST_BLOCK_DEVICES: usize = SyscallNumber::ListBlockDevices as usize;
+/// `Sync`, every mounted filesystem flushed.
+pub const SYS_SYNC: usize = SyscallNumber::Sync as usize;
 /// `ReadConsole`, one line of input, which this machine cannot yet supply.
 pub const SYS_READ_CONSOLE: usize = SyscallNumber::ReadConsole as usize;
 /// `Read`, from a descriptor.
@@ -246,6 +250,22 @@ pub const TIME_RECORD_BYTES: usize = core::mem::size_of::<abi::time::TimeRecord>
 pub const OPEN_READ: usize = abi::fs::OPEN_FLAG_READ;
 /// Open for writing, creating the file when it is not there.
 pub const OPEN_WRITE_CREATE: usize = abi::fs::OPEN_FLAG_WRITE | abi::fs::OPEN_FLAG_CREATE;
+/// The size of the ABI's block-device record, and the offsets of its words.
+///
+/// A program reads the record the handler filled, so the layout it parses is
+/// the one the kernel wrote; deriving both from `abi` is what keeps them
+/// agreeing.
+pub const BLOCK_DEVICE_INFO_RECORD_SIZE: usize = abi::fs::BLOCK_DEVICE_INFO_RECORD_SIZE;
+/// Where the record's block size is.
+pub const BLOCK_DEVICE_INFO_BLOCK_SIZE_OFFSET: usize =
+    abi::fs::BLOCK_DEVICE_INFO_RECORD_BLOCK_SIZE_OFFSET;
+/// Where the record's block count is.
+pub const BLOCK_DEVICE_INFO_BLOCK_COUNT_OFFSET: usize =
+    abi::fs::BLOCK_DEVICE_INFO_RECORD_BLOCK_COUNT_OFFSET;
+/// Where the record's read-only flag is.
+pub const BLOCK_DEVICE_INFO_READ_ONLY_OFFSET: usize =
+    abi::fs::BLOCK_DEVICE_INFO_RECORD_READ_ONLY_OFFSET;
+
 /// The only `Fallocate` mode this build defines: punch a hole, keep the size.
 pub const PUNCH_HOLE_KEEP_SIZE: usize =
     abi::fs::FALLOC_FL_PUNCH_HOLE | abi::fs::FALLOC_FL_KEEP_SIZE;
@@ -424,6 +444,33 @@ pub fn sys_exit(status: usize) -> ! {
 #[cfg(target_os = "none")]
 pub fn sys_open(path: usize, flags: usize) -> usize {
     syscall6(SYS_OPEN, path, flags, 0, 0, 0, 0)
+}
+
+/// `list_block_devices(index, record)`: zero, with the record filled.
+///
+/// The record's size is the ABI's own constant, so a program compiled against
+/// this wrapper cannot disagree with the kernel about the layout: the number
+/// moves in `abi` and both sides rebuild.
+#[cfg(target_os = "none")]
+pub fn sys_list_block_devices(
+    index: usize,
+    record: &mut [u8; BLOCK_DEVICE_INFO_RECORD_SIZE],
+) -> usize {
+    syscall6(
+        SYS_LIST_BLOCK_DEVICES,
+        index,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `sync()`: zero once every mounted filesystem has flushed.
+#[cfg(target_os = "none")]
+pub fn sys_sync() -> usize {
+    syscall6(SYS_SYNC, 0, 0, 0, 0, 0, 0)
 }
 
 /// `write_debug(buffer)`: the bytes taken.
