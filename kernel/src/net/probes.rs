@@ -21,48 +21,48 @@ use alloc::vec::Vec;
 use netdev::LinkDevice;
 use sync::Mutex;
 
-use super::DCCP;
-use super::INTERFACE;
-use super::MULTICAST;
-use super::TCP;
-use super::apply_lease;
-use super::bind_udp;
-use super::create_raw_socket;
-use super::dccp_accept;
-use super::dccp_close;
-use super::dccp_listen;
-use super::dccp_read;
-use super::deliver_dccp;
-use super::deliver_udp;
-use super::demux;
-use super::demux_ipv6;
-use super::filter_add;
-use super::filter_remove;
-use super::filter_status;
-use super::hardware_for_v4;
-use super::ipsec_add_sa;
-use super::ipsec_add_sp;
-use super::ipsec_del_sa;
-use super::ipsec_del_sp;
-use super::ipsec_open;
-use super::ipsec_status;
-use super::multicast_add_mfc;
-use super::multicast_done;
-use super::multicast_init;
-use super::peer_hardware;
-use super::rebind_lease;
-use super::resolve;
-use super::send_datagram;
-use super::send_raw_packet;
-use super::submit_filtered;
-use super::tcp_accept;
-use super::tcp_close;
-use super::tcp_connect;
-use super::tcp_exchange;
-use super::tcp_listen;
-use super::tcp_read;
-use super::tcp_write;
-use super::write_ipv6;
+use super::core::DCCP;
+use super::core::INTERFACE;
+use super::core::TCP;
+use super::core::bind_udp;
+use super::core::create_raw_socket;
+use super::core::deliver_udp;
+use super::core::hardware_for_v4;
+use super::core::send_datagram;
+use super::core::send_raw_packet;
+use super::dccp::dccp_accept;
+use super::dccp::dccp_close;
+use super::dccp::dccp_listen;
+use super::dccp::dccp_read;
+use super::dccp::deliver_dccp;
+use super::demux4::demux;
+use super::demux6::demux_ipv6;
+use super::demux6::peer_hardware;
+use super::demux6::write_ipv6;
+use super::dhcp::apply_lease;
+use super::dhcp::rebind_lease;
+use super::dhcp::resolve;
+use super::filter::filter_add;
+use super::filter::filter_remove;
+use super::filter::filter_status;
+use super::filter::submit_filtered;
+use super::ipsec::ipsec_add_sa;
+use super::ipsec::ipsec_add_sp;
+use super::ipsec::ipsec_del_sa;
+use super::ipsec::ipsec_del_sp;
+use super::ipsec::ipsec_open;
+use super::ipsec::ipsec_status;
+use super::multicast::MULTICAST;
+use super::multicast::multicast_add_mfc;
+use super::multicast::multicast_done;
+use super::multicast::multicast_init;
+use super::tcp::tcp_accept;
+use super::tcp::tcp_close;
+use super::tcp::tcp_connect;
+use super::tcp::tcp_exchange;
+use super::tcp::tcp_listen;
+use super::tcp::tcp_read;
+use super::tcp::tcp_write;
 
 /// Prove the IPv6 side of the stack on the boot's own machine.
 ///
@@ -80,7 +80,6 @@ use super::write_ipv6;
 /// for its address goes unanswered and the boot would have no advertisement
 /// to learn from.  A probe that printed a line for an exchange that never
 /// happened is the shape this tree's gates exist to catch.
-#[cfg(target_os = "none")]
 pub fn ipv6_probe() -> bool {
     let (card, mac, local) = {
         let interface = INTERFACE.lock();
@@ -236,7 +235,6 @@ pub fn ipv6_probe() -> bool {
 /// A network with no name server answers the probe with a line and no
 /// address, which is not a failure of the stack: the line says which of the
 /// two happened.
-#[cfg(target_os = "none")]
 pub fn dns_probe() -> bool {
     // The name QEMU's resolver answers for on every user-mode network: the
     // host's own name for the guest's gateway.  Asking a name that does not
@@ -282,7 +280,6 @@ pub fn dns_probe() -> bool {
 ///
 /// The line names the address and the prefix it came from, which is what a
 /// reader compares against the Mac's own identifier.
-#[cfg(target_os = "none")]
 pub fn slaac_probe() -> bool {
     let hardware = {
         let interface = INTERFACE.lock();
@@ -419,7 +416,6 @@ pub fn slaac_probe() -> bool {
 /// one a real fragment meets.  What the line names is the payload's length and
 /// its first and last byte, which only a correctly reassembled datagram could
 /// produce.
-#[cfg(target_os = "none")]
 pub fn reassembly_probe() -> bool {
     const PORT: u16 = 9200;
     const PAYLOAD: &[u8] = b"protofire-fragmented";
@@ -518,7 +514,6 @@ pub fn reassembly_probe() -> bool {
 /// The IPv4 side's own probe answers the same question for the other family,
 /// which is why the two lines are asserted separately by a gate: one family
 /// working says nothing about the other.
-#[cfg(target_os = "none")]
 pub fn ipv6_transport_probe() -> bool {
     let (local, card) = {
         let interface = INTERFACE.lock();
@@ -622,7 +617,6 @@ pub fn ipv6_transport_probe() -> bool {
 /// and what makes them evidence is that the second response is deliberately
 /// **later** than the first: a stack that measured one round trip and reused it
 /// would print the same number twice.
-#[cfg(target_os = "none")]
 pub fn round_trip_probe() -> bool {
     let listener = match tcp_listen(9110) {
         Ok(id) => id,
@@ -749,7 +743,6 @@ pub fn round_trip_probe() -> bool {
 ///
 /// The line's number is the inbox's length, which is the data and not the
 /// headers: eight bytes sent, eight held.
-#[cfg(target_os = "none")]
 pub fn frame_data_probe() -> bool {
     const PORT: u16 = 9109;
     const FIRST: &[u8] = b"four";
@@ -893,7 +886,6 @@ pub fn frame_data_probe() -> bool {
 /// The line names how many routes exist and which address the frame went to,
 /// and the second number is the assertion: the specific route's hardware
 /// address and not the default's.
-#[cfg(target_os = "none")]
 pub fn route_probe() -> bool {
     // A destination the default route covers and the specific one does not
     // have to win for.
@@ -967,12 +959,10 @@ pub fn route_probe() -> bool {
 /// look like a forward from every counter the tables keep, and a frame with the
 /// wrong hop count looks like a forward from a count alone.  So the probe reads
 /// the bytes.
-#[cfg(target_os = "none")]
 struct RecordingCard {
     frames: Mutex<Vec<Vec<u8>>>,
 }
 
-#[cfg(target_os = "none")]
 impl RecordingCard {
     fn new() -> Self {
         Self {
@@ -985,7 +975,6 @@ impl RecordingCard {
     }
 }
 
-#[cfg(target_os = "none")]
 impl LinkDevice for RecordingCard {
     fn hardware_address(&self) -> [u8; 6] {
         [0x02; 6]
@@ -1013,12 +1002,10 @@ impl LinkDevice for RecordingCard {
 /// the frame and then returned an error looks like a refusal from the caller's
 /// side and is a packet on the wire.  So the probe needs a card whose only job
 /// is to count.
-#[cfg(target_os = "none")]
 struct CountingCard {
     frames: core::sync::atomic::AtomicUsize,
 }
 
-#[cfg(target_os = "none")]
 impl CountingCard {
     fn new() -> Self {
         Self {
@@ -1031,7 +1018,6 @@ impl CountingCard {
     }
 }
 
-#[cfg(target_os = "none")]
 impl LinkDevice for CountingCard {
     fn hardware_address(&self) -> [u8; 6] {
         [0x02; 6]
@@ -1062,7 +1048,6 @@ impl LinkDevice for CountingCard {
 ///
 /// The three numbers are the state the client reached, whether the server read
 /// the datagram the client sent, and whether the client finished on a close.
-#[cfg(target_os = "none")]
 pub fn dccp_probe() -> bool {
     const PORT: u16 = 9_109;
     const CLIENT_PORT: u16 = 9_110;
@@ -1207,7 +1192,6 @@ pub fn dccp_probe() -> bool {
 /// through the demux is the wiring.  And the same frame delivered twice must
 /// produce **one** delivery: the replay window is what makes ESP a protocol and
 /// not a cipher.
-#[cfg(target_os = "none")]
 pub fn ipsec_probe() -> bool {
     const PORT: u16 = 9_108;
     const SPI: u32 = 0x0000_2A2A;
@@ -1411,7 +1395,6 @@ pub fn ipsec_probe() -> bool {
 /// whose rejection path ran only under a mutation.  And it does not prove the
 /// syscall's connection to a server, because there is none.  `docs/status.md`
 /// says all three.
-#[cfg(target_os = "none")]
 pub fn tls_probe() -> bool {
     use net::tls;
 
@@ -1537,7 +1520,6 @@ pub fn tls_probe() -> bool {
 /// copy left with one hop fewer (a forwarder that did not decrement would loop
 /// forever), and its payload is the sender's (a copy that rebuilt the payload
 /// would forward bytes nobody sent).
-#[cfg(target_os = "none")]
 pub fn multicast_probe() -> bool {
     const GROUP: [u8; 4] = [239, 1, 2, 3];
     const SENDER: [u8; 4] = [10, 0, 2, 2];
@@ -1694,7 +1676,6 @@ pub fn multicast_probe() -> bool {
 ///
 /// The rule is removed and the counts restored before the probe returns, so the
 /// boot's later exchanges run under the filter they started with.
-#[cfg(target_os = "none")]
 pub fn filter_probe() -> bool {
     const PORT: u16 = 9_106;
 
@@ -1875,7 +1856,6 @@ pub fn filter_probe() -> bool {
 /// would still agree on the length.
 ///
 /// [RFC 3692]: https://www.rfc-editor.org/rfc/rfc3692
-#[cfg(target_os = "none")]
 pub fn raw_probe() -> bool {
     const PROTOCOL: u8 = 253;
     const PAYLOAD: &[u8] = b"raw packet";
@@ -1927,7 +1907,6 @@ pub fn raw_probe() -> bool {
 /// line names what only a completed exchange could have carried: the ids
 /// the table handed out, the echo's length beside the send's, and the close
 /// that left both ends done.
-#[cfg(target_os = "none")]
 pub fn tcp_probe() -> bool {
     let listener = match tcp_listen(9000) {
         Ok(id) => id,
@@ -2028,7 +2007,6 @@ pub fn tcp_probe() -> bool {
 /// the segment that was sent twice, and `intact` from the peer's own
 /// acknowledgement retiring the entry.  A stack that queued nothing would
 /// send nothing again and the peer's inbox would stay empty.
-#[cfg(target_os = "none")]
 pub fn retransmission_probe() -> bool {
     let listener = match tcp_listen(9100) {
         Ok(id) => id,
@@ -2126,7 +2104,6 @@ pub fn retransmission_probe() -> bool {
 /// stack that parsed the report and did nothing with it prints the same number
 /// twice, which is exactly the state this change found: `demux` had no ICMP
 /// branch at all, so every report about this machine was dropped unread.
-#[cfg(target_os = "none")]
 pub fn path_mtu_probe() -> bool {
     let listener = match tcp_listen(9103) {
         Ok(id) => id,
@@ -2267,7 +2244,6 @@ pub fn path_mtu_probe() -> bool {
 ///
 /// The report is built here because no wire this gate boots sends one, and the
 /// frame goes through the same `demux_ipv6` a received one does.
-#[cfg(target_os = "none")]
 pub fn path_mtu6_probe() -> bool {
     let (local, hardware) = {
         let interface = INTERFACE.lock();
@@ -2390,7 +2366,6 @@ pub fn path_mtu6_probe() -> bool {
 /// The line's two numbers are the window before and after an unread segment the
 /// size of the whole buffer.  A stack that enforced nothing would print the
 /// same number twice.
-#[cfg(target_os = "none")]
 pub fn window_probe() -> bool {
     let listener = match tcp_listen(9105) {
         Ok(id) => id,
@@ -2483,7 +2458,6 @@ pub fn window_probe() -> bool {
 /// `1000` is the receive buffer the probe set and the window after, `14600` is
 /// the congestion window before, and `2190` is what it became when the probe
 /// named a send buffer of three segments.
-#[cfg(target_os = "none")]
 pub fn option_effect_probe() -> bool {
     let listener = match tcp_listen(9108) {
         Ok(id) => id,
@@ -2574,7 +2548,6 @@ pub fn option_effect_probe() -> bool {
 /// what the same write carried once the peer reopened.  A sender that parsed
 /// the field and ignored it would print `8192 -> 8192` and carry the seven
 /// bytes while the peer said nothing fits, which is the defect this pins.
-#[cfg(target_os = "none")]
 pub fn peer_window_probe() -> bool {
     let listener = match tcp_listen(9107) {
         Ok(id) => id,
@@ -2670,7 +2643,6 @@ pub fn peer_window_probe() -> bool {
 /// measured on all four machines; a machine whose wire does not is a machine
 /// where this line would have to be argued for rather than weakened, and the
 /// probe says so by printing what happened.
-#[cfg(target_os = "none")]
 pub fn rebind_probe() -> bool {
     let lease = {
         let interface = INTERFACE.lock();
@@ -2709,7 +2681,6 @@ pub fn rebind_probe() -> bool {
 /// The three numbers are the initial window, what acknowledgements grew it to,
 /// and what a timeout left it at.  A stack that never grew it prints the first
 /// number three times; one that never collapsed it prints the second twice.
-#[cfg(target_os = "none")]
 pub fn congestion_probe() -> bool {
     let listener = match tcp_listen(9106) {
         Ok(id) => id,
@@ -2845,7 +2816,6 @@ pub fn congestion_probe() -> bool {
 /// delivers a stream's second half to the peer before its first, and then the
 /// first.  A stack that dropped the early half would leave the peer's inbox
 /// short by exactly that half, which is the number on the line.
-#[cfg(target_os = "none")]
 pub fn out_of_order_probe() -> bool {
     let listener = match tcp_listen(9101) {
         Ok(id) => id,

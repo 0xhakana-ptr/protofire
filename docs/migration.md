@@ -46,7 +46,7 @@ says so and says what it would take.
   IPv6, ICMPv6, neighbour discovery, UDP and TCP.  It is a pure reader and
   writer, no lock, no `static`, no device, and no address of its own, and the
   state a machine needs (which address, which neighbours, which sockets) is
-  `kernel/src/net.rs`'s.  It is `net`, the name the workspace member uses, and
+  `kernel/src/net/mod.rs`'s.  It is `net`, the name the workspace member uses, and
   not `network`.  `virtio_net` is the driver and does not name it: a packet's
   format is the stack's business and the card's is the ring.  Its files sit in
   `link/`, `internet/` and `transport/`, one directory per layer of the frame,

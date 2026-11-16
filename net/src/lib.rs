@@ -73,7 +73,7 @@
 //!
 //! Which address a machine has, which neighbours it can reach, and when a task
 //! waiting on a socket wakes.  Those are choices about a boot's state, and they
-//! live in `kernel/src/net.rs`: this crate computes what a frame means and
+//! live in `kernel/src/net/mod.rs`: this crate computes what a frame means and
 //! keeps the table a caller hands it, and the kernel keeps what the machine
 //! knows.
 //!

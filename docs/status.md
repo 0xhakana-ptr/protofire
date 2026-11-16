@@ -1727,7 +1727,7 @@ another machine, each its own level's decision.
 **Where the connection table lives.**  The streams a machine holds, the id
 per end, the port a listener reserves, the queue a completed handshake waits
 in, and the counters that hand out ids and sequence numbers, are
-`net::tcp_table::Table`, not `kernel/src/net.rs`.  All of it is protocol
+`net::tcp_table::Table`, not `kernel/src/net/mod.rs`.  All of it is protocol
 state: the four fields a segment is keyed on are the wire's, and nothing in
 the table needs a card, a scheduler or a lock.  What stayed in the kernel is
 the part that does: the one lock, whether an address is this machine, which
@@ -1759,7 +1759,7 @@ one asserts the solicitation's length difference is exactly the option's
 eight bytes, which is the defect that round found.  A boot could only ever
 learn that by failing.
 
-`kernel/src/net.rs` is 196 lines smaller across the three moves, and every
+`kernel/src/net/mod.rs` is 196 lines smaller across the three moves, and every
 line that left is arithmetic a host can now run.
 
 **The transports carry over IPv6.**  Until this change the IPv6 side answered
