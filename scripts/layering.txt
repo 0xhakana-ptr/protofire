@@ -65,6 +65,16 @@
 # namespace count from offset 95 where the specification puts it at 516.
 0 nvme
 
+# `ahci` is the SATA controller's wire format: BAR5's registers, a port's
+# register block, the command-list header, the PRD table entry, the
+# Host-to-Device FIS and the ATA identify structure.  It is a relocation of the
+# previous tree's 1,085-line AHCI driver out of its x86_64 architecture crate,
+# which is the inversion `check-arch-fanout` refuses, and it names nothing for
+# the same reason `nvme` does not: the command header's CFL field and the
+# header's write bit are facts a host test can hold, and the two the previous
+# driver got wrong are both assertions here.
+0 ahci
+
 # ── Layer 1: the wire format ────────────────────────────────────────────────
 #
 # `abi` is what the kernel and a program both compile against: the error type and

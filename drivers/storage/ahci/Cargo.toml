@@ -1,0 +1,23 @@
+[package]
+name = "ahci"
+description = "the AHCI wire format: BAR5's registers, a port's block, the three command structures, and the identify structure"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The AHCI wire format and register map: BAR5's offsets, a port's register
+# block, the command-list header, the PRD table entry, the Host-to-Device FIS,
+# and the ATA identify structure.
+#
+# It names nothing of this tree, which is what lets every offset, every bit
+# position and every structure size be checked on a host.  A command header is
+# 32 bytes wherever it is built, so the layout is a fact about a specification
+# rather than about a machine, and the controller that drives it is the
+# machine's half.  This is a relocation of the previous tree's 1,085-line
+# AHCI driver out of its x86_64 architecture crate, which is the shape
+# `check-arch-fanout` refuses.
+[dependencies]
+
+# The tests build a command header and an identify structure, neither of which
+# needs an allocator beyond the identify test's page-shaped answer.

@@ -7,6 +7,10 @@ name = "abi"
 version = "0.1.0"
 
 [[package]]
+name = "ahci"
+version = "0.1.0"
+
+[[package]]
 name = "allocator"
 version = "0.1.0"
 dependencies = [
