@@ -29,7 +29,15 @@ cargo install just        # or: apt install just / dnf install just
 # 3. QEMU, only for the tiers that boot something.
 #    `cargo test --workspace` and `sh scripts/verify.sh p0` need neither QEMU
 #    nor a boot: they build every crate and run its tests on the host.
+# 
+#    Debian / Ubuntu
 apt install qemu-system-x86 qemu-system-arm qemu-system-misc
+
+#    Fedora / RHEL
+dnf install qemu-system-x86 qemu-system-arm qemu-system-misc
+
+#    Arch Linux
+pacman -S qemu-system-x86 qemu-system-arm qemu-system-misc
 ```
 
 ```sh
