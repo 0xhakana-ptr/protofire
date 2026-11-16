@@ -210,6 +210,12 @@ The calls a ring-3 program can make today, and the slots each carries.
   `a2`-`a5` reserved zero.  Answers zero.  The descriptor must have been opened
   for writing, and its own position does not move, so a caller that writes,
   truncates and writes again appends rather than overwriting.
+- **`Fsync`**, `a0` the descriptor; `a1`-`a5` reserved zero.  Answers zero once
+  the file's data and the metadata that locates it are durable.  The descriptor
+  must have been opened for writing.
+- **`Fdatasync`**, `a0` the descriptor; `a1`-`a5` reserved zero.  Answers zero
+  once the file's **data** is durable; a filesystem that cannot separate the
+  data from its metadata answers the stronger flush.
 - **`Seek`**, `a0` the descriptor; `a1` the offset, a **signed** word;
   `a2` the whence, one of `SEEK_SET`, `SEEK_CUR`, `SEEK_END`, `SEEK_DATA` and
   `SEEK_HOLE`; `a3`-`a5` reserved zero.  Answers the new position, not zero.  A

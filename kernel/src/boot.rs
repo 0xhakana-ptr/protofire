@@ -258,6 +258,14 @@ fn install_registry(namespace: fs::MountTable) {
     // ABI has it return the new offset: a caller that sought to the end needs
     // the size, and no other call in this group gives it.
     table.register(::syscall::SyscallNumber::Seek, crate::syscall::seek);
+    // The two flushes.  `Fsync` waits for the data and its metadata,
+    // `Fdatasync` for the data alone; a filesystem that cannot separate them
+    // answers the stronger one, which is a superset of what the weaker asks.
+    table.register(::syscall::SyscallNumber::Fsync, crate::syscall::fsync);
+    table.register(
+        ::syscall::SyscallNumber::Fdatasync,
+        crate::syscall::fdatasync,
+    );
     table.register(
         ::syscall::SyscallNumber::CreateDir,
         crate::syscall::create_dir,

@@ -33,11 +33,11 @@ echo "missing  $(comm -13 /tmp/served.txt /tmp/declared.txt | wc -l)"
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **93 of the 196 numbers are served**, after the memory,
+Four machines boot, and **95 of the 196 numbers are served**, after the memory,
 filesystem, process, time and network levels.  That is the number the census
 command above answers, and it is the one to re-take rather than trust.
 
-The boot's own line, `syscall table installed, 72 number(s) served`, counts
+The boot's own line, `syscall table installed, 74 number(s) served`, counts
 only the registry's half, the numbers whose handler functions live in
 `boot.rs`'s table.  The rest are the ones `process/` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
@@ -157,14 +157,14 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 196 numbers, **93 are served**.  The 103 that are not fall into these
+Of 196 numbers, **95 are served**.  The 101 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
 The network has no row, which is the change since this table was first taken:
 each of its 43 numbers is served, so nothing from it is left to list.
 
 | family | numbers | in the kernel today |
 |---|---|---|
-| filesystem metadata and mutation (`Fsync`, `Fdatasync`, `Fallocate`, `SetFdFlags`, xattrs, file flags, the access and permission queries) | 16 | **all of it**, the filesystem implements every operation |
+| filesystem metadata and mutation (`Fallocate`, `SetFdFlags`, xattrs, file flags, the access and permission queries) | 14 | **all of it**, the filesystem implements every operation |
 | descriptors (`Dup`, `Dup2`, `Fcntl`, `Poll`) | 4 | the descriptor holds the handle and the rights; what is missing is a way to copy one |
 | shared memory, timers, multiplexing and queues (`Shm*`, `Futex`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 21 | none, and each is one mechanism rather than one call |
 | identity (`GetUid`, `GetGid`, `AddUser`, `RemoveUser`, `SetUserPassword`, `SetSecurityDescriptor`) | 6 | `security` has the types and nothing has asked them |
@@ -175,7 +175,7 @@ each of its 43 numbers is served, so nothing from it is left to list.
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
 | power, audit, policy and packages (`Cpufreq*`, `Audit*`, `MacSetPathType`, `ServiceDeclare`, `ServiceStartAll`, `InstallPackage`) | 11 | `power`'s governors and `audit`'s ring exist; the calls do not |
 
-The ten rows sum to exactly 103, because each number is assigned to one row by
+The ten rows sum to exactly 101, because each number is assigned to one row by
 name, the edges between families (`ListThreads` is process introspection *and*
 scheduling) are settled by where the row's handler would live, and that
 assignment is the census's one judgement call.  The counts come from matching
@@ -281,6 +281,15 @@ Writing it produced one lesson worth keeping: the first version had a
 check changed no test**, because the conversion already refuses both ends.  The
 check is gone, and the comment where it was now says so.  A refusal no test can
 remove is a refusal nobody can tell is there.
+
+`Fsync` (54) and `Fdatasync` (55) came next, and they are the reverse problem:
+their success leaves no trace on the file, so every test that reads the status
+word passes a handler that answered without reaching the node.  The test that
+holds them inserts a node that **counts** its two flush entry points, and the
+assertions are on those counts: `Fsync` calls `sync` once and not `sync_data`,
+`Fdatasync` the other way round, and a read-only descriptor reaches neither.
+That is the cheap version of the rule this tree keeps relearning, a call that is
+written, wired and never executed looks exactly like one that works.
 
 `SetLength` (20) was on that list and has come off it.  The filesystem already
 implemented it, `VNode::set_len`, and what was missing was a table method, a
@@ -623,7 +632,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
 | `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; the rest are not here |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial**, 93 of 196 numbers |
+| `syscall` | 15,647 | **partial**, 95 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
@@ -645,8 +654,8 @@ number's presence as a capability is the mistake this tree's `Handler::Unimpleme
 exists to avoid.
 
 This tree declares **196**, the same 194 plus `WaitProcessOf` (196) and
-`Ipv6Status` (197), with the same two retirements, and serves **93** of them.
-The other 103 are what the levels below are about.
+`Ipv6Status` (197), with the same two retirements, and serves **95** of them.
+The other 101 are what the levels below are about.
 
 That single number is the clearest statement of what is left.  The old tree's
 15,647-line syscall tree is the work list, and its modules are named by what
@@ -751,7 +760,7 @@ The syscall gap restated as work: roughly twenty mechanisms, ordered by what
 each unblocks rather than by size.
 
 1. **Descriptors and the file interface**, `Dup`, `Dup2`, `Fcntl`, `Poll`,
-   `Fsync`, `Fdatasync`, `Fallocate`,
+   `Fallocate`,
    `SetFdFlags`, `SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`,
    `SetFileFlags`, `GetFileFlags`, `AccessQuery`, `AccessQueryAt`,
    `AccessQueryFd`, `PermissionMetadata`, `PermissionMetadataAt`,

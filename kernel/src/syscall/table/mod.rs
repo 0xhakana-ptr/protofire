@@ -1112,6 +1112,54 @@ impl SyscallTable {
         *position = next;
         Ok(next)
     }
+
+    /// Flush a descriptor's file to stable storage.
+    ///
+    /// `data_only` is `Fdatasync`'s difference from `Fsync`: the data reaches
+    /// the device and the metadata that describes the data's location does not
+    /// wait.  Both go through `VNode`, whose `sync_data` defaults to `sync`: a
+    /// filesystem that cannot separate the two is honest by answering the
+    /// stronger flush, which is what a caller of the weaker one can act on.
+    ///
+    /// The right is the **writer's** for the reason a write is: this is the
+    /// call that makes bytes the caller wrote durable, and a descriptor opened
+    /// for reading has no bytes of its own to make durable.  A caller that
+    /// only opened for reading and wants the file on disk is asking on behalf
+    /// of data it did not write, which is `Sync`'s job rather than this one's.
+    ///
+    /// A pipe end, a socket and a stream are refused: none of them is a file
+    /// with a stable storage behind it.  A node whose filesystem has nothing to
+    /// flush answers `Ok(())` rather than `NotImplemented`, because "there is
+    /// nothing to do" is a success and the caller's contract is kept either
+    /// way: `tmpfs` answers that, and its bytes are already the only copy.
+    pub(crate) fn sync_at(
+        &mut self,
+        descriptor_index: usize,
+        data_only: bool,
+        caller: Option<u32>,
+    ) -> Result<()> {
+        self.check_owner(descriptor_index, caller)?;
+        let descriptor = self
+            .descriptors
+            .get(descriptor_index)
+            .ok_or(Error::InvalidArgument)?
+            .as_ref()
+            .ok_or(Error::InvalidArgument)?;
+
+        let Descriptor::File { node, writable, .. } = descriptor else {
+            return Err(Error::InvalidArgument);
+        };
+
+        if !*writable {
+            return Err(Error::PermissionDenied);
+        }
+
+        if data_only {
+            node.sync_data()
+        } else {
+            node.sync()
+        }
+    }
 }
 
 impl Default for SyscallTable {

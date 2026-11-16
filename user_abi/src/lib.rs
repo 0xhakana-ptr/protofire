@@ -61,6 +61,10 @@ pub const SYS_CLOSE: usize = SyscallNumber::Close as usize;
 pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
 /// `Seek`, a descriptor's new position.
 pub const SYS_SEEK: usize = SyscallNumber::Seek as usize;
+/// `Fsync`, the data and its metadata.
+pub const SYS_FSYNC: usize = SyscallNumber::Fsync as usize;
+/// `Fdatasync`, the data alone.
+pub const SYS_FDATASYNC: usize = SyscallNumber::Fdatasync as usize;
 /// `Stat`, by path.
 pub const SYS_STAT: usize = SyscallNumber::Stat as usize;
 /// `ReadDir`, by path and index.
@@ -462,6 +466,18 @@ pub fn sys_set_length(descriptor: usize, length: usize) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_seek(descriptor: usize, offset: i64, whence: usize) -> usize {
     syscall6(SYS_SEEK, descriptor, offset as usize, whence, 0, 0, 0)
+}
+
+/// `fsync(descriptor)`: zero once the file and its metadata are durable.
+#[cfg(target_os = "none")]
+pub fn sys_fsync(descriptor: usize) -> usize {
+    syscall6(SYS_FSYNC, descriptor, 0, 0, 0, 0, 0)
+}
+
+/// `fdatasync(descriptor)`: zero once the file's data is durable.
+#[cfg(target_os = "none")]
+pub fn sys_fdatasync(descriptor: usize) -> usize {
+    syscall6(SYS_FDATASYNC, descriptor, 0, 0, 0, 0, 0)
 }
 
 /// `stat(path, record)`: zero, with the record filled.

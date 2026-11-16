@@ -299,6 +299,35 @@ pub(crate) fn serve_io(
         }
         return Some(outcome);
     }
+    if number == SyscallNumber::Fsync as usize || number == SyscallNumber::Fdatasync as usize {
+        // The two flushes, one branch because they differ only in how much of
+        // the file they wait for and the handler reads which from the number.
+        // Neither takes a pointer.
+        //
+        // The line is the evidence a refusal cannot give: the answer is zero
+        // either way, so a program that flushed nothing and one that flushed
+        // everything print the same status.  Naming which of the two ran is
+        // what the log can say, and "the file is on the device" is not a fact
+        // this boot can observe from ring 3 at all.
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if number == SyscallNumber::Fsync as usize {
+                " flushed descriptor "
+            } else {
+                " flushed the data of descriptor "
+            });
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::Write as usize {
         // The no-length case: a `Write` whose third argument is zero names no
         // bytes, so it is not a write, and it is the announcement.

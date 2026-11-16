@@ -261,6 +261,36 @@ pub fn seek(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     Ok(Dispatch::complete(position as usize))
 }
 
+/// Flush a descriptor's file to stable storage.
+///
+/// Arguments: the descriptor, then five reserved slots that must be zero.
+/// Answers zero: a status, because there is no count a caller could act on.
+///
+/// This is `Fsync`, and it waits for everything the file has: the data and the
+/// metadata that says where the data is.
+pub fn fsync(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    table.sync_at(descriptor, false, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Flush a descriptor's **data** to stable storage.
+///
+/// Arguments: the descriptor, then five reserved slots that must be zero.
+/// Answers zero.
+///
+/// The weaker of the pair: the bytes reach the device and the metadata that
+/// locates them does not have to.  A filesystem that cannot separate the two
+/// answers the stronger flush through `VNode::sync_data`'s default, which is a
+/// superset of what the caller asked for and therefore never a broken promise.
+pub fn fdatasync(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    table.sync_at(descriptor, true, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(0))
+}
+
 /// Report a path's kind and size.
 ///
 /// Arguments: the path, the record, its length, then three reserved slots

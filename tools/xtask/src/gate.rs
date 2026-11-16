@@ -453,6 +453,15 @@ impl Machine {
                 // into evidence that the position moved rather than being
                 // reported.
                 ("protofire: process 1 seeked descriptor ", false),
+                // The two flushes.  Their answer is zero whether the node was
+                // reached or not, so the line naming which one ran is the only
+                // thing this boot can say about them; whether the bytes left
+                // the machine is not a fact ring 3 can observe.
+                ("protofire: process 1 flushed descriptor ", false),
+                (
+                    "protofire: process 1 flushed the data of descriptor ",
+                    false,
+                ),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,
@@ -1298,6 +1307,15 @@ impl Machine {
                     // the line into evidence that the position moved rather
                     // than being reported.
                     ("protofire: process 1 seeked descriptor ", false),
+                    // The two flushes.  Their answer is zero whether the node
+                    // was reached or not, so the line naming which one ran is
+                    // the only thing this boot can say about them; whether the
+                    // bytes left the machine is not a fact ring 3 can observe.
+                    ("protofire: process 1 flushed descriptor ", false),
+                    (
+                        "protofire: process 1 flushed the data of descriptor ",
+                        false,
+                    ),
                     (
                         "protofire: process 1 renamed note.txt via descriptor ",
                         false,
@@ -1796,6 +1814,15 @@ impl Machine {
                 // into evidence that the position moved rather than being
                 // reported.
                 ("protofire: process 1 seeked descriptor ", false),
+                // The two flushes.  Their answer is zero whether the node was
+                // reached or not, so the line naming which one ran is the only
+                // thing this boot can say about them; whether the bytes left
+                // the machine is not a fact ring 3 can observe.
+                ("protofire: process 1 flushed descriptor ", false),
+                (
+                    "protofire: process 1 flushed the data of descriptor ",
+                    false,
+                ),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,

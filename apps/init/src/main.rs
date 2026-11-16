@@ -87,7 +87,11 @@ use user_abi::sys_create_raw_socket;
 #[cfg(target_os = "none")]
 use user_abi::sys_exit;
 #[cfg(target_os = "none")]
+use user_abi::sys_fdatasync;
+#[cfg(target_os = "none")]
 use user_abi::sys_fork;
+#[cfg(target_os = "none")]
+use user_abi::sys_fsync;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use user_abi::sys_get_host_name;
@@ -436,6 +440,23 @@ pub extern "C" fn _start() -> ! {
         sys_exit(246);
     }
     insist(sys_close(seeker));
+
+    // The two flushes, on the descriptor this program just wrote through.  The
+    // answer is zero either way, so the check is that neither refuses: a
+    // program that flushed and one that did not print the same status, which
+    // is why the kernel's own line names which of the two ran.
+    //
+    // The write descriptor is reopened here rather than reused because the one
+    // above was closed; a flush of a closed descriptor is the refusal this
+    // would be testing instead of the call.
+    let flushing = insist(sys_open_at(
+        notes,
+        ANCHORED_NAME.as_ptr() as usize,
+        OPEN_WRITE_CREATE,
+    ));
+    insist(sys_fsync(flushing));
+    insist(sys_fdatasync(flushing));
+    insist(sys_close(flushing));
 
     // The rename, each side anchored at the `/tmp` descriptor: both names
     // resolve into the same filesystem, which is what a rename requires

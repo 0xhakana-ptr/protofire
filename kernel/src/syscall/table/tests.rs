@@ -14,6 +14,7 @@
 use alloc::sync::Arc;
 
 use super::super::*;
+use super::Descriptor;
 use super::MAX_SYSCALLS;
 use abi::Error;
 use abi::Result;
@@ -401,6 +402,91 @@ fn one_process_cannot_truncate_another_process_descriptor() {
     assert_eq!(set_length_as(&mut table, theirs, 0, Some(8)), Ok(()));
 }
 
+/// A node that records which flush reached it.
+///
+/// The flushes are the one pair of calls whose success leaves no trace on the
+/// file: the answer is zero whether the node was asked or not, so a handler
+/// that answered without reaching the node passes every test that reads the
+/// status.  This node is how the test tells "asked" from "answered", which is
+/// the difference between a call served and a call implemented.
+struct RecordingNode {
+    name: &'static str,
+    syncs: core::sync::atomic::AtomicUsize,
+    data_syncs: core::sync::atomic::AtomicUsize,
+}
+
+impl RecordingNode {
+    fn new() -> Self {
+        Self {
+            name: "recorded",
+            syncs: core::sync::atomic::AtomicUsize::new(0),
+            data_syncs: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl fs::VNode for RecordingNode {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn kind(&self) -> NodeKind {
+        NodeKind::File
+    }
+
+    fn size(&self) -> usize {
+        0
+    }
+
+    fn read(&self, _offset: u64, _buffer: &mut [u8]) -> Result<usize> {
+        Err(Error::NotFound)
+    }
+
+    fn sync(&self) -> Result<()> {
+        self.syncs
+            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn sync_data(&self) -> Result<()> {
+        self.data_syncs
+            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// Put a file descriptor over `node` and answer its number.
+fn insert_file(table: &mut SyscallTable, node: Arc<dyn fs::VNode>, writable: bool) -> usize {
+    table
+        .insert(Descriptor::File {
+            node,
+            readable: true,
+            writable,
+            offset: 0,
+            path: alloc::string::String::from("/recorded"),
+            owner: 1,
+        })
+        .expect("insert")
+}
+
+/// Flush through the registry: `Fsync` or `Fdatasync` on a descriptor.
+fn flush_as(table: &mut SyscallTable, descriptor: usize, data_only: bool) -> Result<()> {
+    let number = if data_only {
+        SyscallNumber::Fdatasync
+    } else {
+        SyscallNumber::Fsync
+    };
+    let mut context = SyscallContext::new(number as usize, [descriptor, 0, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    table.dispatch(&mut arguments)?;
+    Ok(())
+}
+
 /// Seek through the registry: `Seek(descriptor, offset, whence)`.
 fn seek_as(table: &mut SyscallTable, descriptor: usize, offset: i64, whence: usize) -> Result<u64> {
     let mut context = SyscallContext::new(
@@ -527,6 +613,94 @@ fn a_seek_to_an_extent_answers_the_node_position() {
     // one a range past the end gets rather than a position.
     assert_eq!(
         seek_as(&mut table, descriptor, 11, fs_abi::SEEK_DATA),
+        Err(Error::InvalidArgument)
+    );
+}
+
+/// Each flush reaches the node, and each reaches it once.
+///
+/// The counts are the whole point: `Fsync` that answered zero without calling
+/// `sync`, or that called both, or `Fdatasync` that called the stronger one,
+/// would all pass a test that only checked the status.  This is the test that
+/// makes the pair's difference observable.
+#[test]
+fn each_flush_reaches_the_node_once() {
+    use core::sync::atomic::Ordering;
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Fsync, fsync);
+    table.register(SyscallNumber::Fdatasync, fdatasync);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), true);
+
+    assert_eq!(flush_as(&mut table, descriptor, false), Ok(()));
+    assert_eq!(node.syncs.load(Ordering::SeqCst), 1, "Fsync called sync");
+    assert_eq!(
+        node.data_syncs.load(Ordering::SeqCst),
+        0,
+        "and not the data-only one"
+    );
+
+    assert_eq!(flush_as(&mut table, descriptor, true), Ok(()));
+    assert_eq!(
+        node.syncs.load(Ordering::SeqCst),
+        1,
+        "Fdatasync did not call the stronger flush"
+    );
+    assert_eq!(
+        node.data_syncs.load(Ordering::SeqCst),
+        1,
+        "Fdatasync called sync_data"
+    );
+}
+
+/// A flush of a read-only descriptor is refused, and reaches nothing.
+///
+/// A flush is the call that makes what the caller wrote durable, so the right
+/// it needs is the write's.  The node's own count proves the refusal came
+/// before the node was asked, rather than being a node that refused.
+#[test]
+fn a_flush_of_a_read_only_descriptor_is_refused() {
+    use core::sync::atomic::Ordering;
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Fsync, fsync);
+    table.register(SyscallNumber::Fdatasync, fdatasync);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), false);
+
+    assert_eq!(
+        flush_as(&mut table, descriptor, false),
+        Err(Error::PermissionDenied)
+    );
+    assert_eq!(
+        flush_as(&mut table, descriptor, true),
+        Err(Error::PermissionDenied)
+    );
+    assert_eq!(
+        node.syncs.load(Ordering::SeqCst) + node.data_syncs.load(Ordering::SeqCst),
+        0,
+        "the node was never reached"
+    );
+}
+
+/// A flush of a descriptor that names no file is refused.
+#[test]
+fn a_flush_of_a_pipe_descriptor_is_refused() {
+    use crate::pipe;
+    use crate::pipe::End;
+
+    let pipe = Arc::new(pipe::Pipe::new(16));
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Fsync, fsync);
+    let end = table
+        .insert_pipe(End::writer(pipe.clone()), 1)
+        .expect("insert");
+
+    assert_eq!(
+        flush_as(&mut table, end, false),
         Err(Error::InvalidArgument)
     );
 }
