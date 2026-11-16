@@ -688,7 +688,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `fs` | 68,494 | **moved**, PyroFS, tmpfs and the ten Level 6 formats; four of them are readers, which the old tree's were too |
 | `kernel` | 39,704 | **mostly done**, scheduler, processes, COW, pipes, signals, memory |
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
-| `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; the rest are not here |
+| `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; Level 7 states the order, and its first item, the flush, has landed |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
 | `syscall` | 15,647 | **partial**, 98 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
@@ -793,24 +793,64 @@ hardest case, not because every filesystem has to grow one.
 ### Level 7, the drivers
 
 The old tree's `drivers/` was 18,828 lines and this tree has virtio-blk and
-virtio-net.  What is missing, in the order it matters:
+virtio-net.  The migration is **six bodies of work plus what the old tree did
+not have**, and the order below is by what each one unblocks rather than by
+size.
 
-1. **`nvme`**, a modern machine's disk, and the one that makes a boot from
-   real hardware plausible.
-2. **`ahci`**, the SATA controller, for a machine without NVMe.
-3. **The framebuffer console**, this is the one that changes what the machine
-   *is*: today a boot has a serial port and nothing else, which is why every
-   demonstration is a log rather than a screen.
-4. **`xhci`** and USB HID/MSD, a keyboard, a mouse, a stick.
-5. **`virtio_gpu`** and **`virtio_input`**, the same two, on the emulator this
-   tree is developed on, which is the cheaper way to prove the input path.
-6. **`pcspkr`** last: one line of value, and it needs a timer nobody has asked
-   for.
+**Landed.**
+
+- **7.1, the flush.**  `VIRTIO_BLK_F_FLUSH` is negotiated, and a flush goes out
+  as the two descriptors the specification names.  Found by a Level 2 `Fsync`
+  that was served and unusable; see that level for the two defects it turned
+  out to be.
+
+**What is left, in the order it matters:**
+
+1. **The framebuffer console.**  This is the one that changes what the machine
+   *is*.  Today a boot has a serial port and nothing else, so every
+   demonstration this tree has is a log rather than a screen.  The old tree's
+   half is `framebuffer` (199 lines), `framebuffer_protocol` (147) and
+   `framebuffer_console` (726), and the split is worth keeping: the protocol is
+   a description that compiles everywhere, the probe is the machine's, and the
+   console is neither.
+   It is first because it is the smallest of the six and because it changes the
+   shape of every later demonstration.  It is also the one with a real
+   decision: this tree's output goes through `arch::serial`, which 767 call
+   sites name, so a console has to be a **second sink beside** that one, not a
+   rewrite of it.
+2. **`nvme`.**  A modern machine's disk, and what makes a boot from real
+   hardware plausible.  The old tree's `nvme` (1,125) and `nvme_protocol` (459)
+   split along the line this tree already draws for virtio: the wire format
+   compiles everywhere and the controller is the machine's.
+3. **`ahci`.**  Worth stating precisely, because the roadmap used to imply it
+   was a driver crate like the others: **the old tree had no `drivers/ahci`.**
+   It was the previous tree's x86_64 architecture crate's `ata` module, 1,144
+   lines,
+   which is exactly the inversion this tree's `check-arch-fanout` refuses.  So
+   the work is not a port but a **relocation**: the register map and the
+   command structures become a crate under `drivers/`, and the machine keeps
+   only what is genuinely the machine's.
+4. **`xhci`** and USB HID/MSD.  The largest of the six by far, the old tree's
+   at 3,451 + 1,177 + 642 + 545.  A keyboard, a mouse and a stick.
+5. **`virtio_gpu`** and **`virtio_input`.**  The same two devices on the
+   emulator this tree is developed on, which is the cheaper way to prove the
+   input path before the USB one.  They come after the framebuffer console
+   because that console is what they draw into.
+6. **`pcspkr`**, last: one line of value, and it needs a timer nobody has
+   asked for.
+
+**What the old tree had and this list does not:** `hda` (857 lines) and its
+protocol (751).  It is not on the list because nothing in this tree has a
+caller for audio, and `sound` is a crate with no code.  It is the one place
+this level does not aim at parity, and the reason is stated here rather than
+left as an omission.
 
 What this level does not promise: a driver *framework*.  `block`'s two traits
 are the only abstraction this tree has and they are enough for a disk; a
 display and an input device do not obviously want the same shape, and inventing
 one before the second driver exists is how a framework becomes a constraint.
+The framebuffer console is the first place that question gets asked for real,
+and the answer it gives is the one the later drivers inherit.
 
 ### Level 8, the mechanisms the numbers name
 
