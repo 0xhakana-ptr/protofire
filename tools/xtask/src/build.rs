@@ -25,6 +25,15 @@ use crate::machine::Machine;
 /// enough that the driver's first writes cannot fail for want of space.
 const DISK_BYTES: usize = 1024 * 1024;
 
+/// The disk the NVMe controller is given: 16 MiB.
+///
+/// A namespace's block count is what the probe reads back, so the number has to
+/// be large enough that the size in the Identify answer is unambiguous, and
+/// small enough that creating the file costs nothing.  16 MiB is 32768 blocks
+/// of 512 bytes, which is not a power of two in the answer's low bytes and so
+/// cannot be confused with the zeroed memory around it.
+const NVME_DISK_BYTES: usize = 16 * 1024 * 1024;
+
 /// The volume's label and the greeting file, as the kernel's own constants
 /// name them.
 ///
@@ -160,6 +169,26 @@ pub(crate) fn run(
     ));
     let _ = std::fs::remove_file(&disk);
 
+    // The NVMe controller's own disk.  Separate from the one above for the
+    // reason the machine's arguments give: the virtio driver mounts that one,
+    // and the NVMe probe reads this one to prove the controller rather than to
+    // mount a second volume.  It is left empty, so what the probe reads back is
+    // whatever the device holds rather than something this tool wrote, and it
+    // is only created for the machine that has the controller.
+    let nvme_disk = std::env::temp_dir().join(format!(
+        "protofire-{}-{}.nvme",
+        machine.triple(),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&nvme_disk);
+    if machine.has_nvme() {
+        // QEMU creates a `raw` file it is handed if it does not exist, but only
+        // when the size is unambiguous; writing the file here is what makes the
+        // size this tool's number rather than QEMU's default.
+        std::fs::write(&nvme_disk, vec![0u8; NVME_DISK_BYTES])
+            .with_context(|| format!("creating the NVMe disk at {}", nvme_disk.display()))?;
+    }
+
     // The volume, formatted **here**: the greeting the boot's self-check reads
     // back, and `/bin/init`, the compiled program the kernel execs from its
     // own filesystem.  A PyroFS image built on the host from the same crate
@@ -190,7 +219,7 @@ pub(crate) fn run(
     disk_bytes[..volume_len].copy_from_slice(&volume[..volume_len]);
     std::fs::write(&disk, disk_bytes.as_slice())
         .with_context(|| format!("creating the disk at {}", disk.display()))?;
-    let machine_arguments = machine.qemu_arguments(&disk);
+    let machine_arguments = machine.qemu_arguments(&disk, &nvme_disk);
     if machine_arguments.is_empty() {
         bail!(
             "{} has no boot arguments yet: its image cannot be booted, so there is \

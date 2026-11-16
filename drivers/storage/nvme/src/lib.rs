@@ -35,6 +35,7 @@ extern crate alloc;
 
 pub mod command;
 pub mod identify;
+pub mod queue;
 pub mod registers;
 
 pub use command::CQE_SIZE;
@@ -56,6 +57,9 @@ pub use identify::NAMESPACE_SIZE_OFFSET;
 pub use identify::namespace_capacity;
 pub use identify::namespace_count;
 pub use identify::namespace_geometry;
+pub use queue::CompletionQueue;
+pub use queue::SubmissionQueue;
+pub use queue::queue_size;
 pub use registers::ADMIN_CREATE_IOCQ;
 pub use registers::ADMIN_CREATE_IOSQ;
 pub use registers::ADMIN_DELETE_IOCQ;
@@ -76,6 +80,7 @@ pub use registers::NVME_REG_ASQ;
 pub use registers::NVME_REG_CAP;
 pub use registers::NVME_REG_CC;
 pub use registers::NVME_REG_CSTS;
+pub use registers::NVME_REG_VS;
 pub use registers::doorbell;
 pub use registers::doorbell_stride;
 pub use registers::run_prp;

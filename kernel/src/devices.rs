@@ -44,6 +44,17 @@ const VENDOR_REDHAT: u16 = 0x1AF4;
 const DEVICE_VIRTIO_BLOCK_MODERN: u16 = 0x1042;
 const DEVICE_VIRTIO_BLOCK_TRANSITIONAL: u16 = 0x1001;
 
+/// QEMU's `nvme` function: vendor `0x1B36`, device `0x0010`.
+///
+/// The class is the check that means anything (see [`find_nvme`]); these two
+/// are what the boot's line reports, and they are the same pair on any machine
+/// that emulates the controller with QEMU's device model.
+const NVME_VENDOR_ID: u16 = 0x1B36;
+const NVME_DEVICE_ID: u16 = 0x0010;
+/// NVMe's class code: `0x01` mass storage, `0x08` non-volatile memory.
+const NVME_CLASS: u8 = 0x01;
+const NVME_SUBCLASS: u8 = 0x08;
+
 /// The class code a network controller carries.
 ///
 /// `0x02` is network and `0x00` is Ethernet, so a virtio network card reports
@@ -230,6 +241,19 @@ pub struct FoundDisplay {
     /// The linear framebuffer's address, in BAR0, mapped for the console's
     /// mode.
     pub framebuffer_address: usize,
+}
+
+/// An NVMe controller found on the bus, with BAR0 mapped.
+///
+/// One field, unlike [`FoundDisplay`]: a controller has everything a driver
+/// needs in its first BAR, and the two addresses are carried as numbers so the
+/// controller's own file owns their arithmetic.
+pub struct FoundNvme {
+    /// Where BAR0 is, mapped uncached.
+    pub bar0: usize,
+    /// How long the window is, so a register read can be refused rather than
+    /// landing outside the mapping.
+    pub bar0_length: usize,
 }
 
 pub struct FoundVirtio {
@@ -779,6 +803,73 @@ pub fn find_display() -> Option<FoundDisplay> {
         // that has the block.
         layout: vga::VbeLayout::Flat,
         framebuffer_address,
+    })
+}
+
+/// Scan the bus for an NVMe controller, and map its BAR0.
+///
+/// `None` on a machine with no controller, which is the normal state for two of
+/// the three machines this tree boots: only the x86_64 one is given an `nvme`
+/// function, so a boot on the other two reaches the caller's "no disk" path
+/// rather than a probe that failed.
+///
+/// The class check is the one that matters and the ids are what the boot
+/// prints.  NVMe's class code is `0x01 / 0x08`, mass storage and non-volatile
+/// memory, and a machine that put some other function there would answer a
+/// different pair and be refused instead of being programmed with a register
+/// map that is not its own.
+pub fn find_nvme() -> Option<FoundNvme> {
+    let config = configuration_space();
+    let (scan, found) = pci::device::scan(&*config, BUS_COUNT, |device| {
+        let is_nvme = device.vendor == NVME_VENDOR_ID
+            && device.device == NVME_DEVICE_ID
+            && device.class == NVME_CLASS
+            && device.subclass == NVME_SUBCLASS;
+        is_nvme.then_some(device)
+    });
+
+    let device = match found {
+        Some(device) => device,
+        None => {
+            // Said out loud, because "no controller" and "the scan reached
+            // nothing" are different states and only one is normal.
+            arch::serial::write_str("protofire: nvme scan found ");
+            arch::serial::write_u32(scan.devices as u32);
+            arch::serial::write_str(" device(s), none of them a controller\n");
+            return None;
+        }
+    };
+
+    // The assignment pass, for the machines whose firmware left BARs at zero.
+    // On x86_64 the firmware has already done it and this answers `None`, which
+    // is why it is asked rather than assumed.
+    if let Some((base, size)) = arch::pcie_memory_window() {
+        let mut listing = [Device::ABSENT; MAX_FUNCTIONS];
+        let count = pci::scan_all(&*config, BUS_COUNT, &mut listing);
+        pci::assign_memory_bars(&*config, &listing[..count.min(MAX_FUNCTIONS)], base, size);
+    }
+
+    // BAR0 is the controller's register block, and it is the only window a
+    // polling driver needs: no MSI-X table, no memory window, no doorbell
+    // outside it.
+    let bar = device.bar_register(&*config, 0)?;
+    if !bar.is_assigned() {
+        arch::serial::write_str("protofire: nvme found but BAR0 is unassigned\n");
+        return None;
+    }
+
+    let length = pci::bar::size(&*config, device.address, bar.register).unwrap_or(0x2000) as usize;
+    let base = physical_address(bar.address);
+    // SAFETY: the region is BAR0 of a function the bus reported, so it is that
+    // device's registers and nothing else.
+    #[cfg(target_os = "none")]
+    unsafe {
+        crate::address_space::map_device(base, length);
+    }
+
+    Some(FoundNvme {
+        bar0: base,
+        bar0_length: length,
     })
 }
 

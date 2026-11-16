@@ -103,6 +103,18 @@ pub fn kernel_main() -> ! {
         arch::serial::write_str(" cell(s)\n");
     }
 
+    // The NVMe controller, when the machine has one.  After the heap, because
+    // its queue memory is a page-aligned allocation, and after the display so a
+    // reader watching the screen sees these lines arrive on it.
+    //
+    // It is not in the mount's path: the volume mounts on virtio-blk, which is
+    // the driver a boot needs, and this one is proving the controller.  What
+    // arrives over NVMe comes when a namespace is mounted, which wants a run
+    // buffer per request and is the next piece of work rather than this one.
+    if let Some(report) = crate::nvme::Controller::probe() {
+        crate::nvme::report_read(&report);
+    }
+
     // The registry that outlives this function, and the policy proven through
     // it rather than beside it.
     install_registry(namespace);

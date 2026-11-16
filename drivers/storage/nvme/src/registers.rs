@@ -29,6 +29,14 @@ pub const NVME_REG_CC: usize = 0x0014;
 /// initialisation and may be given commands.
 pub const NVME_REG_CSTS: usize = 0x001C;
 
+/// The controller's version register.
+///
+/// 32-bit, read-only, §3.1.2.  Bits 31:16 are the major version, 15:8 the
+/// minor and 7:0 the tertiary, so `0x0001_0400` reads as 1.4.  The boot prints
+/// it because a driver's assumption about which commands exist is a claim about
+/// a version, and the device is the one that knows.
+pub const NVME_REG_VS: usize = 0x0008;
+
 /// The admin queue attributes: the two queue sizes, each a count minus one.
 ///
 /// 32-bit.  The low sixteen bits are the submission queue's size minus one, the

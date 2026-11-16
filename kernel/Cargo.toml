@@ -45,6 +45,11 @@ virtio_core = { path = "../drivers/virtio/core" }
 virtio_block = { path = "../drivers/virtio/block" }
 vga = { path = "../drivers/display/vga" }
 text = { path = "../drivers/display/text" }
+# The NVMe controller's wire format.  The registers, the two queue entries and
+# the ring arithmetic are facts about a specification and are tested on a host;
+# reaching the device is this crate's file, the same split `vga` and `framebuffer`
+# make.
+nvme = { path = "../drivers/storage/nvme" }
 # The network card.  A boot with one exercises the frame path; a boot without
 # one is the ordinary state on two of the three machines, and the driver prints
 # nothing then.

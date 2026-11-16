@@ -64,6 +64,17 @@ impl Machine {
         }
     }
 
+    /// Whether this machine is given an NVMe controller.
+    ///
+    /// One machine, and that is a property of the machine rather than of the
+    /// driver: `q35` carries an `nvme` function on its PCIe bus, and the other
+    /// two trees describe a bus this controller is not attached to.  The
+    /// question is asked here rather than in three places so a machine that
+    /// gains a controller answers it once.
+    pub(crate) const fn has_nvme(self) -> bool {
+        matches!(self, Self::X8664)
+    }
+
     /// The emulator that boots this machine's image.
     pub(crate) const fn qemu(self) -> &'static str {
         match self {
@@ -108,7 +119,7 @@ impl Machine {
     /// Every machine this tree boots has an arm here, and each one ends with
     /// the same network card: the exchange the driver does is the same on all
     /// three, and only the bus mechanism that reaches the PCI function differs.
-    pub(crate) fn qemu_arguments(self, disk: &Path) -> Vec<String> {
+    pub(crate) fn qemu_arguments(self, disk: &Path, nvme_disk: &Path) -> Vec<String> {
         let mut arguments = match self {
             // A disk is part of the machine the gate boots: the boot prefers a
             // real device over its in-memory image, and a machine with no disk
@@ -142,6 +153,24 @@ impl Machine {
                 // device that has only that.  On x86_64 the same flag is
                 // unnecessary because `q35`'s default is already modern.
                 "virtio-blk-pci,drive=blk0,disable-legacy=on".to_string(),
+                // The NVMe controller, on a second disk of its own.
+                //
+                // A second `-drive` rather than sharing `blk0`: the virtio
+                // driver mounts the disk it finds, and a controller that read
+                // and wrote the same sectors would be a boot whose two drivers
+                // corrupt each other's volume.  This disk is not formatted and
+                // nothing mounts it, which is the point -- the NVMe probe is
+                // proving the controller, and a mount would be a second claim
+                // riding on the first.
+                //
+                // Only x86_64 gets it: `q35` carries an `nvme` function, and
+                // the other two machines' trees describe a PCIe bus this
+                // controller is not on.  A required line on them would be a
+                // requirement the machine cannot meet.
+                "-drive".to_string(),
+                format!("file={},format=raw,if=none,id=nvm0", nvme_disk.display()),
+                "-device".to_string(),
+                "nvme,serial=protofire,drive=nvm0".to_string(),
             ],
             // The device-tree machine, with a disk on its PCIe bus.
             //

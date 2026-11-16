@@ -109,6 +109,15 @@ impl NvmeSqe {
         self.raw[10] = dw10;
     }
 
+    /// Set `CDW11` alone, which is what the two create commands use.
+    ///
+    /// Separate from [`NvmeSqe::set_cdw`] because a create command leaves
+    /// `CDW12` alone, and a word the command does not define is not a word a
+    /// driver should be writing.
+    pub fn set_cdw11(&mut self, dw11: u32) {
+        self.raw[11] = dw11;
+    }
+
     /// The opcode this entry carries.
     pub fn opcode(&self) -> u8 {
         (self.raw[0] & 0xFF) as u8

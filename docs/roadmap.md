@@ -688,7 +688,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `fs` | 68,494 | **moved**, PyroFS, tmpfs and the ten Level 6 formats; four of them are readers, which the old tree's were too |
 | `kernel` | 39,704 | **mostly done**, scheduler, processes, COW, pipes, signals, memory |
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
-| `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; Level 7 states the order, and its first item, the flush, has landed |
+| `drivers` | 18,828 | **partial**, virtio-blk, virtio-net, the display and the NVMe controller; Level 7 states the order, and its first two items have landed |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
 | `syscall` | 15,647 | **partial**, 102 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
@@ -899,10 +899,17 @@ size.
       printed `admin queues at 0xa7d810, 0xa7e830` and the controller answered
       `CSTS = 0x2`, `CFS` -- "I am fatal" -- and never started.  A page-aligned
       allocation fixed it, and `CSTS` is the register that says so.
-   2. **`Create I/O Submission Queue` needs `DW11` bit 1, `EN`.**  Without it the
-      queue is created, the command is accepted with status zero, the doorbell is
-      rung at the right offset, and the controller never looks at the ring.  The
-      symptom is a timeout with nothing anywhere naming the bit.
+   2. **A claim that `Create I/O Submission Queue` needs `DW11` bit 1, `EN`,
+      was wrong.**  This entry used to say the bit was required, on the evidence
+      that setting it made a queue appear to work.  There is no enable bit in
+      that command: NVMe 1.0 §5.4 gives `DW11` bit 0 as `PC`, bits 2:1 as
+      `QPRIO`, and bits 31:16 as the completion queue id.  Bit 1 is `QPRIO`'s low
+      bit, so setting it made the queue *urgent*, and QEMU's `nvme_create_sq`
+      validates only `PC` and never reads bits 2:1 at all.  The bit changed
+      nothing; the real defect was the doorbell below, and it outlived this fix.
+      The builder no longer sets the bit and its host test asserts bits 2:1 are
+      zero.  Kept here because a wrong entry that is quietly deleted is one the
+      next attempt rediscovers.
    3. **The completion queue's doorbell must be written after the queue is
       created**, telling the controller where the host will start reading.
 
@@ -938,6 +945,31 @@ size.
    the wrong formula look measured.  The replacement asserts the invariant
    instead: no submission doorbell of any queue in `0..64` equals any completion
    doorbell, and the stride is `CAP`'s own bits 35:32.
+
+   **The controller now completes a read.**  `kernel/src/nvme.rs` finds the function
+   on the bus, maps BAR0, resets the controller, points it at an admin pair,
+   identifies the controller and the namespace, creates an I/O pair, and reads
+   block zero.  The boot's evidence is four lines, each of which was a place a
+   defect hid:
+
+   ```
+   protofire: nvme capability 0x4008200f0107ff, version 1024, queues up to 2048 entr(ies), stride 0
+   protofire: nvme namespace 1, 32768 block(s) of 512 byte(s)
+   protofire: nvme I/O queue pair up, 64 entr(ies)
+   protofire: nvme identified, namespace 1 of 32768 block(s), first block starts 0x0
+   ```
+
+   The last one is the device's own word: it read the command from the ring,
+   posted a completion to the other, and wrote the data into the buffer the
+   driver named.  All four are required lines of the x86_64 gate, and only
+   x86_64's: `q35` carries an `nvme` function and the other two machines' trees
+   describe a bus this controller is not on.
+
+   What is **not** done is a namespace mounted: that wants a run buffer per
+   request and a block device over the controller, which is the next piece of
+   work rather than this one.  The probe's read is what proves the controller,
+   and the disk it reads is a second, unformatted one so the probe cannot be
+   confused with a mount.
 
    The record's layout had a defect of its own to avoid: `#[repr(C)]` pads the
    three 64-bit words to the name field's **aligned** end, which for a 63-byte

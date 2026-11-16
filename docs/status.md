@@ -126,6 +126,18 @@ without the line there is no way to tell a device that has it from one that
 ignores a flush request, because the second fails by timing out rather than by
 answering.
 
+The NVMe controller is also up, and it completes a read: it is found on the bus,
+BAR0 is mapped, the controller resets and enables, an admin pair identifies the
+controller and the namespace, an I/O pair is created, and block zero is read
+into a buffer the driver named.  Its evidence is `nvme capability `,
+`nvme namespace 1, 32768 block(s) of 512 byte(s)`, `nvme I/O queue pair up`,
+and `nvme identified, namespace 1 of 32768 block(s)`, all required lines of the
+x86_64 gate.  A namespace is **not** mounted: the volume mounts on virtio-blk,
+and a block device over this controller is the next step rather than this one.
+Its formal half is `drivers/storage/nvme`, which names nothing of this tree and
+is tested on a host: the register offsets, both queue entries, the identify
+offsets, the ring arithmetic and the phase walk.
+
 The virtio network card is **attached on all four boots**.  `virtio_net` brings
 a card up, the same status sequence the block device runs, the address read
 from the configuration region under `VIRTIO_NET_F_MAC`, and both queues,

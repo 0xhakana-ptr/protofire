@@ -267,6 +267,7 @@ dependencies = [
  "memory",
  "net",
  "netdev",
+ "nvme",
  "paging",
  "pci",
  "security",

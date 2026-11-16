@@ -878,6 +878,28 @@ impl Machine {
                     "protofire: process 1 flushed every mounted filesystem",
                     true,
                 ),
+                // The NVMe controller.  Four lines rather than one, because
+                // this driver's four defects were each invisible in a sentence
+                // that said it worked: the capability line is the device
+                // answering with its own queue ceiling and doorbell stride, the
+                // namespace line is an Identify that parsed, the queue line is
+                // the pair actually created, and the last is a **completed
+                // read** -- the device's own word that it read a command from
+                // the ring and wrote its data into the buffer the driver named.
+                //
+                // The last line's prefix stops before the namespace id, which
+                // is a number the gate does not fix; the block count after it
+                // is the disk's size and is asserted separately as the tail.
+                ("protofire: nvme capability ", false),
+                (
+                    "protofire: nvme namespace 1, 32768 block(s) of 512 byte(s)",
+                    true,
+                ),
+                ("protofire: nvme I/O queue pair up, 64 entr(ies)", true),
+                (
+                    "protofire: nvme identified, namespace 1 of 32768 block(s)",
+                    false,
+                ),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,
