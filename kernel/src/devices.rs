@@ -75,6 +75,16 @@ struct MappedBar {
     length: usize,
 }
 
+impl WordAccess for MappedBar {
+    fn read16(&self, offset: u64) -> u16 {
+        <Self as RegisterFile>::read16(self, offset)
+    }
+
+    fn write16(&self, offset: u64, value: u16) {
+        <Self as RegisterFile>::write16(self, offset, value)
+    }
+}
+
 impl RegisterFile for MappedBar {
     fn read32(&self, offset: u64) -> u32 {
         let offset = offset as usize;
@@ -194,6 +204,35 @@ const BUS_COUNT: u8 = 1;
 /// submits through, the PCI address its message table hangs off, and the
 /// configuration space that answers questions about it.  A second struct per
 /// device would have carried three identical fields and a name.
+/// The word-wide access a display's register block needs.
+///
+/// Two operations, not six.  The trait `virtio_core` owns is the right shape
+/// for a virtio function, whose registers are dwords and bytes; a
+/// bochs-display's are words, and a display crate that reached for
+/// `virtio_core::RegisterFile` would be a non-virtio device depending on the
+/// virtio framework to compile. That inversion is the one this file's
+/// `DisplayBar` refuses: the two operations below are all a register block
+/// uses, and `MappedBar` happens to implement both sets because it is one
+/// mapping.
+pub trait WordAccess: Send + Sync {
+    /// Read a 16-bit register at `offset`.
+    fn read16(&self, offset: u64) -> u16;
+    /// Write a 16-bit register at `offset`.
+    fn write16(&self, offset: u64, value: u16);
+}
+
+/// A display found on the bus, with both of its BARs mapped.
+pub struct FoundDisplay {
+    /// The register block, in BAR2.
+    pub registers: Arc<dyn WordAccess>,
+    /// Which way the register block is reached.
+    pub layout: vga::VbeLayout,
+    /// The linear framebuffer's address, in BAR0.
+    pub framebuffer_address: usize,
+    /// How many bytes that window is.
+    pub framebuffer_size: usize,
+}
+
 pub struct FoundVirtio {
     pub transport: Arc<virtio_core::PciTransport>,
     pub device: Device,
@@ -634,6 +673,101 @@ fn find_virtio(
     let (device, _modern) = found?;
     let transport = virtio_transport(&config, device)?;
     Some((transport, device, config))
+}
+
+/// Scan the bus for a bochs-display, and map both of its BARs.
+///
+/// `None` on a machine with no display controller, which some machines this
+/// tree boots have: a headless boot is still a bootable machine, and a probe
+/// that treated an absent screen as an error would make one unfixable.
+///
+/// The device is identified by its vendor and device id and by its class.  The
+/// class check is the one that matters: `0x1234:0x1111` is what QEMU answers
+/// for its `std` VGA, and a machine that put some other function there, a
+/// different emulator's, would answer a different pair of ids and be refused
+/// rather than programmed with a register map that is not its own.
+pub fn find_display() -> Option<FoundDisplay> {
+    let config = configuration_space();
+    let (scan, found) = pci::device::scan(&*config, BUS_COUNT, |device| {
+        let is_bochs = device.vendor == vga::BOCHS_VENDOR_ID
+            && device.device == vga::BOCHS_DEVICE_ID
+            // Class 0x03 is a display controller; subclass 0x00 is VGA.
+            && device.class == 0x03
+            && device.subclass == 0x00;
+        is_bochs.then_some(device)
+    });
+
+    let device = match found {
+        Some(device) => device,
+        None => {
+            // Said out loud, because "no screen" and "the scan found nothing"
+            // are different states of the machine and only one of them is
+            // normal on a headless boot.
+            arch::serial::write_str("protofire: display scan found ");
+            arch::serial::write_u32(scan.devices as u32);
+            arch::serial::write_str(" device(s), none of them a display\n");
+            return None;
+        }
+    };
+
+    // BAR0 is the linear framebuffer and BAR2 the register block.  The
+    // assignment pass is the same one every device on a firmware-less machine
+    // needs: a BAR that reads zero names no window, and a display whose
+    // registers are at zero is one nothing can program.
+    if let Some((base, size)) = arch::pcie_memory_window() {
+        let mut listing = [Device::ABSENT; MAX_FUNCTIONS];
+        let count = pci::scan_all(&*config, BUS_COUNT, &mut listing);
+        pci::assign_memory_bars(&*config, &listing[..count.min(MAX_FUNCTIONS)], base, size);
+    }
+
+    let framebuffer_bar = device.bar_register(&*config, 0)?;
+    let registers_bar = device.bar_register(&*config, 2)?;
+    if !framebuffer_bar.is_assigned() || !registers_bar.is_assigned() {
+        arch::serial::write_str("protofire: display found but a BAR is unassigned\n");
+        return None;
+    }
+
+    let framebuffer_size =
+        pci::bar::size(&*config, device.address, framebuffer_bar.register).unwrap_or(0) as usize;
+    let registers_size =
+        pci::bar::size(&*config, device.address, registers_bar.register).unwrap_or(0x1000) as usize;
+
+    // Both windows, mapped uncached.  A device's registers read through a
+    // cached line answer what was true when the line was fetched, and a
+    // framebuffer read that way is a screen that draws yesterday's frame.
+    let map = |address: u64, length: usize| -> Option<Arc<dyn WordAccess>> {
+        let base = physical_address(address);
+        // SAFETY: the region is a BAR the bus reported, so it is a device's
+        // memory and nothing else.
+        #[cfg(target_os = "none")]
+        unsafe {
+            crate::address_space::map_device(base, length);
+        }
+        Some(Arc::new(MappedBar { base, length }) as Arc<dyn WordAccess>)
+    };
+
+    let registers = map(registers_bar.address, registers_size)?;
+    let framebuffer_address = physical_address(framebuffer_bar.address);
+
+    arch::serial::write_str("protofire: display at ");
+    arch::serial::write_hex(framebuffer_address as u64);
+    arch::serial::write_str(", registers at ");
+    arch::serial::write_hex(registers_bar.address);
+    arch::serial::write_str("\n");
+
+    Some(FoundDisplay {
+        registers,
+        // QEMU's `std` VGA answers the flat layout: register `i` is a word at
+        // `0x500 + 2*i`.  A discrete bochs-display answers the index/data
+        // pair, and telling them apart is a read of the ID register through
+        // the flat window: a device that speaks the flat layout answers a
+        // version there, and one that does not answers something outside the
+        // range.  That decision is `framebuffer`'s, because it is the caller
+        // that has the block.
+        layout: vga::VbeLayout::Flat,
+        framebuffer_address,
+        framebuffer_size,
+    })
 }
 
 /// Scan the bus for a virtio block device, and bring up its transport.

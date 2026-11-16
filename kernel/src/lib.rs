@@ -62,6 +62,7 @@ pub mod boot_pages;
 pub mod console;
 pub mod cpus;
 pub mod devices;
+pub mod framebuffer;
 pub mod heap;
 pub mod interrupts;
 pub mod iso_disc;

@@ -803,6 +803,26 @@ size.
   as the two descriptors the specification names.  Found by a Level 2 `Fsync`
   that was served and unusable; see that level for the two defects it turned
   out to be.
+- **7.2a, the display.**  `drivers/display/vga` is the bochs-display's register
+  block and mode-set sequence, and it names nothing of this tree, so a host
+  test drives the whole sequence against an array.  The probe is the kernel's,
+  because reaching a BAR is.  The boot finds the device, reads `VBE 0xb0c5`
+  back from its `ID` register, sets 1024x768 at 32 bits, and prints the mode the
+  **device** reports rather than the one it asked for.
+
+  That is the first time this machine's screen has said anything:
+  ```
+  protofire: display at 0xfd000000, registers at 0xfeb90000
+  protofire: display answered VBE 0xb0c5
+  protofire: display mode 1024x768 at 32 bpp, 4096 byte(s) per line
+  ```
+
+  One thing this had to correct on the way: the `tlb shootdown` gate line
+  asserted an exact count of three, on the argument that the machine's
+  remapping is deterministic.  It is, and the count is "how many shared windows
+  the boot changed after the second CPU came up", so mapping two display BARs
+  made it four.  The number is still exact and the comment now says what it
+  counts.
 
 **What is left, in the order it matters:**
 

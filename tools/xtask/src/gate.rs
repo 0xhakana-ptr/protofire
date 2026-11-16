@@ -851,6 +851,17 @@ impl Machine {
                 // `Fsync` took seconds and failed, so the line is what turns
                 // "the driver asked" into "the device answered".
                 ("protofire: virtio-blk negotiated flush=", false),
+                // The display.  Only x86_64 has one: QEMU's `q35` carries a
+                // bochs-display and the other two machines' trees do not, so a
+                // required line on them would be a requirement the machine
+                // cannot meet.  The version is the device saying which register
+                // block it implements, and the mode is its read-back rather
+                // than the driver's request.
+                ("protofire: display answered VBE ", false),
+                (
+                    "protofire: display mode 1024x768 at 32 bpp, 4096 byte(s) per line",
+                    true,
+                ),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,
@@ -920,8 +931,15 @@ impl Machine {
                 // change that CPU has to be told about.  Deleting the broadcast
                 // turns this into `0 sent, 0 acknowledged` and the gate refuses
                 // it, which a bare `0 timed out` check would have passed.
+                //
+                // **The count moved from three to four** when the display probe
+                // began mapping its BARs, which is the number behaving as
+                // described: it is "how many shared windows the boot changed
+                // after the second CPU was up", so a change that maps a window
+                // moves it.  A reader comparing this with an older log is
+                // looking at one more device, not at a defect.
                 (
-                    "protofire: tlb shootdown 3 sent, 3 acknowledged, 0 timed out",
+                    "protofire: tlb shootdown 4 sent, 4 acknowledged, 0 timed out",
                     true,
                 ),
                 // The placement rule's own record.  The count is the number of

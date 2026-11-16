@@ -42,6 +42,15 @@
 # argues it here.
 0 rights
 
+# `vga` is the bochs-display's register block and its mode-set sequence: the
+# `VBE_DISPI_*` indices, the two layouts a device offers, and the record a
+# renderer draws with.  It names nothing at all, which is the whole reason it is
+# a crate rather than part of the kernel: a register map is a description of a
+# device, so a host test drives the sequence against an array and no machine is
+# involved.  The probe that maps a BAR and reaches the device is the kernel's,
+# where the machine is.
+0 vga
+
 # ── Layer 1: the wire format ────────────────────────────────────────────────
 #
 # `abi` is what the kernel and a program both compile against: the error type and

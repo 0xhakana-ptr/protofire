@@ -1,0 +1,22 @@
+[package]
+description = "the bochs-display register block and the display record its consumers share"
+name = "vga"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The bochs-display's register block, its mode-set sequence, and the record a
+# probe hands to whatever draws.
+#
+# It names nothing of this tree.  That is the point of the split: the register
+# map is a description of the device and compiles everywhere, so a host test
+# drives the mode-set sequence against a fake register block and no machine is
+# involved.  The probe that maps a BAR and calls into this lives in `kernel`,
+# where the machine is.
+[dependencies]
+
+# The tests build a recording block, which records an order and therefore needs
+# a growable buffer.  The crate itself names no allocator: a register map is a
+# set of constants and a sequence is a list of writes it hands to a caller.
+[dev-dependencies]

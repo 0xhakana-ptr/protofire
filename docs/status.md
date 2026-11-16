@@ -115,9 +115,12 @@ uses for its return address.  It answers `ReturnFromException(resume, value)`
 with the address to continue at, because an instruction's length is the
 program's fact and not the kernel's, x86_64's vary.
 
-**Devices.**  The PCI scan, BARs assigned by the boot, and virtio-blk
-attached.  Verified by `block device from virtio-blk on pci`,
-`virtio-blk wrote and read back sector `, and `virtio-blk negotiated flush=yes`.
+**Devices.**  The PCI scan, BARs assigned by the boot, a bochs-display found
+and given a mode, and virtio-blk attached.  The display is x86_64's alone: the
+other two machines' QEMU trees carry no display controller, so a required line
+on them would be a requirement the machine cannot meet.  Verified by `block device from virtio-blk on pci`,
+`virtio-blk wrote and read back sector `, `virtio-blk negotiated flush=yes`, and,
+on x86_64, `display answered VBE ` with `display mode 1024x768 at 32 bpp`.
 The last is the flush capability: the driver asks for `VIRTIO_BLK_F_FLUSH`, and
 without the line there is no way to tell a device that has it from one that
 ignores a flush request, because the second fails by timing out rather than by

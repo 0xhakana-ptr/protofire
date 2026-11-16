@@ -88,6 +88,11 @@ pub fn kernel_main() -> ! {
     #[cfg(debug_assertions)]
     crate::heap::check_after_mount();
 
+    // The display: found on the bus, given a mode, and reported.  After the
+    // heap because the probe allocates, and before the programs because
+    // whatever draws on this screen will be reachable from them.
+    crate::framebuffer::probe();
+
     // The registry that outlives this function, and the policy proven through
     // it rather than beside it.
     install_registry(namespace);

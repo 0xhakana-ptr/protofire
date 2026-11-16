@@ -21,6 +21,33 @@ pub fn write_to_console(text: &str) {
     arch::serial::write_str("\n");
 }
 
+/// Report the display's interface version, once a probe has found one.
+///
+/// The version is the device saying which register block it implements, and a
+/// boot that set a mode without printing it would be one whose screen worked
+/// for a reason nothing recorded.
+pub fn report_display_found(id: u16) {
+    arch::serial::write_str("protofire: display answered VBE ");
+    arch::serial::write_hex(id as u64);
+    arch::serial::write_str("\n");
+}
+
+/// Report the mode the display is driving.
+///
+/// The numbers are the device's own, read back after the mode was written, so
+/// the line is the device's answer rather than the driver's request.
+pub fn report_display_mode(mode: vga::Mode) {
+    arch::serial::write_str("protofire: display mode ");
+    arch::serial::write_u32(mode.width as u32);
+    arch::serial::write_str("x");
+    arch::serial::write_u32(mode.height as u32);
+    arch::serial::write_str(" at ");
+    arch::serial::write_u32(mode.bpp as u32);
+    arch::serial::write_str(" bpp, ");
+    arch::serial::write_u32(mode.pitch());
+    arch::serial::write_str(" byte(s) per line\n");
+}
+
 /// Report what the machine's handshake actually contained.
 ///
 /// A device-tree machine puts a pointer in a register and the pointer may name
