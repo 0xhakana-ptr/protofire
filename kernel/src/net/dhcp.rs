@@ -40,7 +40,7 @@ use super::core::send_datagram;
 /// the caller's next step is the same.
 ///
 /// [`resolve_why`] is the same exchange with the reason kept, for the boot
-/// probe: a resolver that answers `None` for five different reasons and one
+/// probe: a resolver that answers `None` for six different reasons and one
 /// line for all of them is a probe that cannot say what it saw.
 #[cfg(target_os = "none")]
 pub fn resolve(name: &str, kind: u16) -> Option<net::address::Address> {
@@ -49,7 +49,7 @@ pub fn resolve(name: &str, kind: u16) -> Option<net::address::Address> {
 
 /// Why a lookup answered what it did, so the boot can say which happened.
 ///
-/// The five answers are the five things that can go wrong between this stack
+/// The six answers are the six things that can go wrong between this stack
 /// and the address, and each is a different diagnosis: no server is a
 /// configuration answer, a send failure is the card or the route, no reply at
 /// all is the wire or the wait, a reply that did not parse is the parser, and
