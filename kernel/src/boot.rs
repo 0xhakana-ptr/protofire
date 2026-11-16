@@ -79,8 +79,13 @@ pub fn kernel_main() -> ! {
         crate::cpus::start_the_others();
     }
 
-    // The heap, and then the filesystem that needs it.
+    // The heap, then the NVMe controller whose namespace the mount will take,
+    // and then the filesystem that needs them.  The controller comes up before
+    // the mount because a namespace mounted over it has to find the device
+    // already there; a bring-up after the mount would be a device the table
+    // never saw.
     crate::heap::bring_up();
+    crate::nvme::bring_up();
     let namespace = crate::volume::mount_everything();
     // The mount is where the kernel first allocates in volume, so it is where a
     // check reading a second view of the arena stops agreeing with the
@@ -102,17 +107,6 @@ pub fn kernel_main() -> ! {
         arch::serial::write_u32(crate::console_screen::rows() as u32);
         arch::serial::write_str(" cell(s)\n");
     }
-
-    // The NVMe controller, when the machine has one.  After the heap, because
-    // its queue memory is a page-aligned allocation, and after the display so a
-    // reader watching the screen sees these lines arrive on it.
-    //
-    // It is not in the mount's path: the volume mounts on virtio-blk, which is
-    // the driver a boot needs, and this one is proving the controller through
-    // the block interface a filesystem would use.  It stays up in
-    // `nvme::device()` for the mount that will want it, which is the next piece
-    // of work rather than this one.
-    crate::nvme::bring_up();
 
     // The registry that outlives this function, and the policy proven through
     // it rather than beside it.

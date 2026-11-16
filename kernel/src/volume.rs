@@ -19,12 +19,23 @@
 //! contents cannot have been changed since the image was built.
 
 use crate::halt;
+use block::BlockDevice;
 
 /// The label the boot's volume carries.
 pub const BOOT_VOLUME_LABEL: &str = "protofire";
 
 /// The label the boot's ISO 9660 disc carries.
 const ISO_LABEL: &str = "bootdisc";
+
+/// The path the NVMe namespace's file is read at, through the mount.
+const NVME_NOTE_PATH: &str = "/data/note.txt";
+
+/// What that file says.
+///
+/// A string no other file in the tree contains, and one the **host** wrote:
+/// a read that returned it came off the second disk, through the controller,
+/// the queues and the mount table, and no part of this boot wrote it.
+const NVME_NOTE_CONTENT: &[u8] = b"written by the host, read over nvme";
 
 /// Where the block device came from, when it came from the bus.
 ///
@@ -129,12 +140,14 @@ pub fn mount_everything() -> fs::MountTable {
         .mount("/tmp", "tmpfs", "memory", alloc::sync::Arc::new(scratch))
         .unwrap_or_else(|_| halt());
     mount_disc(&mut namespace);
+    mount_nvme(&mut namespace);
 
     arch::serial::write_str("protofire: namespace: ");
     arch::serial::write_str(&fs::mount::describe(&namespace));
     arch::serial::write_str("\n");
 
     read_the_disc(&namespace);
+    read_the_nvme(&namespace);
     namespace
 }
 
@@ -323,6 +336,84 @@ fn read_the_disc(namespace: &fs::MountTable) {
                     arch::serial::write_str("read ");
                     arch::serial::write_u32(count as u32);
                     arch::serial::write_str(" bytes that are not the disc's\n")
+                }
+                Err(error) => {
+                    arch::serial::write_str("FAILED to read: ");
+                    arch::serial::write_str(error.as_str());
+                    arch::serial::write_str("\n")
+                }
+            }
+        }
+        Err(_) => arch::serial::write_str("FAILED to find\n"),
+    }
+}
+
+/// Mount the NVMe namespace at `/data`, when the machine has a controller.
+///
+/// The completion-queue-first order the controller's own bring-up uses is not
+/// repeated here because the device arrived complete: `nvme::bring_up` ran
+/// before this file did, so what it hands over is a device that has already
+/// proven it reads and writes.
+///
+/// A volume that does not open is **skipped rather than fatal**, and that is a
+/// different decision from the disc's above: the boot volume is the one a
+/// machine without a disk cannot boot without, and the disc is built here, so
+/// either failing leaves a machine that cannot do what it says.  The second
+/// disk is a machine fact the host may have left empty, and a boot that halted
+/// because of it would be one where pulling a drive stopped the power button.
+fn mount_nvme(namespace: &mut fs::MountTable) {
+    let Some(device) = crate::nvme::device() else {
+        return;
+    };
+    // The name in the table's line is the **device's**, as the boot volume's
+    // is: `(nvme0n1)` says which disk the table resolved, and the label is
+    // already in the superblock it opened.
+    let name = alloc::string::String::from(device.name());
+    match fs::pyrofs::PyroFs::open(device, true) {
+        Ok(volume) => {
+            let volume = fs::pyrofs::PyroFsVolume::new(volume);
+            match namespace.mount("/data", "pyrofs", &name, alloc::sync::Arc::new(volume)) {
+                Ok(_) => arch::serial::write_str("protofire: nvme namespace mounted at /data\n"),
+                Err(error) => {
+                    arch::serial::write_str("protofire: nvme namespace FAILED to mount: ");
+                    arch::serial::write_str(error.as_str());
+                    arch::serial::write_str("\n");
+                }
+            }
+        }
+        Err(_) => {
+            arch::serial::write_str("protofire: nvme namespace is not a pyrofs volume\n");
+        }
+    }
+}
+
+/// Read a file off the NVMe namespace, through the mount table.
+///
+/// The same doubt the disc's read answers, and the reason it is worth its own
+/// line: the bytes were written by the host into the disk's image, so a read
+/// that returns them came off the second disk, through the controller, and no
+/// part of this boot wrote them.  A namespace that mounted and cannot read is
+/// worse than one that refused to mount, because the first lies to every
+/// caller that trusts the table.
+fn read_the_nvme(namespace: &fs::MountTable) {
+    if crate::nvme::device().is_none() {
+        return;
+    }
+    arch::serial::write_str("protofire: /data/note.txt ");
+    match namespace.lookup(NVME_NOTE_PATH) {
+        Ok(node) => {
+            let mut buffer = [0u8; 64];
+            match node.read(0, &mut buffer) {
+                Ok(count)
+                    if count == NVME_NOTE_CONTENT.len()
+                        && buffer[..count] == *NVME_NOTE_CONTENT =>
+                {
+                    arch::serial::write_str("reads back over nvme\n")
+                }
+                Ok(count) => {
+                    arch::serial::write_str("read ");
+                    arch::serial::write_u32(count as u32);
+                    arch::serial::write_str(" bytes that are not the namespace's\n")
                 }
                 Err(error) => {
                     arch::serial::write_str("FAILED to read: ");

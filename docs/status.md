@@ -126,18 +126,22 @@ without the line there is no way to tell a device that has it from one that
 ignores a flush request, because the second fails by timing out rather than by
 answering.
 
-The NVMe controller is also up, and its namespace is a block device: it is
-found on the bus, BAR0 is mapped, the controller resets and enables, an admin
-pair identifies the controller and the namespace, an I/O pair is created, and
-`NvmeBlockDevice` carries the namespace through the block interface a
-filesystem uses.  Its evidence is `nvme capability `,
+The NVMe controller is also up, its namespace is a block device, and the
+namespace is **mounted**: the controller is found on the bus, BAR0 is mapped,
+it resets and enables, an admin pair identifies it and the namespace, an I/O
+pair is created, `NvmeBlockDevice` carries the namespace through the block
+interface, and `volume::mount_nvme` mounts that device at `/data` as the
+table's fourth entry.  Its evidence is `nvme capability `,
 `nvme namespace 1, 32768 block(s) of 512 byte(s)`, `nvme I/O queue pair up`,
-`nvme0n1 block 0 answers PFNVME01` (bytes only the host wrote, so no part of
-the boot could have written them), `nvme0n1 wrote and read back sector `, and
-`nvme0n1 recorded as block device 1` -- all required lines of the x86_64 gate,
-with `process 1 listed block device 1` reading the record back from ring 3.
-A namespace is **not** mounted: the volume mounts on virtio-blk, and the device
-waits in `nvme::device()` for the mount that will want it.  Its formal half is
+`nvme0n1 far block answers PFNVME01` (bytes only the host wrote, at the far
+block, because block zero of a filesystem is its superblock),
+`nvme0n1 wrote and read back sector `, `nvme0n1 recorded as block device 0`,
+the namespace line ending `, pyrofs on /data (nvme0n1)`, and
+`/data/note.txt reads back over nvme` -- all required lines of the x86_64
+gate, with `process 1 listed block device 1` reading the second record back
+from ring 3.  A volume that does not open is skipped rather than fatal: the
+boot volume is the one a machine cannot boot without, and the second disk is a
+machine fact the host may have left empty.  Its formal half is
 `drivers/storage/nvme`, which names nothing of this tree and is tested on a
 host: the register offsets, both queue entries, the identify offsets, the ring
 arithmetic and the phase walk.

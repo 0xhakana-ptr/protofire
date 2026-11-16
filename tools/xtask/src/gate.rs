@@ -839,13 +839,19 @@ impl Machine {
                 ("protofire: process 1 wrote 9 byte(s) to a stream", true),
                 ("protofire: process 8 read 9 byte(s) from a stream", true),
                 (
-                    "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
+                    "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc), pyrofs on /data (nvme0n1)",
                     true,
                 ),
                 (
                     "protofire: /cdrom/README.TXT reads back from the disc",
                     true,
                 ),
+                // The second namespace, and the file on it.  The bytes were
+                // written by the host into the disk's image, so a read that
+                // returns them came off the second disk through the controller
+                // and the mount table, and no part of this boot wrote them.
+                ("protofire: nvme namespace mounted at /data", true),
+                ("protofire: /data/note.txt reads back over nvme", true),
                 ("protofire: virtio-blk wrote and read back sector ", false),
                 // The negotiated flush bit.  Its absence was invisible until a
                 // `Fsync` took seconds and failed, so the line is what turns
@@ -872,7 +878,7 @@ impl Machine {
                 // what the boot recorded, and the two program lines are the
                 // calls answering through the dispatcher rather than the
                 // fallthrough.
-                ("protofire: block devices listed 1", true),
+                ("protofire: block devices listed 2", true),
                 ("protofire: process 1 listed block device 0", true),
                 // The second device, through the dispatcher from ring 3.  Only
                 // x86_64's machine has one, so the program's exercise takes the
@@ -898,9 +904,9 @@ impl Machine {
                     true,
                 ),
                 ("protofire: nvme I/O queue pair up, 64 entr(ies)", true),
-                ("protofire: nvme0n1 block 0 answers PFNVME01", true),
+                ("protofire: nvme0n1 far block answers PFNVME01", true),
                 ("protofire: nvme0n1 wrote and read back sector ", false),
-                ("protofire: nvme0n1 recorded as block device 1", true),
+                ("protofire: nvme0n1 recorded as block device 0", true),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,

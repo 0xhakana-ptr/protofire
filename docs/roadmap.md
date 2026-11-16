@@ -946,42 +946,51 @@ size.
    instead: no submission doorbell of any queue in `0..64` equals any completion
    doorbell, and the stride is `CAP`'s own bits 35:32.
 
-   **The controller now completes a read, and the namespace is a block device.**
-   `kernel/src/nvme.rs` finds the function on the bus, maps BAR0, resets the
-   controller, points it at an admin pair, identifies the controller and the
-   namespace, creates an I/O pair, and wraps the namespace in
-   `NvmeBlockDevice`, a device of depth one.  The boot's evidence is six lines,
-   each of which answers a doubt:
+   **The controller now completes a read, the namespace is a block device, and
+   the namespace is mounted.**  `kernel/src/nvme.rs` finds the function on the
+   bus, maps BAR0, resets the controller, points it at an admin pair,
+   identifies the controller and the namespace, creates an I/O pair, and wraps
+   the namespace in `NvmeBlockDevice`, a device of depth one.
+   `kernel/src/volume.rs` mounts that device at `/data` beside the boot's
+   three, and the boot's evidence is the lines each step answers:
 
    ```
    protofire: nvme capability 0x4008200f0107ff, version 1024, queues up to 2048 entr(ies), stride 0
    protofire: nvme namespace 1, 32768 block(s) of 512 byte(s)
    protofire: nvme I/O queue pair up, 64 entr(ies)
-   protofire: nvme0n1 block 0 answers PFNVME01
-   protofire: nvme0n1 wrote and read back sector 32767
-   protofire: nvme0n1 recorded as block device 1
+   protofire: nvme0n1 far block answers PFNVME01
+   protofire: nvme0n1 wrote and read back sector 32766
+   protofire: nvme0n1 recorded as block device 0
+   protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc), pyrofs on /data (nvme0n1)
+   protofire: /data/note.txt reads back over nvme
    ```
 
-   The fourth line reads bytes **only the host wrote** -- the disk's first block
-   says `PFNVME01` because `xtask` put it there before the machine ran, so no
-   part of this boot could have satisfied it.  The fifth is the write path,
-   through the block interface a filesystem will use rather than through a raw
-   command, so the code that is proven is the code a caller runs.  The sixth
-   puts the disk where `ListBlockDevices` names it, and the init program's
-   exercise reads that record back from ring 3 (`process 1 listed block device
-   1`).  All are required lines of the x86_64 gate, and only x86_64's: `q35`
-   carries an `nvme` function and the other two machines' trees describe a bus
-   this controller is not on.
+   The fourth line reads bytes **only the host wrote** -- the disk's far block
+   says `PFNVME01` because `xtask` put it there before the machine ran, at the
+   far end because block zero of a filesystem is its superblock, so no part of
+   this boot could have satisfied it.  The fifth is the write path, through the
+   block interface a filesystem will use rather than through a raw command, so
+   the code that is proven is the code a caller runs.  The last is the end the
+   whole path exists for: a file the host wrote, read back through the mount
+   table, where no part of the boot could have written it.  All are required
+   lines of the x86_64 gate, and only x86_64's: `q35` carries an `nvme`
+   function and the other two machines' trees describe a bus this controller is
+   not on.
 
    Every transfer rides one page-aligned frame the controller owns, because a
    caller's buffer is neither page-aligned nor inside one page and this driver's
    PRP arithmetic is `PRP1` alone.  A namespace whose blocks are bigger than the
    frame is refused at probe rather than driven badly.
 
-   What is **not** done is a namespace mounted: the volume mounts on virtio-blk,
-   which is the driver a boot needs, and the NVMe device waits in
-   `nvme::device()` for the mount that will want it.  The disk it reads is a
-   second, unformatted one, so the proof cannot be confused with a mount.
+   The controller is brought up **before** the mount, because a namespace
+   mounted over it has to find the device already there; and a second volume
+   that fails to open is skipped rather than fatal, because the boot volume is
+   the one a machine cannot boot without and the second disk is a machine fact
+   the host may have left empty.  The volume mounts as the table's fourth
+   entry, which makes this boot the first with two disks: the device list
+   answers two, and init's exercise reads the second record from ring 3
+   (`process 1 listed block device 1`), where it used to assert that a second
+   device must be refused.
 
    The record's layout had a defect of its own to avoid: `#[repr(C)]` pads the
    three 64-bit words to the name field's **aligned** end, which for a 63-byte

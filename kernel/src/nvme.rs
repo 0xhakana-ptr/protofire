@@ -658,7 +658,7 @@ pub struct NvmeBlockDevice {
 /// device list's own tests use.
 const DEVICE_NAME: &str = "nvme0n1";
 
-/// What the disk's first block is expected to say.
+/// What the disk's far block is expected to say.
 ///
 /// Written by `xtask` into the NVMe disk before the machine runs, for the same
 /// reason the volume's label is written there: a read this driver could satisfy
@@ -717,13 +717,18 @@ pub fn device() -> Option<Arc<NvmeBlockDevice>> {
 /// works, and through [`NvmeBlockDevice`] rather than through a raw command so
 /// the code that is proven is the code a caller runs.
 fn prove(device: &NvmeBlockDevice) {
+    // The magic's block is the namespace's **last**, not its first, because the
+    // disk carries a filesystem and a filesystem's superblock is what block
+    // zero is.  The far end is the same ground the virtio probe's sector
+    // reasons about: bytes at a distance no growth of the volume reaches.
+    let magic_block = device.block_count.saturating_sub(1);
     let mut first = [0u8; 512];
-    match device.read_blocks(0, &mut first) {
+    match device.read_blocks(magic_block, &mut first) {
         Ok(()) => {
             if first[..8] == DISK_MAGIC {
-                arch::serial::write_str("protofire: nvme0n1 block 0 answers PFNVME01\n");
+                arch::serial::write_str("protofire: nvme0n1 far block answers PFNVME01\n");
             } else {
-                arch::serial::write_str("protofire: nvme0n1 block 0 read back ");
+                arch::serial::write_str("protofire: nvme0n1 far block read back ");
                 arch::serial::write_hex(u64::from_le_bytes(
                     first[..8].try_into().unwrap_or([0; 8]),
                 ));
@@ -731,7 +736,7 @@ fn prove(device: &NvmeBlockDevice) {
             }
         }
         Err(error) => {
-            arch::serial::write_str("protofire: nvme0n1 block 0 failed: ");
+            arch::serial::write_str("protofire: nvme0n1 far block failed: ");
             arch::serial::write_str(error.as_str());
             arch::serial::write_str("\n");
         }
@@ -739,16 +744,18 @@ fn prove(device: &NvmeBlockDevice) {
 
     let pattern: [u8; 512] = core::array::from_fn(|index| (index % 251) as u8);
     let mut read_back = [0u8; 512];
-    let last_block = device.block_count.saturating_sub(1);
-    let written = device.write_blocks(last_block, &pattern);
-    let read = device.read_blocks(last_block, &mut read_back);
+    // The block **before** the magic's, so the write the round trip does and
+    // the bytes the magic check reads never land in the same place.
+    let probe_block = device.block_count.saturating_sub(2);
+    let written = device.write_blocks(probe_block, &pattern);
+    let read = device.read_blocks(probe_block, &mut read_back);
     if written.is_ok() && read.is_ok() && read_back == pattern {
         arch::serial::write_str("protofire: nvme0n1 wrote and read back sector ");
-        arch::serial::write_u32(last_block as u32);
+        arch::serial::write_u32(probe_block as u32);
         arch::serial::write_str("\n");
     } else {
         arch::serial::write_str("protofire: nvme0n1 FAILED to write and read back sector ");
-        arch::serial::write_u32(last_block as u32);
+        arch::serial::write_u32(probe_block as u32);
         arch::serial::write_str("\n");
     }
 

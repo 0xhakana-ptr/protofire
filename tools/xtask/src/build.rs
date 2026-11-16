@@ -25,6 +25,15 @@ use crate::machine::Machine;
 /// enough that the driver's first writes cannot fail for want of space.
 const DISK_BYTES: usize = 1024 * 1024;
 
+/// The volume the NVMe namespace carries, and the file the boot reads back.
+///
+/// Two copies of each, here and in `kernel/src/volume.rs`, for the same reason
+/// the boot volume's label is two copies: the disk is formatted **here** and
+/// the read-back line is what polices the pairing.
+const NVME_VOLUME_LABEL: &str = "nvme";
+const NVME_NOTE_PATH: &str = "/note.txt";
+const NVME_NOTE_CONTENT: &[u8] = b"written by the host, read over nvme";
+
 /// The disk the NVMe controller is given: 16 MiB.
 ///
 /// A namespace's block count is what the probe reads back, so the number has to
@@ -191,11 +200,24 @@ pub(crate) fn run(
     ));
     let _ = std::fs::remove_file(&nvme_disk);
     if machine.has_nvme() {
-        // The size is this tool's number rather than QEMU's default, and the
-        // first block is the magic the kernel's probe reads back: a read this
-        // driver could satisfy from its own memory would prove nothing.
+        // A real volume at the front, so the namespace the boot mounts over
+        // this controller has something in it to read; and the magic at the
+        // far block, because block zero of a filesystem is its superblock.
+        // The kernel reads the magic back from the last block and reads the
+        // file through the mount, and each line polices one pairing.
+        let nvme_volume = fs::pyrofs::PyroFs::build_image(
+            NVME_VOLUME_LABEL,
+            &[fs::pyrofs::ImageEntry {
+                path: NVME_NOTE_PATH,
+                data: NVME_NOTE_CONTENT,
+            }],
+        )
+        .map_err(|error| anyhow!("building the NVMe volume failed: {error:?}"))?;
         let mut nvme_bytes = vec![0u8; NVME_DISK_BYTES];
-        nvme_bytes[..NVME_DISK_MAGIC.len()].copy_from_slice(NVME_DISK_MAGIC);
+        let volume_len = nvme_volume.len().min(NVME_DISK_BYTES);
+        nvme_bytes[..volume_len].copy_from_slice(&nvme_volume[..volume_len]);
+        let magic_at = NVME_DISK_BYTES - 512;
+        nvme_bytes[magic_at..magic_at + NVME_DISK_MAGIC.len()].copy_from_slice(NVME_DISK_MAGIC);
         std::fs::write(&nvme_disk, nvme_bytes)
             .with_context(|| format!("creating the NVMe disk at {}", nvme_disk.display()))?;
     }
