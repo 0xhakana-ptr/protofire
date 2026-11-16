@@ -886,6 +886,32 @@ size.
      whole-machine half of durability where a descriptor's `Fsync` is the
      per-file half, and the mount table grew `sync_all` for it.
 
+   **The controller was attempted and is not finished.**  Admin commands work:
+   the controller comes up, `Identify Controller` and `Identify Namespace` both
+   answer, and the namespace's size and block size are read from a real device.
+   I/O submissions do not: a read or write is put in the submission ring, the
+   doorbell is rung, and no completion arrives.  Three specification errors were
+   found and fixed on the way, and each is worth recording so the next attempt
+   does not rediscover them:
+
+   1. **A queue's base address must be page aligned.**  The first version handed
+      the controller addresses from a `Vec`, which has alignment one: the boot
+      printed `admin queues at 0xa7d810, 0xa7e830` and the controller answered
+      `CSTS = 0x2`, `CFS` -- "I am fatal" -- and never started.  A page-aligned
+      allocation fixed it, and `CSTS` is the register that says so.
+   2. **`Create I/O Submission Queue` needs `DW11` bit 1, `EN`.**  Without it the
+      queue is created, the command is accepted with status zero, the doorbell is
+      rung at the right offset, and the controller never looks at the ring.  The
+      symptom is a timeout with nothing anywhere naming the bit.
+   3. **The completion queue's doorbell must be written after the queue is
+      created**, telling the controller where the host will start reading.
+
+   What is left is the fourth question: why a submission on an enabled, aligned,
+   correctly-belled I/O queue still gets no completion.  The next step is not
+   more guessing -- three of those three errors were each found by printing one
+   more register -- but QEMU's own NVMe trace, which says what the device did
+   with the command rather than what the driver expected.
+
    The record's layout had a defect of its own to avoid: `#[repr(C)]` pads the
    three 64-bit words to the name field's **aligned** end, which for a 63-byte
    name is offset 64 and not 63.  A handler that added 63 would put every word

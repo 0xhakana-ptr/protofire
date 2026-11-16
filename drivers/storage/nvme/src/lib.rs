@@ -74,4 +74,5 @@ pub use registers::NVME_REG_ASQ;
 pub use registers::NVME_REG_CAP;
 pub use registers::NVME_REG_CC;
 pub use registers::NVME_REG_CSTS;
+pub use registers::doorbell;
 pub use registers::run_prp;
