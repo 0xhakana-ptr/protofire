@@ -109,7 +109,7 @@ pub fn model(structure: &[u8]) -> Option<[u8; MODEL_BYTES]> {
     let at = MODEL_WORD * 2;
     let bytes = structure.get(at..at + MODEL_BYTES)?;
     let mut out = [0u8; MODEL_BYTES];
-    for (index, pair) in bytes.chunks_exact(2).enumerate() {
+    for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
         out[index * 2] = pair[1];
         out[index * 2 + 1] = pair[0];
     }
@@ -203,8 +203,7 @@ mod tests {
         // "QEMU" packed big-endian per word: each word's low byte holds the
         // string's *second* character, so word 27 is [E, Q] and word 28 is
         // [U, M], and the swap puts the string back.
-        s[MODEL_WORD * 2..MODEL_WORD * 2 + 8]
-            .copy_from_slice(&[b'E', b'Q', b'U', b'M', b' ', b' ', b' ', b' ']);
+        s[MODEL_WORD * 2..MODEL_WORD * 2 + 8].copy_from_slice(b"EQUM    ");
         let model = model(&s).expect("forty bytes");
         assert_eq!(&model[..8], b"QEMU    ");
     }

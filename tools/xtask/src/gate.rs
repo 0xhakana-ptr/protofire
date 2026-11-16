@@ -878,12 +878,14 @@ impl Machine {
                 // what the boot recorded, and the two program lines are the
                 // calls answering through the dispatcher rather than the
                 // fallthrough.
-                ("protofire: block devices listed 2", true),
+                ("protofire: block devices listed 3", true),
                 ("protofire: process 1 listed block device 0", true),
-                // The second device, through the dispatcher from ring 3.  Only
-                // x86_64's machine has one, so the program's exercise takes the
-                // refusal on the other two and answers this here.
+                // The second and third devices, through the dispatcher from
+                // ring 3.  Only x86_64's machine has them, so the program's
+                // exercise takes the refusal on the other two and answers
+                // these here.
                 ("protofire: process 1 listed block device 1", true),
+                ("protofire: process 1 listed block device 2", true),
                 (
                     "protofire: process 1 flushed every mounted filesystem",
                     true,
@@ -907,6 +909,20 @@ impl Machine {
                 ("protofire: nvme0n1 far block answers PFNVME01", true),
                 ("protofire: nvme0n1 wrote and read back sector ", false),
                 ("protofire: nvme0n1 recorded as block device 0", true),
+                // The SATA controller, on the machine's third disk.  The
+                // capability and port lines are the device answering; the
+                // geometry line is an identify that parsed, with the model the
+                // device gave; the far-block and round-trip lines are the same
+                // two proofs the NVMe device makes, and for the same reasons.
+                ("protofire: ahci ports implemented ", false),
+                ("protofire: ahci disk on port 0", true),
+                (
+                    "protofire: ahci port 0, 65536 block(s) of 512 byte(s), model QEMU HARDDISK",
+                    true,
+                ),
+                ("protofire: ahci0 far block answers PFATAH01", true),
+                ("protofire: ahci0 wrote and read back sector ", false),
+                ("protofire: ahci0 recorded as block device 1", true),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,

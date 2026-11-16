@@ -75,6 +75,16 @@ impl Machine {
         matches!(self, Self::X8664)
     }
 
+    /// Whether this machine is given a SATA disk on its AHCI controller.
+    ///
+    /// `q35` carries an Intel ICH9 whose six SATA ports are on the PCI bus,
+    /// and `ide-hd` on `ide.0` is a disk on the first of them.  The other two
+    /// machines' trees carry no SATA controller, so the question is asked
+    /// here rather than in three places.
+    pub(crate) const fn has_ahci(self) -> bool {
+        matches!(self, Self::X8664)
+    }
+
     /// The emulator that boots this machine's image.
     pub(crate) const fn qemu(self) -> &'static str {
         match self {
@@ -119,7 +129,12 @@ impl Machine {
     /// Every machine this tree boots has an arm here, and each one ends with
     /// the same network card: the exchange the driver does is the same on all
     /// three, and only the bus mechanism that reaches the PCI function differs.
-    pub(crate) fn qemu_arguments(self, disk: &Path, nvme_disk: &Path) -> Vec<String> {
+    pub(crate) fn qemu_arguments(
+        self,
+        disk: &Path,
+        nvme_disk: &Path,
+        sata_disk: &Path,
+    ) -> Vec<String> {
         let mut arguments = match self {
             // A disk is part of the machine the gate boots: the boot prefers a
             // real device over its in-memory image, and a machine with no disk
@@ -171,6 +186,14 @@ impl Machine {
                 format!("file={},format=raw,if=none,id=nvm0", nvme_disk.display()),
                 "-device".to_string(),
                 "nvme,serial=protofire,drive=nvm0".to_string(),
+                // The SATA disk, on the controller's first port.  `ide.0` is
+                // how QEMU names the ICH9's first SATA port, and `ide-hd` is
+                // the device a driver can identify over it; the controller
+                // itself needs no argument, because `q35` creates it.
+                "-drive".to_string(),
+                format!("file={},format=raw,if=none,id=sata0", sata_disk.display()),
+                "-device".to_string(),
+                "ide-hd,drive=sata0,bus=ide.0".to_string(),
             ],
             // The device-tree machine, with a disk on its PCIe bus.
             //

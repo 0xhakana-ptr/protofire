@@ -50,6 +50,11 @@ text = { path = "../drivers/display/text" }
 # reaching the device is this crate's file, the same split `vga` and `framebuffer`
 # make.
 nvme = { path = "../drivers/storage/nvme" }
+# The SATA controller's wire format, relocated out of the old tree's x86_64
+# architecture crate.  The offsets, the three command structures and the
+# identify structure are facts a host test holds; reaching the device is this
+# crate's file, the same split `nvme` and `vga` make.
+ahci = { path = "../drivers/storage/ahci" }
 # The network card.  A boot with one exercises the frame path; a boot without
 # one is the ordinary state on two of the three machines, and the driver prints
 # nothing then.

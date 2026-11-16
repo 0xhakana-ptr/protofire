@@ -43,6 +43,21 @@ const NVME_NOTE_CONTENT: &[u8] = b"written by the host, read over nvme";
 /// cannot be confused with the zeroed memory around it.
 const NVME_DISK_BYTES: usize = 16 * 1024 * 1024;
 
+/// The disk the SATA controller is given: 32 MiB.
+///
+/// A different size from the NVMe disk on purpose: two disks whose capacities
+/// read the same would make the boot's two identify lines indistinguishable,
+/// and a reader checking one against the other would be guessing.
+const SATA_DISK_BYTES: usize = 32 * 1024 * 1024;
+
+/// The SATA disk's far block, as the kernel's probe expects to find it.
+///
+/// Two copies of one constant, here and in `kernel/src/ahci.rs`, for the same
+/// reason the NVMe disk's magic is two copies: a read the driver could
+/// satisfy from its own memory is not evidence.  Drift and the read answers
+/// garbage and the gate goes red.
+const SATA_DISK_MAGIC: &[u8; 8] = b"PFATAH01";
+
 /// The disk's first block, as the kernel's probe expects to find it.
 ///
 /// Two copies of one constant, here and in `kernel/src/nvme.rs`, for the same
@@ -199,6 +214,23 @@ pub(crate) fn run(
         std::process::id()
     ));
     let _ = std::fs::remove_file(&nvme_disk);
+    let sata_disk = std::env::temp_dir().join(format!(
+        "protofire-{}-{}.sata",
+        machine.triple(),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&sata_disk);
+    if machine.has_ahci() {
+        // The far block is the magic the kernel's probe reads back, and the
+        // rest is left as the device holds it: nothing mounts this disk yet,
+        // and a probe that read a volume it built itself would prove nothing.
+        let mut sata_bytes = vec![0u8; SATA_DISK_BYTES];
+        let magic_at = SATA_DISK_BYTES - 512;
+        sata_bytes[magic_at..magic_at + SATA_DISK_MAGIC.len()].copy_from_slice(SATA_DISK_MAGIC);
+        std::fs::write(&sata_disk, sata_bytes)
+            .with_context(|| format!("creating the SATA disk at {}", sata_disk.display()))?;
+    }
+
     if machine.has_nvme() {
         // A real volume at the front, so the namespace the boot mounts over
         // this controller has something in it to read; and the magic at the
@@ -252,7 +284,7 @@ pub(crate) fn run(
     disk_bytes[..volume_len].copy_from_slice(&volume[..volume_len]);
     std::fs::write(&disk, disk_bytes.as_slice())
         .with_context(|| format!("creating the disk at {}", disk.display()))?;
-    let machine_arguments = machine.qemu_arguments(&disk, &nvme_disk);
+    let machine_arguments = machine.qemu_arguments(&disk, &nvme_disk, &sata_disk);
     if machine_arguments.is_empty() {
         bail!(
             "{} has no boot arguments yet: its image cannot be booted, so there is \

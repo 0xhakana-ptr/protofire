@@ -688,7 +688,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `fs` | 68,494 | **moved**, PyroFS, tmpfs and the ten Level 6 formats; four of them are readers, which the old tree's were too |
 | `kernel` | 39,704 | **mostly done**, scheduler, processes, COW, pipes, signals, memory |
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
-| `drivers` | 18,828 | **partial**, virtio-blk, virtio-net, the display and the NVMe controller; Level 7 states the order, and its first two items have landed |
+| `drivers` | 18,828 | **partial**, virtio-blk, virtio-net, the display, the NVMe controller and the AHCI controller; Level 7 states the order, and its first three items have landed |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
 | `syscall` | 15,647 | **partial**, 102 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
@@ -999,12 +999,59 @@ size.
    offsets come from the type's own layout rather than from the field order.
 3. **`ahci`.**  Worth stating precisely, because the roadmap used to imply it
    was a driver crate like the others: **the old tree had no `drivers/ahci`.**
-   It was the previous tree's x86_64 architecture crate's `ata` module, 1,144
-   lines,
-   which is exactly the inversion this tree's `check-arch-fanout` refuses.  So
-   the work is not a port but a **relocation**: the register map and the
-   command structures become a crate under `drivers/`, and the machine keeps
-   only what is genuinely the machine's.
+   Its AHCI driver was 1,085 lines inside the x86_64 architecture crate (its
+   ATA PIO sibling 1,144 beside it), which is exactly the inversion this
+   tree's `check-arch-fanout` refuses.  So the work was not a port but a
+   **relocation**, and it has landed: the specification's half is
+   `drivers/storage/ahci` at layer 0, twenty-four host tests asserting the
+   offsets, the structures and the identify parse; the machine's half is
+   `kernel/src/ahci.rs`, which finds the controller, finds the port the disk
+   is on, starts the engine, and drives the disk as a block device.  The
+   boot's evidence, all required lines of the x86_64 gate:
+
+   ```
+   protofire: ahci at 0xfebda000, 4096 byte(s)
+   protofire: ahci ports implemented 0x3f
+   protofire: ahci disk on port 0
+   protofire: ahci port 0, 65536 block(s) of 512 byte(s), model QEMU HARDDISK
+   protofire: ahci0 far block answers PFATAH01
+   protofire: ahci0 wrote and read back sector 65534
+   protofire: ahci0 recorded as block device 1
+   ```
+
+   The far block and the round trip are the same two proofs the NVMe device
+   makes, and for the same reasons: the magic is bytes only the host wrote,
+   and the round trip is the write path through the interface a filesystem
+   will use.  The disk is a third one, 32 MiB against NVMe's 16, so the two
+   identify lines cannot be confused.
+
+   The relocation corrected three defects the old driver carried, each one a
+   reason it had never executed a command:
+
+   - The command header's `CFL` was left zero, and a controller is entitled
+     to refuse that: QEMU's `handle_cmd` rejects a length below two dwords
+     with no message a driver reads.
+   - The command table's address sat in the header's fourth and fifth dwords
+     where the layout has it at the third and fourth; the controller then
+     took its command table from bytes 8 to 15 -- zeros -- which is physical
+     address zero, the interrupt vector table.  QEMU's trace printed the
+     vector table as the command it was asked to run, and that dump settled
+     the layout for both the old tree and this crate's first builder.
+   - The write FIS set byte 1's bit 6 "for a write", where the layout has
+     only `C` at bit 7 and **reserved** at bits 6:4.  QEMU's controller
+     checks the reserved mask and drops the FIS without executing it -- the
+     same silence a wrong doorbell produces, and this time the dump that
+     found the address was already in place before it mattered.
+
+   The port itself was never found in the old driver: it hardcoded port zero
+   with a comment promising to find the real one later.  This one reads `PI`,
+   walks the implemented ports, and takes the first whose `PxSSTS.DET` reads
+   three, because present-but-dead and absent are two states a driver that
+   only checked "non-zero" would send IDENTIFY into.
+
+   The devices past the first are now three, and init's exercise walks them:
+   it lists past the first until the table refuses, and every record named on
+   the way must be as well-formed as the first.
 4. **`xhci`** and USB HID/MSD.  The largest of the six by far, the old tree's
    at 3,451 + 1,177 + 642 + 545.  A keyboard, a mouse and a stick.
 5. **`virtio_gpu`** and **`virtio_input`.**  The same two devices on the

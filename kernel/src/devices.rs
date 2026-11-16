@@ -55,6 +55,14 @@ const NVME_DEVICE_ID: u16 = 0x0010;
 const NVME_CLASS: u8 = 0x01;
 const NVME_SUBCLASS: u8 = 0x08;
 
+/// AHCI's class code: `0x01` mass storage, `0x06` SATA.
+///
+/// The ids are not the check -- QEMU's `ich9-ahci` reports Intel's `8086:2922`
+/// and a real controller reports its own -- so the class is the check and the
+/// ids are what the boot's line reports.
+const AHCI_CLASS: u8 = 0x01;
+const AHCI_SUBCLASS: u8 = 0x06;
+
 /// The class code a network controller carries.
 ///
 /// `0x02` is network and `0x00` is Ethernet, so a virtio network card reports
@@ -254,6 +262,20 @@ pub struct FoundNvme {
     /// How long the window is, so a register read can be refused rather than
     /// landing outside the mapping.
     pub bar0_length: usize,
+}
+
+/// An AHCI controller found on the bus, with BAR5 mapped.
+///
+/// BAR5 is the HBA's whole register set: the six global registers and up to
+/// 32 port blocks behind them, so one window is everything a driver needs.
+pub struct FoundAhci {
+    /// Where BAR5 is, mapped uncached.
+    pub bar5: usize,
+    /// How long the window is.
+    pub bar5_length: usize,
+    /// The identity the boot's line reports.
+    pub vendor: u16,
+    pub device: u16,
 }
 
 pub struct FoundVirtio {
@@ -870,6 +892,77 @@ pub fn find_nvme() -> Option<FoundNvme> {
     Some(FoundNvme {
         bar0: base,
         bar0_length: length,
+    })
+}
+
+/// Scan the bus for an AHCI controller, and map its BAR5.
+///
+/// `None` on a machine with no controller, which is the ordinary state on two
+/// of the three machines: only `q35` carries one, an Intel ICH9 the firmware
+/// puts at function 31.2, so a boot on the others reaches the caller's "no
+/// controller" path rather than a probe that failed.
+///
+/// The check is the class and subclass -- `0x01/0x06`, SATA -- because the ids
+/// name a vendor and not a protocol.  A machine that put a different SATA
+/// controller there is still an AHCI controller; a machine that put a virtio
+/// function there is not, and would be refused rather than programmed with a
+/// register map that is not its own.
+pub fn find_ahci() -> Option<FoundAhci> {
+    let config = configuration_space();
+    let (scan, found) = pci::device::scan(&*config, BUS_COUNT, |device| {
+        let is_ahci = device.class == AHCI_CLASS && device.subclass == AHCI_SUBCLASS;
+        is_ahci.then_some(device)
+    });
+
+    let device = match found {
+        Some(device) => device,
+        None => {
+            // Said out loud, because "no controller" and "the scan reached
+            // nothing" are different states and only one is normal.
+            arch::serial::write_str("protofire: ahci scan found ");
+            arch::serial::write_u32(scan.devices as u32);
+            arch::serial::write_str(" device(s), none of them a controller\n");
+            return None;
+        }
+    };
+
+    // The assignment pass, for the machines whose firmware left BARs at zero.
+    // On x86_64 the firmware has already done it and this answers `None`.
+    if let Some((base, size)) = arch::pcie_memory_window() {
+        let mut listing = [Device::ABSENT; MAX_FUNCTIONS];
+        let count = pci::scan_all(&*config, BUS_COUNT, &mut listing);
+        pci::assign_memory_bars(&*config, &listing[..count.min(MAX_FUNCTIONS)], base, size);
+    }
+
+    // BAR5 is the HBA's register set.  BAR4 is a legacy I/O window the
+    // driver does not use, and a driver that programmed through it would be
+    // speaking IDE where it means AHCI.
+    let bar = device.bar_register(&*config, 5)?;
+    if !bar.is_assigned() {
+        arch::serial::write_str("protofire: ahci found but BAR5 is unassigned\n");
+        return None;
+    }
+
+    let length = pci::bar::size(&*config, device.address, bar.register).unwrap_or(0x8000) as usize;
+    let base = physical_address(bar.address);
+    // SAFETY: the region is BAR5 of a function the bus reported, so it is that
+    // device's registers and nothing else.
+    #[cfg(target_os = "none")]
+    unsafe {
+        crate::address_space::map_device(base, length);
+    }
+
+    arch::serial::write_str("protofire: ahci at ");
+    arch::serial::write_hex(base as u64);
+    arch::serial::write_str(", ");
+    arch::serial::write_u32(length as u32);
+    arch::serial::write_str(" byte(s)\n");
+
+    Some(FoundAhci {
+        bar5: base,
+        bar5_length: length,
+        vendor: device.vendor,
+        device: device.device,
     })
 }
 

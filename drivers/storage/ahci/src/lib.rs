@@ -68,6 +68,7 @@ pub use command::command_header;
 pub use command::h2d_fis;
 pub use command::prdt_entry;
 pub use identify::IDENTIFY_BYTES;
+pub use identify::MODEL_BYTES;
 pub use identify::capacity_blocks;
 pub use identify::is_ata;
 pub use identify::model;

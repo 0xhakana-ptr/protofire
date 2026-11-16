@@ -105,8 +105,8 @@ pub fn command_header(
         let dw1: u32 = 1 << 9;
         header[4..8].copy_from_slice(&dw1.to_le_bytes());
     }
-    header[16..20].copy_from_slice(&(table_address as u32).to_le_bytes());
-    header[20..24].copy_from_slice(&((table_address >> 32) as u32).to_le_bytes());
+    header[8..12].copy_from_slice(&(table_address as u32).to_le_bytes());
+    header[12..16].copy_from_slice(&((table_address >> 32) as u32).to_le_bytes());
     header
 }
 
@@ -145,10 +145,12 @@ pub fn prdt_entry(address: u64, bytes: usize) -> [u8; PRDT_ENTRY_SIZE] {
 /// which tells the device whether data will follow from the host.  The two
 /// places that say "write" in one command -- this bit and the header's --
 /// must agree, which is why [`command_header`] takes the same argument.
-pub fn h2d_fis(command: u8, lba: u64, count: u16, write: bool) -> [u8; REGISTER_FIS_BYTES] {
+pub fn h2d_fis(command: u8, lba: u64, count: u16) -> [u8; REGISTER_FIS_BYTES] {
     let mut fis = [0u8; REGISTER_FIS_BYTES];
     fis[0] = 0x27;
-    fis[1] = 0x80 | if write { 1 << 6 } else { 0 };
+    // Byte 1: C at bit 7, and nothing else.  Bits 6:4 are reserved, and a
+    // controller may refuse the FIS for a set one.
+    fis[1] = 0x80;
     fis[2] = command;
     // The LBA, 48 bits wide across bytes 4, 5, 6, 8, 9 and 10; byte 7 is the
     // device register, whose low nibble is the LBA's bits 27:24 in an LBA28
@@ -239,8 +241,10 @@ mod tests {
     #[test]
     fn the_table_address_is_split_low_half_first() {
         let header = command_header(REGISTER_FIS_DWORDS, 1, false, 0x0000_0002_0000_3000);
-        assert_eq!(&header[16..20], &0x0000_3000u32.to_le_bytes());
-        assert_eq!(&header[20..24], &0x0000_0002u32.to_le_bytes());
+        assert_eq!(&header[8..12], &0x0000_3000u32.to_le_bytes());
+        assert_eq!(&header[12..16], &0x0000_0002u32.to_le_bytes());
+        assert_eq!(&header[16..20], &[0u8; 4], "DW4 is not the address");
+        assert_eq!(&header[20..24], &[0u8; 4], "and neither is DW5");
     }
 
     /// A header's unused bytes stay zero, which is what a controller reads
@@ -248,15 +252,14 @@ mod tests {
     #[test]
     fn the_header_leaves_what_it_does_not_use_zero() {
         let header = command_header(REGISTER_FIS_DWORDS, 1, false, 0x1000);
-        for at in [8usize, 24, 28] {
-            assert_eq!(
-                &header[at..at + 4],
-                &[0u8; 4],
-                "DW{}/{} stays zero",
-                at / 4,
-                at
-            );
+        // DW1 is zero for a read, and DW4 through DW7 are zero because the
+        // table's address ended at DW3: a builder that stopped one dword early
+        // would leave the address where a controller reading forward from DW4
+        // would find it, which is the defect this test pins in both directions.
+        for at in [4usize, 16, 20, 24, 28] {
+            assert_eq!(&header[at..at + 4], &[0u8; 4], "DW{} stays zero", at / 4);
         }
+        assert_eq!(&header[16..24], &[0u8; 8], "the address is not in DW4");
     }
 
     /// A PRD entry names its buffer and a byte count that is **minus one**.
@@ -291,7 +294,7 @@ mod tests {
     /// A Register FIS lands where the specification puts its fields.
     #[test]
     fn a_h2d_fis_names_the_command_the_lba_and_the_count() {
-        let fis = h2d_fis(ATA_READ_DMA_EXT, 0x0000_0123_4567_89AB, 8, false);
+        let fis = h2d_fis(ATA_READ_DMA_EXT, 0x0000_0123_4567_89AB, 8);
         assert_eq!(fis[0], 0x27, "the FIS type is Register Host-to-Device");
         assert_eq!(fis[1], 0x80, "C is set, W is clear, for a read");
         assert_eq!(fis[2], ATA_READ_DMA_EXT);
@@ -311,14 +314,27 @@ mod tests {
     /// command says "write" agree when the header is built with the same
     /// argument.
     #[test]
-    fn a_write_fis_sets_the_fis_and_the_header_bits_alike() {
-        let fis = h2d_fis(ATA_WRITE_DMA_EXT, 0, 1, true);
-        assert_eq!(fis[1], 0xC0, "C and W are both set");
-        assert_eq!(fis[2], ATA_WRITE_DMA_EXT);
+    fn a_write_fis_differs_only_in_its_command_code() {
+        let write = h2d_fis(ATA_WRITE_DMA_EXT, 0, 1);
+        assert_eq!(
+            write[1], 0x80,
+            "C alone: bit 6 is reserved, not a write bit"
+        );
+        assert_eq!(write[2], ATA_WRITE_DMA_EXT);
 
+        // The header's own write bit is where the direction is declared.
         let header = command_header(REGISTER_FIS_DWORDS, 1, true, 0x1000);
         let dw1 = u32::from_le_bytes(header[4..8].try_into().expect("four bytes"));
-        assert_eq!(dw1 >> 9 & 1, 1, "the header says write too");
+        assert_eq!(dw1 >> 9 & 1, 1, "the header says write");
+
+        // And every FIS leaves the reserved mask clear.
+        for fis in [
+            h2d_fis(ATA_READ_DMA_EXT, 0, 1),
+            h2d_fis(ATA_WRITE_DMA_EXT, 0, 1),
+            h2d_fis(ATA_FLUSH_CACHE, 0, 0),
+        ] {
+            assert_eq!(fis[1] & 0x70, 0, "the reserved mask is clear");
+        }
     }
 
     /// The commands are distinct, because a driver that sends one where it

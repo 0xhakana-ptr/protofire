@@ -146,6 +146,24 @@ machine fact the host may have left empty.  Its formal half is
 host: the register offsets, both queue entries, the identify offsets, the ring
 arithmetic and the phase walk.
 
+The AHCI controller is also up, and its disk is a block device: found on the
+bus by its class, `PI` read for the ports implemented, the first port whose
+`PxSSTS.DET` reads three taken, the engine started in the order the
+specification gives, and the disk identified and driven through the same
+block interface.  Its evidence is `ahci ports implemented `,
+`ahci disk on port 0`,
+`ahci port 0, 65536 block(s) of 512 byte(s), model QEMU HARDDISK`,
+`ahci0 far block answers PFATAH01`,
+`ahci0 wrote and read back sector `, and
+`ahci0 recorded as block device 1` -- all required lines of the x86_64 gate,
+which is the one machine whose tree carries a SATA controller.  A namespace
+is not mounted here either; the proof is the device, and a mount is the next
+step if a filesystem is ever wanted on it.  Its formal half is
+`drivers/storage/ahci`, relocated out of the previous tree's x86_64
+architecture crate, which names nothing of this tree and is tested on a host:
+BAR5's registers, a port's block, the command header, the PRD entry, the
+Host-to-Device FIS and the ATA identify structure.
+
 The virtio network card is **attached on all four boots**.  `virtio_net` brings
 a card up, the same status sequence the block device runs, the address read
 from the configuration region under `VIRTIO_NET_F_MAC`, and both queues,
