@@ -24,6 +24,7 @@ members = [
     "drivers/virtio/net",
     "drivers/bus/pci",
     "drivers/display/text",
+    "drivers/storage/nvme",
     "drivers/display/vga",
     "drivers/net/e1000",
     "libs/allocator",

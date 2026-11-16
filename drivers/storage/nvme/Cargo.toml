@@ -1,0 +1,19 @@
+[package]
+name = "nvme"
+description = "the NVMe wire format: registers, the two queue entries, and the identify structures"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The NVMe wire format and register map: BAR0's offsets, the 64-byte submission
+# entry, the 16-byte completion entry, and the identify structures.
+#
+# It names nothing of this tree, which is what lets every size assertion and
+# every field offset be checked on a host.  A command is 64 bytes wherever it is
+# built, so the layout is a fact about a specification rather than about a
+# machine, and the controller that drives it is the machine's half.
+[dependencies]
+
+# The tests build a register file and a command, neither of which needs an
+# allocator; nothing here does.

@@ -859,6 +859,20 @@ size.
    hardware plausible.  The old tree's `nvme` (1,125) and `nvme_protocol` (459)
    split along the line this tree already draws for virtio: the wire format
    compiles everywhere and the controller is the machine's.
+
+   **The format has landed** as `drivers/storage/nvme`: BAR0's registers, the
+   two queue entries, and the identify structures, with twenty host tests.  It
+   names nothing, so every offset and size is asserted rather than assumed, and
+   that is what caught the defect the old tree carried.  Its `IdentifyController`
+   was a 99-byte structure whose namespace count sat at offset 95 while NVMe 1.0
+   puts `NN` at **516**: the driver read the serial number and called it a
+   namespace count.  The old structure declared its fields in a run with no
+   regard for the specification's reserved gaps and nothing checked an offset,
+   which is why it survived.  This module declares only the fields a driver
+   reads, at the offsets the specification names, and the geometry reads the LBA
+   format table row the namespace selects instead of answering 512 from a
+   constant.  The controller half, mapping BAR0, driving the queues and claiming
+   a message, is what is left.
 3. **`ahci`.**  Worth stating precisely, because the roadmap used to imply it
    was a driver crate like the others: **the old tree had no `drivers/ahci`.**
    It was the previous tree's x86_64 architecture crate's `ata` module, 1,144

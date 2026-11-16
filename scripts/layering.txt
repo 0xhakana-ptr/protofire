@@ -58,6 +58,13 @@
 # reason `vga` is: arithmetic tested only by booting is arithmetic nobody checks.
 0 text
 
+# `nvme` is the controller's wire format: BAR0's registers, the 64-byte
+# submission entry, the 16-byte completion entry, and the identify structures.
+# It names nothing, so every offset and every size is asserted on a host, which
+# is the check the previous tree's identify structure did not have: it read the
+# namespace count from offset 95 where the specification puts it at 516.
+0 nvme
+
 # ── Layer 1: the wire format ────────────────────────────────────────────────
 #
 # `abi` is what the kernel and a program both compile against: the error type and
