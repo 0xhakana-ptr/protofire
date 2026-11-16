@@ -946,30 +946,42 @@ size.
    instead: no submission doorbell of any queue in `0..64` equals any completion
    doorbell, and the stride is `CAP`'s own bits 35:32.
 
-   **The controller now completes a read.**  `kernel/src/nvme.rs` finds the function
-   on the bus, maps BAR0, resets the controller, points it at an admin pair,
-   identifies the controller and the namespace, creates an I/O pair, and reads
-   block zero.  The boot's evidence is four lines, each of which was a place a
-   defect hid:
+   **The controller now completes a read, and the namespace is a block device.**
+   `kernel/src/nvme.rs` finds the function on the bus, maps BAR0, resets the
+   controller, points it at an admin pair, identifies the controller and the
+   namespace, creates an I/O pair, and wraps the namespace in
+   `NvmeBlockDevice`, a device of depth one.  The boot's evidence is six lines,
+   each of which answers a doubt:
 
    ```
    protofire: nvme capability 0x4008200f0107ff, version 1024, queues up to 2048 entr(ies), stride 0
    protofire: nvme namespace 1, 32768 block(s) of 512 byte(s)
    protofire: nvme I/O queue pair up, 64 entr(ies)
-   protofire: nvme identified, namespace 1 of 32768 block(s), first block starts 0x0
+   protofire: nvme0n1 block 0 answers PFNVME01
+   protofire: nvme0n1 wrote and read back sector 32767
+   protofire: nvme0n1 recorded as block device 1
    ```
 
-   The last one is the device's own word: it read the command from the ring,
-   posted a completion to the other, and wrote the data into the buffer the
-   driver named.  All four are required lines of the x86_64 gate, and only
-   x86_64's: `q35` carries an `nvme` function and the other two machines' trees
-   describe a bus this controller is not on.
+   The fourth line reads bytes **only the host wrote** -- the disk's first block
+   says `PFNVME01` because `xtask` put it there before the machine ran, so no
+   part of this boot could have satisfied it.  The fifth is the write path,
+   through the block interface a filesystem will use rather than through a raw
+   command, so the code that is proven is the code a caller runs.  The sixth
+   puts the disk where `ListBlockDevices` names it, and the init program's
+   exercise reads that record back from ring 3 (`process 1 listed block device
+   1`).  All are required lines of the x86_64 gate, and only x86_64's: `q35`
+   carries an `nvme` function and the other two machines' trees describe a bus
+   this controller is not on.
 
-   What is **not** done is a namespace mounted: that wants a run buffer per
-   request and a block device over the controller, which is the next piece of
-   work rather than this one.  The probe's read is what proves the controller,
-   and the disk it reads is a second, unformatted one so the probe cannot be
-   confused with a mount.
+   Every transfer rides one page-aligned frame the controller owns, because a
+   caller's buffer is neither page-aligned nor inside one page and this driver's
+   PRP arithmetic is `PRP1` alone.  A namespace whose blocks are bigger than the
+   frame is refused at probe rather than driven badly.
+
+   What is **not** done is a namespace mounted: the volume mounts on virtio-blk,
+   which is the driver a boot needs, and the NVMe device waits in
+   `nvme::device()` for the mount that will want it.  The disk it reads is a
+   second, unformatted one, so the proof cannot be confused with a mount.
 
    The record's layout had a defect of its own to avoid: `#[repr(C)]` pads the
    three 64-bit words to the name field's **aligned** end, which for a 63-byte

@@ -52,6 +52,10 @@ use alloc::alloc::alloc_zeroed;
 use alloc::alloc::dealloc;
 use alloc::sync::Arc;
 
+use abi::Error;
+use abi::Result;
+use block::BlockDevice;
+use block::QueuedBlockDevice;
 use nvme::ADMIN_DELETE_IOCQ;
 use nvme::ADMIN_DELETE_IOSQ;
 use nvme::CAP_DSTRD_MASK;
@@ -155,6 +159,14 @@ impl Drop for AlignedFrames {
     }
 }
 
+// SAFETY: the type owns its allocation exclusively -- the pointer came from
+// `alloc_zeroed`, every access goes through `&self` or `&mut self` of the
+// owner, and `Drop` frees it exactly once with the layout it was given.  Moving
+// the struct moves that ownership, which is the whole of what `Send` asks.  It
+// exists because the device sits behind an `Arc`, and a raw pointer is `!Send`
+// by default whether or not anything shares it.
+unsafe impl Send for AlignedFrames {}
+
 /// BAR0, read and written a word at a time.
 ///
 /// The registers are 32 and 64 bits.  A 64-bit read is two 32-bit reads for the
@@ -215,26 +227,13 @@ pub struct Controller {
     block_size: usize,
     /// The command id every submission takes, incremented per command.
     next_command_id: u16,
-}
-
-/// What a probe learned, for the boot's lines.
-#[derive(Debug, Clone, Copy)]
-pub struct Report {
-    pub bar0: u64,
-    pub version: u32,
-    pub nsid: u32,
-    pub block_count: u64,
-    pub block_size: usize,
-    pub queue_entries: usize,
-    /// Whether the read came back with the bytes that were written first.
-    pub round_trip: bool,
-    /// The first eight bytes read from block zero, so a line can say what was
-    /// there rather than only that something was.
-    pub first_bytes: [u8; 8],
+    /// The page every block transfer rides through, behind the same lock as the
+    /// rings it is named in.
+    bounce: AlignedFrames,
 }
 
 impl Controller {
-    /// Find the controller on the bus, bring it up, and read a block.
+    /// Find the controller on the bus, bring it up, and return it as a device.
     ///
     /// `None` on a machine with no controller, which is a normal state: the
     /// emulator's other two machines have no NVMe function, and a boot that
@@ -243,7 +242,7 @@ impl Controller {
     /// Every step reports what it found rather than only that it succeeded,
     /// because the four defects this driver had were each invisible in a
     /// sentence that said "worked".
-    pub fn probe() -> Option<Report> {
+    fn bring_up() -> Option<Controller> {
         let found = crate::devices::find_nvme()?;
 
         let registers = Registers {
@@ -287,6 +286,7 @@ impl Controller {
         let admin_completion_frames = AlignedFrames::new(completion_bytes)?;
         let io_submission_frames = AlignedFrames::new(submission_bytes)?;
         let io_completion_frames = AlignedFrames::new(completion_bytes)?;
+        let bounce = AlignedFrames::new(NVME_PAGE_SIZE)?;
 
         // Step 3: the admin pair.  Both queues are the same size, which is why
         // one write sets both halves of `AQA`.
@@ -321,6 +321,7 @@ impl Controller {
             block_count: 0,
             block_size: 0,
             next_command_id: 0,
+            bounce,
         };
 
         // Step 5: identify.  The controller first, which says whether there is
@@ -369,32 +370,18 @@ impl Controller {
         // a submission queue that names one that does not exist.
         controller.create_io_queues(entries)?;
 
-        // Step 7: read.  A read of block zero is the proof: the driver created
-        // the queues, the controller read a command from one and wrote a
-        // completion to the other, and the data is in the buffer the driver
-        // named.
-        let data = AlignedFrames::new(NVME_PAGE_SIZE)?;
-        let command = nvme::queue::read(controller.nsid, 0, 1, data.address(), 0);
-        let cqe = controller.io_command(&command)?;
-        let mut first_bytes = [0u8; 8];
-        if cqe.is_success() {
-            first_bytes.copy_from_slice(&data.as_slice()[..8]);
-        } else {
-            arch::serial::write_str("protofire: nvme read failed, status ");
-            arch::serial::write_u32(cqe.status_code() as u32);
-            arch::serial::write_str("\n");
+        // Step 7: the namespace's block size, against what this driver can
+        // carry.  A block bigger than the bounce frame is a run the driver
+        // cannot split, and a driver that accepted it would transfer past the
+        // frame the command names.
+        if block_size > NVME_PAGE_SIZE {
+            arch::serial::write_str("protofire: nvme blocks of ");
+            arch::serial::write_u32(block_size as u32);
+            arch::serial::write_str(" byte(s) are bigger than a page, refused\n");
+            return None;
         }
 
-        Some(Report {
-            bar0: found.bar0 as u64,
-            version,
-            nsid: controller.nsid,
-            block_count: controller.block_count,
-            block_size: controller.block_size,
-            queue_entries: entries,
-            round_trip: cqe.is_success(),
-            first_bytes,
-        })
+        Some(controller)
     }
 
     /// Create the I/O completion queue and then the submission queue.
@@ -560,6 +547,23 @@ impl Controller {
     }
 }
 
+impl Controller {
+    /// The transfer frame, for a caller filling it before a write.
+    fn bounce_mut(&mut self) -> &mut [u8] {
+        self.bounce.as_slice_mut()
+    }
+
+    /// The transfer frame, for a caller reading what a command brought back.
+    fn bounce_slice(&self) -> &[u8] {
+        self.bounce.as_slice()
+    }
+
+    /// The frame's physical address, for the command that names it.
+    fn bounce_address(&self) -> u64 {
+        self.bounce.address()
+    }
+}
+
 impl Drop for Controller {
     /// Delete the I/O queues on the way out.
     ///
@@ -625,33 +629,255 @@ fn wait_ready(registers: &Registers, ready: bool) -> bool {
     }
 }
 
-/// The names the boot's lines spell, so the gate and the probe cannot drift.
-pub const REPORT_PREFIX: &str = "protofire: nvme identified, namespace ";
-
-/// A boot line that says the read happened and what it read.
+/// The disk the controller's namespace is, as the block layer sees it.
 ///
-/// The first eight bytes are printed as one word rather than as eight
-/// `write_hex` calls: `write_hex` puts `0x` in front of its value, and eight of
-/// them read as eight numbers where this is one.
-pub fn report_read(report: &Report) {
-    arch::serial::write_str(REPORT_PREFIX);
-    arch::serial::write_u32(report.nsid);
-    arch::serial::write_str(" of ");
-    arch::serial::write_u32(report.block_count as u32);
-    arch::serial::write_str(" block(s), first block starts ");
-    arch::serial::write_hex(u64::from_le_bytes(report.first_bytes));
-    arch::serial::write_str("\n");
+/// One device of **depth one**: every read and write runs to completion before
+/// it returns, which is the shape [`block`] gives a device that has nothing to
+/// pipeline behind.  The virtio disk queues and this one does not, and the
+/// difference is a property of the drivers rather than of the bus: NVMe's own
+/// rings are deep, but driving more than one command at a time wants a ticket
+/// per request and an interrupt to wake on, and this driver polls.
+///
+/// Every transfer rides one page-aligned frame.  The controller reads and
+/// writes DMA memory by physical address, and a caller's buffer is neither
+/// page-aligned nor guaranteed to sit inside one page, so a transfer that is
+/// neither would need a PRP list to describe it.  Bouncing through a frame
+/// costs a copy and buys a driver whose PRP arithmetic is always `PRP1` alone,
+/// which is the arithmetic the host tests check.
+pub struct NvmeBlockDevice {
+    controller: spin::Mutex<Controller>,
+    name: &'static str,
+    nsid: u32,
+    block_count: u64,
+    block_size: usize,
 }
 
-/// The controller's own record, for anything that wants to drive it later.
+/// The name this device answers to.
 ///
-/// Nothing does yet: a block device over NVMe needs a run buffer per request
-/// and a namespace that is mounted, and the mount this boot does is virtio's.
-/// The probe is what proves the driver, and the type is here because the next
-/// step is to hand it to [`block`] rather than to print a line.
-pub struct Found {
-    pub controller: Arc<spin::Mutex<Controller>>,
-    pub report: Report,
+/// `nvme0n1` is the shape a program matches on, and it is the same string the
+/// device list's own tests use.
+const DEVICE_NAME: &str = "nvme0n1";
+
+/// What the disk's first block is expected to say.
+///
+/// Written by `xtask` into the NVMe disk before the machine runs, for the same
+/// reason the volume's label is written there: a read this driver could satisfy
+/// from its own memory is not evidence.  Two copies of one constant, here and
+/// in `tools/xtask/src/build.rs`, and the boot's line is what polices the
+/// pairing.
+const DISK_MAGIC: [u8; 8] = *b"PFNVME01";
+
+/// The controller this boot brought up, and the reason it outlives the boot's
+/// own function.
+///
+/// `kernel_main` runs for the machine's whole life, but a local that outlives
+/// its scope only by convention is a local that will be dropped the day the
+/// boot is restructured.  A `static` says the device stays up in words, and
+/// [`device`] is how the next step -- a namespace mounted over it -- reaches
+/// it.
+static DEVICE: spin::Mutex<Option<Arc<NvmeBlockDevice>>> = spin::Mutex::new(None);
+
+/// Bring the controller up, keep it, and prove it through the device interface.
+///
+/// `true` when a controller was found, brought up and proven; `false` when the
+/// machine has none, which is the ordinary state on two of the three machines.
+pub fn bring_up() -> bool {
+    let Some(controller) = Controller::bring_up() else {
+        return false;
+    };
+    let device = Arc::new(NvmeBlockDevice {
+        nsid: controller.nsid,
+        block_count: controller.block_count,
+        block_size: controller.block_size,
+        name: DEVICE_NAME,
+        controller: spin::Mutex::new(controller),
+    });
+    *DEVICE.lock() = Some(Arc::clone(&device));
+
+    prove(&device);
+    true
+}
+
+/// The device this boot brought up, for a caller that wants to mount it.
+///
+/// `None` on a machine with no controller and on one whose controller refused
+/// to come up, which are different states the boot's own lines tell apart.
+pub fn device() -> Option<Arc<NvmeBlockDevice>> {
+    DEVICE.lock().clone()
+}
+
+/// Prove the device, and record it in the list a program can ask for.
+///
+/// Two proofs, and they answer different doubts.  The first reads a block the
+/// **host** wrote before the machine ran, which nothing in this boot could have
+/// written: if the bytes come back, the whole path from the device's own disk
+/// through the controller, the queues and the DMA transfer into the driver's
+/// frame happened.  The second writes a pattern and reads it back through the
+/// same interface a filesystem will use, which is the proof the **write** path
+/// works, and through [`NvmeBlockDevice`] rather than through a raw command so
+/// the code that is proven is the code a caller runs.
+fn prove(device: &NvmeBlockDevice) {
+    let mut first = [0u8; 512];
+    match device.read_blocks(0, &mut first) {
+        Ok(()) => {
+            if first[..8] == DISK_MAGIC {
+                arch::serial::write_str("protofire: nvme0n1 block 0 answers PFNVME01\n");
+            } else {
+                arch::serial::write_str("protofire: nvme0n1 block 0 read back ");
+                arch::serial::write_hex(u64::from_le_bytes(
+                    first[..8].try_into().unwrap_or([0; 8]),
+                ));
+                arch::serial::write_str(", not the disk's magic\n");
+            }
+        }
+        Err(error) => {
+            arch::serial::write_str("protofire: nvme0n1 block 0 failed: ");
+            arch::serial::write_str(error.as_str());
+            arch::serial::write_str("\n");
+        }
+    }
+
+    let pattern: [u8; 512] = core::array::from_fn(|index| (index % 251) as u8);
+    let mut read_back = [0u8; 512];
+    let last_block = device.block_count.saturating_sub(1);
+    let written = device.write_blocks(last_block, &pattern);
+    let read = device.read_blocks(last_block, &mut read_back);
+    if written.is_ok() && read.is_ok() && read_back == pattern {
+        arch::serial::write_str("protofire: nvme0n1 wrote and read back sector ");
+        arch::serial::write_u32(last_block as u32);
+        arch::serial::write_str("\n");
+    } else {
+        arch::serial::write_str("protofire: nvme0n1 FAILED to write and read back sector ");
+        arch::serial::write_u32(last_block as u32);
+        arch::serial::write_str("\n");
+    }
+
+    // Recorded after the proof, so a device that cannot transfer is a device
+    // the list does not name: a program asking for index 1 would otherwise
+    // hear about a disk it cannot read.
+    let listed = crate::block_devices::record(
+        device.name(),
+        device.block_size(),
+        device.block_count(),
+        device.is_read_only(),
+    );
+    if listed {
+        arch::serial::write_str("protofire: nvme0n1 recorded as block device ");
+        arch::serial::write_u32((crate::block_devices::count() - 1) as u32);
+        arch::serial::write_str("\n");
+    } else {
+        arch::serial::write_str("protofire: nvme0n1 did not fit the device list\n");
+    }
+}
+
+impl NvmeBlockDevice {
+    /// Validate a run, and answer the block count it covers.
+    ///
+    /// The block layer's contract is that a buffer is a whole number of blocks
+    /// and covers them all, and the same check as every other device's: a run
+    /// past the end would transfer into blocks the namespace does not have,
+    /// which on a real controller is a write to whoever owns them.
+    fn check(&self, lba: u64, bytes: usize) -> Result<u32> {
+        if bytes == 0 || !bytes.is_multiple_of(self.block_size) {
+            return Err(Error::InvalidArgument);
+        }
+        let blocks = bytes / self.block_size;
+        if lba.saturating_add(blocks as u64) > self.block_count {
+            return Err(Error::InvalidArgument);
+        }
+        Ok(blocks as u32)
+    }
+
+    /// How many blocks one pass of the bounce frame carries.
+    ///
+    /// The frame is the controller's, and its length is fixed at one page, so
+    /// the number is a division and not a state the lock would have to guard.
+    fn blocks_per_run(&self) -> u32 {
+        (NVME_PAGE_SIZE / self.block_size) as u32
+    }
+}
+
+impl BlockDevice for NvmeBlockDevice {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn block_size(&self) -> usize {
+        self.block_size
+    }
+
+    fn block_count(&self) -> u64 {
+        self.block_count
+    }
+
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        let total = self.check(lba, buffer.len())?;
+        let per_run = self.blocks_per_run();
+        let mut controller = self.controller.lock();
+        let mut done = 0u32;
+        while done < total {
+            let blocks = per_run.min(total - done);
+            let run_bytes = blocks as usize * self.block_size;
+            let at = lba + done as u64;
+            let command = nvme::queue::read(self.nsid, at, blocks, controller.bounce_address(), 0);
+            let cqe = controller.io_command(&command).ok_or(Error::TimedOut)?;
+            if !cqe.is_success() {
+                return Err(Error::DeviceError);
+            }
+            buffer[done as usize * self.block_size..done as usize * self.block_size + run_bytes]
+                .copy_from_slice(&controller.bounce_slice()[..run_bytes]);
+            done += blocks;
+        }
+        Ok(())
+    }
+
+    fn write_blocks(&self, lba: u64, data: &[u8]) -> Result<()> {
+        let total = self.check(lba, data.len())?;
+        let per_run = self.blocks_per_run();
+        let mut controller = self.controller.lock();
+        let mut done = 0u32;
+        while done < total {
+            let blocks = per_run.min(total - done);
+            let run_bytes = blocks as usize * self.block_size;
+            let at = lba + done as u64;
+            controller.bounce_mut()[..run_bytes]
+                .copy_from_slice(&data[done as usize * self.block_size..][..run_bytes]);
+            let command = nvme::queue::write(self.nsid, at, blocks, controller.bounce_address(), 0);
+            let cqe = controller.io_command(&command).ok_or(Error::TimedOut)?;
+            if !cqe.is_success() {
+                return Err(Error::DeviceError);
+            }
+            done += blocks;
+        }
+        Ok(())
+    }
+
+    /// The namespace's write cache to stable storage.
+    ///
+    /// Reached today by nothing: the mount this boot does is virtio's, and
+    /// `Sync` flushes the devices the mount table holds.  It is implemented
+    /// here rather than left as the trait's no-op because the controller can
+    /// answer it, and a device whose flush silently did nothing is one a
+    /// filesystem would believe durable when it was not.
+    fn flush(&self) -> Result<()> {
+        let mut controller = self.controller.lock();
+        let command = nvme::queue::flush(self.nsid);
+        let cqe = controller.io_command(&command).ok_or(Error::TimedOut)?;
+        if !cqe.is_success() {
+            return Err(Error::DeviceError);
+        }
+        Ok(())
+    }
+}
+
+impl QueuedBlockDevice for NvmeBlockDevice {
+    fn as_block_device(&self) -> &dyn BlockDevice {
+        self
+    }
 }
 
 #[cfg(test)]

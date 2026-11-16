@@ -108,12 +108,11 @@ pub fn kernel_main() -> ! {
     // reader watching the screen sees these lines arrive on it.
     //
     // It is not in the mount's path: the volume mounts on virtio-blk, which is
-    // the driver a boot needs, and this one is proving the controller.  What
-    // arrives over NVMe comes when a namespace is mounted, which wants a run
-    // buffer per request and is the next piece of work rather than this one.
-    if let Some(report) = crate::nvme::Controller::probe() {
-        crate::nvme::report_read(&report);
-    }
+    // the driver a boot needs, and this one is proving the controller through
+    // the block interface a filesystem would use.  It stays up in
+    // `nvme::device()` for the mount that will want it, which is the next piece
+    // of work rather than this one.
+    crate::nvme::bring_up();
 
     // The registry that outlives this function, and the policy proven through
     // it rather than beside it.

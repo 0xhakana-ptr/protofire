@@ -34,6 +34,15 @@ const DISK_BYTES: usize = 1024 * 1024;
 /// cannot be confused with the zeroed memory around it.
 const NVME_DISK_BYTES: usize = 16 * 1024 * 1024;
 
+/// The disk's first block, as the kernel's probe expects to find it.
+///
+/// Two copies of one constant, here and in `kernel/src/nvme.rs`, for the same
+/// reason the volume's label is two copies: a read the kernel could satisfy
+/// from its own memory is not evidence, so the disk says something only the
+/// **host** wrote, and the boot's line is what polices the pairing.  Drift and
+/// the read answers garbage and the gate goes red.
+const NVME_DISK_MAGIC: &[u8; 8] = b"PFNVME01";
+
 /// The volume's label and the greeting file, as the kernel's own constants
 /// name them.
 ///
@@ -182,10 +191,12 @@ pub(crate) fn run(
     ));
     let _ = std::fs::remove_file(&nvme_disk);
     if machine.has_nvme() {
-        // QEMU creates a `raw` file it is handed if it does not exist, but only
-        // when the size is unambiguous; writing the file here is what makes the
-        // size this tool's number rather than QEMU's default.
-        std::fs::write(&nvme_disk, vec![0u8; NVME_DISK_BYTES])
+        // The size is this tool's number rather than QEMU's default, and the
+        // first block is the magic the kernel's probe reads back: a read this
+        // driver could satisfy from its own memory would prove nothing.
+        let mut nvme_bytes = vec![0u8; NVME_DISK_BYTES];
+        nvme_bytes[..NVME_DISK_MAGIC.len()].copy_from_slice(NVME_DISK_MAGIC);
+        std::fs::write(&nvme_disk, nvme_bytes)
             .with_context(|| format!("creating the NVMe disk at {}", nvme_disk.display()))?;
     }
 

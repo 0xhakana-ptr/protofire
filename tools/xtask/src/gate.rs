@@ -874,32 +874,33 @@ impl Machine {
                 // fallthrough.
                 ("protofire: block devices listed 1", true),
                 ("protofire: process 1 listed block device 0", true),
+                // The second device, through the dispatcher from ring 3.  Only
+                // x86_64's machine has one, so the program's exercise takes the
+                // refusal on the other two and answers this here.
+                ("protofire: process 1 listed block device 1", true),
                 (
                     "protofire: process 1 flushed every mounted filesystem",
                     true,
                 ),
-                // The NVMe controller.  Four lines rather than one, because
-                // this driver's four defects were each invisible in a sentence
-                // that said it worked: the capability line is the device
-                // answering with its own queue ceiling and doorbell stride, the
-                // namespace line is an Identify that parsed, the queue line is
-                // the pair actually created, and the last is a **completed
-                // read** -- the device's own word that it read a command from
-                // the ring and wrote its data into the buffer the driver named.
-                //
-                // The last line's prefix stops before the namespace id, which
-                // is a number the gate does not fix; the block count after it
-                // is the disk's size and is asserted separately as the tail.
+                // The NVMe controller.  The first three lines are the device
+                // answering: its own queue ceiling and doorbell stride, an
+                // Identify that parsed, and the queue pair actually created.
+                // The rest are the **proofs**, and each answers a different
+                // doubt: the block-zero line reads bytes only the host wrote,
+                // so no part of this boot could have satisfied it; the round
+                // trip exercises the write path through the block interface a
+                // filesystem will use; and the record line puts the second disk
+                // where `ListBlockDevices` names it.  The program's own line
+                // below is that record read back from ring 3.
                 ("protofire: nvme capability ", false),
                 (
                     "protofire: nvme namespace 1, 32768 block(s) of 512 byte(s)",
                     true,
                 ),
                 ("protofire: nvme I/O queue pair up, 64 entr(ies)", true),
-                (
-                    "protofire: nvme identified, namespace 1 of 32768 block(s)",
-                    false,
-                ),
+                ("protofire: nvme0n1 block 0 answers PFNVME01", true),
+                ("protofire: nvme0n1 wrote and read back sector ", false),
+                ("protofire: nvme0n1 recorded as block device 1", true),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,

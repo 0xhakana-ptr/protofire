@@ -440,10 +440,28 @@ pub extern "C" fn _start() -> ! {
     if disk[0] == 0 {
         sys_exit(223);
     }
-    // A second device is one this machine does not have, and the answer is the
-    // one a list's end gets rather than a zeroed record.
+    // A second device is one this machine may or may not have: x86_64 boots an
+    // NVMe controller beside the virtio disk and the other two machines do not.
+    // So what is asserted is the ABI and not the machine's census: an index the
+    // list refuses is what a one-disk machine answers, and a second device that
+    // is named must come back as well-formed as the first, never as a zeroed
+    // record -- which is the answer a handler that past the end would give.
     if !user_abi::is_error_status(sys_list_block_devices(1, &mut disk)) {
-        sys_exit(224);
+        let second_size = u64::from_le_bytes(
+            disk[user_abi::BLOCK_DEVICE_INFO_BLOCK_SIZE_OFFSET
+                ..user_abi::BLOCK_DEVICE_INFO_BLOCK_SIZE_OFFSET + 8]
+                .try_into()
+                .expect("eight bytes"),
+        );
+        let second_count = u64::from_le_bytes(
+            disk[user_abi::BLOCK_DEVICE_INFO_BLOCK_COUNT_OFFSET
+                ..user_abi::BLOCK_DEVICE_INFO_BLOCK_COUNT_OFFSET + 8]
+                .try_into()
+                .expect("eight bytes"),
+        );
+        if second_size == 0 || second_count == 0 || disk[0] == 0 {
+            sys_exit(224);
+        }
     }
     // Every mounted filesystem flushed, in one call.
     insist(sys_sync());

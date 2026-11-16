@@ -126,17 +126,21 @@ without the line there is no way to tell a device that has it from one that
 ignores a flush request, because the second fails by timing out rather than by
 answering.
 
-The NVMe controller is also up, and it completes a read: it is found on the bus,
-BAR0 is mapped, the controller resets and enables, an admin pair identifies the
-controller and the namespace, an I/O pair is created, and block zero is read
-into a buffer the driver named.  Its evidence is `nvme capability `,
+The NVMe controller is also up, and its namespace is a block device: it is
+found on the bus, BAR0 is mapped, the controller resets and enables, an admin
+pair identifies the controller and the namespace, an I/O pair is created, and
+`NvmeBlockDevice` carries the namespace through the block interface a
+filesystem uses.  Its evidence is `nvme capability `,
 `nvme namespace 1, 32768 block(s) of 512 byte(s)`, `nvme I/O queue pair up`,
-and `nvme identified, namespace 1 of 32768 block(s)`, all required lines of the
-x86_64 gate.  A namespace is **not** mounted: the volume mounts on virtio-blk,
-and a block device over this controller is the next step rather than this one.
-Its formal half is `drivers/storage/nvme`, which names nothing of this tree and
-is tested on a host: the register offsets, both queue entries, the identify
-offsets, the ring arithmetic and the phase walk.
+`nvme0n1 block 0 answers PFNVME01` (bytes only the host wrote, so no part of
+the boot could have written them), `nvme0n1 wrote and read back sector `, and
+`nvme0n1 recorded as block device 1` -- all required lines of the x86_64 gate,
+with `process 1 listed block device 1` reading the record back from ring 3.
+A namespace is **not** mounted: the volume mounts on virtio-blk, and the device
+waits in `nvme::device()` for the mount that will want it.  Its formal half is
+`drivers/storage/nvme`, which names nothing of this tree and is tested on a
+host: the register offsets, both queue entries, the identify offsets, the ring
+arithmetic and the phase walk.
 
 The virtio network card is **attached on all four boots**.  `virtio_net` brings
 a card up, the same status sequence the block device runs, the address read
