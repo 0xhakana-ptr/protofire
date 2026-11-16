@@ -828,9 +828,21 @@ pub fn exercise_network() -> bool {
     // The name: one lookup through the server the lease named.  This is the
     // exchange that proves the resolver rather than the parser: a query this
     // stack built went out, and an answer another machine built came back.
-    if !crate::net::dns_probe() {
-        return false;
-    }
+    //
+    // Its result does **not** stop the chain, and that is a decision the gate
+    // already made: the lookup needs a network with a resolver behind it, and
+    // the line is deliberately not one the gate requires, because a gate that
+    // fails because the host has no working DNS is a gate nobody can fix from
+    // this tree.  The probe's own line is the evidence either way.
+    //
+    // Measured, and the reason this had to change: the reply is on the wire
+    // and the resolver parses it, but the host's own DNS occasionally takes
+    // seconds.  Thirteen boots answered in 0.2 to 2.5 milliseconds and one in
+    // 6820, which is three hundred times the wait.  Treating that as a
+    // failure of this stack cost four unrelated lines, the stateless
+    // configuration, both IPv6 transports and the stream, all of which the
+    // gate does require.
+    let _ = crate::net::dns_probe();
 
     // Stateless configuration: a router's advertisement through the receive
     // path, and the global address it makes.  No router this tree boots sends
