@@ -65,6 +65,12 @@ pub const SYS_SEEK: usize = SyscallNumber::Seek as usize;
 pub const SYS_FSYNC: usize = SyscallNumber::Fsync as usize;
 /// `Fdatasync`, the data alone.
 pub const SYS_FDATASYNC: usize = SyscallNumber::Fdatasync as usize;
+/// `Fallocate`, the one mode this build defines being a punch.
+pub const SYS_FALLOCATE: usize = SyscallNumber::Fallocate as usize;
+/// `GetFileFlags`, the per-file data-reduction flags.
+pub const SYS_GET_FILE_FLAGS: usize = SyscallNumber::GetFileFlags as usize;
+/// `SetFileFlags`, the same flags, as two masks.
+pub const SYS_SET_FILE_FLAGS: usize = SyscallNumber::SetFileFlags as usize;
 /// `Stat`, by path.
 pub const SYS_STAT: usize = SyscallNumber::Stat as usize;
 /// `ReadDir`, by path and index.
@@ -236,6 +242,11 @@ pub const TIME_RECORD_BYTES: usize = core::mem::size_of::<abi::time::TimeRecord>
 pub const OPEN_READ: usize = abi::fs::OPEN_FLAG_READ;
 /// Open for writing, creating the file when it is not there.
 pub const OPEN_WRITE_CREATE: usize = abi::fs::OPEN_FLAG_WRITE | abi::fs::OPEN_FLAG_CREATE;
+/// The only `Fallocate` mode this build defines: punch a hole, keep the size.
+pub const PUNCH_HOLE_KEEP_SIZE: usize =
+    abi::fs::FALLOC_FL_PUNCH_HOLE | abi::fs::FALLOC_FL_KEEP_SIZE;
+/// Per-file transparent compression.
+pub const FILE_FLAG_COMPRESSED: u32 = abi::fs::FILE_FLAG_COMPRESSED;
 /// `Seek` from an absolute offset.
 pub const SEEK_SET: usize = abi::fs::SEEK_SET;
 /// `Seek` from the current position, forwards or back.
@@ -478,6 +489,32 @@ pub fn sys_fsync(descriptor: usize) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_fdatasync(descriptor: usize) -> usize {
     syscall6(SYS_FDATASYNC, descriptor, 0, 0, 0, 0, 0)
+}
+
+/// `fallocate(descriptor, mode, offset, length)`: zero, or an error's encoding.
+#[cfg(target_os = "none")]
+pub fn sys_fallocate(descriptor: usize, mode: usize, offset: usize, length: usize) -> usize {
+    syscall6(SYS_FALLOCATE, descriptor, mode, offset, length, 0, 0)
+}
+
+/// `get_file_flags(descriptor)`: the flags word, or an error's encoding.
+#[cfg(target_os = "none")]
+pub fn sys_get_file_flags(descriptor: usize) -> usize {
+    syscall6(SYS_GET_FILE_FLAGS, descriptor, 0, 0, 0, 0, 0)
+}
+
+/// `set_file_flags(descriptor, set, clear)`: zero, or an error's encoding.
+#[cfg(target_os = "none")]
+pub fn sys_set_file_flags(descriptor: usize, set: u32, clear: u32) -> usize {
+    syscall6(
+        SYS_SET_FILE_FLAGS,
+        descriptor,
+        set as usize,
+        clear as usize,
+        0,
+        0,
+        0,
+    )
 }
 
 /// `stat(path, record)`: zero, with the record filled.

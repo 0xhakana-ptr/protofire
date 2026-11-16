@@ -328,6 +328,54 @@ pub(crate) fn serve_io(
         }
         return Some(outcome);
     }
+    if number == SyscallNumber::Fallocate as usize
+        || number == SyscallNumber::GetFileFlags as usize
+        || number == SyscallNumber::SetFileFlags as usize
+    {
+        // The punch and the two data-reduction flags.  One branch because none
+        // of the three takes a pointer: a descriptor and words, which the
+        // handler reads and validates.
+        //
+        // The line prints the call's own answer rather than a fixed word,
+        // because the three answers mean different things: the punch answers
+        // zero, the get answers the flags word, and the set answers zero.  A
+        // line that printed "zero" for all three would hide the get's, which
+        // is the only one of them with anything to report.
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        match outcome {
+            CallOutcome::Return(answer) if !abi::syscall::is_error_status(answer) => {
+                arch::serial::write_str("protofire: process ");
+                arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                arch::serial::write_str(" asked ");
+                arch::serial::write_str(if number == SyscallNumber::Fallocate as usize {
+                    "for a hole in descriptor "
+                } else if number == SyscallNumber::GetFileFlags as usize {
+                    "for the flags of descriptor "
+                } else {
+                    "to change the flags of descriptor "
+                });
+                arch::serial::write_u32(call.arguments[0] as u32);
+                arch::serial::write_str(", answered ");
+                arch::serial::write_u32(answer as u32);
+                arch::serial::write_str("\n");
+            }
+            _ => {
+                // A refusal is reported too, and with the same words: a punch
+                // the volume does not implement and a punch that happened are
+                // the two outcomes a reader of this log has to tell apart, and
+                // the answer's encoding is what does it.
+                arch::serial::write_str("protofire: process ");
+                arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+                arch::serial::write_str(" was refused a call on descriptor ");
+                arch::serial::write_u32(call.arguments[0] as u32);
+                arch::serial::write_str("\n");
+            }
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::Write as usize {
         // The no-length case: a `Write` whose third argument is zero names no
         // bytes, so it is not a write, and it is the announcement.

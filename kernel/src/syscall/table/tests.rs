@@ -413,6 +413,14 @@ struct RecordingNode {
     name: &'static str,
     syncs: core::sync::atomic::AtomicUsize,
     data_syncs: core::sync::atomic::AtomicUsize,
+    holes: core::sync::atomic::AtomicUsize,
+    flags: core::sync::atomic::AtomicU32,
+    flag_writes: core::sync::atomic::AtomicUsize,
+    /// Whether this node claims to make holes.  A node that does not is the
+    /// default `VNode`, which refuses `punch_hole` with `PermissionDenied`;
+    /// the test needs both shapes because the two refusals are different
+    /// answers.
+    makes_holes: bool,
 }
 
 impl RecordingNode {
@@ -421,6 +429,17 @@ impl RecordingNode {
             name: "recorded",
             syncs: core::sync::atomic::AtomicUsize::new(0),
             data_syncs: core::sync::atomic::AtomicUsize::new(0),
+            holes: core::sync::atomic::AtomicUsize::new(0),
+            flags: core::sync::atomic::AtomicU32::new(0),
+            flag_writes: core::sync::atomic::AtomicUsize::new(0),
+            makes_holes: true,
+        }
+    }
+
+    fn refusing_holes() -> Self {
+        Self {
+            makes_holes: false,
+            ..Self::new()
         }
     }
 }
@@ -450,6 +469,30 @@ impl fs::VNode for RecordingNode {
 
     fn sync_data(&self) -> Result<()> {
         self.data_syncs
+            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn punch_hole(&self, _offset: u64, _length: u64) -> Result<()> {
+        if !self.makes_holes {
+            return Err(Error::PermissionDenied);
+        }
+        self.holes
+            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn get_file_flags(&self) -> Result<u32> {
+        Ok(self.flags.load(core::sync::atomic::Ordering::SeqCst))
+    }
+
+    fn set_file_flags(&self, set: u32, clear: u32) -> Result<()> {
+        let mut flags = self.flags.load(core::sync::atomic::Ordering::SeqCst);
+        flags |= set;
+        flags &= !clear;
+        self.flags
+            .store(flags, core::sync::atomic::Ordering::SeqCst);
+        self.flag_writes
             .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
@@ -686,6 +729,59 @@ fn a_flush_of_a_read_only_descriptor_is_refused() {
     );
 }
 
+/// Punch a hole through the registry.
+fn punch_as(
+    table: &mut SyscallTable,
+    descriptor: usize,
+    offset: u64,
+    length: u64,
+    mode: usize,
+) -> Result<()> {
+    let mut context = SyscallContext::new(
+        SyscallNumber::Fallocate as usize,
+        [descriptor, mode, offset as usize, length as usize, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    table.dispatch(&mut arguments)?;
+    Ok(())
+}
+
+/// Read a descriptor's file flags through the registry.
+fn flags_as(table: &mut SyscallTable, descriptor: usize) -> Result<u32> {
+    let mut context = SyscallContext::new(
+        SyscallNumber::GetFileFlags as usize,
+        [descriptor, 0, 0, 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    Ok(table.dispatch(&mut arguments)?.value as u32)
+}
+
+/// Change a descriptor's file flags through the registry.
+fn set_flags_as(table: &mut SyscallTable, descriptor: usize, set: u32, clear: u32) -> Result<()> {
+    let mut context = SyscallContext::new(
+        SyscallNumber::SetFileFlags as usize,
+        [descriptor, set as usize, clear as usize, 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    table.dispatch(&mut arguments)?;
+    Ok(())
+}
+
 /// A flush of a descriptor that names no file is refused.
 #[test]
 fn a_flush_of_a_pipe_descriptor_is_refused() {
@@ -702,6 +798,192 @@ fn a_flush_of_a_pipe_descriptor_is_refused() {
     assert_eq!(
         flush_as(&mut table, end, false),
         Err(Error::InvalidArgument)
+    );
+}
+
+/// A punch reaches the node exactly once, with the range the caller named.
+///
+/// The node counts its `punch_hole` calls, so a handler that answered zero
+/// without reaching it fails, and a handler that punched twice fails too.
+#[test]
+fn a_punch_reaches_the_node_once() {
+    use core::sync::atomic::Ordering;
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Fallocate, fallocate);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), true);
+
+    let punch = fs_abi::FALLOC_FL_PUNCH_HOLE | fs_abi::FALLOC_FL_KEEP_SIZE;
+    assert_eq!(punch_as(&mut table, descriptor, 0, 8, punch), Ok(()));
+    assert_eq!(node.holes.load(Ordering::SeqCst), 1);
+}
+
+/// A punch with a mode this build does not define is refused, and reaches
+/// nothing.
+///
+/// `NotImplemented` rather than `InvalidArgument`, because the mode is a word
+/// the caller chose from a set this kernel does not have.  The node's count
+/// proves the refusal came before it was asked.
+#[test]
+fn a_punch_with_an_undefined_mode_is_refused() {
+    use core::sync::atomic::Ordering;
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Fallocate, fallocate);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), true);
+
+    // The punch flag alone, without `KEEP_SIZE`, is not a mode this build
+    // defines: a punch that moves the length is a truncate and a punch at
+    // once, and no filesystem here does that.
+    assert_eq!(
+        punch_as(&mut table, descriptor, 0, 8, fs_abi::FALLOC_FL_PUNCH_HOLE),
+        Err(Error::NotImplemented)
+    );
+    assert_eq!(
+        punch_as(&mut table, descriptor, 0, 8, 0),
+        Err(Error::NotImplemented)
+    );
+    assert_eq!(node.holes.load(Ordering::SeqCst), 0);
+}
+
+/// A punch of a read-only descriptor is refused before the node is asked.
+#[test]
+fn a_punch_of_a_read_only_descriptor_is_refused() {
+    use core::sync::atomic::Ordering;
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Fallocate, fallocate);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), false);
+
+    let punch = fs_abi::FALLOC_FL_PUNCH_HOLE | fs_abi::FALLOC_FL_KEEP_SIZE;
+    assert_eq!(
+        punch_as(&mut table, descriptor, 0, 8, punch),
+        Err(Error::PermissionDenied)
+    );
+    assert_eq!(node.holes.load(Ordering::SeqCst), 0);
+}
+
+/// A node that cannot make holes answers its own refusal.
+///
+/// The right check passed, so the refusal is the filesystem's: this is what a
+/// punch on the boot's PyroFS root does, and the answer is a word the caller
+/// can tell from "you may not".
+#[test]
+fn a_punch_on_a_node_without_holes_is_refused_by_the_node() {
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Fallocate, fallocate);
+
+    let node = Arc::new(RecordingNode::refusing_holes());
+    let descriptor = insert_file(&mut table, node.clone(), true);
+
+    let punch = fs_abi::FALLOC_FL_PUNCH_HOLE | fs_abi::FALLOC_FL_KEEP_SIZE;
+    assert_eq!(
+        punch_as(&mut table, descriptor, 0, 8, punch),
+        Err(Error::PermissionDenied)
+    );
+}
+
+/// Setting a flag makes it readable, and clearing it makes it go away.
+///
+/// The round trip is the whole point: a `SetFileFlags` that answered zero
+/// without storing anything would pass a test that only checked its status, so
+/// the flag is read back through a second call.
+#[test]
+fn a_file_flag_survives_a_set_and_a_clear() {
+    use core::sync::atomic::Ordering;
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::GetFileFlags, get_file_flags);
+    table.register(SyscallNumber::SetFileFlags, set_file_flags);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), true);
+
+    assert_eq!(flags_as(&mut table, descriptor), Ok(0), "none to start");
+    assert_eq!(
+        set_flags_as(&mut table, descriptor, fs_abi::FILE_FLAG_COMPRESSED, 0),
+        Ok(())
+    );
+    assert_eq!(
+        flags_as(&mut table, descriptor),
+        Ok(fs_abi::FILE_FLAG_COMPRESSED)
+    );
+    assert_eq!(
+        set_flags_as(&mut table, descriptor, 0, fs_abi::FILE_FLAG_COMPRESSED),
+        Ok(())
+    );
+    assert_eq!(flags_as(&mut table, descriptor), Ok(0), "cleared again");
+    assert_eq!(node.flag_writes.load(Ordering::SeqCst), 2);
+}
+
+/// A flag word with a bit this build does not define is refused.
+///
+/// The mask is checked at the handler, so the refusal is the same whichever
+/// filesystem answers, and the node is never asked.
+#[test]
+fn an_undefined_file_flag_is_refused() {
+    use core::sync::atomic::Ordering;
+
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::SetFileFlags, set_file_flags);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), true);
+
+    assert_eq!(
+        set_flags_as(&mut table, descriptor, 1 << 30, 0),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(
+        set_flags_as(&mut table, descriptor, 0, 1 << 30),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(node.flag_writes.load(Ordering::SeqCst), 0);
+}
+
+/// A bit in both masks is refused rather than resolved to one of them.
+#[test]
+fn a_file_flag_set_and_cleared_at_once_is_refused() {
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::SetFileFlags, set_file_flags);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), true);
+
+    assert_eq!(
+        set_flags_as(
+            &mut table,
+            descriptor,
+            fs_abi::FILE_FLAG_COMPRESSED,
+            fs_abi::FILE_FLAG_COMPRESSED
+        ),
+        Err(Error::InvalidArgument)
+    );
+}
+
+/// Reading a descriptor's flags needs no write right; setting them does.
+///
+/// The two rights are different and the pair is the test: a read-only
+/// descriptor may learn what its file carries, and may not change it.
+#[test]
+fn reading_a_file_flag_needs_no_write_right_but_setting_one_does() {
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::GetFileFlags, get_file_flags);
+    table.register(SyscallNumber::SetFileFlags, set_file_flags);
+
+    let node = Arc::new(RecordingNode::new());
+    let descriptor = insert_file(&mut table, node.clone(), false);
+
+    assert_eq!(flags_as(&mut table, descriptor), Ok(0));
+    assert_eq!(
+        set_flags_as(&mut table, descriptor, fs_abi::FILE_FLAG_COMPRESSED, 0),
+        Err(Error::PermissionDenied)
     );
 }
 

@@ -33,11 +33,11 @@ echo "missing  $(comm -13 /tmp/served.txt /tmp/declared.txt | wc -l)"
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **95 of the 196 numbers are served**, after the memory,
+Four machines boot, and **98 of the 196 numbers are served**, after the memory,
 filesystem, process, time and network levels.  That is the number the census
 command above answers, and it is the one to re-take rather than trust.
 
-The boot's own line, `syscall table installed, 74 number(s) served`, counts
+The boot's own line, `syscall table installed, 77 number(s) served`, counts
 only the registry's half, the numbers whose handler functions live in
 `boot.rs`'s table.  The rest are the ones `process/` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
@@ -157,15 +157,15 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 196 numbers, **95 are served**.  The 101 that are not fall into these
+Of 196 numbers, **98 are served**.  The 98 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
 The network has no row, which is the change since this table was first taken:
 each of its 43 numbers is served, so nothing from it is left to list.
 
 | family | numbers | in the kernel today |
 |---|---|---|
-| filesystem metadata and mutation (`Fallocate`, `SetFdFlags`, xattrs, file flags, the access and permission queries) | 14 | **all of it**, the filesystem implements every operation |
-| descriptors (`Dup`, `Dup2`, `Fcntl`, `Poll`) | 4 | the descriptor holds the handle and the rights; what is missing is a way to copy one |
+| filesystem metadata and mutation (`SetFdFlags`, the access and permission queries) | 7 | the access machinery exists and nothing has given it an identity to check |
+| descriptors (`Dup`, `Dup2`, `Fcntl`, `Poll`) | 4 | the descriptor holds the handle and the rights; what is missing is a way to copy one, and a readiness question for `Poll` |
 | shared memory, timers, multiplexing and queues (`Shm*`, `Futex`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 21 | none, and each is one mechanism rather than one call |
 | identity (`GetUid`, `GetGid`, `AddUser`, `RemoveUser`, `SetUserPassword`, `SetSecurityDescriptor`) | 6 | `security` has the types and nothing has asked them |
 | introspection and scheduling (`ListProcesses`, `ListThreads`, `ListProcessFaults`, `KernelLog`, `Prctl`, `Ptrace`, `Seccomp`, `SchedSetAffinity`, `SchedGetAffinity`) | 9 | the scheduler exists; these report on it or move a task |
@@ -173,9 +173,10 @@ each of its 43 numbers is served, so nothing from it is left to list.
 | io_uring (`IoUringSetup`, `IoUringEnter`) | 2 | none, and it is a second way to do what the calls above already do |
 | GPU (`GpuCtxCreate`, `GpuCtxDestroy`, `GpuDeviceInfo`, `GpuResCreate3d`, `GpuResUnref`, `GpuSetScanout`, `GpuSubmit3d`, `GpuTransferFromHost3d`, `GpuTransferToHost3d`) | 9 | none, a VIRGL context over a device this tree does not have |
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
+| extended attributes (`SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`) | 4 | every filesystem that has them implements them; what is missing is the wire format for a packed list |
 | power, audit, policy and packages (`Cpufreq*`, `Audit*`, `MacSetPathType`, `ServiceDeclare`, `ServiceStartAll`, `InstallPackage`) | 11 | `power`'s governors and `audit`'s ring exist; the calls do not |
 
-The ten rows sum to exactly 101, because each number is assigned to one row by
+The eleven rows sum to exactly 98, because each number is assigned to one row by
 name, the edges between families (`ListThreads` is process introspection *and*
 scheduling) are settled by where the row's handler would live, and that
 assignment is the census's one judgement call.  The counts come from matching
@@ -290,6 +291,44 @@ assertions are on those counts: `Fsync` calls `sync` once and not `sync_data`,
 `Fdatasync` the other way round, and a read-only descriptor reaches neither.
 That is the cheap version of the rule this tree keeps relearning, a call that is
 written, wired and never executed looks exactly like one that works.
+
+`Fallocate` (193), `GetFileFlags` (156) and `SetFileFlags` (155) closed the
+group, and the boot's first honest run of them turned up a Level 7 gap that
+this level had been quietly assuming away.
+
+**`VIRTIO_BLK_F_FLUSH` is never negotiated.**  The driver offers
+`VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX` and nothing else, so the card
+cannot answer a flush request: `VirtioBlock::flush` submits a `Flush` request,
+the device never completes it, and `wait` spins to its 50-million-iteration
+limit before answering `TimedOut`.  A `Fsync` on the root volume therefore
+takes seconds and fails, which the first boot of this group demonstrated by
+hanging until the gate's own timeout rather than by printing anything.
+
+That is a driver change and not a syscall one, so it does not belong in this
+commit; what the commit does is stop the boot asserting around it.  `init` no
+longer calls `Fsync` on the PyroFS root at all, and the reason is written where
+the call would have been, so the next reader does not rediscover it by watching
+a boot hang.
+
+The two refusals that *are* exercised are both properties of this machine and
+both recorded as such, with the program asserting the refusal rather than
+success:
+
+- **`Fallocate` refuses on the root**, because only the NTFS volume implements
+  `VNode::punch_hole` and the root is PyroFS.
+- **`SetFileFlags` refuses on the root**, because PyroFS persists the flags byte
+  only in its V4 format and the boot image is not V4.  The volume answers
+  `Unsupported` rather than writing into a field a remount would drop, which is
+  the reading this tree prefers to a call that reports success and loses the
+  value.
+
+`GetFileFlags` is the one that answers, and its line carries the word the
+program read back:
+
+```
+protofire: process 1 asked for the flags of descriptor 6, answered 0
+protofire: process 1 was refused a call on descriptor 6
+```
 
 `SetLength` (20) was on that list and has come off it.  The filesystem already
 implemented it, `VNode::set_len`, and what was missing was a table method, a
@@ -632,7 +671,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
 | `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; the rest are not here |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial**, 95 of 196 numbers |
+| `syscall` | 15,647 | **partial**, 98 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
@@ -654,8 +693,8 @@ number's presence as a capability is the mistake this tree's `Handler::Unimpleme
 exists to avoid.
 
 This tree declares **196**, the same 194 plus `WaitProcessOf` (196) and
-`Ipv6Status` (197), with the same two retirements, and serves **95** of them.
-The other 101 are what the levels below are about.
+`Ipv6Status` (197), with the same two retirements, and serves **98** of them.
+The other 98 are what the levels below are about.
 
 That single number is the clearest statement of what is left.  The old tree's
 15,647-line syscall tree is the work list, and its modules are named by what
@@ -760,7 +799,6 @@ The syscall gap restated as work: roughly twenty mechanisms, ordered by what
 each unblocks rather than by size.
 
 1. **Descriptors and the file interface**, `Dup`, `Dup2`, `Fcntl`, `Poll`,
-   `Fallocate`,
    `SetFdFlags`, `SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`,
    `SetFileFlags`, `GetFileFlags`, `AccessQuery`, `AccessQueryAt`,
    `AccessQueryFd`, `PermissionMetadata`, `PermissionMetadataAt`,

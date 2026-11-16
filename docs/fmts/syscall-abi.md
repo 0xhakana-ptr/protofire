@@ -210,6 +210,16 @@ The calls a ring-3 program can make today, and the slots each carries.
   `a2`-`a5` reserved zero.  Answers zero.  The descriptor must have been opened
   for writing, and its own position does not move, so a caller that writes,
   truncates and writes again appends rather than overwriting.
+- **`Fallocate`**, `a0` the descriptor; `a1` the mode, which must be
+  `FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE`; `a2` the offset; `a3` the
+  length; `a4`-`a5` reserved zero.  Answers zero.  The range reads as zeros and
+  its storage goes back; the file's length does not change.  A mode with any
+  other bit is `NotImplemented`, not `InvalidArgument`.
+- **`GetFileFlags`**, `a0` the descriptor; `a1`-`a5` reserved zero.  Answers the
+  flags word: the ABI's record for it is one `u32`, so the word is the record.
+- **`SetFileFlags`**, `a0` the descriptor; `a1` the bits to set; `a2` the bits
+  to clear; `a3`-`a5` reserved zero.  Answers zero.  A bit outside
+  `FILE_FLAG_KNOWN_MASK`, or a bit in both masks, is `InvalidArgument`.
 - **`Fsync`**, `a0` the descriptor; `a1`-`a5` reserved zero.  Answers zero once
   the file's data and the metadata that locates it are durable.  The descriptor
   must have been opened for writing.

@@ -291,6 +291,76 @@ pub fn fdatasync(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Res
     Ok(Dispatch::complete(0))
 }
 
+/// Punch a hole: the range reads as zeros and its storage goes back.
+///
+/// Arguments: the descriptor, the offset, the length, the mode, then two
+/// reserved slots that must be zero.  Answers zero.
+///
+/// **The only mode this build defines is `FALLOC_FL_PUNCH_HOLE |
+/// FALLOC_FL_KEEP_SIZE`.**  The pair is what makes the call a punch: the hole
+/// is made and the file's length does not move, which is the only thing the
+/// name promises.  A mode with any other bit is `NotImplemented` rather than
+/// `InvalidArgument`: the caller named a mode this kernel does not define, and
+/// that is a different fact from a mode word that is malformed.
+///
+/// A range past the end of the file is the node's to refuse, not this
+/// handler's: a filesystem that would have to extend the file to punch it is
+/// the one that knows it.
+pub fn fallocate(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let mode = arguments.context.arg(1);
+    let offset = arguments.context.arg(2) as u64;
+    let length = arguments.context.arg(3) as u64;
+    validate_zeroed_args(arguments.context, 4)?;
+
+    let punch = fs_abi::FALLOC_FL_PUNCH_HOLE | fs_abi::FALLOC_FL_KEEP_SIZE;
+    if mode != punch {
+        return Err(Error::NotImplemented);
+    }
+
+    table.punch_hole_at(descriptor, offset, length, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// Read the per-file data-reduction flags a descriptor names.
+///
+/// Arguments: the descriptor, then five reserved slots that must be zero.
+/// Answers the flags word, not zero: the flags are the whole answer, and the
+/// ABI's record for them is one `u32`, so a returned word is the record.
+pub fn get_file_flags(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    let flags = table.file_flags_at(descriptor, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(flags as usize))
+}
+
+/// Change the per-file data-reduction flags a descriptor names.
+///
+/// Arguments: the descriptor, the mask of bits to **set**, the mask of bits to
+/// **clear**, then three reserved slots that must be zero.  Answers zero.
+///
+/// The two masks are validated here rather than at the node, for the reason
+/// every handler validates a flag word: a bit this build does not define is a
+/// caller that meant something else, and the answer is the same whichever
+/// filesystem answers the call.  A bit in both masks is refused too, because
+/// "set and clear" is not a state a flag can end in.
+pub fn set_file_flags(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let set = arguments.context.arg(1) as u32;
+    let clear = arguments.context.arg(2) as u32;
+    validate_zeroed_args(arguments.context, 3)?;
+
+    if set & !fs_abi::FILE_FLAG_KNOWN_MASK != 0 || clear & !fs_abi::FILE_FLAG_KNOWN_MASK != 0 {
+        return Err(Error::InvalidArgument);
+    }
+    if set & clear != 0 {
+        return Err(Error::InvalidArgument);
+    }
+
+    table.set_file_flags_at(descriptor, set, clear, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(0))
+}
+
 /// Report a path's kind and size.
 ///
 /// Arguments: the path, the record, its length, then three reserved slots

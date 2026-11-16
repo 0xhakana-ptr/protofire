@@ -1160,6 +1160,114 @@ impl SyscallTable {
             node.sync()
         }
     }
+
+    /// Punch a hole: the range reads as zeros and the storage behind it goes
+    /// back to the volume.
+    ///
+    /// The length of the file does not change.  That is the difference from
+    /// [`Self::set_len_at`], and it is why this is a separate call rather than
+    /// a flag on that one: a caller that wanted the file shorter asked
+    /// `SetLength`, and one that wants the bytes inside it released asked
+    /// this.
+    ///
+    /// The right is the writer's, for the reason every mutation here keeps:
+    /// the bytes' content changes, so the descriptor must have been opened for
+    /// writing.  A node that does not make holes refuses with
+    /// `NotImplemented`, which is a different claim from a node that refuses
+    /// the right; the default `VNode::punch_hole` answers `PermissionDenied`
+    /// because that is what a read-only node's every mutation answers, and a
+    /// filesystem that could make holes but was asked by the wrong descriptor
+    /// is the case the check above already covers.
+    pub(crate) fn punch_hole_at(
+        &mut self,
+        descriptor_index: usize,
+        offset: u64,
+        length: u64,
+        caller: Option<u32>,
+    ) -> Result<()> {
+        self.check_owner(descriptor_index, caller)?;
+        let descriptor = self
+            .descriptors
+            .get(descriptor_index)
+            .ok_or(Error::InvalidArgument)?
+            .as_ref()
+            .ok_or(Error::InvalidArgument)?;
+
+        let Descriptor::File { node, writable, .. } = descriptor else {
+            return Err(Error::InvalidArgument);
+        };
+
+        if !*writable {
+            return Err(Error::PermissionDenied);
+        }
+
+        node.punch_hole(offset, length)
+    }
+
+    /// Read the per-file data-reduction flags a descriptor names.
+    ///
+    /// Answers the flags word, which is what the caller reads; the ABI's record
+    /// is one `u32`, so a handler that had to fill a buffer would be wrapping a
+    /// word in a record for no reason.  A filesystem that does not carry the
+    /// flags refuses with `Unsupported` through the node's own default.
+    ///
+    /// The right is the reader's: reading which flags a file carries changes
+    /// nothing about it.
+    pub(crate) fn file_flags_at(
+        &self,
+        descriptor_index: usize,
+        caller: Option<u32>,
+    ) -> Result<u32> {
+        self.check_owner(descriptor_index, caller)?;
+        let descriptor = self
+            .descriptors
+            .get(descriptor_index)
+            .ok_or(Error::InvalidArgument)?
+            .as_ref()
+            .ok_or(Error::InvalidArgument)?;
+
+        let Descriptor::File { node, .. } = descriptor else {
+            return Err(Error::InvalidArgument);
+        };
+
+        node.get_file_flags()
+    }
+
+    /// Change the per-file data-reduction flags a descriptor names.
+    ///
+    /// `set` turns bits on and `clear` turns them off, and a bit in both is
+    /// refused rather than resolved to one of the two: a caller that asked for
+    /// both meant something this call does not do.  The caller validates the
+    /// mask against [`fs_abi::FILE_FLAG_KNOWN_MASK`] before this, so a bit
+    /// outside it never reaches the node.
+    ///
+    /// The right is the writer's, because the flags are the file's metadata and
+    /// changing one is a mutation of it.
+    pub(crate) fn set_file_flags_at(
+        &mut self,
+        descriptor_index: usize,
+        set: u32,
+        clear: u32,
+        caller: Option<u32>,
+    ) -> Result<()> {
+        self.check_owner(descriptor_index, caller)?;
+        let descriptor = self
+            .descriptors
+            .get(descriptor_index)
+            .ok_or(Error::InvalidArgument)?
+            .as_ref()
+            .ok_or(Error::InvalidArgument)?;
+
+        let Descriptor::File { node, writable, .. } = descriptor else {
+            return Err(Error::InvalidArgument);
+        };
+
+        if !*writable {
+            return Err(Error::PermissionDenied);
+        }
+
+        node.set_file_flags(set, clear)
+    }
 }
 
 impl Default for SyscallTable {

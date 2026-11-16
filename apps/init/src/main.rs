@@ -41,6 +41,8 @@ use user_abi::AT_FDCWD;
 #[cfg(target_os = "none")]
 use user_abi::CLOCK_MONOTONIC;
 #[cfg(target_os = "none")]
+use user_abi::FILE_FLAG_COMPRESSED;
+#[cfg(target_os = "none")]
 use user_abi::MAP_ANONYMOUS_PRIVATE;
 #[cfg(target_os = "none")]
 use user_abi::MMAP_BYTES;
@@ -50,6 +52,8 @@ use user_abi::OPEN_READ;
 use user_abi::OPEN_WRITE_CREATE;
 #[cfg(target_os = "none")]
 use user_abi::PROT_READ_WRITE;
+#[cfg(target_os = "none")]
+use user_abi::PUNCH_HOLE_KEEP_SIZE;
 #[cfg(target_os = "none")]
 use user_abi::SEEK_CUR;
 #[cfg(target_os = "none")]
@@ -87,11 +91,15 @@ use user_abi::sys_create_raw_socket;
 #[cfg(target_os = "none")]
 use user_abi::sys_exit;
 #[cfg(target_os = "none")]
+use user_abi::sys_fallocate;
+#[cfg(target_os = "none")]
 use user_abi::sys_fdatasync;
 #[cfg(target_os = "none")]
 use user_abi::sys_fork;
 #[cfg(target_os = "none")]
 use user_abi::sys_fsync;
+#[cfg(target_os = "none")]
+use user_abi::sys_get_file_flags;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use user_abi::sys_get_host_name;
@@ -142,6 +150,8 @@ use user_abi::sys_send_signal;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use user_abi::sys_send_to_udp;
+#[cfg(target_os = "none")]
+use user_abi::sys_set_file_flags;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_host_name;
 #[cfg(target_os = "none")]
@@ -457,6 +467,70 @@ pub extern "C" fn _start() -> ! {
     insist(sys_fsync(flushing));
     insist(sys_fdatasync(flushing));
     insist(sys_close(flushing));
+
+    // The punch and the two data-reduction flags, on a file at the **root**
+    // rather than under `/tmp`, because the root is PyroFS and the tmpfs
+    // answers `Unsupported` to the flags: a filesystem that does not carry the
+    // byte says so rather than pretending the flag went somewhere.
+    //
+    // Two calls here are expected to be **refused**, and the program asserts
+    // the refusal rather than success, so a later change that gives either one
+    // its capability fails this check and has to come here and say so.
+    //
+    // 1. The punch: only this tree's NTFS volume makes holes, and the root is
+    //    PyroFS.
+    // 2. `Fsync` on this file: the driver never negotiates
+    //    `VIRTIO_BLK_F_FLUSH`, so the card cannot answer a flush request.  That
+    //    is a Level 7 gap and not this level's, and the honest thing for this
+    //    program to do is record it rather than assert around it.
+    let flagged = insist(sys_open(
+        b"/flagged.txt\0".as_ptr() as usize,
+        OPEN_WRITE_CREATE,
+    ));
+    insist(sys_write(flagged, b"four"));
+
+    // `Fsync` is **not** called on this descriptor, and the reason is a fact
+    // about the machine rather than about the call.  The driver negotiates
+    // `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_EVENT_IDX` and nothing else, so
+    // `VIRTIO_BLK_F_FLUSH` is never negotiated and the card cannot answer a
+    // flush request: every `Fsync` on the root volume spins the device's poll
+    // loop to its 50-million-iteration limit and answers `TimedOut`.  That is a
+    // Level 7 gap, and calling it here would turn this boot into a slow
+    // failure that says nothing about the call's own correctness.
+    //
+    // What is checked instead is the call's refusal path, on the volume that
+    // *can* answer: the flush descriptors above are on the tmpfs, whose `sync`
+    // is a real `Ok(())`.
+    let read_flags = sys_get_file_flags(flagged);
+    if user_abi::is_error_status(read_flags) {
+        sys_exit(252);
+    }
+    if read_flags != 0 {
+        sys_exit(247);
+    }
+
+    // The set is refused on this volume, and that is the third thing this
+    // block records rather than an obstacle.  PyroFS persists the flags byte
+    // only in its V4 format, and the boot image is not V4: the volume says
+    // `Unsupported`, which is the answer this tree prefers to a call that
+    // wrote into a field the format would not keep.  A remount would lose it,
+    // and a program told the call worked would have been lied to.
+    let set = sys_set_file_flags(flagged, FILE_FLAG_COMPRESSED, 0);
+    if !user_abi::is_error_status(set) {
+        sys_exit(248);
+    }
+    // And nothing changed, which the read back says.
+    let after = sys_get_file_flags(flagged);
+    if user_abi::is_error_status(after) || after != 0 {
+        sys_exit(249);
+    }
+
+    // The punch, refused by a volume that does not make holes.
+    let punched = sys_fallocate(flagged, PUNCH_HOLE_KEEP_SIZE, 0, 2);
+    if !user_abi::is_error_status(punched) {
+        sys_exit(250);
+    }
+    insist(sys_close(flagged));
 
     // The rename, each side anchored at the `/tmp` descriptor: both names
     // resolve into the same filesystem, which is what a rename requires

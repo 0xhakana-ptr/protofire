@@ -266,6 +266,25 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::Fdatasync,
         crate::syscall::fdatasync,
     );
+    // The punch.  One mode is defined, `FALLOC_FL_PUNCH_HOLE |
+    // FALLOC_FL_KEEP_SIZE`, and `VNode::punch_hole` is what answers it: only
+    // the NTFS volume makes holes in this tree, so the other filesystems
+    // refuse with the word their default gives.
+    table.register(
+        ::syscall::SyscallNumber::Fallocate,
+        crate::syscall::fallocate,
+    );
+    // The two data-reduction flags.  PyroFS persists the byte and refuses a
+    // bit that is not the program's, which is why `GetFileFlags` answering is
+    // a fact about the volume rather than about this table.
+    table.register(
+        ::syscall::SyscallNumber::GetFileFlags,
+        crate::syscall::get_file_flags,
+    );
+    table.register(
+        ::syscall::SyscallNumber::SetFileFlags,
+        crate::syscall::set_file_flags,
+    );
     table.register(
         ::syscall::SyscallNumber::CreateDir,
         crate::syscall::create_dir,

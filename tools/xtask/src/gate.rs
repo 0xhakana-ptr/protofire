@@ -462,6 +462,18 @@ impl Machine {
                     "protofire: process 1 flushed the data of descriptor ",
                     false,
                 ),
+                // The punch and the two data-reduction flags.  The punch is
+                // the refusal this boot expects, because the root is PyroFS
+                // and only the NTFS volume makes holes; the flags round trip,
+                // and their lines carry the word the program read back.
+                (
+                    "protofire: process 1 asked for the flags of descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 1 was refused a call on descriptor ",
+                    false,
+                ),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,
@@ -1316,6 +1328,19 @@ impl Machine {
                         "protofire: process 1 flushed the data of descriptor ",
                         false,
                     ),
+                    // The punch and the two data-reduction flags.  The punch
+                    // is the refusal this boot expects, because the root is
+                    // PyroFS and only the NTFS volume makes holes; the flags
+                    // round trip, and their lines carry the word the program
+                    // read back.
+                    (
+                        "protofire: process 1 asked for the flags of descriptor ",
+                        false,
+                    ),
+                    (
+                        "protofire: process 1 was refused a call on descriptor ",
+                        false,
+                    ),
                     (
                         "protofire: process 1 renamed note.txt via descriptor ",
                         false,
@@ -1821,6 +1846,18 @@ impl Machine {
                 ("protofire: process 1 flushed descriptor ", false),
                 (
                     "protofire: process 1 flushed the data of descriptor ",
+                    false,
+                ),
+                // The punch and the two data-reduction flags.  The punch is
+                // the refusal this boot expects, because the root is PyroFS
+                // and only the NTFS volume makes holes; the flags round trip,
+                // and their lines carry the word the program read back.
+                (
+                    "protofire: process 1 asked for the flags of descriptor ",
+                    false,
+                ),
+                (
+                    "protofire: process 1 was refused a call on descriptor ",
                     false,
                 ),
                 (
