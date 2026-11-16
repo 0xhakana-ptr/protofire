@@ -58,6 +58,12 @@ const SATA_DISK_BYTES: usize = 32 * 1024 * 1024;
 /// garbage and the gate goes red.
 const SATA_DISK_MAGIC: &[u8; 8] = b"PFATAH01";
 
+/// The disk the USB storage device is given: 8 MiB.
+///
+/// A third size, so the MSC driver's geometry line names a number the other
+/// two disks' lines cannot be confused with.
+const USB_DISK_BYTES: usize = 8 * 1024 * 1024;
+
 /// The disk's first block, as the kernel's probe expects to find it.
 ///
 /// Two copies of one constant, here and in `kernel/src/nvme.rs`, for the same
@@ -220,6 +226,17 @@ pub(crate) fn run(
         std::process::id()
     ));
     let _ = std::fs::remove_file(&sata_disk);
+    let usb_disk = std::env::temp_dir().join(format!(
+        "protofire-{}-{}.usb",
+        machine.triple(),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&usb_disk);
+    if machine.has_xhci() {
+        std::fs::write(&usb_disk, vec![0u8; USB_DISK_BYTES])
+            .with_context(|| format!("creating the USB disk at {}", usb_disk.display()))?;
+    }
+
     if machine.has_ahci() {
         // The far block is the magic the kernel's probe reads back, and the
         // rest is left as the device holds it: nothing mounts this disk yet,
@@ -284,7 +301,7 @@ pub(crate) fn run(
     disk_bytes[..volume_len].copy_from_slice(&volume[..volume_len]);
     std::fs::write(&disk, disk_bytes.as_slice())
         .with_context(|| format!("creating the disk at {}", disk.display()))?;
-    let machine_arguments = machine.qemu_arguments(&disk, &nvme_disk, &sata_disk);
+    let machine_arguments = machine.qemu_arguments(&disk, &nvme_disk, &sata_disk, &usb_disk);
     if machine_arguments.is_empty() {
         bail!(
             "{} has no boot arguments yet: its image cannot be booted, so there is \
@@ -319,9 +336,63 @@ pub(crate) fn run(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
+    // The keyboard's report, typed by the **monitor**: a gate that waited for
+    // a human to press a key would never run twice the same way, and the
+    // monitor's `sendkey` is what makes a key arrive on a machine nobody is
+    // touching.  The monitor rides stdio (the serial console rides its file),
+    // the keys are sent once the boot is well past the program exercise that
+    // reads the console -- a report still in the queue then would be bytes
+    // that exercise's `ReadConsole` check did not expect -- and the two keys
+    // are `a` then `b`, so a reader can tell the reports apart.  A machine
+    // with no keyboard is not given a monitor at all.
+    if machine.has_xhci() {
+        command.args(["-monitor", "stdio"]);
+        command.stdin(Stdio::piped());
+    }
+
     let mut child = command
         .spawn()
         .with_context(|| format!("starting {}", machine.qemu()))?;
+
+    if machine.has_xhci() {
+        // SAFETY: irrelevant -- this is a host side, not a guest one.
+        let mut stdin = child.stdin.take().expect("the monitor's stdin");
+        let log_for_keys = log_path.clone();
+        std::thread::spawn(move || {
+            // The keys go in **after** the boot's own program exercise reads
+            // the console: that check asserts nothing was typed, and a report
+            // still in the queue when it runs is bytes the check did not
+            // expect -- measured, exit 255.  The log is the signal: when it
+            // names every program exited, the exercise is over and the keys
+            // are safe.  A boot that never gets there is a boot the keys were
+            // never for.
+            // The keys go in **after** the boot's own program exercise reads
+            // the console: that check asserts nothing was typed, and a report
+            // still in the queue when it runs is bytes the check did not
+            // expect -- measured, exit 255.  The log is the signal, and the
+            // line is the program's device-list call, which runs *after* that
+            // check and *before* the boot halts: typing earlier risks the
+            // check, typing later risks a machine that has already stopped.
+            // A boot that never gets there is a boot the keys were never for.
+            for _ in 0..600 {
+                if std::fs::read_to_string(&log_for_keys)
+                    .map(|text| text.contains("protofire: process 1 listed block device 0"))
+                    .unwrap_or(false)
+                {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            for key in ["a", "b"] {
+                use std::io::Write as _;
+                let _ = writeln!(stdin, "sendkey {key}");
+                let _ = stdin.flush();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            // The monitor stays open; QEMU owns the pipe from here.
+            std::mem::forget(stdin);
+        });
+    }
 
     // Sleep in small steps rather than one long one, so a machine that exits
     // early, a crash, a bad image, is noticed without waiting the whole

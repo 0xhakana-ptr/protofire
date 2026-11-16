@@ -85,7 +85,11 @@ pub mod shootdown;
 pub mod syscall;
 pub mod tick;
 pub mod time;
+pub mod usb_hid;
+pub mod usb_mouse;
+pub mod usb_msd;
 pub mod volume;
+pub mod xhci;
 
 // The heap's global allocator, installed here because this is the crate that
 // knows it is a kernel.

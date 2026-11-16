@@ -278,6 +278,24 @@ pub struct FoundAhci {
     pub device: u16,
 }
 
+/// An xHCI controller found on the bus, with BAR0 mapped.
+///
+/// The controller's register set is BAR0: the capability block, whose first
+/// byte names where the operational block begins, and the doorbell array the
+/// `DBOFF` register names.  One window is everything a driver needs.
+pub struct FoundXhci {
+    /// Where BAR0 is, mapped uncached.
+    pub bar0: usize,
+    /// How long the window is.
+    pub bar0_length: usize,
+    /// The bus address the boot's line reports.
+    pub bus: u8,
+    pub device: u8,
+    pub function: u8,
+    pub vendor: u16,
+    pub device_id: u16,
+}
+
 pub struct FoundVirtio {
     pub transport: Arc<virtio_core::PciTransport>,
     pub device: Device,
@@ -963,6 +981,72 @@ pub fn find_ahci() -> Option<FoundAhci> {
         bar5_length: length,
         vendor: device.vendor,
         device: device.device,
+    })
+}
+
+/// Scan the bus for an xHCI controller, and map its BAR0.
+///
+/// `None` on a machine with no controller, which is the ordinary state on two
+/// of the three machines: only the x86_64 one is given a `qemu-xhci` function,
+/// so a boot on the others reaches the caller's "no controller" path rather
+/// than a probe that failed.
+///
+/// The check is class, subclass and interface -- `0x0C/0x03/0x30` -- because
+/// the interface byte is what separates an xHCI controller from the EHCI and
+/// OHCI functions the same class carries.
+pub fn find_xhci() -> Option<FoundXhci> {
+    let config = configuration_space();
+    let (scan, found) = pci::device::scan(&*config, BUS_COUNT, |device| {
+        let is_xhci = device.class == 0x0C && device.subclass == 0x03 && device.interface == 0x30;
+        is_xhci.then_some(device)
+    });
+
+    let device = match found {
+        Some(device) => device,
+        None => {
+            arch::serial::write_str("protofire: xhci scan found ");
+            arch::serial::write_u32(scan.devices as u32);
+            arch::serial::write_str(" device(s), none of them a controller\n");
+            return None;
+        }
+    };
+
+    // The assignment pass, for the machines whose firmware left BARs at zero.
+    if let Some((base, size)) = arch::pcie_memory_window() {
+        let mut listing = [Device::ABSENT; MAX_FUNCTIONS];
+        let count = pci::scan_all(&*config, BUS_COUNT, &mut listing);
+        pci::assign_memory_bars(&*config, &listing[..count.min(MAX_FUNCTIONS)], base, size);
+    }
+
+    let bar = device.bar_register(&*config, 0)?;
+    if !bar.is_assigned() {
+        arch::serial::write_str("protofire: xhci found but BAR0 is unassigned\n");
+        return None;
+    }
+
+    let length = pci::bar::size(&*config, device.address, bar.register).unwrap_or(0x8000) as usize;
+    let base = physical_address(bar.address);
+    // SAFETY: the region is BAR0 of a function the bus reported, so it is that
+    // device's registers and nothing else.
+    #[cfg(target_os = "none")]
+    unsafe {
+        crate::address_space::map_device(base, length);
+    }
+
+    arch::serial::write_str("protofire: xhci at ");
+    arch::serial::write_hex(base as u64);
+    arch::serial::write_str(", ");
+    arch::serial::write_u32(length as u32);
+    arch::serial::write_str(" byte(s)\n");
+
+    Some(FoundXhci {
+        bar0: base,
+        bar0_length: length,
+        bus: device.address.bus,
+        device: device.address.device,
+        function: device.address.function,
+        vendor: device.vendor,
+        device_id: device.device,
     })
 }
 

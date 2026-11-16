@@ -60,7 +60,13 @@ enum Commands {
         #[arg(long, default_value = "debug")]
         profile: String,
         /// How long to let the machine run, in seconds.
-        #[arg(long, default_value_t = 15)]
+        ///
+        /// Forty, and not the fifteen the boot used to get: the boot now
+        /// enumerates four disks' worth of controllers, and the xHCI one's
+        /// port walk and the USB keyboard's reports cost the window the most.
+        /// A window the boot finishes inside -- with time left for the keys
+        /// the monitor types after it -- is the one a gate can assert in.
+        #[arg(long, default_value_t = 40)]
         timeout: u64,
         /// Keep the serial log at this path instead of a temporary file.
         #[arg(long)]
@@ -72,7 +78,7 @@ enum Commands {
         machine: Machine,
         #[arg(long, default_value = "debug")]
         profile: String,
-        #[arg(long, default_value_t = 15)]
+        #[arg(long, default_value_t = 40)]
         timeout: u64,
     },
 }

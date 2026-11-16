@@ -386,8 +386,24 @@ pub fn read_console(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) ->
     // raw argument would be checking a number the handler cannot see.  The
     // ring-3 branch validates the range before it builds the borrow, which is
     // where every buffer-taking call keeps that rule.
-    let _ = arguments.buffer.as_deref();
-    Ok(Dispatch::complete(0))
+    let Some(buffer) = arguments.buffer.as_deref_mut() else {
+        return Ok(Dispatch::complete(0));
+    };
+    // The keyboard's queue, when the machine has a USB keyboard.  What a
+    // program reads is the scancodes its typing produced; a queue nothing
+    // typed into answers zero, which is the same answer this call gave before
+    // there was a keyboard at all, and the one a shell loops on.
+    let mut read = 0usize;
+    while read < buffer.len() {
+        match crate::xhci::KeyboardQueue::take() {
+            Some(byte) => {
+                buffer[read] = byte;
+                read += 1;
+            }
+            None => break,
+        }
+    }
+    Ok(Dispatch::complete(read))
 }
 
 /// Flush a descriptor's file to stable storage.

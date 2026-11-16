@@ -6,6 +6,17 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+# The two mutation hooks the controller carries, from the tree the driver was
+# relocated out of: `xhci_ring_room_leak` stops the event ring's room from
+# being handed back, so a gate can watch occupancy climb until `reserve`
+# refuses, and `xhci_contention` makes the tick-drain line print every time
+# rather than once, so a gate can read its position against the enumeration it
+# explains.  Neither is enabled by any build this tree runs; they are here
+# because a hook that needs a flag is a flag, not a comment.
+[features]
+xhci_ring_room_leak = []
+xhci_contention = []
+
 [dependencies]
 abi.workspace = true
 sync.workspace = true
@@ -55,6 +66,11 @@ nvme = { path = "../drivers/storage/nvme" }
 # identify structure are facts a host test holds; reaching the device is this
 # crate's file, the same split `nvme` and `vga` make.
 ahci = { path = "../drivers/storage/ahci" }
+# The USB host controller's wire format, relocated out of the previous tree's
+# drivers.  The register maps, the TRB and the USB structures are facts a host
+# test holds; driving them is this crate's file, the same split the two disks
+# make.
+xhci = { path = "../drivers/usb/xhci" }
 # The network card.  A boot with one exercises the frame path; a boot without
 # one is the ordinary state on two of the three machines, and the driver prints
 # nothing then.

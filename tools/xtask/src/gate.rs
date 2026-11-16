@@ -878,7 +878,7 @@ impl Machine {
                 // what the boot recorded, and the two program lines are the
                 // calls answering through the dispatcher rather than the
                 // fallthrough.
-                ("protofire: block devices listed 3", true),
+                ("protofire: block devices listed 4", true),
                 ("protofire: process 1 listed block device 0", true),
                 // The second and third devices, through the dispatcher from
                 // ring 3.  Only x86_64's machine has them, so the program's
@@ -886,6 +886,7 @@ impl Machine {
                 // these here.
                 ("protofire: process 1 listed block device 1", true),
                 ("protofire: process 1 listed block device 2", true),
+                ("protofire: process 1 listed block device 3", true),
                 (
                     "protofire: process 1 flushed every mounted filesystem",
                     true,
@@ -923,6 +924,28 @@ impl Machine {
                 ("protofire: ahci0 far block answers PFATAH01", true),
                 ("protofire: ahci0 wrote and read back sector ", false),
                 ("protofire: ahci0 recorded as block device 1", true),
+                // The USB controller, with its two devices.  The controller
+                // line is the rings up and running; the mass-storage lines are
+                // an enumeration whose bulk path moved a real SCSI exchange --
+                // INQUIRY, a capacity read, and the sector the disk holds --
+                // and the HID lines are the interrupt-IN endpoint delivering a
+                // report the monitor's `sendkey` typed.  The reports arrive
+                // under the tick, because the controller's interrupt wiring
+                // has no counterpart in this tree yet.
+                ("protofire: xhci at ", false),
+                ("[xhci  ] controller initialised and running", true),
+                ("[xhci  ] mass storage initialised at slot 1", true),
+                (
+                    "[usbmsd] INQUIRY: vendor='QEMU' product='QEMU HARDDISK'",
+                    true,
+                ),
+                (
+                    "[usbmsd] USB mass storage: 16384 blocks x 512 bytes = 8 MiB",
+                    true,
+                ),
+                ("[usbmsd] recorded as block device 2", true),
+                ("[xhci  ] HID keyboard ready at slot 2", true),
+                ("[hid  ] keyboard report: modifiers=", false),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,

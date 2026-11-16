@@ -160,6 +160,14 @@ pub fn handle(frame: irq::Frame) -> bool {
             // not move; the IPI is what makes it re-check.
             unsafe { arch::send_ipi_to_others() };
         }
+
+        // The USB controller's event ring, when the machine has one.  Until a
+        // device-message wiring exists for it this tick is the ring's only
+        // reader, so a keyboard report waits for the tick that drains it -- the
+        // same wait every polling driver here asks of its device, and the same
+        // fallback the controller's interrupt path names for itself.
+        crate::xhci::poll();
+
         return true;
     }
 

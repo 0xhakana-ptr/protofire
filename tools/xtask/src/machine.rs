@@ -85,6 +85,17 @@ impl Machine {
         matches!(self, Self::X8664)
     }
 
+    /// Whether this machine is given an xHCI controller with devices on its
+    /// bus.
+    ///
+    /// `qemu-xhci` is QEMU's own USB 3 controller, and the keyboard and the
+    /// storage device are what the two HID/MSC drivers drive.  The other two
+    /// machines' trees carry no USB controller, so the question is asked here
+    /// rather than in three places.
+    pub(crate) const fn has_xhci(self) -> bool {
+        matches!(self, Self::X8664)
+    }
+
     /// The emulator that boots this machine's image.
     pub(crate) const fn qemu(self) -> &'static str {
         match self {
@@ -134,6 +145,7 @@ impl Machine {
         disk: &Path,
         nvme_disk: &Path,
         sata_disk: &Path,
+        usb_disk: &Path,
     ) -> Vec<String> {
         let mut arguments = match self {
             // A disk is part of the machine the gate boots: the boot prefers a
@@ -194,6 +206,20 @@ impl Machine {
                 format!("file={},format=raw,if=none,id=sata0", sata_disk.display()),
                 "-device".to_string(),
                 "ide-hd,drive=sata0,bus=ide.0".to_string(),
+                // The USB host controller, with a keyboard and a disk on its
+                // bus.  `qemu-xhci` creates the controller and its own USB
+                // bus; a `-device usb-*` without an explicit bus lands on the
+                // first one, which is this controller's.  The keyboard is
+                // what a HID report is for; the disk is what the MSC driver's
+                // geometry probe is for.
+                "-device".to_string(),
+                "qemu-xhci".to_string(),
+                "-device".to_string(),
+                "usb-kbd".to_string(),
+                "-device".to_string(),
+                "usb-storage,drive=usb0".to_string(),
+                "-drive".to_string(),
+                format!("file={},format=raw,if=none,id=usb0", usb_disk.display()),
             ],
             // The device-tree machine, with a disk on its PCIe bus.
             //

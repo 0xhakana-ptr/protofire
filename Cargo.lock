@@ -284,6 +284,7 @@ dependencies = [
  "virtio_block",
  "virtio_core",
  "virtio_net",
+ "xhci",
 ]
 
 [[package]]
