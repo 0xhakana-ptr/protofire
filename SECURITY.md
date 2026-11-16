@@ -15,7 +15,7 @@ plans around it.
 
 - **Ring-3 isolation.**  A program reaches the kernel only through the syscall
   gate, and a fault it takes kills the process rather than the machine.  In
-  `kernel/src/process.rs` and the per-machine trap paths.
+  `kernel/src/process/mod.rs` and the per-machine trap paths.
 
 - **User addresses are validated.**  A user address from ring 3 is validated
   before the kernel touches it, and a program's pages are `user: true` while the

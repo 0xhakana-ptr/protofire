@@ -15,7 +15,7 @@ Everything below is measured, not remembered.  The counts are cheap to re-take:
 
 ```sh
 # Which syscall numbers have a handler
-grep -oE 'if number == SyscallNumber::\w+' kernel/src/process.rs
+grep -rhoE 'if number == SyscallNumber::\w+' kernel/src/process/
 grep -A1 'table.register' kernel/src/boot.rs
 
 # The ABI's own list
