@@ -69,26 +69,6 @@ pub(crate) fn serve_lifecycle(
         let outcome = crate::scheduler::advance_with_status(frame, true, status);
         return Some(outcome);
     }
-    // A write to a pipe, recognised by the descriptor naming one.
-    //
-    // The test is the table, not the argument: a program's `Write` is also how
-    // it announces which program it is, and that call passes a small number
-    // where a pipe's descriptor would be.  A range check could not tell the two
-    // apart, aarch64's `x0` holds the stack top for every program, and the
-    // first version's did exactly that, so the announcement was served as a
-    // pipe write and the program printed once.
-    // A pipe write is a write *with a length*, which the announcing `Write`
-    // never has.
-    //
-    // The descriptor test alone is not enough, and this is the defect that
-    // showed it: a program's first instructions have no reason to set `edi`, so
-    // it holds whatever the boot left, zero, and zero is a valid descriptor
-    // once a pipe exists.  The announcement was then served as a pipe write and
-    // the program printed nothing.  A length is what the announcing call
-    // genuinely lacks and a real write genuinely has.
-    // A write to a local-domain connection: the writer half of the
-    // descriptor's two.  The wake is the pipe's, and the count is what the
-    // pipe carried: a full pipe answers a short write, which is the contract a
     if number == SyscallNumber::Sleep as usize {
         // `Sleep(microseconds)`.
         //
@@ -150,17 +130,16 @@ pub(crate) fn serve_lifecycle(
         }
     }
 
-    // A read from a local-domain connection: the reader half of the
-    // descriptor's two.
+    // Fork: the running process shared with a child.
     //
-    // The slots are a **stream's**, `a1` the offset, `a2` the buffer and `a3`
-    // its length, because that is how `sys_read` packs one: the wrapper sends
-    // the read-from-here sentinel in `a1` and the address after it.  The pipe
-    // branch below reads `a1` and `a2`, which is right only for the boot's own
-    // calls, whose arguments are built by hand, and this branch started as a
-    // copy of it: every ring-3 read of a local end was therefore refused for a
-    // range whose "buffer" was the sentinel `0xffff_ffff_ffff_ffff`.  Both
-    // halves of the exchange failed that way, and the exit statuses 243 and
+    // ## The one instruction that answers two ways
+    //
+    // Both processes resume at the instruction after the `int`/`svc`/`ecall`;
+    // the kernel distinguishes them by what it writes into the return register.
+    // The **parent** learns the child's pid, and the **child** learns zero.
+    // That is the whole of `fork`'s interface, and it is why the answer is not
+    // put in the frame here for the child: the child's frame is its parent's,
+    // taken whole, and the value this writes is the value only the parent sees.
     if number == SyscallNumber::Fork as usize {
         return Some(match crate::scheduler::fork_current(frame) {
             Some(pid) => {
@@ -178,6 +157,7 @@ pub(crate) fn serve_lifecycle(
     // `ExecProcess` replaces the calling task; `SpawnProcess` grows the
     // machine by one task that did not exist, named by the file the caller
     // picked, and answers the pid, which is the number a supervisor needs,
+    // because the wait that supervises names a pid.
     if number == SyscallNumber::SpawnProcess as usize {
         let mut path_bytes = [0u8; OPEN_PATH_MAX];
         let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
@@ -216,6 +196,7 @@ pub(crate) fn serve_lifecycle(
     // address from ring 3 is a number until something validates it.  The
     // kernel reads the file through the registry's own namespace, loads it,
     // and maps it; the task keeps its pid and its parent, and everything else
+    // is the new program's, which is the whole of what `exec` is.
     if number == SyscallNumber::ExecProcess as usize {
         let mut path_bytes = [0u8; OPEN_PATH_MAX];
         let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
@@ -245,6 +226,7 @@ pub(crate) fn serve_lifecycle(
     //
     // The answers come from the task the scheduler is running, not from the
     // call: a program does not send its own id, and one that could would be a
+    // program answering a question about itself.
     if number == SyscallNumber::GetPid as usize {
         return Some(match crate::scheduler::current_pid() {
             Some(pid) => CallOutcome::Return(pid as usize),
@@ -269,6 +251,7 @@ pub(crate) fn serve_lifecycle(
     // A wait with nothing finished **blocks** rather than spinning: the caller
     // is parked like a pipe's reader, and a process exit is what wakes it.  A
     // wait that answered zero would be a parent told its child exited with
+    // nothing, which is the kind of invented answer this tree refuses.
     if number == SyscallNumber::WaitProcess as usize {
         if let Some(status) = crate::scheduler::first_exit_status() {
             // Reported, because a wait that answered silently and a wait that
@@ -350,6 +333,7 @@ pub(crate) fn serve_lifecycle(
     // - the process ended: its status;
     // - no task has that pid: `NotFound`, which is a fact the caller can check
     //   its own argument against;
+    // - it has not ended yet: park, and its exit is what wakes the park.
     if number == SyscallNumber::WaitProcessOf as usize {
         let pid = call.arguments[0] as u32;
         match crate::scheduler::block_unless_pid(frame, pid) {
@@ -387,9 +371,6 @@ pub(crate) fn serve_lifecycle(
             }
         }
     }
-
-    // Sending a signal: the target's ring takes the record and the wake
-    // runs.  The signal's range and the flags are the ABI's, and a process
 
     None
 }

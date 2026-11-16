@@ -23,6 +23,10 @@ pub(crate) fn serve_io(
     use arch::CallOutcome;
     use syscall::SyscallNumber;
     let _ = (&call, &*frame, number, caller);
+    // A write to a local-domain connection: the writer half of the
+    // descriptor's two.  The wake is the pipe's, and the count is what the
+    // pipe carried: a full pipe answers a short write, which is the contract a
+    // program's loop already handles.
     if number == SyscallNumber::Write as usize
         && call.arguments[2] != 0
         && crate::syscall::local_halves_for(call.arguments[0], caller).is_some()
@@ -69,6 +73,23 @@ pub(crate) fn serve_io(
             crate::pipe::Progress::Block => CallOutcome::Return(0),
         });
     }
+    // A write to a pipe, recognised by the descriptor naming one.
+    //
+    // The test is the table, not the argument: a program's `Write` is also how
+    // it announces which program it is, and that call passes a small number
+    // where a pipe's descriptor would be.  A range check could not tell the two
+    // apart, aarch64's `x0` holds the stack top for every program, and the
+    // first version's did exactly that, so the announcement was served as a
+    // pipe write and the program printed once.
+    // A pipe write is a write *with a length*, which the announcing `Write`
+    // never has.
+    //
+    // The descriptor test alone is not enough, and this is the defect that
+    // showed it: a program's first instructions have no reason to set `edi`, so
+    // it holds whatever the boot left, zero, and zero is a valid descriptor
+    // once a pipe exists.  The announcement was then served as a pipe write and
+    // the program printed nothing.  A length is what the announcing call
+    // genuinely lacks and a real write genuinely has.
     if number == SyscallNumber::Write as usize
         && call.arguments[2] != 0
         && crate::pipe::lookup_for(call.arguments[0], caller).is_some()
@@ -144,6 +165,7 @@ pub(crate) fn serve_io(
     // is the count.  Reached only when the pipe branch above did not
     // return, so the descriptor names a stream the table holds, or it
     // names nothing, and the branch's own test refuses it before a byte is
+    // read.
     if number == SyscallNumber::Write as usize
         && call.arguments[2] != 0
         && crate::syscall::tcp_stream_for(call.arguments[0], caller).is_some()
@@ -243,6 +265,18 @@ pub(crate) fn serve_io(
         // CPU, and nothing here preempts.
         return Some(CallOutcome::Return(PROGRAM_OUTPUT));
     }
+    // A read from a local-domain connection: the reader half of the
+    // descriptor's two.
+    //
+    // The slots are a **stream's**, `a1` the offset, `a2` the buffer and `a3`
+    // its length, because that is how `sys_read` packs one: the wrapper sends
+    // the read-from-here sentinel in `a1` and the address after it.  The pipe
+    // branch below reads `a1` and `a2`, which is right only for the boot's own
+    // calls, whose arguments are built by hand, and this branch started as a
+    // copy of it: every ring-3 read of a local end was therefore refused for a
+    // range whose "buffer" was the sentinel `0xffff_ffff_ffff_ffff`.  Both
+    // halves of the exchange failed that way, and the exit statuses 243 and
+    // 245 are what found it.
     if number == SyscallNumber::Read as usize
         && crate::syscall::local_halves_for(call.arguments[0], caller).is_some()
     {
@@ -385,15 +419,6 @@ pub(crate) fn serve_io(
         });
     }
 
-    // Fork: the running process shared with a child.
-    //
-    // ## The one instruction that answers two ways
-    //
-    // Both processes resume at the instruction after the `int`/`svc`/`ecall`;
-    // the kernel distinguishes them by what it writes into the return register.
-    // The **parent** learns the child's pid, and the **child** learns zero.
-    // That is the whole of `fork`'s interface, and it is why the answer is not
-    // put in the frame here for the child: the child's frame is its parent's,
     if number == SyscallNumber::Pipe as usize {
         // `Pipe()`: make one and answer the read end's descriptor.  The write
         // end is the next number, because a call answers one word and two
@@ -453,6 +478,7 @@ pub(crate) fn serve_io(
     // program of this kernel could have mapped; the pages behind it are the
     // calling task's own, installed on this CPU, and a write into one that
     // copy-on-write demoted faults into the resolver, which is why that path
+    // exists.
     if number == SyscallNumber::Open as usize {
         // `Open(path, flags)`: the path is a NUL-terminated string in the
         // caller's memory, the flags are the ABI's own open flags, and the two
@@ -632,6 +658,7 @@ pub(crate) fn serve_io(
 
     // The path mutations: make a directory, take a name away, move a name.
     // They take paths the same way `Open` and `Stat` do, and the rename's
+    // second path is the one call whose path borrow arrives in a second slot.
     if number == SyscallNumber::CreateDir as usize || number == SyscallNumber::RemovePath as usize {
         let mut path_bytes = [0u8; OPEN_PATH_MAX];
         let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
@@ -737,6 +764,7 @@ pub(crate) fn serve_io(
     // the path anchored at a descriptor instead of at the root.  The
     // descriptor travels in the first argument, the path in the second
     // including for the rename, whose second name brings its own anchor in
+    // the third.
     if number == SyscallNumber::OpenAt as usize
         || number == SyscallNumber::CreateDirAt as usize
         || number == SyscallNumber::RemovePathAt as usize
@@ -850,14 +878,17 @@ pub(crate) fn serve_io(
         return Some(outcome);
     }
 
-    // The memory calls, in one block because they share everything but their
-    // number: none takes a pointer, so each rebuilds the argument words and
-    // hands them straight to the registry.
+    // A read from a stream: the bytes the peer sent that this side has not
+    // taken, or a park until some arrive.  The park is the pipe reader's
+    // and the datagram receiver's shape, with the same re-check under the
+    // scheduler's lock; the card's ring is drained first, so a frame the
+    // card is holding is bytes in the stream's inbox rather than a wait
+    // that answers nothing.
     //
-    // **This branch is what makes them reachable.**  `MacGetStatus` and its two
-    // siblings are registered in the same table and have no branch here, so a
-    // program that calls one gets `NotImplemented` from the fallthrough below
-    // and nothing says why.  A handler is reachable from ring 3 only when this
+    // End of file is the read that answers zero, and it comes from a stream
+    // whose connection is gone, which an orderly close's last
+    // acknowledgement leaves behind.  A read that never answered zero would
+    // be a reader parked on a writer that said it was done.
     if number == SyscallNumber::Read as usize
         && crate::syscall::tcp_stream_for(call.arguments[0], caller).is_some()
     {
@@ -921,8 +952,6 @@ pub(crate) fn serve_io(
             Err(error) => CallOutcome::Return(abi::syscall::encode_error(error)),
         });
     }
-
-    // The stream calls that answer at once: a listen, and a connect.  The
 
     None
 }

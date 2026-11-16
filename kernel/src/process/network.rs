@@ -23,6 +23,16 @@ pub(crate) fn serve_network(
     use arch::CallOutcome;
     use syscall::SyscallNumber;
     let _ = (&call, &*frame, number, caller);
+    // The two socket-option calls.  Both name a descriptor and a value buffer,
+    // and the difference between them is which way the bytes move:
+    // `SetSockOpt` reads the value and `GetSockOpt` writes it, so one branch
+    // validates the range and hands the buffer to whichever handler the number
+    // selects.
+    //
+    // The value is `a3` in both, because both state the descriptor, the level
+    // and the name before it.  The widths differ and that stays the handler's:
+    // a set knows how many bytes its option needs, and a get answers how many
+    // it wrote.
     if number == SyscallNumber::SetSockOpt as usize || number == SyscallNumber::GetSockOpt as usize
     {
         let value = call.arguments[3];
@@ -68,6 +78,7 @@ pub(crate) fn serve_network(
 
     // `TrustAnchorAdd` names a DER document, so its buffer is borrowed the way
     // every other record-shaped call's is.  `TrustAnchorRemove` names a word
+    // and is in the branch below with the others.
     if number == SyscallNumber::TrustAnchorAdd as usize {
         let (record, length) = (call.arguments[0], call.arguments[1]);
         if length == 0
@@ -119,6 +130,7 @@ pub(crate) fn serve_network(
 
     // `TlsConnect` names a host with a pointer and a length, so it is copied
     // the way a path is.  Its answer is a word: a refusal here, because the
+    // hello it builds has no peer in this machine.
     if number == SyscallNumber::TlsConnect as usize {
         let mut name_bytes = [0u8; NAME_MAX];
         let Ok(host) = copy_user_name(call.arguments[0], call.arguments[1], &mut name_bytes) else {
@@ -142,6 +154,7 @@ pub(crate) fn serve_network(
 
     // The calls that name a host take a pointer and a length, so their string
     // is copied the way a path is and their answer is a word rather than a
+    // record.
     if number == SyscallNumber::SetHostName as usize
         || number == SyscallNumber::ResolveHostname as usize
         || number == SyscallNumber::BindLocal as usize
@@ -190,6 +203,7 @@ pub(crate) fn serve_network(
     // validated.  `FilterGetStats` names its output in `a0` and its length in
     // `a1`, and is written.  One branch because the two calls differ only in
     // which way the bytes move, which is the same reading the socket-option
+    // pair gets above.
     if number == SyscallNumber::FilterAddRule as usize
         || number == SyscallNumber::FilterGetStats as usize
     {
@@ -234,6 +248,7 @@ pub(crate) fn serve_network(
 
     // The multicast routing records.  `MrtAddVif` and `MrtAddMfc` name a
     // record and its length in `a0`/`a1`, and both are read: every field is a
+    // number the caller chose.
     if number == SyscallNumber::MrtAddVif as usize || number == SyscallNumber::MrtAddMfc as usize {
         let (record, length) = (call.arguments[0], call.arguments[1]);
         if length == 0
@@ -274,6 +289,7 @@ pub(crate) fn serve_network(
 
     // DCCP's two buffer calls: `DccpSend` reads a buffer and `DccpRecv`
     // writes one, and the descriptor, the buffer address and the length are
+    // `a0`, `a1` and `a2` for both.
     if number == SyscallNumber::DccpSend as usize || number == SyscallNumber::DccpRecv as usize {
         let buffer = call.arguments[1];
         let length = call.arguments[2];
@@ -315,6 +331,7 @@ pub(crate) fn serve_network(
     }
 
     // DCCP's five calls that name words.  `DccpConnect` names an address and
+    // the three others a port or a descriptor; none needs a buffer.
     if number == SyscallNumber::DccpBind as usize
         || number == SyscallNumber::DccpListen as usize
         || number == SyscallNumber::DccpConnect as usize
@@ -351,6 +368,7 @@ pub(crate) fn serve_network(
     // `DccpAccept` is a second accept, and it parks for the same reason
     // `AcceptLocal` does: the Request that answers it arrives on another CPU or
     // in an interrupt, and a handler cannot wait.  The wake is the one
+    // `deliver_dccp` makes, after its table's lock is down.
     if number == SyscallNumber::DccpAccept as usize {
         let descriptor = call.arguments[0];
         let owner = crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS);
@@ -405,6 +423,7 @@ pub(crate) fn serve_network(
     // The IPsec records: three calls take one and the other two name words.
     // `IpsecAddSp` and `IpsecAddSa` read a record, and `IpsecGetStats` writes
     // one, so all three take the buffer the trap path can validate; one branch
+    // because they differ only in which size they state.
     if number == SyscallNumber::IpsecAddSp as usize
         || number == SyscallNumber::IpsecAddSa as usize
         || number == SyscallNumber::IpsecGetStats as usize
@@ -451,6 +470,7 @@ pub(crate) fn serve_network(
         return Some(outcome);
     }
 
+    // IPsec's two removals: a policy by id and an association by SPI.
     if number == SyscallNumber::IpsecDelSp as usize || number == SyscallNumber::IpsecDelSa as usize
     {
         let mut context = syscall::SyscallContext::new(number, call.arguments)
@@ -473,6 +493,7 @@ pub(crate) fn serve_network(
 
     // The four multicast calls that name words: the switch's two, and the two
     // removals.  Nothing here turns a word into a borrow, so the registry is
+    // reached with no buffer.
     if number == SyscallNumber::MrtInit as usize
         || number == SyscallNumber::MrtDone as usize
         || number == SyscallNumber::MrtDelVif as usize
@@ -499,6 +520,7 @@ pub(crate) fn serve_network(
 
     // The filter's two calls that name no buffer: a rule by id, and the
     // default action.  Their arguments are words, so nothing here has to turn
+    // one into a borrow.
     if number == SyscallNumber::FilterRemoveRule as usize
         || number == SyscallNumber::FilterSetDefaultAction as usize
     {
@@ -525,7 +547,17 @@ pub(crate) fn serve_network(
         return Some(outcome);
     }
 
+    // The time, randomness and the two information calls.  All four write a
+    // record into a buffer the caller named, so all four need the one thing
+    // only this file can do: turn a ring-3 address into a borrow, after
+    // checking the range.
+    //
+    // `GetRandom` is the one call in this group whose *length* arrives in the
+    // same slot its buffer does not: `a0` is the buffer and `a1` the length,
+    // which is the shape the ABI published for it and the shape the handler
+    // reads.  The other three take the record and its length in `a1`/`a2` (and
     // `a0` is the clock or the selector), so the pair to validate is the second
+    // and third words rather than the first two.
     if number == SyscallNumber::GetTimeOfDay as usize
         || number == SyscallNumber::GetRandom as usize
         || number == SyscallNumber::SystemInfo as usize
@@ -654,6 +686,7 @@ pub(crate) fn serve_network(
     // a port, and `SendRawPacket`'s `a2` is the destination address's width
     // where `SendToUdp`'s is the buffer's pointer.  Sharing the datagram
     // branch, which the first version of this did, served a raw send with the
+    // datagram handler and printed the payload **pointer** as a byte count.
     if number == SyscallNumber::CreateRawSocket as usize
         || number == SyscallNumber::SendRawPacket as usize
     {
@@ -764,6 +797,7 @@ pub(crate) fn serve_network(
     // ends the wait.
     //
     // Before both, the card's ring is drained: a frame the card is holding
+    // is a datagram in a queue rather than a wait that answers nothing.
     if number == SyscallNumber::RecvFromUdp as usize {
         let descriptor = call.arguments[0];
         let buffer = call.arguments[1];
@@ -861,6 +895,7 @@ pub(crate) fn serve_network(
     // receiver's, and the two differences are the ones the call's arguments
     // state: there is no port to report, and the sender's record is sixteen
     // bytes for an IPv6 source and four for IPv4, which the record's own
+    // length tells apart.
     if number == SyscallNumber::RecvRawPacket as usize {
         let descriptor = call.arguments[0];
         let buffer = call.arguments[1];
@@ -955,16 +990,8 @@ pub(crate) fn serve_network(
         });
     }
 
-    // A read from a stream: the bytes the peer sent that this side has not
-    // taken, or a park until some arrive.  The park is the pipe reader's
-    // and the datagram receiver's shape, with the same re-check under the
-    // scheduler's lock; the card's ring is drained first, so a frame the
-    // card is holding is bytes in the stream's inbox rather than a wait
-    // that answers nothing.
-    //
-    // End of file is the read that answers zero, and it comes from a stream
-    // whose connection is gone, which an orderly close's last
-    // acknowledgement leaves behind.  A read that never answered zero would
+    // The stream calls that answer at once: a listen, and a connect.  The
+    // accept parks, and it is the branch below.
     if number == SyscallNumber::ListenTcp as usize || number == SyscallNumber::ConnectTcp as usize {
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
@@ -1000,6 +1027,7 @@ pub(crate) fn serve_network(
     // The wake is the connect's, which is a scheduler wake like the stream's,
     // and the re-check under the scheduler's lock is what closes the gap
     // between the `accept` above and the park: a connection made on another
+    // CPU in that window would otherwise wake a task that had not parked yet.
     if number == SyscallNumber::AcceptLocal as usize {
         let descriptor = call.arguments[0];
         let owner = crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS);
@@ -1056,6 +1084,7 @@ pub(crate) fn serve_network(
     // until a client's SYN opens one.  The re-check under the scheduler's
     // lock is the same one every park here makes, and the SYN that fills
     // the list is what wakes it, the demux's own wake, which fires when a
+    // connection opened or bytes arrived.
     if number == SyscallNumber::AcceptTcp as usize {
         let descriptor = call.arguments[0];
         let Some(listener) = crate::syscall::tcp_listener_for(descriptor, caller) else {

@@ -19,6 +19,15 @@ pub(crate) fn serve_memory(
     use arch::CallOutcome;
     use syscall::SyscallNumber;
     let _ = (&call, &*frame, number, caller);
+    // The memory calls, in one block because they share everything but their
+    // number: none takes a pointer, so each rebuilds the argument words and
+    // hands them straight to the registry.
+    //
+    // **This branch is what makes them reachable.**  `MacGetStatus` and its two
+    // siblings are registered in the same table and have no branch here, so a
+    // program that calls one gets `NotImplemented` from the fallthrough below
+    // and nothing says why.  A handler is reachable from ring 3 only when this
+    // function forwards to it.
     if number == SyscallNumber::Mmap as usize
         || number == SyscallNumber::Munmap as usize
         || number == SyscallNumber::Brk as usize
@@ -47,25 +56,6 @@ pub(crate) fn serve_memory(
         }
         return Some(outcome);
     }
-
-    // The time, randomness and the two information calls.  All four write a
-    // record into a buffer the caller named, so all four need the one thing
-    // only this file can do: turn a ring-3 address into a borrow, after
-    // checking the range.
-    //
-    // `GetRandom` is the one call in this group whose *length* arrives in the
-    // same slot its buffer does not: `a0` is the buffer and `a1` the length,
-    // which is the shape the ABI published for it and the shape the handler
-    // reads.  The other three take the record and its length in `a1`/`a2` (and
-    // The two socket-option calls.  Both name a descriptor and a value buffer,
-    // and the difference between them is which way the bytes move:
-    // `SetSockOpt` reads the value and `GetSockOpt` writes it, so one branch
-    // validates the range and hands the buffer to whichever handler the number
-    // selects.
-    //
-    // The value is `a3` in both, because both state the descriptor, the level
-    // and the name before it.  The widths differ and that stays the handler's:
-    // a set knows how many bytes its option needs, and a get answers how many
 
     None
 }

@@ -55,6 +55,9 @@ pub(crate) fn serve_signals(
         crate::scheduler::return_from_exception(call.arguments[0], call.arguments[1], frame);
         return Some(CallOutcome::Exit);
     }
+    // Sending a signal: the target's ring takes the record and the wake
+    // runs.  The signal's range and the flags are the ABI's, and a process
+    // signalling itself is allowed, the shell does exactly that.
     if number == SyscallNumber::SendSignal as usize {
         let pid = call.arguments[0] as u32;
         let signal = call.arguments[1];
@@ -136,6 +139,7 @@ pub(crate) fn serve_signals(
 
     // The mask, and the suspend that runs a ring under one.  Both take the
     // mask as a bit-per-signal word; the mask's known set is the signals'
+    // own range, and a bit outside it is a signal this ABI does not define.
     if number == SyscallNumber::SetSignalMask as usize {
         let mask = call.arguments[0];
         let flags = call.arguments[1];
@@ -198,6 +202,7 @@ pub(crate) fn serve_signals(
     // one signal.  The contract is the exception handler's, which is why the
     // address needs no trust the fault path did not already extend: the
     // handler runs in the program, on the program's stack, and its way out
+    // is `ReturnFromException`.
     if number == SyscallNumber::SetSignalHandler as usize {
         let signal = call.arguments[0];
         let action = call.arguments[1];
