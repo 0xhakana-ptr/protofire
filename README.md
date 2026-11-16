@@ -32,10 +32,10 @@ cargo install just        # or: apt install just / dnf install just
 # 
 #    Debian / Ubuntu
 apt install qemu-system-x86 qemu-system-arm qemu-system-misc
-
+# 
 #    Fedora / RHEL
 dnf install qemu-system-x86 qemu-system-arm qemu-system-misc
-
+# 
 #    Arch Linux
 pacman -S qemu-system-x86 qemu-system-arm qemu-system-misc
 ```
