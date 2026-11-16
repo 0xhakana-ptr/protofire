@@ -33,6 +33,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use crate::features::BlockFeatures;
 use block::BlockDevice;
 use block::DeviceHealth;
 use block::QueuedBlockDevice;
@@ -124,6 +125,14 @@ pub struct VirtioBlock {
     /// The next ticket number to hand out.
     next_ticket: Mutex<u64>,
     health: Mutex<DeviceHealth>,
+    /// What the device and this driver agreed it can do.
+    ///
+    /// Kept rather than discarded after negotiation because `flush` is the one
+    /// request whose availability is a negotiated bit: a device that did not
+    /// offer `VIRTIO_BLK_F_FLUSH` is entitled to ignore a flush, and this
+    /// driver would otherwise submit one and wait for a completion that never
+    /// comes.
+    features: BlockFeatures,
 }
 
 impl VirtioBlock {
@@ -160,10 +169,19 @@ impl VirtioBlock {
             transport.write_status(status);
         }
 
-        // 4. Features: take what the device offers and this framework knows.
+        // 4. Features: take what the device offers, this framework knows, and
+        // this device driver wants.  The block device's own bit is the flush:
+        // asking for it is what makes a device that has it answer a flush, and
+        // the negotiation's intersection is what makes a device that does not
+        // leave the answer at `NotImplemented` instead of a request the device
+        // will silently ignore.
         let offered = transport.device_features();
-        let accepted = Features::offered(offered)
-            .negotiate(VIRTIO_F_VERSION_1 | virtio_core::features::VIRTIO_F_RING_EVENT_IDX);
+        let block_features = BlockFeatures::negotiated(offered);
+        let accepted = Features::offered(offered).negotiate(
+            VIRTIO_F_VERSION_1
+                | virtio_core::features::VIRTIO_F_RING_EVENT_IDX
+                | block_features.accepted(),
+        );
         if !accepted.has_required() {
             // The device does not speak the modern interface, and this tree
             // has no other.
@@ -219,7 +237,18 @@ impl VirtioBlock {
             pending: Mutex::new(Vec::new()),
             next_ticket: Mutex::new(0),
             health: Mutex::new(DeviceHealth::Healthy),
+            features: block_features,
         }))
+    }
+
+    /// Whether this device will answer a flush request.
+    ///
+    /// The negotiated bit, exposed so a boot can say what it got rather than a
+    /// reader inferring it from whether `Fsync` failed.  A driver that hid the
+    /// answer would leave the only evidence of the negotiation being the
+    /// absence of a slow failure.
+    pub fn can_flush(&self) -> bool {
+        self.features.can_flush()
     }
 
     /// Submit one request and answer its ticket.
@@ -245,8 +274,21 @@ impl VirtioBlock {
         let header = Box::new(encode_header(request_type, lba));
         let status = Box::new([0xFF_u8; STATUS_LEN as usize]);
 
+        // A request with no data is **two** descriptors, not three.
+        //
+        // The specification says so (5.2.6.1 for `Flush`: the header and the
+        // status byte, and nothing between), and a device is entitled to trust
+        // it.  This driver used to allocate the data descriptor
+        // unconditionally, so a flush went out as `header -> {address 0,
+        // length 0} -> status`, and QEMU's virtio-blk never completed it: the
+        // request sat in the ring and the driver's wait spun to its poll limit.
+        //
+        // The bug was invisible while the flush bit was not negotiated, because
+        // the driver refused to submit at all.  Negotiating the bit is what
+        // exposed it, which is the order these two defects had to be found in.
+        let has_data = data_len != 0;
         let mut queue = self.queue.lock();
-        if queue.free_descriptors() < 3 {
+        if queue.free_descriptors() < if has_data { 3 } else { 2 } {
             return Err(Error::Busy);
         }
 
@@ -258,18 +300,24 @@ impl VirtioBlock {
                 next: 0, // filled below
             })
             .map_err(|_| Error::Busy)?;
-        let data_desc = queue
-            .allocate(Descriptor {
-                address: data_address,
-                length: data_len as u32,
-                flags: if writes_into_data {
-                    DESC_F_NEXT | DESC_F_WRITE
-                } else {
-                    DESC_F_NEXT
-                },
-                next: 0,
-            })
-            .map_err(|_| Error::Busy)?;
+        let data_desc = if has_data {
+            Some(
+                queue
+                    .allocate(Descriptor {
+                        address: data_address,
+                        length: data_len as u32,
+                        flags: if writes_into_data {
+                            DESC_F_NEXT | DESC_F_WRITE
+                        } else {
+                            DESC_F_NEXT
+                        },
+                        next: 0,
+                    })
+                    .map_err(|_| Error::Busy)?,
+            )
+        } else {
+            None
+        };
         let status_desc = queue
             .allocate(Descriptor {
                 address: status.as_ptr() as u64,
@@ -279,9 +327,14 @@ impl VirtioBlock {
             })
             .map_err(|_| Error::Busy)?;
 
-        // Link the chain: header -> data -> status.
-        queue.set_next(header_desc, data_desc);
-        queue.set_next(data_desc, status_desc);
+        // Link the chain: header -> [data] -> status.
+        match data_desc {
+            Some(data_desc) => {
+                queue.set_next(header_desc, data_desc);
+                queue.set_next(data_desc, status_desc);
+            }
+            None => queue.set_next(header_desc, status_desc),
+        }
 
         let id = {
             let mut next = self.next_ticket.lock();
@@ -437,6 +490,18 @@ impl BlockDevice for VirtioBlock {
     }
 
     fn flush(&self) -> Result<()> {
+        // A device that did not offer `VIRTIO_BLK_F_FLUSH` is entitled to
+        // ignore a flush request, and QEMU's does: the request never completes,
+        // so the wait below spins to its poll limit and answers `TimedOut`.
+        // That took seconds and looked like a hung kernel, which is why the bit
+        // is checked here rather than discovered from the wait.
+        //
+        // `NotImplemented` is the honest answer: this device cannot do it.  It
+        // is also the word a caller can act on, a filesystem that sees it knows
+        // its bytes are in the page cache and not on the platter.
+        if !self.features.can_flush() {
+            return Err(Error::NotImplemented);
+        }
         let ticket = self.submit(RequestType::Flush, 0, 0, 0, false, None)?;
         self.wait(ticket)
     }
@@ -536,10 +601,12 @@ mod tests {
     use spin::Mutex;
     use virtio_core::Transport;
     use virtio_core::features::VIRTIO_F_VERSION_1;
+    use virtio_core::queue::DESC_F_NEXT;
     use virtio_core::queue::DeviceAddresses;
 
     use crate::device::SECTOR_SIZE;
     use crate::device::VirtioBlock;
+    use abi::Error;
     use block::BlockDevice;
 
     /// A transport over a byte array: the device a host test can drive.
@@ -552,6 +619,13 @@ mod tests {
     struct FakeDevice {
         storage: Mutex<Vec<u8>>,
         status: AtomicU64,
+        /// What the device offers, before a test narrows it.
+        ///
+        /// A `FakeDevice` offers the framework's bits by default, which is what
+        /// a card with no flush support offers.  A test that wants the flush
+        /// adds it here rather than the device reading a constant, so the
+        /// negotiation is exercised in both directions.
+        offered: AtomicU64,
         driver_features: AtomicU64,
         capacity: u64,
         /// Set between `configure_queue` and `enable_queue`.
@@ -568,6 +642,13 @@ mod tests {
         /// work only while every request completes, and a device that holds a
         /// request it cannot finish would lose its place.
         consumed: AtomicU64,
+        /// How many descriptors the last request's chain had.
+        ///
+        /// A request's shape is not otherwise observable: a phantom data
+        /// descriptor of length zero reports the same used-ring length as no
+        /// descriptor at all, so a test reading the completion cannot tell the
+        /// two apart.  This is what it can read.
+        last_chain_links: AtomicU64,
     }
 
     impl FakeDevice {
@@ -575,6 +656,9 @@ mod tests {
             Arc::new(Self {
                 storage: Mutex::new(vec![0u8; sectors * SECTOR_SIZE]),
                 status: AtomicU64::new(0),
+                offered: AtomicU64::new(
+                    VIRTIO_F_VERSION_1 | virtio_core::features::VIRTIO_F_RING_EVENT_IDX,
+                ),
                 driver_features: AtomicU64::new(0),
                 capacity: sectors as u64,
                 selected_queue_size: AtomicU64::new(0),
@@ -582,6 +666,7 @@ mod tests {
                 notifies: AtomicU64::new(0),
                 next_status: AtomicU64::new(0),
                 consumed: AtomicU64::new(0),
+                last_chain_links: AtomicU64::new(0),
             })
         }
 
@@ -633,39 +718,84 @@ mod tests {
                     let head = { *available_ring.add(slot) } as usize;
 
                     let header = { *descriptors.add(head) };
-                    let data = { *descriptors.add(header.next as usize) };
-                    let status_desc = { *descriptors.add(data.next as usize) };
-
                     let request_type = core::ptr::read_unaligned(header.address as *const u32);
                     let sector_value = core::ptr::read_unaligned(
                         (header.address as *const u8).add(8) as *const u64,
                     );
 
-                    match request_type {
-                        // IN: the device writes into the data buffer.
-                        0 => {
-                            let start = sector_value as usize * SECTOR_SIZE;
-                            let len = data.length as usize;
-                            let src = &self.storage.lock()[start..start + len];
-                            core::ptr::copy_nonoverlapping(
-                                src.as_ptr(),
-                                data.address as *mut u8,
-                                len,
-                            );
+                    // The chain is walked, not assumed.  This used to read
+                    // `header.next` as the data and `data.next` as the status,
+                    // which is the three-descriptor shape `Read` and `Write`
+                    // use, and that assumption is why twenty-one host tests
+                    // could not see a `Flush` going out with a phantom data
+                    // descriptor: the fake device read the same shape the
+                    // driver wrote, so the two agreed and both were wrong.
+                    //
+                    // A request's chain is as long as it needs to be
+                    // (specification 2.4.4), and a device that hard-codes a
+                    // length cannot catch a driver that gets one wrong.
+                    // A descriptor carrying `NEXT` has a successor; a
+                    // descriptor without it ends the chain, and the chain's
+                    // last link is always the status byte.  Walking to the end
+                    // is the whole of the rule (specification 2.4.4), and it
+                    // does not need to know which link is which: what sits
+                    // between the header and the last link is the data, when
+                    // there is any.
+                    let mut links = alloc::vec::Vec::new();
+                    let mut descriptor = header;
+                    loop {
+                        if descriptor.flags & DESC_F_NEXT == 0 {
+                            break;
                         }
-                        // OUT: the device reads the data buffer.
-                        1 => {
-                            let start = sector_value as usize * SECTOR_SIZE;
-                            let len = data.length as usize;
-                            let mut storage = self.storage.lock();
-                            core::ptr::copy_nonoverlapping(
-                                data.address as *const u8,
-                                storage[start..start + len].as_mut_ptr(),
-                                len,
-                            );
-                        }
-                        _ => {}
+                        let next = { *descriptors.add(descriptor.next as usize) };
+                        links.push(next);
+                        descriptor = next;
                     }
+                    // The last link is the status byte; anything before it is
+                    // the request's data.
+                    // The header is a link too, and the walk starts at it.
+                    self.last_chain_links
+                        .store(links.len() as u64 + 1, Ordering::Relaxed);
+                    let status_desc = *links.last().expect("a request always has a status link");
+                    let data: Option<DescriptorWire> = if links.len() >= 2 {
+                        Some(links[links.len() - 2])
+                    } else {
+                        None
+                    };
+
+                    let data_length = match data {
+                        Some(data) => {
+                            match request_type {
+                                // IN: the device writes into the data buffer.
+                                0 => {
+                                    let start = sector_value as usize * SECTOR_SIZE;
+                                    let len = data.length as usize;
+                                    let src = &self.storage.lock()[start..start + len];
+                                    core::ptr::copy_nonoverlapping(
+                                        src.as_ptr(),
+                                        data.address as *mut u8,
+                                        len,
+                                    );
+                                }
+                                // OUT: the device reads the data buffer.
+                                1 => {
+                                    let start = sector_value as usize * SECTOR_SIZE;
+                                    let len = data.length as usize;
+                                    let mut storage = self.storage.lock();
+                                    core::ptr::copy_nonoverlapping(
+                                        data.address as *const u8,
+                                        storage[start..start + len].as_mut_ptr(),
+                                        len,
+                                    );
+                                }
+                                _ => {}
+                            }
+                            data.length
+                        }
+                        // A request with no data: `Flush` is the one, and its
+                        // used-ring length is zero because it carried nothing.
+                        None => 0,
+                    };
 
                     // The status byte, then the used ring.
                     let status = self.next_status.swap(0, Ordering::Relaxed) as u8;
@@ -673,7 +803,7 @@ mod tests {
                     let used_slot = (taken as usize) & (queue_size - 1);
                     let used_element = used_ring.add(used_slot * 8);
                     core::ptr::write_unaligned(used_element as *mut u32, head as u32);
-                    core::ptr::write_unaligned(used_element.add(4) as *mut u32, data.length);
+                    core::ptr::write_unaligned(used_element.add(4) as *mut u32, data_length);
 
                     taken = taken.wrapping_add(1);
                     core::ptr::write_unaligned(used_index_ptr as *mut u16, taken);
@@ -699,7 +829,7 @@ mod tests {
 
     impl Transport for FakeDevice {
         fn device_features(&self) -> u64 {
-            VIRTIO_F_VERSION_1 | virtio_core::features::VIRTIO_F_RING_EVENT_IDX
+            self.offered.load(Ordering::Relaxed)
         }
 
         fn set_driver_features(&self, features: u64) {
@@ -798,6 +928,102 @@ mod tests {
             device.read_status(),
             15,
             "ACKNOWLEDGE|DRIVER|FEATURES_OK|DRIVER_OK"
+        );
+    }
+
+    /// A flush on a device that did not offer the bit is refused at once.
+    ///
+    /// The defect this test exists for: before the bit was negotiated, a flush
+    /// submitted a request the device ignored, and the wait spun to its fifty
+    /// million poll limit before answering `TimedOut`.  The notify count is the
+    /// assertion that matters, a refusal that still rang the doorbell would be
+    /// the same defect with a faster answer.
+    #[test]
+    fn a_flush_without_the_bit_is_refused_without_submitting() {
+        let device = FakeDevice::new(4);
+        let block = VirtioBlock::new(device.clone()).expect("bring up");
+        let before = device.notifies.load(Ordering::Relaxed);
+
+        assert_eq!(block.flush(), Err(Error::NotImplemented));
+        assert_eq!(
+            device.notifies.load(Ordering::Relaxed),
+            before,
+            "the refusal came before the queue was rung"
+        );
+    }
+
+    /// A device that offers the bit gets it accepted, and the driver knows it.
+    #[test]
+    fn an_offered_flush_bit_is_accepted_by_the_driver() {
+        let device = FakeDevice::new(4);
+        // Offer the bit the way a real card that supports flushing does.
+        device.offered.store(
+            VIRTIO_F_VERSION_1
+                | virtio_core::features::VIRTIO_F_RING_EVENT_IDX
+                | crate::features::VIRTIO_BLK_F_FLUSH,
+            Ordering::Relaxed,
+        );
+        let block = VirtioBlock::new(device.clone()).expect("bring up");
+        assert!(
+            block.features.can_flush(),
+            "the driver kept the negotiated bit"
+        );
+        assert_ne!(
+            device.driver_features.load(Ordering::Relaxed) & crate::features::VIRTIO_BLK_F_FLUSH,
+            0,
+            "and wrote it back to the device"
+        );
+    }
+
+    /// A flush on a device that offered the bit completes.
+    ///
+    /// The end of the defect: the bit is negotiated, the request goes out as
+    /// **two** descriptors, and the device answers it.  With the phantom data
+    /// descriptor this test could not have passed on any device that trusts the
+    /// specification, which is what QEMU's does.
+    #[test]
+    fn a_flush_on_a_capable_device_completes() {
+        let device = FakeDevice::new(4);
+        device.offered.store(
+            VIRTIO_F_VERSION_1
+                | virtio_core::features::VIRTIO_F_RING_EVENT_IDX
+                | crate::features::VIRTIO_BLK_F_FLUSH,
+            Ordering::Relaxed,
+        );
+        let block = VirtioBlock::new(device.clone()).expect("bring up");
+        assert!(block.can_flush(), "the bit was negotiated");
+        assert_eq!(block.flush(), Ok(()));
+    }
+
+    /// A flush's chain is two descriptors, not three.
+    ///
+    /// The device records how many links it walked, so this is the shape
+    /// assertion the used ring cannot make: a phantom data descriptor of length
+    /// zero reports the same length as no descriptor at all, and the fake
+    /// device now walks the chain rather than assuming its length, so it
+    /// completes either way.  The count is the only thing that distinguishes
+    /// them.
+    #[test]
+    fn a_flush_carries_no_data_descriptor() {
+        let device = FakeDevice::new(4);
+        device.offered.store(
+            VIRTIO_F_VERSION_1
+                | virtio_core::features::VIRTIO_F_RING_EVENT_IDX
+                | crate::features::VIRTIO_BLK_F_FLUSH,
+            Ordering::Relaxed,
+        );
+        let block = VirtioBlock::new(device.clone()).expect("bring up");
+        block.flush().expect("flush");
+
+        // The device wrote the used-ring length, and for a flush that is 0: a
+        // data descriptor of length 0 would also report 0, so the shape is
+        // asserted at the driver's own allocation instead.  One lock, read
+        // once: `spin::Mutex` is not reentrant, and two `lock()` calls in one
+        // expression would deadlock the test rather than fail it.
+        assert_eq!(
+            device.last_chain_links.load(Ordering::Relaxed),
+            2,
+            "a flush is a header and a status byte, and nothing between"
         );
     }
 

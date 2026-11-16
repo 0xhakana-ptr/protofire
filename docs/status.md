@@ -116,8 +116,12 @@ with the address to continue at, because an instruction's length is the
 program's fact and not the kernel's, x86_64's vary.
 
 **Devices.**  The PCI scan, BARs assigned by the boot, and virtio-blk
-attached.  Verified by `block device from virtio-blk on pci` and
-`virtio-blk wrote and read back sector `.
+attached.  Verified by `block device from virtio-blk on pci`,
+`virtio-blk wrote and read back sector `, and `virtio-blk negotiated flush=yes`.
+The last is the flush capability: the driver asks for `VIRTIO_BLK_F_FLUSH`, and
+without the line there is no way to tell a device that has it from one that
+ignores a flush request, because the second fails by timing out rather than by
+answering.
 
 The virtio network card is **attached on all four boots**.  `virtio_net` brings
 a card up, the same status sequence the block device runs, the address read

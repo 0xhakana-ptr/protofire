@@ -847,6 +847,10 @@ impl Machine {
                     true,
                 ),
                 ("protofire: virtio-blk wrote and read back sector ", false),
+                // The negotiated flush bit.  Its absence was invisible until a
+                // `Fsync` took seconds and failed, so the line is what turns
+                // "the driver asked" into "the device answered".
+                ("protofire: virtio-blk negotiated flush=", false),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,
@@ -1688,6 +1692,10 @@ impl Machine {
                     ("protofire: process 1 wrote 9 byte(s) to a stream", true),
                     ("protofire: process 8 read 9 byte(s) from a stream", true),
                     ("protofire: virtio-blk wrote and read back sector ", false),
+                    // The negotiated flush bit.  Its absence was invisible
+                    // until a `Fsync` took seconds and failed, so the line is
+                    // what turns "the driver asked" into "the device answered".
+                    ("protofire: virtio-blk negotiated flush=", false),
                     (
                         "protofire: namespace: pyrofs on / (protofire), tmpfs on /tmp (memory), iso9660 on /cdrom (bootdisc)",
                         true,
@@ -2214,6 +2222,10 @@ impl Machine {
                 ("protofire: process 1 wrote 9 byte(s) to a stream", true),
                 ("protofire: process 8 read 9 byte(s) from a stream", true),
                 ("protofire: virtio-blk wrote and read back sector ", false),
+                // The negotiated flush bit.  Its absence was invisible until a
+                // `Fsync` took seconds and failed, so the line is what turns
+                // "the driver asked" into "the device answered".
+                ("protofire: virtio-blk negotiated flush=", false),
                 // The completion-message report, which every machine prints
                 // and whose **number is the machine's**: a tree that names no
                 // IMSIC takes none, because no device can send it a message,

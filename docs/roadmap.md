@@ -296,19 +296,38 @@ written, wired and never executed looks exactly like one that works.
 group, and the boot's first honest run of them turned up a Level 7 gap that
 this level had been quietly assuming away.
 
-**`VIRTIO_BLK_F_FLUSH` is never negotiated.**  The driver offers
-`VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX` and nothing else, so the card
-cannot answer a flush request: `VirtioBlock::flush` submits a `Flush` request,
-the device never completes it, and `wait` spins to its 50-million-iteration
-limit before answering `TimedOut`.  A `Fsync` on the root volume therefore
-takes seconds and fails, which the first boot of this group demonstrated by
-hanging until the gate's own timeout rather than by printing anything.
+**The driver never negotiated `VIRTIO_BLK_F_FLUSH`.**  It offered
+`VIRTIO_F_VERSION_1 | VIRTIO_F_RING_EVENT_IDX` and nothing else, so a `Flush`
+request went out to a card that was never told the driver would send one, and
+`wait` spun to its 50-million-iteration limit before answering `TimedOut`.  A
+`Fsync` on the root volume took seconds and failed, and the first boot of this
+group demonstrated it by hanging until the gate's own timeout rather than by
+printing anything.
 
-That is a driver change and not a syscall one, so it does not belong in this
-commit; what the commit does is stop the boot asserting around it.  `init` no
-longer calls `Fsync` on the PyroFS root at all, and the reason is written where
-the call would have been, so the next reader does not rediscover it by watching
-a boot hang.
+Level 7 fixed it, and the fix was two defects rather than one.  Negotiating the
+bit is the first: `virtio_block::features` now asks for it and `VirtioBlock`
+remembers whether it got it, so a device without the bit answers
+`NotImplemented` at once instead of submitting into a request it will ignore.
+
+The second is the one the first exposed.  `submit` allocated three descriptors
+unconditionally, so a flush went out as `header -> {address 0, length 0} ->
+status`; the specification says a flush is two (5.2.6.1), and a device that
+trusts the specification never completes the third.  **Twenty-three host tests
+could not see it**, because the fake device read the chain with the same
+three-descriptor assumption the driver wrote with: the two agreed, and both were
+wrong.  The fake device now walks the chain to its end and records how many
+links it walked, which is how the shape became assertable at all.
+
+The boot says what it negotiated, because a bit's absence is invisible any
+other way:
+
+```
+protofire: virtio-blk negotiated flush=yes
+protofire: process 1 flushed descriptor 6
+```
+
+The second line is a flush on the PyroFS root, which is the case that used to
+hang.
 
 The two refusals that *are* exercised are both properties of this machine and
 both recorded as such, with the program asserting the refusal rather than

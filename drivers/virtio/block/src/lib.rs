@@ -36,9 +36,12 @@ extern crate alloc;
 
 pub mod config;
 pub mod device;
+pub mod features;
 pub mod request;
 
 pub use device::REQUEST_QUEUE;
 pub use device::VirtioBlock;
+pub use features::BlockFeatures;
+pub use features::VIRTIO_BLK_F_FLUSH;
 pub use request::RequestType;
 pub use request::Status as RequestStatus;

@@ -489,18 +489,15 @@ pub extern "C" fn _start() -> ! {
     ));
     insist(sys_write(flagged, b"four"));
 
-    // `Fsync` is **not** called on this descriptor, and the reason is a fact
-    // about the machine rather than about the call.  The driver negotiates
-    // `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_EVENT_IDX` and nothing else, so
-    // `VIRTIO_BLK_F_FLUSH` is never negotiated and the card cannot answer a
-    // flush request: every `Fsync` on the root volume spins the device's poll
-    // loop to its 50-million-iteration limit and answers `TimedOut`.  That is a
-    // Level 7 gap, and calling it here would turn this boot into a slow
-    // failure that says nothing about the call's own correctness.
-    //
-    // What is checked instead is the call's refusal path, on the volume that
-    // *can* answer: the flush descriptors above are on the tmpfs, whose `sync`
-    // is a real `Ok(())`.
+    // The flush on the **real** volume, which is the case that was broken until
+    // the driver learned to negotiate `VIRTIO_BLK_F_FLUSH`.  Before that, this
+    // call submitted a request the card ignored and the driver's wait spun to
+    // its fifty-million poll limit before answering `TimedOut`; the call was
+    // served and unusable at the same time.
+    if user_abi::is_error_status(sys_fsync(flagged)) {
+        sys_exit(253);
+    }
+
     let read_flags = sys_get_file_flags(flagged);
     if user_abi::is_error_status(read_flags) {
         sys_exit(252);

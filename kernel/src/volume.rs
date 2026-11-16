@@ -141,6 +141,19 @@ fn attach_device(
                     return (memory, "memory (the virtio driver refused the device)");
                 }
             };
+            // What the negotiation got, said out loud.  The flush bit is the
+            // one negotiated feature whose absence is not visible any other
+            // way: a device without it ignores a flush request, so the only
+            // evidence used to be a `Fsync` that took seconds and failed.  One
+            // line here is what turns "the driver asked" into "the device
+            // answered", and the two differ on every card that does not
+            // implement flushing.
+            #[cfg(target_os = "none")]
+            {
+                arch::serial::write_str("protofire: virtio-blk negotiated flush=");
+                arch::serial::write_str(if device.can_flush() { "yes" } else { "no" });
+                arch::serial::write_str("\n");
+            }
             // **After** the driver, and that order is the whole of it: the
             // driver's first step is a device reset, and a reset is the device
             // forgetting every queue's interrupt state.  Wired before it, the
