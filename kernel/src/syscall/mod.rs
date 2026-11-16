@@ -121,6 +121,7 @@ pub use handlers::resolve_hostname;
 pub use handlers::send_raw_packet;
 pub use handlers::send_to_udp;
 pub use handlers::set_host_name;
+pub use handlers::set_length;
 pub use handlers::set_sock_opt;
 pub use handlers::stat;
 pub use handlers::stat_at;

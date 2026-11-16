@@ -33,11 +33,11 @@ echo "missing  $(comm -13 /tmp/served.txt /tmp/declared.txt | wc -l)"
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **89 of the 196 numbers are served**, after the memory,
+Four machines boot, and **90 of the 196 numbers are served**, after the memory,
 filesystem, process, time and network levels.  That is the number the census
 command above answers, and it is the one to re-take rather than trust.
 
-The boot's own line, `syscall table installed, 68 number(s) served`, counts
+The boot's own line, `syscall table installed, 69 number(s) served`, counts
 only the registry's half, the numbers whose handler functions live in
 `boot.rs`'s table.  The rest are the ones `process/` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
@@ -146,7 +146,6 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 | capability | in the kernel | reachable from a program |
 |---|---|---|
-| shorten a file, `SetLength` and truncate | yes, `VNode::set_len` | **no**, one handler and one registration |
 | stat or list by descriptor, `StatFd`/`ReadDirFd` | yes | **no**, the descriptor carries `path`, so the anchor exists |
 | seek, duplicate, poll a descriptor | the offset is per descriptor | **no** |
 | **the network** | the stack, IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, and all 43 of its numbers served | **yes**, every one of them, the socket and address calls, the two status calls, the datagram, stream and local-domain calls, and the six protocols this level keeps behind a stated limit |
@@ -159,14 +158,14 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 196 numbers, **89 are served**.  The 107 that are not fall into these
+Of 196 numbers, **90 are served**.  The 106 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
 The network has no row, which is the change since this table was first taken:
 each of its 43 numbers is served, so nothing from it is left to list.
 
 | family | numbers | in the kernel today |
 |---|---|---|
-| filesystem metadata and mutation (`SetLength`, `Fsync`, `Fdatasync`, `Fallocate`, `SetFdFlags`, xattrs, file flags, the access and permission queries) | 17 | **all of it**, the filesystem implements every operation |
+| filesystem metadata and mutation (`Fsync`, `Fdatasync`, `Fallocate`, `SetFdFlags`, xattrs, file flags, the access and permission queries) | 16 | **all of it**, the filesystem implements every operation |
 | descriptors (`StatFd`, `ReadDirFd`, `Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`) | 7 | the offset and the path are both per descriptor, so the anchor exists |
 | shared memory, timers, multiplexing and queues (`Shm*`, `Futex`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 21 | none, and each is one mechanism rather than one call |
 | identity (`GetUid`, `GetGid`, `AddUser`, `RemoveUser`, `SetUserPassword`, `SetSecurityDescriptor`) | 6 | `security` has the types and nothing has asked them |
@@ -177,7 +176,7 @@ each of its 43 numbers is served, so nothing from it is left to list.
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
 | power, audit, policy and packages (`Cpufreq*`, `Audit*`, `MacSetPathType`, `ServiceDeclare`, `ServiceStartAll`, `InstallPackage`) | 11 | `power`'s governors and `audit`'s ring exist; the calls do not |
 
-The ten rows sum to exactly 107, because each number is assigned to one row by
+The ten rows sum to exactly 106, because each number is assigned to one row by
 name, the edges between families (`ListThreads` is process introspection *and*
 scheduling) are settled by where the row's handler would live, and that
 assignment is the census's one judgement call.  The counts come from matching
@@ -239,11 +238,28 @@ have said on its own.
 What the level did **not** promise: `StatFd` and `ReadDirFd` (30, 31), a
 descriptor's own stat needs the descriptor to know what it names beyond the
 node, and the listing-by-descriptor is the same gap; both are separate
-numbers.  `SetLength` (20) and the truncate side of `write` are one decision
-the filesystem already implements (`VNode::set_len`) and the ABI has not been
-given yet.  And nothing here is about *which* filesystem answers, the mount
+numbers.  And nothing here is about *which* filesystem answers, the mount
 table routes every call the same way, which is why the tmpfs and the PyroFS
 volume both served the level without the handlers changing.
+
+`SetLength` (20) was on that list and has come off it.  The filesystem already
+implemented it, `VNode::set_len`, and what was missing was a table method, a
+handler, a registration and a ring-3 branch: the level's own gap stated as
+wiring.  `init` truncates the file it wrote, and the boot proves the file
+actually shrank rather than the call answering zero:
+
+```
+protofire: process 1 stat'd at.txt via descriptor 1, kind file, size 4
+protofire: process 1 set descriptor 6 to 2 byte(s)
+protofire: process 1 stat'd at.txt via descriptor 1, kind file, size 2
+```
+
+The descriptor's position does not move, which is the one design decision
+inside it: a caller that writes, truncates and writes again appends, and a
+truncate that rewound the position would make the third call overwrite the
+first.  Four host tests hold it, one per claim, and each was mutation-tested:
+a `set_len_at` that answers without reaching the node, a missing write-right
+check, and an offset that moves all fail the test that names them.
 
 ### Level 3, the process model, **done**
 
@@ -567,7 +583,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
 | `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; the rest are not here |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial**, 89 of 196 numbers |
+| `syscall` | 15,647 | **partial**, 90 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
@@ -589,8 +605,8 @@ number's presence as a capability is the mistake this tree's `Handler::Unimpleme
 exists to avoid.
 
 This tree declares **196**, the same 194 plus `WaitProcessOf` (196) and
-`Ipv6Status` (197), with the same two retirements, and serves **89** of them.
-The other 107 are what the levels below are about.
+`Ipv6Status` (197), with the same two retirements, and serves **90** of them.
+The other 106 are what the levels below are about.
 
 That single number is the clearest statement of what is left.  The old tree's
 15,647-line syscall tree is the work list, and its modules are named by what
@@ -694,7 +710,7 @@ one before the second driver exists is how a framework becomes a constraint.
 The syscall gap restated as work: roughly twenty mechanisms, ordered by what
 each unblocks rather than by size.
 
-1. **Descriptors and the file interface**, `SetLength`, `StatFd`, `ReadDirFd`,
+1. **Descriptors and the file interface**, `StatFd`, `ReadDirFd`,
    `Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`, `Fsync`, `Fdatasync`, `Fallocate`,
    `SetFdFlags`, `SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`,
    `SetFileFlags`, `GetFileFlags`, `AccessQuery`, `AccessQueryAt`,

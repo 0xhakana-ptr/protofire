@@ -133,6 +133,8 @@ use user_abi::sys_send_to_udp;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_host_name;
 #[cfg(target_os = "none")]
+use user_abi::sys_set_length;
+#[cfg(target_os = "none")]
 use user_abi::sys_set_signal_mask;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_sock_opt;
@@ -329,6 +331,31 @@ pub extern "C" fn _start() -> ! {
     let (kind, size) = user_abi::stat_words(&record);
     if kind != 2 || size != 4 {
         sys_exit(203);
+    }
+
+    // The truncate, on a descriptor this program opened for writing.  The
+    // whole claim is a **shrunk file**, so it is checked by stat rather than
+    // by the call's status: a handler that answered zero without reaching the
+    // node would satisfy the status and fail the size.  The descriptor's
+    // position does not move, which is why the reopen below reads from the
+    // start rather than from where the write left off.
+    let truncated = insist(sys_open_at(
+        notes,
+        ANCHORED_NAME.as_ptr() as usize,
+        OPEN_WRITE_CREATE,
+    ));
+    insist(sys_set_length(truncated, 2));
+    insist(sys_close(truncated));
+
+    let mut record = [0u8; 16];
+    insist(sys_stat_at(
+        notes,
+        ANCHORED_NAME.as_ptr() as usize,
+        &mut record,
+    ));
+    let (kind, size) = user_abi::stat_words(&record);
+    if kind != 2 || size != 2 {
+        sys_exit(240);
     }
 
     // The listing: one entry of the directory, by index, parsed the way the

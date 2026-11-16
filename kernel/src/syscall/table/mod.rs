@@ -945,6 +945,48 @@ impl SyscallTable {
         *offset += count as u64;
         Ok(count)
     }
+
+    /// Shorten or extend the file a descriptor names.
+    ///
+    /// The checks are [`Self::write_at`]'s, in the same order and for the same
+    /// reason: a truncate is a mutation of the file's bytes, so it takes the
+    /// same right, and a descriptor opened for reading answers
+    /// `PermissionDenied` rather than letting the node's own `set_len` decide.
+    ///
+    /// The descriptor's offset does **not** move.  A truncate is not a seek:
+    /// POSIX leaves the position where it was, and moving it would make "write
+    /// a header, truncate the tail, append" a sequence whose third call
+    /// overwrites the header.  A position past the new end is legal and reads
+    /// as end of file, which is a fact a caller can observe and act on.
+    ///
+    /// A node that refuses is the node's answer: `tmpfs` and PyroFS both
+    /// implement this, the synthetic volumes refuse with the same
+    /// `PermissionDenied` their `write` answers, and a directory refuses
+    /// because a directory has no length to set.
+    pub(crate) fn set_len_at(
+        &mut self,
+        descriptor_index: usize,
+        length: u64,
+        caller: Option<u32>,
+    ) -> Result<()> {
+        self.check_owner(descriptor_index, caller)?;
+        let descriptor = self
+            .descriptors
+            .get_mut(descriptor_index)
+            .ok_or(Error::InvalidArgument)?
+            .as_mut()
+            .ok_or(Error::InvalidArgument)?;
+
+        let Descriptor::File { node, writable, .. } = descriptor else {
+            return Err(Error::InvalidArgument);
+        };
+
+        if !*writable {
+            return Err(Error::PermissionDenied);
+        }
+
+        node.set_len(length)
+    }
 }
 
 impl Default for SyscallTable {

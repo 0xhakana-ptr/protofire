@@ -237,6 +237,13 @@ fn install_registry(namespace: fs::MountTable) {
     table.register(::syscall::SyscallNumber::Read, crate::syscall::read);
     table.register(::syscall::SyscallNumber::Write, crate::syscall::write);
     table.register(::syscall::SyscallNumber::Close, crate::syscall::close);
+    // The truncate.  A number the ABI froze at twenty and this table served
+    // nothing for until now: `VNode::set_len` existed and no program could
+    // reach it, which is the whole of what that gap was.
+    table.register(
+        ::syscall::SyscallNumber::SetLength,
+        crate::syscall::set_length,
+    );
     table.register(::syscall::SyscallNumber::Stat, crate::syscall::stat);
     table.register(
         ::syscall::SyscallNumber::CreateDir,

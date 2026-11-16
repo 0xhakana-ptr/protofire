@@ -433,6 +433,12 @@ impl Machine {
                     false,
                 ),
                 ("protofire: process 1 stat'd at.txt via descriptor ", false),
+                // The truncate, on the descriptor the program opened for
+                // writing.  A prefix because the descriptor is the table's to
+                // hand out; the size check beside it is the program's own, so a
+                // handler that answered zero without reaching the node would
+                // leave the file long and end the program at its stat.
+                ("protofire: process 1 set descriptor ", false),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,
@@ -1257,6 +1263,13 @@ impl Machine {
                         false,
                     ),
                     ("protofire: process 1 stat'd at.txt via descriptor ", false),
+                    // The truncate, on the descriptor the program opened for
+                    // writing.  A prefix because the descriptor is the table's
+                    // to hand out; the size check beside it is the program's
+                    // own, so a handler that answered zero without reaching the
+                    // node would leave the file long and end the program at its
+                    // stat.
+                    ("protofire: process 1 set descriptor ", false),
                     (
                         "protofire: process 1 renamed note.txt via descriptor ",
                         false,
@@ -1735,6 +1748,12 @@ impl Machine {
                     false,
                 ),
                 ("protofire: process 1 stat'd at.txt via descriptor ", false),
+                // The truncate, on the descriptor the program opened for
+                // writing.  A prefix because the descriptor is the table's to
+                // hand out; the size check beside it is the program's own, so a
+                // handler that answered zero without reaching the node would
+                // leave the file long and end the program at its stat.
+                ("protofire: process 1 set descriptor ", false),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,

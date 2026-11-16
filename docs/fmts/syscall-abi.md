@@ -206,6 +206,10 @@ The calls a ring-3 program can make today, and the slots each carries.
 - **`Read`**, `a0` the descriptor; `a1` the offset, or `READ_OFFSET_CURRENT`;
   `a2` the buffer; `a3` its length; `a4`-`a5` reserved zero.
 - **`Close`**, `a0` the descriptor; `a1`-`a5` reserved zero.
+- **`SetLength`**, `a0` the descriptor; `a1` the new length in bytes;
+  `a2`-`a5` reserved zero.  Answers zero.  The descriptor must have been opened
+  for writing, and its own position does not move, so a caller that writes,
+  truncates and writes again appends rather than overwriting.
 - **`ExecProcess`**, `a0` the path, a NUL-terminated string in the caller's
   memory naming the file the process becomes; `a1`-`a5` reserved zero.
 - **`Mmap`**, `a0` an address hint, or zero for "anywhere"; `a1` the length in

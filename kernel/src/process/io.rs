@@ -243,6 +243,34 @@ pub(crate) fn serve_io(
         }
         return Some(outcome);
     }
+    if number == SyscallNumber::SetLength as usize {
+        // `SetLength(descriptor, length)`: the one call of the descriptor
+        // family that takes no pointer, so nothing here has to turn a word
+        // into a borrow and the registry is reached directly.  The reserved
+        // slots are the handler's to refuse, which is where every other
+        // word-shaped call leaves them.
+        //
+        // The line is the evidence the call ran rather than the fallthrough
+        // answering `NotImplemented`, and it names the length because a
+        // truncate that answered zero without doing one would otherwise print
+        // the same thing the successful one does.
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" set descriptor ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str(" to ");
+            arch::serial::write_u32(call.arguments[1] as u32);
+            arch::serial::write_str(" byte(s)\n");
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::Write as usize {
         // The no-length case: a `Write` whose third argument is zero names no
         // bytes, so it is not a write, and it is the announcement.

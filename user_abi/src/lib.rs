@@ -57,6 +57,8 @@ pub const SYS_READ: usize = SyscallNumber::Read as usize;
 pub const SYS_WRITE: usize = SyscallNumber::Write as usize;
 /// `Close`.
 pub const SYS_CLOSE: usize = SyscallNumber::Close as usize;
+/// `SetLength`, a descriptor's new length.
+pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
 /// `Stat`, by path.
 pub const SYS_STAT: usize = SyscallNumber::Stat as usize;
 /// `ReadDir`, by path and index.
@@ -425,6 +427,15 @@ pub fn sys_write(descriptor: usize, buffer: &[u8]) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_close(descriptor: usize) -> usize {
     syscall6(SYS_CLOSE, descriptor, 0, 0, 0, 0, 0)
+}
+
+/// `set_length(descriptor, length)`: zero, or an error's encoding.
+///
+/// The descriptor's own position does not move, so a caller that writes,
+/// truncates and writes again appends rather than overwriting.
+#[cfg(target_os = "none")]
+pub fn sys_set_length(descriptor: usize, length: usize) -> usize {
+    syscall6(SYS_SET_LENGTH, descriptor, length, 0, 0, 0, 0)
 }
 
 /// `stat(path, record)`: zero, with the record filled.

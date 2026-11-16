@@ -192,6 +192,36 @@ pub fn write(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
     Ok(Dispatch::complete(count))
 }
 
+/// Shorten or extend the file a descriptor names.
+///
+/// Arguments: the descriptor, the new length, then four reserved slots that
+/// must be zero.  Answers zero: a status, not a count, because the length is
+/// the caller's own argument and the one number the call could report back is
+/// the one it passed in.
+///
+/// A **truncate is a write**, so the descriptor must have been opened for one.
+/// The refusal is `PermissionDenied` and comes before the node is asked, which
+/// is the same order [`write()`] keeps: a descriptor without the right has no
+/// business reaching the filesystem at all.
+///
+/// The descriptor's offset does not move, and that is a decision rather than
+/// an omission.  A caller that writes a header, truncates a tail and appends
+/// expects the third call to land after the second, and a truncate that
+/// rewound the position would make it overwrite the header instead.  A
+/// position past the new end is legal and reads as end of file.
+///
+/// The node decides whether it can: `tmpfs` and PyroFS both implement
+/// `VNode::set_len`, a synthetic volume refuses with `PermissionDenied` the
+/// way it refuses `write`, and a directory refuses because it has no length.
+pub fn set_length(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor_index = arguments.context.arg(0);
+    let length = arguments.context.arg(1) as u64;
+    validate_zeroed_args(arguments.context, 2)?;
+
+    table.set_len_at(descriptor_index, length, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(0))
+}
+
 /// Report a path's kind and size.
 ///
 /// Arguments: the path, the record, its length, then three reserved slots

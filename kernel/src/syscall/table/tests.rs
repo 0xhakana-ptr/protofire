@@ -79,6 +79,7 @@ fn writable() -> SyscallTable {
     table.register(SyscallNumber::CreateDirAt, create_dir_at);
     table.register(SyscallNumber::RemovePathAt, remove_path_at);
     table.register(SyscallNumber::RenameAt, rename_at);
+    table.register(SyscallNumber::SetLength, set_length);
     table.register(SyscallNumber::Close, close);
     table
 }
@@ -223,6 +224,34 @@ fn write_as(
     Ok(dispatch.value)
 }
 
+/// Truncate through the registry: `SetLength(descriptor, length)`.
+///
+/// The call takes no pointer, so there is nothing to borrow and the
+/// helper is shorter than `write_as` for that reason rather than by
+/// accident.
+fn set_length_as(
+    table: &mut SyscallTable,
+    descriptor: usize,
+    length: u64,
+    pid: Option<u32>,
+) -> Result<()> {
+    let mut context = SyscallContext::new(
+        SyscallNumber::SetLength as usize,
+        [descriptor, length as usize, 0, 0, 0, 0],
+    );
+    if let Some(pid) = pid {
+        context = context.with_caller(pid);
+    }
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    table.dispatch(&mut arguments)?;
+    Ok(())
+}
+
 /// The loop the write closes: a program creates a file, writes it, and
 /// reads its own bytes back through the same descriptor.
 ///
@@ -267,6 +296,106 @@ fn a_file_is_written_and_read_back_through_the_table() {
         Ok(20)
     );
     assert_eq!(&whole, b"written by a syscall");
+}
+
+/// A truncate shortens a file, and a fresh open reads the part that is left.
+///
+/// The whole of what `SetLength` adds: the descriptor names a file, the
+/// node's `set_len` runs, and what a later reader sees is the shortened
+/// file.  A handler that answered zero without reaching the node would
+/// pass a test that only checked the status word, so the size is read
+/// back through a separate descriptor.
+#[test]
+fn a_truncate_shortens_the_file_a_descriptor_names() {
+    let mut table = writable();
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    let descriptor = open_path(&mut table, "/note.txt", flags).expect("create and open");
+    assert_eq!(
+        write_as(&mut table, descriptor, b"twenty bytes of text", None),
+        Ok(20)
+    );
+
+    assert_eq!(set_length_as(&mut table, descriptor, 6, None), Ok(()));
+
+    let reader = open_path(&mut table, "/note.txt", fs_abi::OPEN_FLAG_READ).expect("reopen");
+    let mut kept = [0u8; 32];
+    assert_eq!(
+        read_into(&mut table, reader, READ_OFFSET_CURRENT, &mut kept),
+        Ok(6),
+        "the file is six bytes long now"
+    );
+    assert_eq!(&kept[..6], b"twenty");
+}
+
+/// A truncate is a write, so a read-only descriptor is refused.
+///
+/// The same right `write` needs, refused in the same place and for the
+/// same reason: the descriptor was opened for reading, and a node that
+/// would accept a length is still not writable through it.
+#[test]
+fn a_descriptor_opened_read_only_refuses_a_truncate() {
+    let mut table = writable();
+    let creator = open_path(
+        &mut table,
+        "/note.txt",
+        fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("create");
+    assert_eq!(table.close(creator), Ok(()));
+
+    let reader = open_path(&mut table, "/note.txt", fs_abi::OPEN_FLAG_READ).expect("open");
+    assert_eq!(
+        set_length_as(&mut table, reader, 0, None),
+        Err(Error::PermissionDenied)
+    );
+}
+
+/// A truncate leaves the descriptor's position where it was.
+///
+/// A caller that writes a header, truncates a tail and appends expects the
+/// third call to land after the second.  A truncate that rewound the
+/// position would make the append overwrite the header, which is the
+/// defect this test names rather than a style choice.
+#[test]
+fn a_truncate_does_not_move_the_descriptor_position() {
+    let mut table = writable();
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    let descriptor = open_path(&mut table, "/note.txt", flags).expect("create and open");
+
+    assert_eq!(
+        write_as(&mut table, descriptor, b"header and tail", None),
+        Ok(15)
+    );
+    assert_eq!(set_length_as(&mut table, descriptor, 6, None), Ok(()));
+    // The position is still at 15, past the new end, so the append lands
+    // there rather than at the start.
+    assert_eq!(write_as(&mut table, descriptor, b"!", None), Ok(1));
+
+    let reader = open_path(&mut table, "/note.txt", fs_abi::OPEN_FLAG_READ).expect("reopen");
+    let mut whole = [0u8; 32];
+    let count = read_into(&mut table, reader, READ_OFFSET_CURRENT, &mut whole).expect("read");
+    assert_eq!(count, 16, "the file grew to the append's position");
+    assert_eq!(&whole[..6], b"header", "the header is untouched");
+    assert_eq!(&whole[15..16], b"!", "the append landed past the new end");
+}
+
+/// A truncate of another process's descriptor is refused.
+#[test]
+fn one_process_cannot_truncate_another_process_descriptor() {
+    let mut table = writable();
+    let theirs = open_as(
+        &mut table,
+        "/note.txt",
+        fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+        8,
+    )
+    .expect("open");
+
+    assert_eq!(
+        set_length_as(&mut table, theirs, 0, Some(7)),
+        Err(Error::InvalidArgument)
+    );
+    assert_eq!(set_length_as(&mut table, theirs, 0, Some(8)), Ok(()));
 }
 
 /// A descriptor opened read-only refuses a write, and stays readable.
