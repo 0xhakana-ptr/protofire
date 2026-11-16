@@ -932,6 +932,12 @@ impl Machine {
                 // report the monitor's `sendkey` typed.  The reports arrive
                 // under the tick, because the controller's interrupt wiring
                 // has no counterpart in this tree yet.
+                // The PC speaker: the boot's own tone, played and silenced.
+                // The writes are the evidence a serial line can carry; what a
+                // listener hears is not, and QEMU's `pcspk_io_write` trace is
+                // the out-of-band check that the writes landed on the hardware
+                // the specification names.
+                ("protofire: pcspkr played 1000 Hz, then silenced", true),
                 ("protofire: xhci at ", false),
                 ("[xhci  ] controller initialised and running", true),
                 ("[xhci  ] mass storage initialised at slot 1", true),

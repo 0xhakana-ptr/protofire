@@ -1084,9 +1084,7 @@ impl XhciController {
         }
     }
 
-    // -------------------------------------------------------------------
     // Command helpers
-    // -------------------------------------------------------------------
 
     /// Send a command TRB and wait for its completion event.
     unsafe fn send_command(&mut self, trb: Trb) -> Result<Trb> {
@@ -1184,9 +1182,7 @@ impl XhciController {
         }
     }
 
-    // -------------------------------------------------------------------
     // Device enumeration
-    // -------------------------------------------------------------------
 
     /// Enable a device slot on a root hub port. Returns the slot ID
     /// (1-based).

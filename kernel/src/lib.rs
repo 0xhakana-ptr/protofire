@@ -73,6 +73,7 @@ pub mod loader;
 pub mod local;
 pub mod net;
 pub mod nvme;
+pub mod pcspkr;
 pub mod per_cpu;
 pub mod pipe;
 pub mod policy;

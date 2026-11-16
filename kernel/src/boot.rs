@@ -85,6 +85,7 @@ pub fn kernel_main() -> ! {
     // already there; a bring-up after the mount would be a device the table
     // never saw.
     crate::heap::bring_up();
+    crate::pcspkr::boot_check();
     crate::nvme::bring_up();
     crate::ahci::bring_up();
     crate::xhci::bring_up();

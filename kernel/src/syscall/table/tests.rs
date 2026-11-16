@@ -14,6 +14,13 @@
 use alloc::sync::Arc;
 
 use super::super::*;
+// The device list is a `static` and the tests run in parallel, so two tests
+// that each clear it and record their own rows would answer each other's
+// records -- measured, with `list_block_devices_past_the_end_is_not_found`
+// answering a row a parallel test had just put there.  Each of the tests
+// below takes this lock for its whole body, the way `block_devices`' own
+// tests serialise against the same list.
+static DEVICE_LIST: spin::Mutex<()> = spin::Mutex::new(());
 use super::Descriptor;
 use super::MAX_SYSCALLS;
 use abi::Error;
@@ -906,6 +913,7 @@ fn read_console_answers_nothing_rather_than_refusing() {
 /// is what the test does.
 #[test]
 fn list_block_devices_fills_the_record_at_the_abis_offsets() {
+    let _device_list = DEVICE_LIST.lock();
     crate::block_devices::clear();
     assert!(crate::block_devices::record("virtio-blk", 512, 4096, false));
 
@@ -953,6 +961,7 @@ fn list_block_devices_fills_the_record_at_the_abis_offsets() {
 /// An index past the end answers `NotFound` rather than a zeroed record.
 #[test]
 fn list_block_devices_past_the_end_is_not_found() {
+    let _device_list = DEVICE_LIST.lock();
     crate::block_devices::clear();
     let mut table = SyscallTable::new();
     table.register(SyscallNumber::ListBlockDevices, list_block_devices);
@@ -978,6 +987,7 @@ fn list_block_devices_past_the_end_is_not_found() {
 /// A record buffer too small is refused rather than partly filled.
 #[test]
 fn list_block_devices_refuses_a_short_record() {
+    let _device_list = DEVICE_LIST.lock();
     crate::block_devices::clear();
     assert!(crate::block_devices::record("disk", 512, 1, false));
 
