@@ -14,28 +14,37 @@ and in what order the missing pieces depend on each other.
 Everything below is measured, not remembered.  The counts are cheap to re-take:
 
 ```sh
-# Which syscall numbers have a handler
-grep -rhoE 'if number == SyscallNumber::\w+' kernel/src/process/
-grep -A1 'table.register' kernel/src/boot.rs
+# Which syscall numbers are served: a branch in `process/`, or a registry entry.
+# Both halves are needed for different calls, so the set is their union, and
+# the sort is byte order because `comm` requires both sides in the same one.
+grep -rhoE 'SyscallNumber::\w+' kernel/src/process/ kernel/src/boot.rs \
+  | sed 's/.*:://' | LC_ALL=C sort -u > /tmp/served.txt
 
-# The ABI's own list
-grep -cE '^\s{4}[A-Z][A-Za-z0-9]* = [0-9]+,' abi/src/number.rs
+# The ABI's own list, in the same order, so `comm` can compare them.
+grep -oE '^[[:space:]]{4}[A-Z][A-Za-z0-9]*[[:space:]]*=[[:space:]]*[0-9]+' \
+  abi/src/number.rs | sed 's/[[:space:]]*=.*//; s/^[[:space:]]*//' \
+  | LC_ALL=C sort -u > /tmp/declared.txt
+
+echo "declared $(wc -l < /tmp/declared.txt)"
+echo "served   $(comm -12 /tmp/served.txt /tmp/declared.txt | wc -l)"
+echo "missing  $(comm -13 /tmp/served.txt /tmp/declared.txt | wc -l)"
 
 # Crate sizes and layers
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **51 of the 196 numbers are served**, after the memory,
+Four machines boot, and **89 of the 196 numbers are served**, after the memory,
 filesystem, process, time and network levels.  That is the number the census
 command above answers, and it is the one to re-take rather than trust.
 
-The boot's own line, `syscall table installed, 31 number(s) served`, counts
+The boot's own line, `syscall table installed, 68 number(s) served`, counts
 only the registry's half, the numbers whose handler functions live in
-`boot.rs`'s table.  The rest are the ones `process.rs` serves itself: the
+`boot.rs`'s table.  The rest are the ones `process/` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
-borrow before a handler can see it.  A number reachable from a program needs
-**both** a registry entry and a branch in `process.rs`, which is the division
-that cost the `*At` calls a boot to learn.
+borrow before a handler can see it.  The two halves are not nested: 65 numbers
+are in both, 3 are registry-only (`MacAddRule`, `MacGetStatus`, `MacSetMode`) and
+21 are only a branch in `process/`, which is why the census is a union and not
+either count alone.
 
 ---
 
@@ -140,7 +149,7 @@ whose "reachable" column used to say no, which is why this table is now short.
 | shorten a file, `SetLength` and truncate | yes, `VNode::set_len` | **no**, one handler and one registration |
 | stat or list by descriptor, `StatFd`/`ReadDirFd` | yes | **no**, the descriptor carries `path`, so the anchor exists |
 | seek, duplicate, poll a descriptor | the offset is per descriptor | **no** |
-| **the network** | the stack, IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, and 8 of its numbers served | **yes** for 8, the two status calls, the three datagram calls, the three stream calls; 36 socket and protocol numbers still answer `NotImplemented` |
+| **the network** | the stack, IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, and all 43 of its numbers served | **yes**, every one of them, the socket and address calls, the two status calls, the datagram, stream and local-domain calls, and the six protocols this level keeps behind a stated limit |
 | **shared memory** | no | no, `ShmGet` and its three siblings |
 | **threads** | no, one task per process | no |
 | **pass a handle to another process** | no, `Descriptor` has two variants | no |
@@ -150,36 +159,44 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 196 numbers, **51 are served**.  The 145 that are not fall into these
+Of 196 numbers, **89 are served**.  The 107 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
-The unserved count is the same 145 it was before the IPv6 side landed, because
-that change added a number and served it: `Ipv6Status` (197) is the one row here
-the network level did not have when this table was first taken.
+The network has no row, which is the change since this table was first taken:
+each of its 43 numbers is served, so nothing from it is left to list.
 
 | family | numbers | in the kernel today |
 |---|---|---|
-| filesystem metadata and mutation still unserved (`SetLength`, `StatFd`, `ReadDirFd`, `Fsync`, `Fallocate`, xattrs, file flags, the access and permission queries) | 19 | **all of it**, the filesystem implements every operation |
-| sockets and the network stack still unserved (raw, local domain, DCCP, TLS, IPsec, MRT, the packet filter, the host-name and address calls beside them, and the rest of the stream and datagram surface) | 36 | **the eight the network level serves**, the two status calls, the three datagram calls, the three stream calls |
-| process, signal and scheduling still unserved (`Futex`, `SchedSetAffinity`, `Ptrace`, `Seccomp`, `Prctl`, the introspection calls) | 10 | fork/exit/wait/pid/signals landed; these did not |
-| shared memory and synchronisation primitives (`Shm*`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 20 | none |
-| GPU | 9 | none |
+| filesystem metadata and mutation (`SetLength`, `Fsync`, `Fdatasync`, `Fallocate`, `SetFdFlags`, xattrs, file flags, the access and permission queries) | 17 | **all of it**, the filesystem implements every operation |
+| descriptors (`StatFd`, `ReadDirFd`, `Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`) | 7 | the offset and the path are both per descriptor, so the anchor exists |
+| shared memory, timers, multiplexing and queues (`Shm*`, `Futex`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 21 | none, and each is one mechanism rather than one call |
+| identity (`GetUid`, `GetGid`, `AddUser`, `RemoveUser`, `SetUserPassword`, `SetSecurityDescriptor`) | 6 | `security` has the types and nothing has asked them |
+| introspection and scheduling (`ListProcesses`, `ListThreads`, `ListProcessFaults`, `KernelLog`, `Prctl`, `Ptrace`, `Seccomp`, `SchedSetAffinity`, `SchedGetAffinity`) | 9 | the scheduler exists; these report on it or move a task |
+| the app and the machine (`ArgCount`, `ArgValue`, `EnvCount`, `EnvValue`, `CurrentDir`, `SetCurrentDir`, `AppId`, `AppVersion`, `ImagePath`, `ManifestPath`, `Yield`, `WriteDebug`, `ReadConsole`, `ListBlockDevices`, `Sync`, `RestartSyscall`, `CompactMemory`, `Mlock`, `Munlock`, `Madvise`) | 20 | assorted, and most are a record a program reads |
+| io_uring (`IoUringSetup`, `IoUringEnter`) | 2 | none, and it is a second way to do what the calls above already do |
+| GPU (`GpuCtxCreate`, `GpuCtxDestroy`, `GpuDeviceInfo`, `GpuResCreate3d`, `GpuResUnref`, `GpuSetScanout`, `GpuSubmit3d`, `GpuTransferFromHost3d`, `GpuTransferToHost3d`) | 9 | none, a VIRGL context over a device this tree does not have |
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
-| **the rest**, descriptors (`Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`), identity (`GetUid`, `GetGid`, users), power, audit, io_uring, service, locking, and the app's own argv/env/path/debug calls | 46 | assorted |
+| power, audit, policy and packages (`Cpufreq*`, `Audit*`, `MacSetPathType`, `ServiceDeclare`, `ServiceStartAll`, `InstallPackage`) | 11 | `power`'s governors and `audit`'s ring exist; the calls do not |
 
-The seven rows sum to exactly 145, because each number is assigned to one row by
-name, the edges between families (`GetHostName` is identity *and* network,
-`ListThreads` is process introspection) are settled by where the row's handler
-would live, and that assignment is the census's one judgement call.  The counts
-come from matching the enum's names, which is how they can be re-taken; the code
-block at the top of this file shows the command.
+The ten rows sum to exactly 107, because each number is assigned to one row by
+name, the edges between families (`ListThreads` is process introspection *and*
+scheduling) are settled by where the row's handler would live, and that
+assignment is the census's one judgement call.  The counts come from matching
+the enum's names, which is how they can be re-taken; the code block at the top
+of this file shows the command.
 
-Two of those rows were wrong until this was re-taken, and the error is worth
-keeping: the network row said 34 while the enum has **43** names that are
+Two of those rows were wrong when this table was first taken, and the error is
+worth keeping: the network row said 34 while the enum has **43** names that are
 network, seven `Dccp*`, five `Ipsec*`, six `Mrt*`, four `Filter*` and
 `TlsConnect` were not counted in the parenthetical, and the "rest" row
 absorbed the difference at 56.  One row's undercount is invisible in a total
 that another row's overcount fills, which is why the rows are asserted to sum
 rather than the total alone.
+
+The table then went stale rather than wrong: it kept saying 51 served while the
+network level served all 43 of its numbers and the rest stood still.  That is
+the same defect as a remembered count, so the check is mechanical now, the
+groups are asserted to partition the unserved set, and the numbers above are
+what the command block at the top prints.
 
 ---
 
@@ -280,29 +297,36 @@ started core's timer going silent; it was a software interrupt at the GIC's
 reset priority blocking that core's whole interrupt path.  `docs/status.md`
 carries the trace and the 30-of-30 measurement.
 
-### Level 5, the network
+### Level 5, the network, **done**
 
 A stack, not a driver: IPv4, then UDP, then TCP, and then IPv6, which started
 as "the other address family" and turned out to bring its own discovery
 protocol with it.  `virtio_net` moves frames and stops there on purpose.  This
-is the largest single level and the one with the least existing code to build
-on, **43 numbers** and not one line of protocol above the frame.
+was the largest single level and the one with the least existing code to build
+on, **43 numbers** and no line of protocol above the frame when it started.
+
+All 43 are served now, and the census above has no network row because of it.
+The rest of this section is the record of what the level decided, which is
+worth keeping: two of the limits it states are properties of this machine
+rather than gaps, and a later change that "fixes" one of them is undoing a
+measurement.
 
 What those 43 are, because the shape decides the order: 20 of them are the
 socket and address calls a program makes (`NetworkStatus`, `ConnectTcp`,
 `ListenTcp`, `AcceptTcp`, `BindUdp`, `SendToUdp`, `RecvFromUdp`, the three
 name lookups, `GetSockName`/`GetPeerName`, the four raw-socket calls, the two
 `SockOpt` calls and the three local-domain ones); the other 23 are protocols
-this level does not promise, seven `Dccp*`, five `Ipsec*`, six `Mrt*`, four
-`Filter*`, and `TlsConnect`.
+the level planned not to promise, seven `Dccp*`, five `Ipsec*`, six `Mrt*`,
+four `Filter*`, and `TlsConnect`.  All 23 landed anyway, which is the second
+thing this section records.
 
-The dependencies, in order:
+The dependencies, in order, as they were planned:
 
-1. **`net`** is 6 lines today, a `#![no_std]` and a comment.  It grows the
-   frame's layers, and each one is a host-testable unit with no device in it:
-   IPv4 header parse and build plus its checksum, an ARP cache (the card
-   answers one ARP question and remembers nothing), ICMP as far as "port
-   unreachable" needs, UDP with its checksum, then TCP's state machine.
+1. **`net`** was 6 lines when this was written, a `#![no_std]` and a comment.
+   It grew the frame's layers, and each one is a host-testable unit with no
+   device in it: IPv4 header parse and build plus its checksum, an ARP cache
+   (the card answers one ARP question and remembers nothing), ICMP as far as
+   "port unreachable" needs, UDP with its checksum, then TCP's state machine.
 2. **The kernel** grows a socket table and the dispatch.  A socket is a handle
    a program holds, and `Descriptor` in `kernel/src/syscall/table/mod.rs` has two
    variants, `File` and `Pipe`, so this is where a third arrives.  The
@@ -338,7 +362,11 @@ is useful before the next exists.
 the host.  That is deliberate, the largest and least certain part of the level
 lands before anything in the kernel depends on it.
 
-#### What Level 5 does not promise
+#### What the level serves with a stated limit
+
+Stated as limits rather than as gaps, because in each case the mechanism is
+there and the machine is what is missing.  A later change that removes one of
+these is a change to a measurement, and the measurement is in the sentence.
 
 - **All 23 protocol numbers are served, and two of them are served with a
   stated limit.**  `Filter*` (122-125), `Mrt*` (169-174), `Ipsec*` (164-168) and
@@ -536,10 +564,10 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `arch` | 95,361 | **done**, three ports, trap paths, timers, SMP, ring 3 (20,645 lines here, a third of the size) |
 | `fs` | 68,494 | **moved**, PyroFS, tmpfs and the ten Level 6 formats; four of them are readers, which the old tree's were too |
 | `kernel` | 39,704 | **mostly done**, scheduler, processes, COW, pipes, signals, memory |
-| `network` | 39,240 | **partial**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP and TCP, and the eight calls a program reaches |
+| `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
 | `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; the rest are not here |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial**, 51 of 196 numbers |
+| `syscall` | 15,647 | **partial**, 89 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
@@ -561,8 +589,8 @@ number's presence as a capability is the mistake this tree's `Handler::Unimpleme
 exists to avoid.
 
 This tree declares **196**, the same 194 plus `WaitProcessOf` (196) and
-`Ipv6Status` (197), with the same two retirements, and serves **51** of them.
-The other 145 are what the levels below are about.
+`Ipv6Status` (197), with the same two retirements, and serves **89** of them.
+The other 107 are what the levels below are about.
 
 That single number is the clearest statement of what is left.  The old tree's
 15,647-line syscall tree is the work list, and its modules are named by what
@@ -667,9 +695,12 @@ The syscall gap restated as work: roughly twenty mechanisms, ordered by what
 each unblocks rather than by size.
 
 1. **Descriptors and the file interface**, `SetLength`, `StatFd`, `ReadDirFd`,
-   `Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`, `Fsync`, `Fallocate`.  These are the
-   leftover of Level 2 and the cheapest row on this page: the filesystem already
-   implements every operation.
+   `Dup`, `Dup2`, `Seek`, `Fcntl`, `Poll`, `Fsync`, `Fdatasync`, `Fallocate`,
+   `SetFdFlags`, `SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`,
+   `SetFileFlags`, `GetFileFlags`, `AccessQuery`, `AccessQueryAt`,
+   `AccessQueryFd`, `PermissionMetadata`, `PermissionMetadataAt`,
+   `PermissionMetadataFd`.  These are the leftover of Level 2 and the cheapest
+   row on this page: the filesystem already implements every operation.
 2. **Shared memory**, `ShmGet`, `ShmAt`, `ShmDt`, `ShmCtl`.  Two processes
    naming one region, which is a decision about the address space and not
    wiring.
@@ -689,19 +720,32 @@ each unblocks rather than by size.
 9. **The app's own calls**, `ArgCount`, `ArgValue`, `EnvCount`, `EnvValue`,
    `CurrentDir`, `SetCurrentDir`, `AppId`, `AppVersion`, `ImagePath`,
    `ManifestPath`, `Yield`, `WriteDebug`, `ReadConsole`, `ListBlockDevices`,
-   `ListMounts`, `Mount`, `Umount`, `Sync`, `RestartSyscall`, `CompactMemory`,
-   `Mlock`, `Munlock`, `Madvise`.
+   `ListMounts`, `Mount`, `Umount`, `RepairVolume`, `FuseMount`, `Sync`,
+   `RestartSyscall`, `CompactMemory`, `Mlock`, `Munlock`, `Madvise`.
 10. **io_uring**, `IoUringSetup`, `IoUringEnter`.  Last because it is a second
     way to do what every call above already does, and nothing needs it.
-11. **The rest of the network**, `ResolveHostname` beyond a hosts table,
-    `TlsConnect`, `Ipsec*`, `Mrt*`, `Filter*`, `Dccp*`.  The raw socket calls,
-    `GetSockName`/`GetPeerName`, `SetSockOpt`/`GetSockOpt` and the three
-    local-domain calls were on this row and have moved off it.
+11. **Power, audit, the policy's path rule, the service table and packages**,
+    `CpufreqGet`, `CpufreqSet`, `CpufreqGetRange`, `CpufreqSetGovernor`,
+    `CpufreqGetTemp`, `AuditSetEnable`, `AuditReadLog`, `MacSetPathType`,
+    `ServiceDeclare`, `ServiceStartAll`, `InstallPackage`.  Seven of these were
+    not on this list at all until it was re-taken against the enum, which is
+    the drift the census command above exists to catch.  `power` and `audit`
+    both have their mechanism; `ServiceDeclare` and `ServiceStartAll` are the
+    two numbers the parked service table would need (`docs/status.md` records
+    why that direction is unscheduled), and `InstallPackage` names a package
+    format this tree does not have.
 
-What this level does not promise: **the GPU calls**.  `GpuCtxCreate` and its
-eight siblings describe a VIRGL context, which is a device this tree does not
-have and a protocol above it, and they belong with Level 7's `virtio_gpu` if
-that ever lands, not here.
+The network is no longer on this list.  It was item 11, `ResolveHostname`
+beyond a hosts table, `TlsConnect`, `Ipsec*`, `Mrt*`, `Filter*`, `Dccp*`; all
+43 of the level's numbers are served, so the row is gone rather than shrunk.
+
+What this level does not promise: **the GPU calls**, all nine of them,
+`GpuCtxCreate`, `GpuCtxDestroy`, `GpuDeviceInfo`, `GpuResCreate3d`,
+`GpuResUnref`, `GpuSetScanout`, `GpuSubmit3d`, `GpuTransferFromHost3d` and
+`GpuTransferToHost3d`.  They describe a VIRGL context, which is a device this
+tree does not have and a protocol above it, and they belong with Level 7's
+`virtio_gpu` if that ever lands, not here.  They are named one by one because
+"and its eight siblings" is what let them fall off this list the first time.
 
 ### Level 9, the programs
 
