@@ -499,6 +499,40 @@ impl SyscallTable {
         fs::path::normalize_path(path, base)
     }
 
+    /// The path a descriptor was opened at.
+    ///
+    /// The descriptor's own anchor, which is what the calls that name a
+    /// descriptor **instead of** a path need: `StatFd` and `ReadDirFd` ask
+    /// about the file the descriptor holds, and the only thing this table must
+    /// say to answer them is which name that descriptor resolved to.
+    ///
+    /// A descriptor that names no file of this caller's, or a pipe end, socket
+    /// or stream, is refused: none of those has a path in the namespace, so
+    /// none of them is something a stat or a listing could describe.  The
+    /// refusal is the same word for every reason, which is the reading
+    /// [`Self::resolve_at`] keeps and for the same reason.
+    ///
+    /// Answers an owned copy rather than a borrow because the call that asked
+    /// is about to need the table mutably, and the path is a `String` the
+    /// descriptor already owns.
+    pub(crate) fn path_of(
+        &self,
+        descriptor: usize,
+        caller: Option<u32>,
+    ) -> Result<alloc::string::String> {
+        self.check_owner(descriptor, caller)?;
+        let descriptor = self
+            .descriptors
+            .get(descriptor)
+            .ok_or(Error::InvalidArgument)?
+            .as_ref()
+            .ok_or(Error::InvalidArgument)?;
+        match descriptor {
+            Descriptor::File { path, .. } => Ok(path.clone()),
+            _ => Err(Error::InvalidArgument),
+        }
+    }
+
     /// Put one descriptor in a free slot and answer its index.
     pub(crate) fn insert(&mut self, descriptor: Descriptor) -> Result<usize> {
         for (index, slot) in self.descriptors.iter_mut().enumerate() {

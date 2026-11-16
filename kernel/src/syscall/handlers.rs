@@ -265,6 +265,29 @@ pub fn stat_at(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resul
     )
 }
 
+/// Stat the file a descriptor names.
+///
+/// Arguments: the descriptor, the record, its length, then three reserved
+/// slots that must be zero.  The same sixteen-byte record [`stat`] answers,
+/// for the file the descriptor holds.
+///
+/// The difference from `stat` is what a program had to do without it: a
+/// descriptor is what a program passes around, and before this a program that
+/// was handed one and wanted its size had to know the path it was opened at,
+/// which a caller that received the descriptor never does.  The record is read
+/// from the descriptor's anchor, so the two calls describe the same file.
+pub fn stat_fd(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 3)?;
+    let path = table.path_of(descriptor, arguments.context.caller_pid)?;
+    stat_resolved(
+        table,
+        arguments.context,
+        &path,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
 /// The whole of a stat, on a path that is already resolved.
 fn stat_resolved(
     table: &mut SyscallTable,
@@ -495,17 +518,56 @@ pub fn read_dir(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resu
     let path = arguments.path.ok_or(Error::InvalidArgument)?;
     let index = arguments.context.arg(1);
     validate_zeroed_args(arguments.context, 4)?;
+    read_dir_resolved(
+        table,
+        arguments.context,
+        path,
+        index,
+        arguments.buffer.as_deref_mut(),
+    )
+}
 
-    let subject = arguments
-        .context
-        .identity
-        .unwrap_or(mac::MAC_TYPE_UNLABELED);
+/// List one entry of the directory a descriptor names.
+///
+/// Arguments: the descriptor, the index, the buffer, its length, then two
+/// reserved slots that must be zero.  The same record and the same answer as
+/// [`read_dir`], for the directory the descriptor was opened at.
+///
+/// This is the call `read_dir` cannot be: a program that opened a directory
+/// and wants its entries had to remember the path it opened, and a program
+/// handed a descriptor by another call has no path to remember.  The
+/// descriptor already carries the name it resolved to, which is what
+/// `SyscallTable::path_of` reads.
+///
+/// The kind check is the descriptor's, so a descriptor that names a regular
+/// file answers `InvalidArgument` from the listing rather than from a path
+/// that resolved to something with no entries.
+pub fn read_dir_fd(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let index = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 4)?;
+    let path = table.path_of(descriptor, arguments.context.caller_pid)?;
+    read_dir_resolved(
+        table,
+        arguments.context,
+        &path,
+        index,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
+/// The whole of a listing, on a path that is already resolved.
+fn read_dir_resolved(
+    table: &mut SyscallTable,
+    context: &SyscallContext,
+    path: &str,
+    index: usize,
+    buffer: Option<&mut [u8]>,
+) -> Result<Dispatch> {
+    let subject = context.identity.unwrap_or(mac::MAC_TYPE_UNLABELED);
     mac::check_file(subject, path, mac::MAC_CLASS_FILE, mac::MAC_PERM_READ, 0)?;
 
-    let buffer = arguments
-        .buffer
-        .as_deref_mut()
-        .ok_or(Error::InvalidArgument)?;
+    let buffer = buffer.ok_or(Error::InvalidArgument)?;
     if buffer.len() < fs_abi::DIRECTORY_ENTRY_RECORD_SIZE {
         return Err(Error::InvalidArgument);
     }

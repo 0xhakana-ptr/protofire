@@ -63,6 +63,10 @@ pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
 pub const SYS_STAT: usize = SyscallNumber::Stat as usize;
 /// `ReadDir`, by path and index.
 pub const SYS_READ_DIR: usize = SyscallNumber::ReadDir as usize;
+/// `StatFd`, by descriptor.
+pub const SYS_STAT_FD: usize = SyscallNumber::StatFd as usize;
+/// `ReadDirFd`, by descriptor and index.
+pub const SYS_READ_DIR_FD: usize = SyscallNumber::ReadDirFd as usize;
 /// `OpenAt`, relative to a descriptor.
 pub const SYS_OPEN_AT: usize = SyscallNumber::OpenAt as usize;
 /// `StatAt`, relative to a descriptor.
@@ -461,6 +465,37 @@ pub fn sys_read_dir(path: usize, index: usize, buffer: &mut [u8]) -> usize {
     syscall6(
         SYS_READ_DIR,
         path,
+        index,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        0,
+        0,
+    )
+}
+
+/// `stat_fd(descriptor, record)`: zero, with the record filled.
+///
+/// The same sixteen-byte record [`sys_stat`] fills, for the file the
+/// descriptor holds rather than for a path the caller would have to know.
+#[cfg(target_os = "none")]
+pub fn sys_stat_fd(descriptor: usize, record: &mut [u8; 16]) -> usize {
+    syscall6(
+        SYS_STAT_FD,
+        descriptor,
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `read_dir_fd(descriptor, index, buffer)`: the bytes written.
+#[cfg(target_os = "none")]
+pub fn sys_read_dir_fd(descriptor: usize, index: usize, buffer: &mut [u8]) -> usize {
+    syscall6(
+        SYS_READ_DIR_FD,
+        descriptor,
         index,
         buffer.as_mut_ptr() as usize,
         buffer.len(),

@@ -230,6 +230,12 @@ The calls a ring-3 program can make today, and the slots each carries.
 - **`Stat`**, `a0` the path, a NUL-terminated string; `a1` the record;
   `a2` its length, at least `FILE_STAT_SIZE`; `a3`-`a5` reserved zero.
   Answers zero, with the record filled.
+- **`StatFd`**, `a0` the descriptor; `a1` the record; `a2` its length, at
+  least `FILE_STAT_SIZE`; `a3`-`a5` reserved zero.  Answers zero, with the same
+  record `Stat` fills, for the file the descriptor holds.
+- **`ReadDirFd`**, `a0` the descriptor, which must name a directory; `a1` the
+  index; `a2` the buffer; `a3` its length; `a4`-`a5` reserved zero.  Answers
+  the bytes written, the same record and answer `ReadDir` gives.
 - **`ReadDir`**, `a0` the path; `a1` the index; `a2` the buffer; `a3` its
   length; `a4`-`a5` reserved zero.  Answers the bytes written: the ABI's
   `DirectoryEntryRecord` header with the name's UTF-8 bytes packed after it.

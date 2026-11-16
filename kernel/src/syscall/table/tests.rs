@@ -80,6 +80,8 @@ fn writable() -> SyscallTable {
     table.register(SyscallNumber::RemovePathAt, remove_path_at);
     table.register(SyscallNumber::RenameAt, rename_at);
     table.register(SyscallNumber::SetLength, set_length);
+    table.register(SyscallNumber::StatFd, stat_fd);
+    table.register(SyscallNumber::ReadDirFd, read_dir_fd);
     table.register(SyscallNumber::Close, close);
     table
 }
@@ -795,6 +797,54 @@ fn stat_path(table: &mut SyscallTable, path: &str) -> Result<(usize, usize)> {
     Ok((kind, size))
 }
 
+/// Stat a descriptor through the registry: no path, only the handle.
+fn stat_descriptor(table: &mut SyscallTable, descriptor: usize) -> Result<(usize, usize)> {
+    let mut context =
+        SyscallContext::new(SyscallNumber::StatFd as usize, [descriptor, 0, 16, 0, 0, 0]);
+    let mut record = [0u8; 16];
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(&mut record),
+    };
+    table.dispatch(&mut arguments)?;
+    let kind = usize::from_le_bytes(record[..8].try_into().expect("kind bytes"));
+    let size = usize::from_le_bytes(record[8..].try_into().expect("size bytes"));
+    Ok((kind, size))
+}
+
+/// List one entry through a descriptor, parsed the way `list_entry`
+/// parses a listing by path.
+fn list_entry_by_descriptor(
+    table: &mut SyscallTable,
+    descriptor: usize,
+    index: usize,
+    buffer: &mut [u8],
+) -> Result<(usize, usize, alloc::string::String)> {
+    let mut context = SyscallContext::new(
+        SyscallNumber::ReadDirFd as usize,
+        [descriptor, index, 0, 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(buffer),
+    };
+    let written = table.dispatch(&mut arguments)?.value;
+    let word =
+        |at: usize| usize::from_le_bytes(buffer[at..at + 8].try_into().expect("header word"));
+    let kind = word(0);
+    let size = word(8);
+    let name_offset = word(16);
+    let name_len = word(24);
+    assert_eq!(written, fs_abi::DIRECTORY_ENTRY_RECORD_SIZE + name_len);
+    let name = alloc::string::String::from_utf8_lossy(&buffer[name_offset..name_offset + name_len])
+        .into_owned();
+    Ok((kind, size, name))
+}
+
 /// A stat of a file answers the kind and the size the volume holds.
 ///
 /// The record is the wire format, so the parse is the caller's own: kind
@@ -862,6 +912,115 @@ fn a_stat_after_a_write_answers_the_written_size() {
     assert_eq!(
         stat_path(&mut table, "/note.txt"),
         Ok((fs_abi::FILE_KIND_FILE, 11))
+    );
+}
+
+/// A stat by descriptor answers what the same stat by path does.
+///
+/// The two calls describe one file, so a difference between them means one of
+/// them read the wrong anchor.  The descriptor is stat'd while it is **open**,
+/// which is the case the path form cannot serve at all for a caller that was
+/// handed the descriptor and never learned the name.
+#[test]
+fn a_stat_by_descriptor_matches_the_one_by_path() {
+    let mut table = writable();
+    let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    let descriptor = open_path(&mut table, "/note.txt", flags).expect("create");
+    assert_eq!(
+        write_as(&mut table, descriptor, b"twelve byte", None),
+        Ok(11)
+    );
+
+    assert_eq!(
+        stat_descriptor(&mut table, descriptor),
+        Ok((fs_abi::FILE_KIND_FILE, 11))
+    );
+    assert_eq!(
+        stat_descriptor(&mut table, descriptor),
+        stat_path(&mut table, "/note.txt"),
+        "the two anchors describe one file"
+    );
+}
+
+/// A stat of a descriptor that names no file is refused.
+///
+/// A pipe end has no path in the namespace, so there is nothing for the record
+/// to describe, and the answer is the one an unheld descriptor number gets: a
+/// caller does not learn which numbers are pipe ends by stat'ing them.
+#[test]
+fn a_stat_of_a_pipe_descriptor_is_refused() {
+    use crate::pipe;
+    use crate::pipe::End;
+
+    let pipe = Arc::new(pipe::Pipe::new(16));
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::StatFd, stat_fd);
+    let end = table
+        .insert_pipe(End::writer(pipe.clone()), 7)
+        .expect("insert");
+
+    assert_eq!(
+        stat_descriptor(&mut table, end),
+        Err(Error::InvalidArgument)
+    );
+}
+
+/// A listing by descriptor answers the entries a listing by path does.
+///
+/// The same directory opened as the anchor, then listed twice: once through
+/// the descriptor and once through its name.  An entry that differed would
+/// mean one of the two resolved a different directory.
+#[test]
+fn a_listing_by_descriptor_matches_the_one_by_path() {
+    let mut table = writable();
+    make_dir(&mut table, "/docs").expect("create dir");
+    let file = open_path(
+        &mut table,
+        "/docs/entry.txt",
+        fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("create file");
+    assert_eq!(write_as(&mut table, file, b"abc", None), Ok(3));
+    assert_eq!(table.close(file), Ok(()));
+
+    let anchor = open_path(&mut table, "/docs", fs_abi::OPEN_FLAG_READ).expect("open dir");
+
+    let mut by_path = [0u8; 128];
+    let mut by_descriptor = [0u8; 128];
+    let from_path = list_entry(&mut table, "/docs", 0, &mut by_path).expect("list by path");
+    let from_descriptor =
+        list_entry_by_descriptor(&mut table, anchor, 0, &mut by_descriptor).expect("list by fd");
+
+    assert_eq!(
+        (from_descriptor.0, from_descriptor.1),
+        (from_path.0, from_path.1),
+        "kind and size are one directory's entry either way"
+    );
+    assert_eq!(
+        from_descriptor.2, from_path.4,
+        "and so is the name the record points at"
+    );
+}
+
+/// A listing of a descriptor that names a regular file is refused.
+///
+/// The kind check is the descriptor's own: a regular file has no entries, and
+/// a listing that answered `NotFound` instead would be indistinguishable from
+/// a directory whose index ran past its end.
+#[test]
+fn a_listing_of_a_file_descriptor_is_refused() {
+    let mut table = writable();
+    let file = open_path(
+        &mut table,
+        "/note.txt",
+        fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("create");
+
+    let mut buffer = [0u8; 128];
+    assert_eq!(
+        list_entry_by_descriptor(&mut table, file, 0, &mut buffer),
+        Err(Error::InvalidArgument)
     );
 }
 

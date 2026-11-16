@@ -787,6 +787,61 @@ pub(crate) fn serve_io(
         }
         return Some(outcome);
     }
+    if number == SyscallNumber::StatFd as usize || number == SyscallNumber::ReadDirFd as usize {
+        // The two readings asked of a descriptor instead of a path:
+        // `StatFd(descriptor, record, length)` and
+        // `ReadDirFd(descriptor, index, buffer, length)`.
+        //
+        // One branch because the two differ only in where the buffer sits and
+        // what the handler does with it, which is the same reading the
+        // socket-option pair gets: the record is `a1` and `a2` for the stat,
+        // `a2` and `a3` for the listing, and the index the listing reads in
+        // between is a word the stat does not have.
+        //
+        // Neither copies a path: the descriptor already resolved one, and the
+        // handler reads it from the table.  What this branch does owe the
+        // registry is the buffer's validation, because a ring-3 address is a
+        // number until something checks it.
+        let is_stat = number == SyscallNumber::StatFd as usize;
+        let (buffer, length) = if is_stat {
+            (call.arguments[1], call.arguments[2])
+        } else {
+            (call.arguments[2], call.arguments[3])
+        };
+        if !crate::address_space::is_user_range(buffer, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window and not empty, which
+        // `is_user_range` checked, and the pages behind it are the calling
+        // task's own mappings, installed on this CPU.  The stat writes the
+        // sixteen-byte record and the listing writes the record and the name,
+        // nothing past either.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(destination));
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            // The line names the descriptor rather than a path, because the
+            // descriptor is all this call was given: a program that never knew
+            // the path is the reason the call exists, and a line that printed
+            // one would be the kernel reporting a fact it was not told.
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(if is_stat {
+                " stat'd descriptor "
+            } else {
+                " listed descriptor "
+            });
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
 
     // The `*At` calls: the same five operations their plain twins serve, with
     // the path anchored at a descriptor instead of at the root.  The

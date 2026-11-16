@@ -114,6 +114,8 @@ use user_abi::sys_read;
 #[cfg(target_os = "none")]
 use user_abi::sys_read_dir;
 #[cfg(target_os = "none")]
+use user_abi::sys_read_dir_fd;
+#[cfg(target_os = "none")]
 use user_abi::sys_recv_from_udp;
 #[cfg(target_os = "none")]
 use user_abi::sys_recv_raw_packet;
@@ -147,6 +149,8 @@ use user_abi::sys_stat;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use user_abi::sys_stat_at;
+#[cfg(target_os = "none")]
+use user_abi::sys_stat_fd;
 #[cfg(target_os = "none")]
 use user_abi::sys_system_info;
 #[cfg(target_os = "none")]
@@ -365,6 +369,27 @@ pub extern "C" fn _start() -> ! {
     let written = insist(sys_read_dir(NOTES_DIR.as_ptr() as usize, 0, &mut entry));
     if !lists_name(&entry, written, ANCHORED_NAME) {
         sys_exit(204);
+    }
+
+    // The same two readings asked of the **descriptor** instead of a name:
+    // `StatFd` and `ReadDirFd`.  The directory is already open here, and the
+    // point of the pair is that a caller holding it never needs the name it
+    // was opened at.  Each answer is checked against the path form's, so a
+    // call that read a different anchor fails rather than passing on a
+    // plausible record.
+    let mut by_descriptor = [0u8; 16];
+    insist(sys_stat_fd(notes, &mut by_descriptor));
+    let (kind, size) = user_abi::stat_words(&by_descriptor);
+    // A directory's stat: kind 1 is `FILE_KIND_DIRECTORY`, and the size is
+    // the backend's to choose, so only the kind is asserted.
+    if kind != 1 {
+        sys_exit(241);
+    }
+
+    let mut listed = [0u8; 64];
+    let listed_bytes = insist(sys_read_dir_fd(notes, 0, &mut listed));
+    if !lists_name(&listed, listed_bytes, ANCHORED_NAME) {
+        sys_exit(242);
     }
 
     // The rename, each side anchored at the `/tmp` descriptor: both names

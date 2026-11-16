@@ -439,6 +439,13 @@ impl Machine {
                 // handler that answered zero without reaching the node would
                 // leave the file long and end the program at its stat.
                 ("protofire: process 1 set descriptor ", false),
+                // The two readings asked of a descriptor rather than a name.  A
+                // prefix because neither line carries anything but the number
+                // the table handed out; the record and the entry beside them
+                // are the program's own comparisons, so a call that answered
+                // the wrong anchor ends the program instead.
+                ("protofire: process 1 stat'd descriptor ", false),
+                ("protofire: process 1 listed descriptor ", false),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,
@@ -1270,6 +1277,13 @@ impl Machine {
                     // node would leave the file long and end the program at its
                     // stat.
                     ("protofire: process 1 set descriptor ", false),
+                    // The two readings asked of a descriptor rather than a
+                    // name.  A prefix because neither line carries anything but
+                    // the number the table handed out; the record and the entry
+                    // beside them are the program's own comparisons, so a call
+                    // that answered the wrong anchor ends the program instead.
+                    ("protofire: process 1 stat'd descriptor ", false),
+                    ("protofire: process 1 listed descriptor ", false),
                     (
                         "protofire: process 1 renamed note.txt via descriptor ",
                         false,
@@ -1754,6 +1768,13 @@ impl Machine {
                 // handler that answered zero without reaching the node would
                 // leave the file long and end the program at its stat.
                 ("protofire: process 1 set descriptor ", false),
+                // The two readings asked of a descriptor rather than a name.  A
+                // prefix because neither line carries anything but the number
+                // the table handed out; the record and the entry beside them
+                // are the program's own comparisons, so a call that answered
+                // the wrong anchor ends the program instead.
+                ("protofire: process 1 stat'd descriptor ", false),
+                ("protofire: process 1 listed descriptor ", false),
                 (
                     "protofire: process 1 renamed note.txt via descriptor ",
                     false,

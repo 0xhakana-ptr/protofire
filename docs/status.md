@@ -1965,7 +1965,7 @@ be started without deciding it is time.  In particular:
 - **No driver implements `Service`.**  `VirtioBlock` stays on
   `QueuedBlockDevice`, which works and has a caller.
 - **No syscall reaches the table.**  No number names a service; 197 names the
-  IPv6 status call and nothing here, and the 90 numbers that are served are the
+  IPv6 status call and nothing here, and the 92 numbers that are served are the
   memory, filesystem, process, time, descriptor, datagram, stream and protocol
   calls.  `ServiceDeclare` and `ServiceStartAll` are unserved, which is why
   nothing here is reachable from a program yet.
@@ -1987,7 +1987,7 @@ than the list.
 |---|---|---|
 | the memory layer | **done**, `Mmap`, `Munmap`, `Brk`, `ReclaimPages` served | the `program memory call` lines below |
 | a process a program can start | **done**, `SpawnProcess` plus the six signal calls | `process 1 spawned /bin/shell as pid 5` |
-| a way to reach the table from ring 3 | **done**, 90 numbers reachable, the registry holding 69 of them | `syscall table installed, 69 number(s) served` |
+| a way to reach the table from ring 3 | **done**, 92 numbers reachable, the registry holding 71 of them | `syscall table installed, 71 number(s) served` |
 | **a handle that can be given away** | **not started** | `Descriptor` still has two variants, `File` and `Pipe` |
 
 The last one is the one that matters now, and the fourth line of the old list
@@ -2167,7 +2167,7 @@ side's build rather than drifting until a host test notices.
 
 Verified by the lines above on every machine, by the gate's required lines
 for the spawn, the two waits and the suspend, and by `protofire: syscall
-table installed, 69 number(s) served` with the census at **90 of 196**
+table installed, 71 number(s) served` with the census at **92 of 196**
 reachable from ring 3.
 
 **The clock and the generator.**  `GetTimeOfDay` (70), `GetRandom` (75),
@@ -2214,8 +2214,8 @@ Two defects the first ring-3 boot of this found:
   and failed only for a target.
 
 Verified by the six lines above on every machine, by the gate's required lines
-for all four calls, and by `protofire: syscall table installed, 69 number(s)
-served` with the census at **90 of 196**.
+for all four calls, and by `protofire: syscall table installed, 71 number(s)
+served` with the census at **92 of 196**.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement

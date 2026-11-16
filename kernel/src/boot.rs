@@ -245,6 +245,15 @@ fn install_registry(namespace: fs::MountTable) {
         crate::syscall::set_length,
     );
     table.register(::syscall::SyscallNumber::Stat, crate::syscall::stat);
+    // The two descriptor-shaped readings of the same facts: a stat and a
+    // listing, asked of the descriptor rather than of the path it was opened
+    // at.  A program handed a descriptor never learns the path, which is what
+    // these two exist to spare it.
+    table.register(::syscall::SyscallNumber::StatFd, crate::syscall::stat_fd);
+    table.register(
+        ::syscall::SyscallNumber::ReadDirFd,
+        crate::syscall::read_dir_fd,
+    );
     table.register(
         ::syscall::SyscallNumber::CreateDir,
         crate::syscall::create_dir,
