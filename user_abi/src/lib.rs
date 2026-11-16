@@ -51,6 +51,10 @@ use abi::SyscallNumber;
 pub const SYS_OPEN: usize = SyscallNumber::Open as usize;
 /// `Exit`.
 pub const SYS_EXIT: usize = SyscallNumber::Exit as usize;
+/// `WriteDebug`, a program's own bytes into the kernel's log.
+pub const SYS_WRITE_DEBUG: usize = SyscallNumber::WriteDebug as usize;
+/// `ReadConsole`, one line of input, which this machine cannot yet supply.
+pub const SYS_READ_CONSOLE: usize = SyscallNumber::ReadConsole as usize;
 /// `Read`, from a descriptor.
 pub const SYS_READ: usize = SyscallNumber::Read as usize;
 /// `Write`, to a file or a pipe.
@@ -420,6 +424,40 @@ pub fn sys_exit(status: usize) -> ! {
 #[cfg(target_os = "none")]
 pub fn sys_open(path: usize, flags: usize) -> usize {
     syscall6(SYS_OPEN, path, flags, 0, 0, 0, 0)
+}
+
+/// `write_debug(buffer)`: the bytes taken.
+///
+/// The call a program uses before it has opened anything: `write` needs a
+/// descriptor, and a program's first act is often to say what it is.
+#[cfg(target_os = "none")]
+pub fn sys_write_debug(buffer: &[u8]) -> usize {
+    syscall6(
+        SYS_WRITE_DEBUG,
+        buffer.as_ptr() as usize,
+        buffer.len(),
+        0,
+        0,
+        0,
+        0,
+    )
+}
+
+/// `read_console(buffer)`: how many bytes were written, or zero.
+///
+/// Zero means "nothing is waiting", not "no such call": this build has no
+/// keyboard driver, so the answer is always zero and a caller can loop on it.
+#[cfg(target_os = "none")]
+pub fn sys_read_console(buffer: &mut [u8]) -> usize {
+    syscall6(
+        SYS_READ_CONSOLE,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        0,
+        0,
+        0,
+        0,
+    )
 }
 
 /// `read(descriptor, buffer)`: the byte count.

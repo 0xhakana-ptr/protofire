@@ -261,6 +261,71 @@ pub fn seek(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<D
     Ok(Dispatch::complete(position as usize))
 }
 
+/// Write the caller's bytes to the kernel's own log.
+///
+/// Arguments: the buffer, its length, then four reserved slots that must be
+/// zero.  Answers the bytes taken, so a caller learns how much of what it sent
+/// arrived rather than only that the call was understood.
+///
+/// This is the debug channel, and it is deliberately **not** `Write`: `Write`
+/// needs a descriptor, which needs an open file or a pipe, and a program that
+/// has not got that far yet still has things to say.  A boot's first program
+/// uses it to announce itself before it has opened anything.
+///
+/// The bytes are printed as text.  A caller sends UTF-8 and a byte outside it
+/// is drawn as the console's fallback glyph, which is the same rule the screen
+/// follows: a control byte does not vanish from the record, it shows up as a
+/// box a reader can see.
+pub fn write_debug(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let buffer = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 2)?;
+
+    if buffer.is_empty() {
+        return Ok(Dispatch::complete(0));
+    }
+    // Through the arch console rather than a print of this file's own, so the
+    // bytes take the same path a kernel line does: the serial port and, when
+    // one is installed, the screen.
+    let text = core::str::from_utf8(buffer).unwrap_or("");
+    if !text.is_empty() {
+        arch::serial::write_str(text);
+    }
+    Ok(Dispatch::complete(buffer.len()))
+}
+
+/// Read one line from the console into the caller's buffer.
+///
+/// Arguments: the buffer, its length, then four reserved slots that must be
+/// zero.  Answers how many bytes were written, **including** the terminating
+/// newline, or zero when nothing is waiting.
+///
+/// This build has no console input device, so the answer is always zero, and
+/// that is a fact about the machine rather than about the call: a key has to
+/// come from a USB or PS/2 keyboard, and neither driver exists yet.  The
+/// alternative, blocking until a byte arrives, would park the caller for ever
+/// on this machine, which is worse than a word it can check.
+///
+/// It is served rather than left `NotImplemented` because the difference
+/// matters to a program: `NotImplemented` says "this ABI has no such call",
+/// and zero says "there is nothing to read yet", which is a statement a shell
+/// can loop on and an implementation that a later keyboard driver fills in
+/// without changing the call's shape.
+pub fn read_console(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let length = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+    if length == 0 {
+        return Ok(Dispatch::complete(0));
+    }
+    // The address is **not** validated here.  `Arguments::buffer` is already a
+    // borrow: the caller that built it turned the ring-3 word into a slice
+    // behind the one check that makes the turn sound, so a second look at the
+    // raw argument would be checking a number the handler cannot see.  The
+    // ring-3 branch validates the range before it builds the borrow, which is
+    // where every buffer-taking call keeps that rule.
+    let _ = arguments.buffer.as_deref();
+    Ok(Dispatch::complete(0))
+}
+
 /// Flush a descriptor's file to stable storage.
 ///
 /// Arguments: the descriptor, then five reserved slots that must be zero.

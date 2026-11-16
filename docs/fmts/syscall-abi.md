@@ -205,6 +205,13 @@ The calls a ring-3 program can make today, and the slots each carries.
   `a1` the flags; `a2`-`a3` reserved zero.
 - **`Read`**, `a0` the descriptor; `a1` the offset, or `READ_OFFSET_CURRENT`;
   `a2` the buffer; `a3` its length; `a4`-`a5` reserved zero.
+- **`WriteDebug`**, `a0` the buffer; `a1` its length; `a2`-`a5` reserved zero.
+  Answers the bytes taken.  The program's own bytes into the kernel's log, for
+  the caller that has opened nothing yet and so cannot use `Write`.
+- **`ReadConsole`**, `a0` the buffer; `a1` its length; `a2`-`a5` reserved zero.
+  Answers the bytes read, which is **zero** on this build: there is no keyboard
+  driver yet, and zero says "nothing waiting" where `NotImplemented` would say
+  "no such call".
 - **`Close`**, `a0` the descriptor; `a1`-`a5` reserved zero.
 - **`SetLength`**, `a0` the descriptor; `a1` the new length in bytes;
   `a2`-`a5` reserved zero.  Answers zero.  The descriptor must have been opened

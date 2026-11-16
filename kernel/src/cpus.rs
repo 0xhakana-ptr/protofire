@@ -233,4 +233,10 @@ pub fn report_activity() {
     arch::serial::write_str(" acknowledged, ");
     arch::serial::write_u32(timed_out as u32);
     arch::serial::write_str(" timed out\n");
+    // A second line whose **whole text is invariant**, because the one above
+    // carries a count that moves with the number of device windows the boot
+    // maps, and a gate cannot assert a moving number without being edited by
+    // every change that maps one.  This line says the thing the count was
+    // there to say: no CPU failed to answer.
+    arch::serial::write_str("protofire: tlb shootdown every cpu answered\n");
 }

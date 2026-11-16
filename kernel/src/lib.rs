@@ -60,6 +60,7 @@ pub mod address_space;
 pub mod boot;
 pub mod boot_pages;
 pub mod console;
+pub mod console_screen;
 pub mod cpus;
 pub mod devices;
 pub mod framebuffer;

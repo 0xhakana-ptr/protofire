@@ -201,6 +201,72 @@ pub(crate) fn serve_io(
             Err(error) => CallOutcome::Return(abi::syscall::encode_error(error)),
         });
     }
+    if number == SyscallNumber::WriteDebug as usize {
+        // `WriteDebug(buffer, length)`: a program's bytes into the kernel's own
+        // log.  The buffer is a ring-3 address, so it is validated before it is
+        // read, the same rule every buffer-taking call keeps.
+        //
+        // The call exists for a program that has opened nothing yet: `Write`
+        // needs a descriptor, and a boot's first program uses this to say what
+        // it is before it has anything to write through.
+        let buffer = call.arguments[0];
+        let length = call.arguments[1];
+        if !crate::address_space::is_user_range(buffer, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window, which `is_user_range`
+        // checked, and the pages behind it are the calling task's own mappings,
+        // installed on this CPU.  The bytes are read and nothing is written.
+        let source = unsafe { core::slice::from_raw_parts(buffer as *const u8, length) };
+        // Through the arch console and not the registry.  The registry's
+        // `Arguments` carries a `&mut [u8]`, which is right for a call that
+        // writes into a caller's buffer and a lie for one that only reads it:
+        // the handler would need a shared reference cast to an exclusive one,
+        // which is exactly the aliasing `Arguments` exists to make impossible.
+        // A read-only call goes straight to the sink instead.
+        if let Ok(text) = core::str::from_utf8(source) {
+            arch::serial::write_str(text);
+        }
+        let _ = &mut context;
+        return Some(CallOutcome::Return(length));
+    }
+    if number == SyscallNumber::ReadConsole as usize {
+        // `ReadConsole(buffer, length)`: the line a reader typed.  This machine
+        // has no input device yet, so the handler answers zero, and the branch
+        // exists anyway: a call the registry serves but the dispatcher does not
+        // forward is a call that answers `NotImplemented`, which is a different
+        // word from "nothing typed" and the one a shell would treat as a kernel
+        // that has no console at all.
+        let buffer = call.arguments[0];
+        let length = call.arguments[1];
+        if length == 0 {
+            return Some(CallOutcome::Return(0));
+        }
+        if !crate::address_space::is_user_range(buffer, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window, which `is_user_range`
+        // checked, and the pages behind it are the calling task's own
+        // mappings.  The handler writes the bytes it read and nothing past
+        // the length.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        return Some(through_registry(
+            &mut context,
+            None,
+            None,
+            Some(destination),
+        ));
+    }
     if number == SyscallNumber::Write as usize && call.arguments[2] != 0 {
         // `Write(descriptor, buffer, length)` to a file, through the registry.
         //

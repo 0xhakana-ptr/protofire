@@ -23,6 +23,7 @@ members = [
     "drivers/virtio/block",
     "drivers/virtio/net",
     "drivers/bus/pci",
+    "drivers/display/text",
     "drivers/display/vga",
     "drivers/net/e1000",
     "libs/allocator",

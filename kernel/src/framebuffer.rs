@@ -99,11 +99,7 @@ pub fn probe() -> Option<DisplayInfo> {
     crate::console::report_display_mode(applied);
 
     Some(DisplayInfo {
-        framebuffer: FramebufferInfo::new(
-            found.framebuffer_address,
-            found.framebuffer_size,
-            applied,
-        ),
+        framebuffer: FramebufferInfo::new(found.framebuffer_address, applied.size(), applied),
     })
 }
 

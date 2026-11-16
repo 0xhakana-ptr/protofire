@@ -51,6 +51,13 @@
 # where the machine is.
 0 vga
 
+# `text` is the console's renderer: the bitmap font, the character grid, and what
+# a byte does to a screen.  It names nothing, so the whole of it, the control
+# characters, the wrap, the scroll and the repaint, is driven against a recording
+# surface in a host test.  It is a crate rather than a kernel module for the
+# reason `vga` is: arithmetic tested only by booting is arithmetic nobody checks.
+0 text
+
 # ── Layer 1: the wire format ────────────────────────────────────────────────
 #
 # `abi` is what the kernel and a program both compile against: the error type and

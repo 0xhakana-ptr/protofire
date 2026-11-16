@@ -91,7 +91,17 @@ pub fn kernel_main() -> ! {
     // The display: found on the bus, given a mode, and reported.  After the
     // heap because the probe allocates, and before the programs because
     // whatever draws on this screen will be reachable from them.
-    crate::framebuffer::probe();
+    // The screen, installed before the rest of the boot prints: everything
+    // after this line reaches the framebuffer as well as the serial port, and
+    // the two lines below are the boot's own proof of it.
+    if let Some(display) = crate::framebuffer::probe() {
+        crate::console_screen::install(display.framebuffer);
+        arch::serial::write_str("protofire: screen installed, ");
+        arch::serial::write_u32(crate::console_screen::columns() as u32);
+        arch::serial::write_str(" by ");
+        arch::serial::write_u32(crate::console_screen::rows() as u32);
+        arch::serial::write_str(" cell(s)\n");
+    }
 
     // The registry that outlives this function, and the policy proven through
     // it rather than beside it.
@@ -241,6 +251,18 @@ fn install_registry(namespace: fs::MountTable) {
     table.register(::syscall::SyscallNumber::Open, crate::syscall::open);
     table.register(::syscall::SyscallNumber::Read, crate::syscall::read);
     table.register(::syscall::SyscallNumber::Write, crate::syscall::write);
+    // The two console calls: a program's own line, and a read that answers
+    // zero because this machine has no input device yet.  `ReadConsole` is
+    // served rather than refused so a shell can tell "nothing yet" from "no
+    // such call".
+    table.register(
+        ::syscall::SyscallNumber::WriteDebug,
+        crate::syscall::write_debug,
+    );
+    table.register(
+        ::syscall::SyscallNumber::ReadConsole,
+        crate::syscall::read_console,
+    );
     table.register(::syscall::SyscallNumber::Close, crate::syscall::close);
     // The truncate.  A number the ABI froze at twenty and this table served
     // nothing for until now: `VNode::set_len` existed and no program could

@@ -227,10 +227,9 @@ pub struct FoundDisplay {
     pub registers: Arc<dyn WordAccess>,
     /// Which way the register block is reached.
     pub layout: vga::VbeLayout,
-    /// The linear framebuffer's address, in BAR0.
+    /// The linear framebuffer's address, in BAR0, mapped for the console's
+    /// mode.
     pub framebuffer_address: usize,
-    /// How many bytes that window is.
-    pub framebuffer_size: usize,
 }
 
 pub struct FoundVirtio {
@@ -727,8 +726,6 @@ pub fn find_display() -> Option<FoundDisplay> {
         return None;
     }
 
-    let framebuffer_size =
-        pci::bar::size(&*config, device.address, framebuffer_bar.register).unwrap_or(0) as usize;
     let registers_size =
         pci::bar::size(&*config, device.address, registers_bar.register).unwrap_or(0x1000) as usize;
 
@@ -749,6 +746,22 @@ pub fn find_display() -> Option<FoundDisplay> {
     let registers = map(registers_bar.address, registers_size)?;
     let framebuffer_address = physical_address(framebuffer_bar.address);
 
+    // The framebuffer is mapped too, and it is the half a probe that only set a
+    // mode could forget: the registers were mapped because the mode sequence
+    // writes them, and the window the mode *draws into* is a different BAR.  A
+    // console writing an unmapped address faults on the first character.
+    //
+    // The size comes from the mode rather than from the BAR's own request: the
+    // device asks for a window large enough for every mode it offers, and the
+    // console only needs the one it set.  Mapping the smaller range is what
+    // keeps the identity map's budget for the rest of the boot.
+    // SAFETY: the region is a BAR the bus reported and the size is the mode the
+    // device will be told to drive, so nothing outside the window is touched.
+    #[cfg(target_os = "none")]
+    unsafe {
+        crate::address_space::map_device(framebuffer_address, vga::Mode::CONSOLE.size());
+    }
+
     arch::serial::write_str("protofire: display at ");
     arch::serial::write_hex(framebuffer_address as u64);
     arch::serial::write_str(", registers at ");
@@ -766,7 +779,6 @@ pub fn find_display() -> Option<FoundDisplay> {
         // that has the block.
         layout: vga::VbeLayout::Flat,
         framebuffer_address,
-        framebuffer_size,
     })
 }
 

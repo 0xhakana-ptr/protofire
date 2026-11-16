@@ -33,11 +33,11 @@ echo "missing  $(comm -13 /tmp/served.txt /tmp/declared.txt | wc -l)"
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **98 of the 196 numbers are served**, after the memory,
+Four machines boot, and **100 of the 196 numbers are served**, after the memory,
 filesystem, process, time and network levels.  That is the number the census
 command above answers, and it is the one to re-take rather than trust.
 
-The boot's own line, `syscall table installed, 77 number(s) served`, counts
+The boot's own line, `syscall table installed, 79 number(s) served`, counts
 only the registry's half, the numbers whose handler functions live in
 `boot.rs`'s table.  The rest are the ones `process/` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
@@ -157,7 +157,7 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 196 numbers, **98 are served**.  The 98 that are not fall into these
+Of 196 numbers, **100 are served**.  The 96 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
 The network has no row, which is the change since this table was first taken:
 each of its 43 numbers is served, so nothing from it is left to list.
@@ -169,14 +169,15 @@ each of its 43 numbers is served, so nothing from it is left to list.
 | shared memory, timers, multiplexing and queues (`Shm*`, `Futex`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 21 | none, and each is one mechanism rather than one call |
 | identity (`GetUid`, `GetGid`, `AddUser`, `RemoveUser`, `SetUserPassword`, `SetSecurityDescriptor`) | 6 | `security` has the types and nothing has asked them |
 | introspection and scheduling (`ListProcesses`, `ListThreads`, `ListProcessFaults`, `KernelLog`, `Prctl`, `Ptrace`, `Seccomp`, `SchedSetAffinity`, `SchedGetAffinity`) | 9 | the scheduler exists; these report on it or move a task |
-| the app and the machine (`ArgCount`, `ArgValue`, `EnvCount`, `EnvValue`, `CurrentDir`, `SetCurrentDir`, `AppId`, `AppVersion`, `ImagePath`, `ManifestPath`, `Yield`, `WriteDebug`, `ReadConsole`, `ListBlockDevices`, `Sync`, `RestartSyscall`, `CompactMemory`, `Mlock`, `Munlock`, `Madvise`) | 20 | assorted, and most are a record a program reads |
+| the app and the machine (`ArgCount`, `ArgValue`, `EnvCount`, `EnvValue`, `CurrentDir`, `SetCurrentDir`, `AppId`, `AppVersion`, `ImagePath`, `ManifestPath`, `Yield`, `RestartSyscall`, `CompactMemory`, `Mlock`, `Munlock`, `Madvise`) | 16 | assorted, and most are a record a program reads |
 | io_uring (`IoUringSetup`, `IoUringEnter`) | 2 | none, and it is a second way to do what the calls above already do |
 | GPU (`GpuCtxCreate`, `GpuCtxDestroy`, `GpuDeviceInfo`, `GpuResCreate3d`, `GpuResUnref`, `GpuSetScanout`, `GpuSubmit3d`, `GpuTransferFromHost3d`, `GpuTransferToHost3d`) | 9 | none, a VIRGL context over a device this tree does not have |
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
+| the block devices a boot found (`ListBlockDevices`, `Sync`) | 2 | the registry of devices exists and answers `SystemInfo`; what is missing is the list |
 | extended attributes (`SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`) | 4 | every filesystem that has them implements them; what is missing is the wire format for a packed list |
 | power, audit, policy and packages (`Cpufreq*`, `Audit*`, `MacSetPathType`, `ServiceDeclare`, `ServiceStartAll`, `InstallPackage`) | 11 | `power`'s governors and `audit`'s ring exist; the calls do not |
 
-The eleven rows sum to exactly 98, because each number is assigned to one row by
+The twelve rows sum to exactly 96, because each number is assigned to one row by
 name, the edges between families (`ListThreads` is process introspection *and*
 scheduling) are settled by where the row's handler would live, and that
 assignment is the census's one judgement call.  The counts come from matching
@@ -690,7 +691,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
 | `drivers` | 18,828 | **partial**, virtio-blk and virtio-net; Level 7 states the order, and its first item, the flush, has landed |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial**, 98 of 196 numbers |
+| `syscall` | 15,647 | **partial**, 100 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 
@@ -712,8 +713,8 @@ number's presence as a capability is the mistake this tree's `Handler::Unimpleme
 exists to avoid.
 
 This tree declares **196**, the same 194 plus `WaitProcessOf` (196) and
-`Ipv6Status` (197), with the same two retirements, and serves **98** of them.
-The other 98 are what the levels below are about.
+`Ipv6Status` (197), with the same two retirements, and serves **100** of them.
+The other 96 are what the levels below are about.
 
 That single number is the clearest statement of what is left.  The old tree's
 15,647-line syscall tree is the work list, and its modules are named by what
@@ -803,6 +804,22 @@ size.
   as the two descriptors the specification names.  Found by a Level 2 `Fsync`
   that was served and unusable; see that level for the two defects it turned
   out to be.
+- **7.2b, the console.**  A character grid over that framebuffer, and the sink
+  that makes a kernel line and a program's line reach it.  `drivers/display/text`
+  is the font, the control characters and the scroll, and it names nothing of
+  this tree: eighteen host tests drive the grid against a recording surface.
+  The kernel's half is the surface that writes pixels and the hook in `arch`'s
+  console, which every byte already passes through.
+  **It brought two numbers with it**: `WriteDebug` (1), a program's bytes into
+  the kernel's own log, and `ReadConsole` (4), served as zero rather than
+  `NotImplemented` because this machine has no keyboard driver and "nothing yet"
+  is a word a shell can loop on.
+
+  One defect it found in itself, worth keeping: the first version repainted the
+  whole screen on every byte, and the boot **stopped inside the network probe**
+  because 1024x768 pixels times a few thousand bytes is four hundred million
+  framebuffer writes.  A line is the unit a reader sees, so a line is the unit a
+  repaint waits for.
 - **7.2a, the display.**  `drivers/display/vga` is the bochs-display's register
   block and mode-set sequence, and it names nothing of this tree, so a host
   test drives the whole sequence against an array.  The probe is the kernel's,
@@ -901,9 +918,10 @@ each unblocks rather than by size.
    `SchedGetAffinity`.
 9. **The app's own calls**, `ArgCount`, `ArgValue`, `EnvCount`, `EnvValue`,
    `CurrentDir`, `SetCurrentDir`, `AppId`, `AppVersion`, `ImagePath`,
-   `ManifestPath`, `Yield`, `WriteDebug`, `ReadConsole`, `ListBlockDevices`,
-   `ListMounts`, `Mount`, `Umount`, `RepairVolume`, `FuseMount`, `Sync`,
-   `RestartSyscall`, `CompactMemory`, `Mlock`, `Munlock`, `Madvise`.
+   `ManifestPath`, `Yield`, `ListBlockDevices`, `ListMounts`, `Mount`,
+   `Umount`, `RepairVolume`, `FuseMount`, `Sync`, `RestartSyscall`,
+   `CompactMemory`, `Mlock`, `Munlock`, `Madvise`.  `WriteDebug` and
+   `ReadConsole` were on this row and came off it with Level 7's console.
 10. **io_uring**, `IoUringSetup`, `IoUringEnter`.  Last because it is a second
     way to do what every call above already does, and nothing needs it.
 11. **Power, audit, the policy's path rule, the service table and packages**,

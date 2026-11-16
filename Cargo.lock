@@ -273,6 +273,7 @@ dependencies = [
  "spin",
  "sync",
  "syscall",
+ "text",
  "vga",
  "virtio_block",
  "virtio_core",
@@ -430,6 +431,10 @@ version = "0.1.0"
 dependencies = [
  "abi",
 ]
+
+[[package]]
+name = "text"
+version = "0.1.0"
 
 [[package]]
 name = "unicode"

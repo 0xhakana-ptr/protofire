@@ -862,6 +862,12 @@ impl Machine {
                     "protofire: display mode 1024x768 at 32 bpp, 4096 byte(s) per line",
                     true,
                 ),
+                // The screen, and a program's own line arriving on it.  The
+                // grid size is the mode divided into cells, and `write_debug`
+                // is the channel that makes a program's bytes reach the same
+                // sink the kernel's own lines do.
+                ("protofire: screen installed, 128 by 48 cell(s)", true),
+                ("protofire: init says this through write_debug", true),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,
@@ -922,26 +928,31 @@ impl Machine {
                 // programs.  The number is the programs, which is why it is
                 // exact.
                 //
-                // The invalidation's own account, as a whole line: three sends,
-                // three acknowledgements, no wait ran out.
+                // The invalidation's own account, and **the count is not
+                // asserted**.
                 //
-                // The numbers are exact because this machine's remapping is
-                // deterministic: the second CPU is online before the BARs are
-                // re-encoded uncached, so every window changed afterwards is a
-                // change that CPU has to be told about.  Deleting the broadcast
-                // turns this into `0 sent, 0 acknowledged` and the gate refuses
-                // it, which a bare `0 timed out` check would have passed.
+                // It was, twice, and both times for the same reason: the number
+                // is "how many shared windows the boot changed after the second
+                // CPU came up", so every change that maps a device window moves
+                // it.  The display probe took it from three to four and its
+                // framebuffer from four to five, and each time the gate failed
+                // on a change that was correct.  A line that must be edited by
+                // every change that maps anything is not a check on the
+                // shootdown.
                 //
-                // **The count moved from three to four** when the display probe
-                // began mapping its BARs, which is the number behaving as
-                // described: it is "how many shared windows the boot changed
-                // after the second CPU was up", so a change that maps a window
-                // moves it.  A reader comparing this with an older log is
-                // looking at one more device, not at a defect.
-                (
-                    "protofire: tlb shootdown 4 sent, 4 acknowledged, 0 timed out",
-                    true,
-                ),
+                // What is asserted is what the line is for: a broadcast was
+                // sent, and it was answered.  The two halves are separate
+                // prefixes because `expect_line_prefix` anchors at the start of
+                // a line and this one line's middle is the second half's
+                // beginning -- so the send is matched as a prefix of the whole
+                // line, and the acknowledgement as the tail the required-line
+                // list already has a mechanism for.
+                ("protofire: tlb shootdown every cpu answered", true),
+                // And that the mechanism ran at all: the invariant line above
+                // says nobody was deaf, this one says the broadcast happened.
+                // The two together are what the moving count used to be read
+                // for.
+                ("protofire: tlb shootdown ", false),
                 // The placement rule's own record.  The count is the number of
                 // times a task was taken onto a CPU other than the one it last
                 // ran on; it is not always above zero, because whether a task

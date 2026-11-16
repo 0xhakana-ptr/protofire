@@ -1,0 +1,18 @@
+[package]
+description = "a character grid over a framebuffer, and the font it draws with"
+name = "text"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The console's renderer: the font, the grid, and what a byte does to a screen.
+#
+# It names nothing of this tree, which is what lets the whole of it be tested on
+# a host against a recording surface.  That is the same split `vga` makes: the
+# device is a register map and the renderer is arithmetic, and neither should be
+# reachable only by booting.
+[dependencies]
+
+# The tests build a surface that records what was painted, which needs a
+# growable buffer.  The crate itself allocates the grid's cells and nothing else.

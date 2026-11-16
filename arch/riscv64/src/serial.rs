@@ -138,6 +138,45 @@ fn transmit_ready() -> bool {
 }
 
 /// Write one byte, waiting for the transmitter.
+/// A second sink for every byte this console writes.
+///
+/// The kernel installs one so the screen shows what the serial port shows,
+/// without either knowing about the other.  A **function pointer** rather than
+/// a trait object, for the reason `allocator::diag::set_writer` is one: this
+/// runs on the boot path before the heap exists.
+///
+/// Called from inside `write_byte`, so it is reached with the console lock held
+/// and interrupts masked.  A sink that blocks, allocates or prints would
+/// deadlock or lose the line, so the one installed here only writes pixels into
+/// a framebuffer it was handed at install time.
+static MIRROR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Install the second sink.  `None` removes it.
+pub fn set_console_mirror(sink: Option<fn(u8)>) {
+    MIRROR.store(
+        sink.map_or(0, |sink| sink as usize),
+        core::sync::atomic::Ordering::Release,
+    );
+}
+
+/// Hand one byte to the second sink, when there is one.
+///
+/// The target arm only: a host build records bytes in an array and has no
+/// second sink to hand them to.
+#[cfg(target_os = "none")]
+fn mirror(byte: u8) {
+    let address = MIRROR.load(core::sync::atomic::Ordering::Acquire);
+    if address == 0 {
+        return;
+    }
+    // SAFETY: the address was stored by `set_console_mirror` from a `fn(u8)`
+    // and nothing else writes it, so a non-zero value is a live function
+    // pointer.  The ordering pair is what makes a sink installed on one CPU
+    // visible to a byte written on another.
+    let sink: fn(u8) = unsafe { core::mem::transmute(address) };
+    sink(byte);
+}
+
 #[cfg(target_os = "none")]
 pub fn write_byte(byte: u8) {
     if byte == b'\n' {
@@ -149,6 +188,7 @@ pub fn write_byte(byte: u8) {
     // SAFETY: the transmitter reported room, and UART_BASE is the register
     // `init` programmed.
     unsafe { write_reg(UART_BASE + DATA, byte) };
+    mirror(byte);
 }
 
 #[cfg(not(target_os = "none"))]

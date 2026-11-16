@@ -114,6 +114,51 @@ pub fn write_byte(byte: u8) {
     // SAFETY: the transmitter reported itself ready, and COM1 is the port
     // `init` programmed.
     unsafe { outb(COM1, byte) };
+    mirror(byte);
+}
+
+/// A second sink for every byte this console writes.
+///
+/// The kernel installs one so the screen shows what the serial port shows,
+/// without either knowing about the other.  It is a **function pointer** rather
+/// than a trait object for the reason `allocator::diag::set_writer` is: this
+/// runs on the boot path before the heap exists, and a `dyn` sink would need an
+/// allocation to hold.
+///
+/// The hook is called from inside `write_byte`, which means it is reached with
+/// the console lock held and interrupts masked.  A sink that blocks, allocates,
+/// or prints would deadlock or lose the line, so the one here only writes
+/// pixels into a framebuffer it was handed at install time.
+static MIRROR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Install the second sink.
+///
+/// `None` removes it, which is what a test wants between cases.  The pointer is
+/// stored as a `usize` because an `AtomicPtr` and a function pointer are the
+/// same width here and the cast through `usize` is the one this tree uses for
+/// the trap sinks.
+pub fn set_console_mirror(sink: Option<fn(u8)>) {
+    let address = sink.map_or(0, |sink| sink as usize);
+    MIRROR.store(address, core::sync::atomic::Ordering::Release);
+}
+
+/// Hand one byte to the second sink, when there is one.
+///
+/// The target arm only: a host build records bytes in an array and has no
+/// second sink to hand them to, which is why `set_console_mirror` exists on
+/// both arms but only one of them calls it.
+#[cfg(target_os = "none")]
+fn mirror(byte: u8) {
+    let address = MIRROR.load(core::sync::atomic::Ordering::Acquire);
+    if address == 0 {
+        return;
+    }
+    // SAFETY: the address was stored by `set_console_mirror` from a `fn(u8)`
+    // and nothing else writes it, so a non-zero value is a live function
+    // pointer.  The ordering pair is what makes a sink installed on one CPU
+    // visible to the byte written on another.
+    let sink: fn(u8) = unsafe { core::mem::transmute(address) };
+    sink(byte);
 }
 
 #[cfg(not(target_os = "none"))]

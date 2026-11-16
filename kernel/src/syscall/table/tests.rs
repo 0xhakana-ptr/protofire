@@ -801,6 +801,103 @@ fn a_flush_of_a_pipe_descriptor_is_refused() {
     );
 }
 
+/// `WriteDebug` answers the bytes it was given, and refuses a bad range.
+///
+/// The handler is the one call in this group that writes nothing the caller
+/// can read back, so the assertion is on its answer and on the reserved slots:
+/// a call that took the length from the wrong slot would answer a number the
+/// caller never sent.
+#[test]
+fn write_debug_answers_the_length_it_was_given() {
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::WriteDebug, write_debug);
+
+    let text = b"hello";
+    let mut copy = text.to_vec();
+    let mut context = SyscallContext::new(
+        SyscallNumber::WriteDebug as usize,
+        [0, copy.len(), 0, 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(&mut copy),
+    };
+    assert_eq!(
+        table
+            .dispatch(&mut arguments)
+            .map(|dispatch| dispatch.value),
+        Ok(text.len())
+    );
+}
+
+/// A `WriteDebug` whose reserved slots are not zero is refused.
+#[test]
+fn write_debug_with_reserved_arguments_set_is_refused() {
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::WriteDebug, write_debug);
+
+    let mut copy = alloc::vec::Vec::new();
+    let mut context = SyscallContext::new(SyscallNumber::WriteDebug as usize, [0, 0, 1, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(&mut copy),
+    };
+    assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
+}
+
+/// `ReadConsole` answers zero rather than refusing, and zero at length zero.
+///
+/// The difference is the whole point of serving it: `NotImplemented` says this
+/// ABI has no such call, and zero says there is nothing to read yet.  A machine
+/// with no keyboard driver is the second, and a shell loops on it.
+#[test]
+fn read_console_answers_nothing_rather_than_refusing() {
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::ReadConsole, read_console);
+
+    // The address is a real one, because the handler validates the range: a
+    // test that passed zero would be asserting the refusal rather than the
+    // answer.
+    let mut buffer = [0u8; 8];
+    let address = buffer.as_mut_ptr() as usize;
+    let mut context = SyscallContext::new(
+        SyscallNumber::ReadConsole as usize,
+        [address, buffer.len(), 0, 0, 0, 0],
+    );
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(&mut buffer),
+    };
+    assert_eq!(
+        table
+            .dispatch(&mut arguments)
+            .map(|dispatch| dispatch.value),
+        Ok(0)
+    );
+
+    // A zero length is zero without looking at the address, which is what makes
+    // it safe to call with no buffer at all.
+    let mut context = SyscallContext::new(SyscallNumber::ReadConsole as usize, [0, 0, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: None,
+    };
+    assert_eq!(
+        table
+            .dispatch(&mut arguments)
+            .map(|dispatch| dispatch.value),
+        Ok(0)
+    );
+}
+
 /// A punch reaches the node exactly once, with the range the caller named.
 ///
 /// The node counts its `punch_hole` calls, so a handler that answered zero

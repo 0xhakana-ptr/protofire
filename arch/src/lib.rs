@@ -321,6 +321,16 @@ pub use arch_x86_64::trap::set_fault_sink;
 #[cfg(all(target_arch = "x86_64", target_os = "none"))]
 pub use arch_x86_64::trap::set_preempt_sink;
 
+// The console's second sink, one implementation per machine, because every
+// machine has a serial port and every one of them has the same question about
+// it: what else should a byte reach besides the wire.
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub use arch_aarch64::serial::set_console_mirror;
+#[cfg(all(target_arch = "riscv64", target_os = "none"))]
+pub use arch_riscv64::serial::set_console_mirror;
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
+pub use arch_x86_64::serial::set_console_mirror;
+
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub use arch_aarch64::interrupt_line_enabled;
 #[cfg(all(target_arch = "riscv64", target_os = "none"))]

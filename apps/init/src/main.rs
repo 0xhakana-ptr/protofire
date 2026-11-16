@@ -128,6 +128,8 @@ use user_abi::sys_open_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_read;
 #[cfg(target_os = "none")]
+use user_abi::sys_read_console;
+#[cfg(target_os = "none")]
 use user_abi::sys_read_dir;
 #[cfg(target_os = "none")]
 use user_abi::sys_read_dir_fd;
@@ -180,6 +182,8 @@ use user_abi::sys_wait_process_of;
 use user_abi::sys_wait_signal;
 #[cfg(target_os = "none")]
 use user_abi::sys_write;
+#[cfg(target_os = "none")]
+use user_abi::sys_write_debug;
 
 /// The path `init` reads first, NUL-terminated in its own `.rodata`.
 ///
@@ -380,6 +384,24 @@ pub extern "C" fn _start() -> ! {
     let (kind, size) = user_abi::stat_words(&record);
     if kind != 2 || size != 2 {
         sys_exit(240);
+    }
+
+    // The two console calls, and the pair is deliberately checked together:
+    // `WriteDebug` puts a line on the screen and the serial port, and
+    // `ReadConsole` answers zero because this machine has no keyboard driver
+    // yet.  A program that expected a byte would park for ever, so what is
+    // asserted is that the call is **served** and honest about it.
+    let said_line = b"protofire: init says this through write_debug\n";
+    let said = insist(sys_write_debug(said_line));
+    // The length is the program's own constant, so the assertion is that the
+    // kernel answered the count it was given rather than a number of its own.
+    if said != said_line.len() {
+        sys_exit(254);
+    }
+    let mut line = [0u8; 32];
+    let typed = insist(sys_read_console(&mut line));
+    if typed != 0 {
+        sys_exit(255);
     }
 
     // The listing: one entry of the directory, by index, parsed the way the
