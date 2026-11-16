@@ -38,11 +38,51 @@ use super::core::send_datagram;
 /// answer arrived inside the wait.  A name the server says does not exist is
 /// also `None`, because both are "this stack cannot give you an address" and
 /// the caller's next step is the same.
+///
+/// [`resolve_why`] is the same exchange with the reason kept, for the boot
+/// probe: a resolver that answers `None` for five different reasons and one
+/// line for all of them is a probe that cannot say what it saw.
 #[cfg(target_os = "none")]
 pub fn resolve(name: &str, kind: u16) -> Option<net::address::Address> {
+    resolve_why(name, kind).ok()
+}
+
+/// Why a lookup answered what it did, so the boot can say which happened.
+///
+/// The five answers are the five things that can go wrong between this stack
+/// and the address, and each is a different diagnosis: no server is a
+/// configuration answer, a send failure is the card or the route, no reply at
+/// all is the wire or the wait, a reply that did not parse is the parser, and
+/// a name the server refused is the answer.
+#[cfg(target_os = "none")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Why {
+    /// No name server was configured, so nothing was asked.
+    NoServer,
+    /// The socket for the lookup's own port did not bind.
+    NoPort,
+    /// The query could not be built or sent.
+    NotSent,
+    /// Nothing arrived before the wait ran out.
+    NoReply,
+    /// Datagrams arrived on the port and none of them parsed as this lookup's
+    /// answer.
+    Unreadable,
+    /// The server answered that the name does not exist.
+    NoSuchName,
+}
+
+#[cfg(target_os = "none")]
+pub(crate) fn resolve_why(
+    name: &str,
+    kind: u16,
+) -> core::result::Result<net::address::Address, Why> {
     let server = {
         let interface = INTERFACE.lock();
-        interface.as_ref()?.dns()?
+        interface.as_ref().and_then(|interface| interface.dns())
+    };
+    let Some(server) = server else {
+        return Err(Why::NoServer);
     };
 
     // A port for this lookup, taken from the ephemeral range the TCP side
@@ -53,35 +93,40 @@ pub fn resolve(name: &str, kind: u16) -> Option<net::address::Address> {
         NEXT.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
     };
     let Ok(socket) = bind_udp(port) else {
-        return None;
+        return Err(Why::NoPort);
     };
 
     let mut id_bytes = [0_u8; 2];
     if crate::random::fill(&mut id_bytes).is_err() {
-        return None;
+        return Err(Why::NotSent);
     }
     let id = u16::from_be_bytes(id_bytes);
 
     let mut query = [0_u8; 300];
-    let length = net::dns::write_query(&mut query, id, name, kind)?;
-    send_datagram(
+    let Some(length) = net::dns::write_query(&mut query, id, name, kind) else {
+        return Err(Why::NotSent);
+    };
+    if send_datagram(
         net::address::Address::V4(server),
         53,
         port,
         &query[..length],
     )
-    .ok()?;
-
-    // One wait, bounded by the timer: a server on this link answers in
-    // microseconds, so a second is generous and a boot with no server ends
-    // with an answer rather than a hang.
-    let deadline = crate::tick::TIMER_TICKS
-        .load(core::sync::atomic::Ordering::Relaxed)
-        .saturating_add(DHCP_WAIT_TICKS);
-    let mut buffer = [0_u8; 512];
-    while (crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64)
-        < deadline as u64
+    .is_err()
     {
+        return Err(Why::NotSent);
+    }
+
+    // One wait, and the unit is microseconds rather than ticks for the reason
+    // the stream's timeouts are: a tick is a duration this file would have to
+    // guess, and the guess it carried said a hundred-hertz clock while the
+    // machine's slice is a hundred microseconds.  A server on this link
+    // answers in microseconds, so twenty milliseconds is generous by orders
+    // of magnitude and a boot with no server ends with an answer rather than a
+    // hang.
+    let deadline = micros_since_boot().saturating_add(LEASE_WAIT_MICROS);
+    let mut buffer = [0_u8; 512];
+    while micros_since_boot() < deadline {
         // The card's ring first, because the answer is on it before the
         // socket's queue is: a receive that asked its queue alone would see
         // nothing until the next pump.
@@ -92,15 +137,15 @@ pub fn resolve(name: &str, kind: u16) -> Option<net::address::Address> {
                     continue;
                 }
                 match net::dns::parse_answer(&buffer[..count], id, kind) {
-                    Ok(net::dns::Answer::Address { address, .. }) => return Some(address),
-                    Ok(net::dns::Answer::NoSuchName) => return None,
-                    Err(_) => continue,
+                    Ok(net::dns::Answer::Address { address, .. }) => return Ok(address),
+                    Ok(net::dns::Answer::NoSuchName) => return Err(Why::NoSuchName),
+                    Err(_) => return Err(Why::Unreadable),
                 }
             }
             _ => continue,
         }
     }
-    None
+    Err(Why::NoReply)
 }
 
 /// Ask the network what this machine is, and configure the interface with the
@@ -172,12 +217,8 @@ pub fn dhcp_probe() -> Option<net::dhcp::Lease> {
     let await_reply = |kind: u8| -> Option<net::dhcp::Reply> {
         let limit = card.maximum_frame_len();
         let mut frame = alloc::vec![0_u8; limit];
-        let deadline = crate::tick::TIMER_TICKS
-            .load(core::sync::atomic::Ordering::Relaxed)
-            .saturating_add(DHCP_WAIT_TICKS);
-        while (crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64)
-            < deadline as u64
-        {
+        let deadline = micros_since_boot().saturating_add(WAIT_MICROS);
+        while micros_since_boot() < deadline {
             let Ok(Some(length)) = card.receive_frame(&mut frame) else {
                 continue;
             };
@@ -315,12 +356,8 @@ fn renew_lease(lease: &net::dhcp::Lease) -> Option<net::dhcp::Lease> {
     // rebinding.
     let limit = card.maximum_frame_len();
     let mut reply_frame = alloc::vec![0_u8; limit];
-    let deadline = crate::tick::TIMER_TICKS
-        .load(core::sync::atomic::Ordering::Relaxed)
-        .saturating_add(DHCP_WAIT_TICKS);
-    while (crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64)
-        < deadline as u64
-    {
+    let deadline = micros_since_boot().saturating_add(WAIT_MICROS);
+    while micros_since_boot() < deadline {
         let Ok(Some(length)) = card.receive_frame(&mut reply_frame) else {
             continue;
         };
@@ -428,12 +465,8 @@ pub(crate) fn rebind_lease(lease: &net::dhcp::Lease) -> Option<net::dhcp::Lease>
     // The answer, on the same bounded wait a grant uses.
     let limit = card.maximum_frame_len();
     let mut reply_frame = alloc::vec![0_u8; limit];
-    let deadline = crate::tick::TIMER_TICKS
-        .load(core::sync::atomic::Ordering::Relaxed)
-        .saturating_add(DHCP_WAIT_TICKS);
-    while (crate::tick::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed) as u64)
-        < deadline as u64
-    {
+    let deadline = micros_since_boot().saturating_add(WAIT_MICROS);
+    while micros_since_boot() < deadline {
         let Ok(Some(length)) = card.receive_frame(&mut reply_frame) else {
             continue;
         };
@@ -552,10 +585,29 @@ pub(crate) fn renew_lease_if_due() {
     }
 }
 
-/// How long one DHCP reply is waited for, in timer ticks.
+/// How long one DHCP reply is waited for.
 ///
-/// Two seconds on a hundred-hertz clock.  A server on the same link answers in
-/// microseconds, so this is generous by orders of magnitude; it exists so a
-/// boot with no server ends with a line rather than a hung machine.
+/// A duration, and microseconds rather than ticks because a tick is a duration
+/// this file would have to guess.  It guessed, and the guess was wrong by a
+/// factor of a hundred: the constant said "two seconds on a hundred-hertz
+/// clock" while the machine's slice is `TIME_SLICE_US`, a hundred
+/// microseconds, so two hundred ticks was twenty milliseconds.  The DHCP
+/// server on a boot's own link still answered inside that, which is why only
+/// the resolver below it ever failed, and only sometimes.
+///
+/// Twenty milliseconds is what this wait has always been, once the unit is
+/// the right one: two hundred ticks of a hundred-microsecond slice.  It is
+/// kept rather than chosen again because a window widened without a
+/// measurement is a window that hides the failure it was widened for.
 #[cfg(target_os = "none")]
-const DHCP_WAIT_TICKS: usize = 200;
+const WAIT_MICROS: u64 = 20_000;
+
+/// How long the resolver waits for the name server's answer.
+///
+/// The DHCP wait's twenty milliseconds, and the reasoning is the same: the
+/// exchange is one query and one datagram, and a server on the same link
+/// answers in microseconds.  The measured answer on this machine is three
+/// hundred microseconds, so the window is what the old constant meant and not
+/// a change to it.
+#[cfg(target_os = "none")]
+const LEASE_WAIT_MICROS: u64 = 20_000;

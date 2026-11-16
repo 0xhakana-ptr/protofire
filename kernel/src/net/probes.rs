@@ -41,7 +41,6 @@ use super::demux6::peer_hardware;
 use super::demux6::write_ipv6;
 use super::dhcp::apply_lease;
 use super::dhcp::rebind_lease;
-use super::dhcp::resolve;
 use super::filter::filter_add;
 use super::filter::filter_remove;
 use super::filter::filter_status;
@@ -241,8 +240,8 @@ pub fn dns_probe() -> bool {
     // exist would prove the parser's refusal rather than the exchange.
     const NAME: &str = "example.com";
 
-    match resolve(NAME, net::dns::TYPE_A) {
-        Some(net::address::Address::V4(address)) => {
+    match super::dhcp::resolve_why(NAME, net::dns::TYPE_A) {
+        Ok(net::address::Address::V4(address)) => {
             arch::serial::write_str("protofire: dns resolved ");
             arch::serial::write_str(NAME);
             arch::serial::write_str(" to ");
@@ -256,12 +255,25 @@ pub fn dns_probe() -> bool {
             arch::serial::write_str("\n");
             true
         }
-        Some(net::address::Address::V6(_)) => {
+        Ok(net::address::Address::V6(_)) => {
             arch::serial::write_str("protofire: dns answered the wrong family\n");
             false
         }
-        None => {
-            arch::serial::write_str("protofire: dns got no answer\n");
+        Err(why) => {
+            // The reason is the diagnosis, and there are five of them.  The
+            // first version of this line said "got no answer" for all five,
+            // which made a boot that failed on the wire read the same as one
+            // whose server refused the name.
+            arch::serial::write_str("protofire: dns ");
+            arch::serial::write_str(match why {
+                super::dhcp::Why::NoServer => "had no server to ask",
+                super::dhcp::Why::NoPort => "could not bind a port",
+                super::dhcp::Why::NotSent => "could not send the query",
+                super::dhcp::Why::NoReply => "got no reply inside the wait",
+                super::dhcp::Why::Unreadable => "got a reply that did not parse",
+                super::dhcp::Why::NoSuchName => "was told the name does not exist",
+            });
+            arch::serial::write_str("\n");
             false
         }
     }
