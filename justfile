@@ -100,3 +100,7 @@ check-riscv64-aia:
 # The gate.  `just verify` is p0; `just verify p3` is the release floor.
 verify tier="p0":
     sh scripts/verify.sh {{tier}}
+
+# Clean.
+clean:
+    cargo clean
