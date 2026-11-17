@@ -222,15 +222,33 @@ fn checked(segment: Segment, flags: u32, bytes: &[u8]) -> Result<Segment, LoadEr
     // would land on the wrong one.  Real linkers emit offsets congruent to
     // the addresses (padding the file as little as possible), not individually
     // aligned, requiring alignment would refuse every real image.
+    //
+    // The file-range test uses `checked_add`, and that is the point of this
+    // change.  `file_offset + file_size` is a sum of two numbers the **file**
+    // chose: a shaped ELF can put `u64::MAX` in `p_offset`, and the debug
+    // build then panics inside the kernel with an overflow while the release
+    // build wraps to a small number that passes the length test.  The window
+    // check below is not this check, which is what the comment here used to
+    // claim: it covers `vaddr + memsz`, two different sums.  A program that
+    // writes a shaped file into the filesystem and calls `ExecProcess`
+    // reaches both.
+    let Some(file_end) = segment.file_offset.checked_add(segment.file_size) else {
+        return Err(LoadError::BadSegment);
+    };
     if segment.file_offset % PAGE_SIZE != segment.virtual_address % PAGE_SIZE
         || segment.memory_size < segment.file_size
-        || segment.file_offset + segment.file_size > bytes.len()
+        || file_end > bytes.len()
     {
         return Err(LoadError::BadSegment);
     }
-    // The window check is also the overflow check: `is_user_range` does its
-    // own `checked_add`, so a `vaddr + memsz` that wrapped answers "outside"
-    // rather than wrapping into the window.
+    // The window check is also the overflow check for `vaddr + memsz`:
+    // `is_user_range` does its own `checked_add`, so a sum that wrapped
+    // answers "outside" rather than wrapping into the window.  That is a
+    // property of the function and not of this caller, which is why `pages`,
+    // `overlaps`, the entry test and the dynamic test may add the two fields
+    // without their own checks: every one of them runs on a segment this
+    // function admitted.  A future caller that builds a `Segment` some other
+    // way does not get that guarantee, which is what this paragraph is for.
     if !is_user_range(segment.virtual_address, segment.memory_size) {
         return Err(LoadError::BadSegment);
     }
@@ -447,19 +465,37 @@ pub fn load(bytes: &[u8], expected_machine: u16) -> Result<Image, LoadError> {
     // every mapped segment names machinery this loader does not have
     // relocation processing, another program to load the file, and that is a
     // refusal, by name.
+    //
+    // Both sums are checked, and both had to be.  `at` is `e_phoff + header *
+    // size`, which the table-end test above already bounds, but `p_offset +
+    // p_filesz` is read straight out of a header **before** `checked` sees the
+    // segment, so nothing has vouched for it: a dynamic header naming
+    // `u64::MAX` panics a debug kernel here and wraps in a release one, and the
+    // wrapped number is what the containment test would then judge.
     for header in 0..e_phnum {
-        let at = e_phoff + header * PROGRAM_HEADER_SIZE;
+        let at = e_phoff
+            .checked_add(
+                header
+                    .checked_mul(PROGRAM_HEADER_SIZE)
+                    .ok_or(LoadError::BadProgramHeaders)?,
+            )
+            .ok_or(LoadError::BadProgramHeaders)?;
         let p_type = u32_at(bytes, at).ok_or(LoadError::BadProgramHeaders)?;
         if p_type != PT_DYNAMIC && p_type != PT_INTERP {
             continue;
         }
         let p_offset = u64_at(bytes, at + 8).ok_or(LoadError::BadProgramHeaders)? as usize;
         let p_filesz = u64_at(bytes, at + 32).ok_or(LoadError::BadProgramHeaders)? as usize;
+        let Some(segment_end) = p_offset.checked_add(p_filesz) else {
+            return Err(LoadError::NotExecutable);
+        };
         if p_type == PT_INTERP
             || !image.segments().iter().any(|segment| {
                 let start = segment.file_offset;
+                // `checked` admitted this segment, so its own sum did not
+                // overflow; the addition is safe here for that reason.
                 let end = start + segment.file_size;
-                p_offset >= start && p_offset + p_filesz <= end
+                p_offset >= start && segment_end <= end
             })
         {
             return Err(LoadError::NotExecutable);
@@ -469,6 +505,11 @@ pub fn load(bytes: &[u8], expected_machine: u16) -> Result<Image, LoadError> {
     // The entry must be inside executable code the loader is about to map: an
     // entry anywhere else is an address the program can never fetch from, and
     // the boot would learn it as a fault far from the cause.
+    //
+    // The range's end is a plain addition because `checked` admitted every
+    // segment here and its window test is what proves `vaddr + memsz` does not
+    // wrap.  A `checked_add` that fell back to "not inside" would say the same
+    // thing twice and read as if the earlier check could not be trusted.
     let inside_code = image.segments().iter().any(|segment| {
         segment.executable
             && (segment.virtual_address..segment.virtual_address + segment.memory_size)

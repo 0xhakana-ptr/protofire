@@ -68,10 +68,15 @@ its severity, and the order they should land.
   still runs exactly once: `process 3 handled its own fault at
   0x80c0000000 (vector 14)`.
 
+- **The ELF loader has unchecked additions.**  The segment file range, the
+  dynamic header's range and the program-header walk are `checked_add` now, and
+  the four plain additions that remain each say what vouches for them.  Three
+  host tests pin the refusals, and each was confirmed to fail with the checked
+  sum replaced by a wrapping one; the loader's own prose records why the obvious
+  first version of two of them proved nothing.
+
 **Open.**
 
-- **The ELF loader has unchecked additions** in its segment and dynamic-section
-  bounds, so a shaped image panics a debug kernel and can wrap a release one.
 - **`exec` does not reset per-process state.** The fault handler, the signal
   mask and the pending-signal ring survive into the new image, and the
   retired-space array holds eight before it leaks.

@@ -1408,16 +1408,34 @@ not one, and the second test exists to fail a version that set a "has faulted"
 flag instead.  The boot's own handler still runs: `process 3 handled its own
 fault at 0x80c0000000 (vector 14)` appears once, as it did before.
 
-**4. The ELF loader has unchecked additions.  P1.**
+**4. The ELF loader has unchecked additions.  P1.  Fixed.**
 
-`loader::checked` bounds a segment with `segment.file_offset + segment.file_size
+`loader::checked` bounded a segment with `segment.file_offset + segment.file_size
 > bytes.len()`, and the dynamic-section check with `p_offset + p_filesz <= end`.
-Neither uses `checked_add`, and the comment beside the first claims the window
-check is also the overflow check, and it is not, because `is_user_range` covers
-`vaddr + memsz` and these two sums are file offsets.  A program that writes a
-shaped ELF into the filesystem and calls `ExecProcess` overflows in the debug
-build's bounds check (a panic in the kernel) and can wrap past the range test in
-the release one.
+Neither used `checked_add`, and the comment beside the first claimed the window
+check was also the overflow check.  It was not: `is_user_range` covers
+`vaddr + memsz`, and these two sums are file offsets, which the file chooses.  A
+program that wrote a shaped ELF into the filesystem and called `ExecProcess`
+overflowsed the debug build's bounds check, a panic in the kernel, and could
+wrap past the range test in the release one.
+
+Both sums are `checked_add` now, and the header walk's `e_phoff + header *
+size` is too.  The paragraph beside the remaining plain additions (`pages`,
+`overlaps`, the entry range, the dynamic containment test's `segment.file_offset
++ segment.file_size`) says what they rest on: `checked` admitted the segment, and
+its window test is what proves `vaddr + memsz` did not wrap, so those four run
+on numbers that already passed.  A caller that built a `Segment` some other way
+would not get that guarantee, which is the reason the paragraph exists.
+
+The tests found their own first version wrong twice, and both are worth the
+space.  A segment naming `u64::MAX` as its file offset is refused by the **page
+congruence** test, before the sum is reached, so a probe replacing `checked_add`
+with `wrapping_add` still passed; the offset has to be congruent to the virtual
+address for the sum to be what refuses it.  And a dynamic header naming
+`u64::MAX` is refused by the containment test whether the sum is checked or not;
+the pair has to be one whose **wrapped** sum lands inside the segment, so that
+the containment test reads the wrap as yes.  Both tests now do that, and a probe
+returned `Ok(Image)` under each before the fix was restored.
 
 **5. Process lifecycle does not reset between images.  P1.**
 

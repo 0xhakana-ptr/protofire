@@ -600,3 +600,104 @@ fn an_image_at_the_byte_bound_yields_a_page_for_every_frame_the_space_can_hold()
         "the space records at least the image's {planned} pages plus the stack"
     );
 }
+
+/// A segment whose file range overflows is refused, not wrapped and accepted.
+///
+/// This is the loader's defect in its smallest form.  `p_offset` is a `u64`
+/// the file chooses, and the check was `file_offset + file_size > len`: in a
+/// debug build that addition panics **inside the kernel**, and in a release
+/// build it wraps, so a segment naming `u64::MAX` has a file range of a few
+/// bytes and passes.  Any ring-3 program can write such an image into the
+/// filesystem and call `ExecProcess`.
+///
+/// The image is the ordinary one with one header field overwritten, because
+/// the test helper sizes its file from the segment it is given and would try
+/// to allocate the whole offset.  What the loader sees is exactly what a
+/// shaped file would give it.
+#[test]
+fn a_segment_whose_file_range_overflows_is_refused() {
+    let mut image = good_image();
+    // The first program header's `p_offset`, at 64 bytes' header block plus
+    // the offset field's position inside the entry.
+    //
+    // The value is congruent to the segment's virtual address modulo the page
+    // size, on purpose: `u64::MAX` is `-1`, which is **not** congruent with
+    // `0x8040000000`'s zero, so the congruence test would refuse the image
+    // first and this test would pass without ever reaching the sum.  A probe
+    // replacing the `checked_add` with `wrapping_add` proved exactly that.
+    let congruent_to_the_top = u64::MAX - (u64::MAX % 4096);
+    let offset_field = 64 + 8;
+    image[offset_field..offset_field + 8].copy_from_slice(&congruent_to_the_top.to_le_bytes());
+    assert_eq!(
+        load(&image, MACHINE),
+        Err(LoadError::BadSegment),
+        "a wrapping file range is a refusal, not a wrapped acceptance"
+    );
+}
+
+/// A file size that overflows the segment's own end is refused the same way.
+///
+/// The other half of the same pair: an offset near the top with a size beside
+/// it, so neither operand alone is absurd and only their sum is.
+#[test]
+fn a_segment_whose_file_end_overflows_is_refused() {
+    let mut image = good_image();
+    let offset_field = 64 + 8;
+    let size_field = 64 + 32;
+    image[offset_field..offset_field + 8].copy_from_slice(&(u64::MAX - 8).to_le_bytes());
+    image[size_field..size_field + 8].copy_from_slice(&64u64.to_le_bytes());
+    assert_eq!(
+        load(&image, MACHINE),
+        Err(LoadError::BadSegment),
+        "the sum overflows even though neither field does"
+    );
+}
+
+/// A dynamic header's file range is refused before any segment vouches for it.
+///
+/// The dynamic check runs over the program headers **before** `checked` sees a
+/// segment, so its `p_offset + p_filesz` is not covered by the segment test.
+/// A `PT_DYNAMIC` entry naming `u64::MAX` would panic a debug kernel here and
+/// wrap in a release one, and the wrapped number is what the containment test
+/// would then judge.
+#[test]
+fn a_dynamic_header_whose_file_range_overflows_is_refused() {
+    // Two headers: a real `PT_LOAD` and the shaped `PT_DYNAMIC`.  One header
+    // alone would be refused earlier, by the "no loadable segment" test, and
+    // the assertion would pass without reaching the sum this test is about.
+    let image = elf(
+        MACHINE,
+        0x8040000008,
+        &[
+            SegmentSpec {
+                vaddr: 0x8040000000,
+                offset: FIRST_OFFSET,
+                filesz: 0x1000,
+                memsz: 0x1000,
+                flags: FLAG_R | FLAG_X,
+            },
+            SegmentSpec {
+                vaddr: 0,
+                offset: 0,
+                filesz: 0,
+                memsz: 0,
+                flags: 0,
+            },
+        ],
+    );
+    let mut image = image;
+    let header = 64 + 56;
+    image[header..header + 4].copy_from_slice(&2u32.to_le_bytes()); // PT_DYNAMIC
+    // The pair whose **sum** overflows and wraps to something inside the
+    // loadable segment, which is what makes this a test of the sum: with
+    // `wrapping_add` the containment test below reads the wrapped value as
+    // inside and the image is accepted.  `u64::MAX` alone would be refused by
+    // the containment test whether the sum was checked or not.
+    image[header + 8..header + 16].copy_from_slice(&(u64::MAX - 0xFFF).to_le_bytes());
+    image[header + 32..header + 40].copy_from_slice(&0x1000u64.to_le_bytes());
+    assert_eq!(
+        load(&image, MACHINE),
+        Err(LoadError::NotExecutable),
+        "a dynamic header the loader cannot bound is named as what it is"
+    );
+}
