@@ -18,6 +18,39 @@ and the tree disagree, the tree is right and this document is the bug;
 `scripts/check-docs.sh` enforces the part of that a machine can check: every
 path named here has to exist.
 
+## Known defects
+
+Five kernel defects and three engineering ones were reported against this tree
+by a contributor, and all five kernel ones were confirmed against the code.
+They are **recorded here rather than fixed** because each needs a change of its
+own and a test that fails without it, and because the reason they survived every
+green gate is itself worth stating: the boot's programs are this tree's, and
+nothing in it ever hands the kernel a pointer, an ELF or a fault it did not
+mean.  `docs/roadmap.md`'s Level 7.5 states each one with its code site, its
+severity, and the order they should land.
+
+- **A user pointer's value is checked and its mapping is not.** Every
+  `is_user_range` caller dereferences the address afterwards, and an unmapped
+  one faults in the kernel, where `interrupts::handle` has no kernel-mode arm.
+- **W^X is declared and bypassed.** `AddressSpace::map` hardcodes
+  `executable: true`, the fork path maps every page through it, and the
+  copy-on-write resolver widens with `..entry.permissions`, which keeps the
+  execute bit.
+- **A fault handler is never withdrawn.** `install_exception_handler`'s comment
+  says the second fault kills the program; `hand_the_fault_to_the_program` reads
+  the handler and never clears it.
+- **The ELF loader has unchecked additions** in its segment and dynamic-section
+  bounds, so a shaped image panics a debug kernel and can wrap a release one.
+- **`exec` does not reset per-process state.** The fault handler, the signal
+  mask and the pending-signal ring survive into the new image, and the
+  retired-space array holds eight before it leaks.
+
+The engineering findings are in the same place: the gates' `--offline` cannot
+work on a clone with no vendor directory and a cold cargo cache, and the two
+documents that had drifted (this file's sibling counts, and
+`kernel/src/syscall/mod.rs`) are the evidence that `check-docs.sh` resolves
+paths and not prose.
+
 ## What every machine does
 
 The three machines are one kernel.  A boot installs the same frame pool and

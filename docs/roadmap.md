@@ -33,18 +33,19 @@ echo "missing  $(comm -13 /tmp/served.txt /tmp/declared.txt | wc -l)"
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **102 of the 196 numbers are served**, after the memory,
-filesystem, process, time and network levels.  That is the number the census
-command above answers, and it is the one to re-take rather than trust.
+Four machines boot, and **109 of the 196 numbers are served**, after the memory,
+filesystem, process, time, network and driver levels.  That is the number the
+census command above answers, and it is the one to re-take rather than trust:
+it was 102 before the descriptor and attribute calls landed, and the three
+numbers of drift are the reason this paragraph names its command.
 
-The boot's own line, `syscall table installed, 81 number(s) served`, counts
+The boot's own line, `syscall table installed, 88 number(s) served`, counts
 only the registry's half, the numbers whose handler functions live in
 `boot.rs`'s table.  The rest are the ones `process/` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
-borrow before a handler can see it.  The two halves are not nested: 65 numbers
-are in both, 3 are registry-only (`MacAddRule`, `MacGetStatus`, `MacSetMode`) and
-21 are only a branch in `process/`, which is why the census is a union and not
-either count alone.
+borrow before a handler can see it.  The two halves are not nested, and the
+numbers are in the census command's three answers rather than restated here,
+which is what keeps this paragraph from drifting the way it did before.
 
 ---
 
@@ -64,7 +65,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **147,731 lines of Rust across 40 crates**, which is
+The tree is **194,870 lines of Rust across 47 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -667,13 +668,13 @@ list too: a stream advertises the room it has and refuses a byte past it.
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-147,731 across 40 crates.  The difference is not lost work, it is work the new
+194,870 across 47 crates.  The difference is not lost work, it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 
 **This is a rewrite, not a migration.**  The two trees do not share an
 architecture: the old one was one binary with module trees and a `shared` crate;
-this one is 40 crates with a layering a gate enforces, a different error type, a
+this one is 47 crates with a layering a gate enforces, a different error type, a
 different syscall dispatch, and a rule that no crate outside `arch/` may name a
 machine.  Code carried across unchanged would either fail those gates or, worse,
 pass them and leave a layer inverted.  So every row below is read as *"what does
@@ -1301,6 +1302,105 @@ What this level does not promise: **the GPU calls**, all nine of them,
 tree does not have and a protocol above it, and they belong with Level 7's
 `virtio_gpu` if that ever lands, not here.  They are named one by one because
 "and its eight siblings" is what let them fall off this list the first time.
+
+### Level 7.5, the defects a contributor found
+
+A contributor read this tree and reported five kernel defects and three
+engineering ones.  All five are real, and every one of them is a case the gates
+cannot see: the boot is short, the programs are this tree's own, and nothing in
+it ever passes the kernel a pointer it did not mean.  They are recorded here as
+work with their evidence, ordered by what a program could do with them rather
+than by how hard they are to fix.
+
+**1. A user pointer's *value* is checked and its *mapping* is not.  P0.**
+
+`address_space::is_user_range` is the whole validation most call sites do, and
+its own doc comment says what it does not check: "what it does **not** check is
+that the pages are mapped".  Then `copy_user_path` and the `from_raw_parts`
+calls below it dereference the address.  A program that passes a number inside
+the window and outside its mappings faults **in the kernel**, and
+`interrupts::handle` has no kernel-mode arm: it tries the write fault as
+copy-on-write, then `describe_fault`, then answers `false` and the machine
+stops.  Every `Open`, `WaitSignal`, socket send and the three paths just added
+for the extended attributes reach user memory this way.
+
+What a fix needs is a real `copy_from_user`/`copy_to_user`: a page-table walk
+against **the calling task's own root** rather than the window's bounds, or an
+exception-table fixup that resumes the copy at the instruction after it.  The
+first is cheaper here, because `address_space` already owns the walk
+(`permissions_of`) and the scheduler already hands a handler the current space.
+
+**2. W^X is declared and bypassed in two places.  P0.**
+
+`SECURITY.md` states that a segment both writable and executable is refused,
+and `loader::checked` does refuse it.  Two paths re-open it afterwards.
+
+`AddressSpace::map` hardcodes `executable: true`, and the fork path calls
+`child.map(page.virtual_address, page.physical, false)` for every page, so a
+child's data and stack are mapped executable.  The copy-on-write resolver then
+widens with `Permissions { writable: true, ..entry.permissions }`, which keeps
+`executable`, so the child's first write makes the page read-write-execute.
+
+And `build_image_space` merges two segments that share a page with
+`perms.writable |= permissions.writable; perms.executable |= permissions.executable`,
+which is exactly the pair `loader::checked` refuses, arrived at from two
+segments that are each legal.  The merge is not wrong in itself; the widening
+is, and a page two segments share needs the **intersection** of what they may
+do, or the segments need to stop sharing a page.
+
+**3. A fault handler is never withdrawn, so it can re-enter for ever.  P1.**
+
+`install_exception_handler`'s doc comment says a handler that faults is
+"withdrawn, so the second fault kills it instead of looping".
+`hand_the_fault_to_the_program` reads `task.handler` and never writes it back,
+so the second fault re-enters the handler, and a handler whose own address is
+unmapped loops until the stack runs out.  The comment describes the fix; the
+code does not do it.
+
+**4. The ELF loader has unchecked additions.  P1.**
+
+`loader::checked` bounds a segment with `segment.file_offset + segment.file_size
+> bytes.len()`, and the dynamic-section check with `p_offset + p_filesz <= end`.
+Neither uses `checked_add`, and the comment beside the first claims the window
+check is also the overflow check, and it is not, because `is_user_range` covers
+`vaddr + memsz` and these two sums are file offsets.  A program that writes a
+shaped ELF into the filesystem and calls `ExecProcess` overflows in the debug
+build's bounds check (a panic in the kernel) and can wrap past the range test in
+the release one.
+
+**5. Process lifecycle does not reset between images.  P1.**
+
+`exec_current` replaces `space` and `context` and nothing else: `handler`, the
+signal mask and the pending-signal ring all survive into the new image, so a
+program inherits the previous image's fault handler and undelivered signals.
+And the retired-space array is `RETIRED_SPACES = 8`; a full array leaks the
+space rather than dropping it, which the doc comment states as deliberate.  A
+long-running boot that spawns, forks and execs will leak both frames and task
+metadata.
+
+**The engineering problems, which are not kernel defects and are not smaller.**
+
+- **`cargo --offline` cannot work on a fresh clone.** There is no `vendor/`,
+  and 25 of the lockfile's packages come from the registry.  The gates all pass
+  `--offline`, so they pass on a machine whose `~/.cargo` cache is warm and fail
+  on one that has never built this tree.  A competition or CI runner with no
+  network is a build that never starts.
+- **Two documents have drifted, and `check-docs.sh` cannot see it.**
+  `kernel/src/syscall/mod.rs` says "Thirty-one numbers" where the boot
+  registers 88, and this file said "147,731 lines of Rust across 40 crates"
+  where the workspace has 47.  The gate checks that a cited **path** exists,
+  which is a different claim from a number in prose being true, and "the docs
+  gate passed" is therefore not evidence that a document is accurate.
+- **The gates themselves run only what this tree wrote.** Nothing exercises a
+  program handing the kernel a bad pointer, a shaped ELF, or a fault handler
+  that faults.  That is why all five defects survived every green run, and it
+  is the reason each fix above needs a test that fails without it.
+
+The order they should land: 1 and 2 first, because they turn a program's
+mistake into a kernel stop and into a page a program can rewrite; then 3 and 4,
+which are each a loop or a panic from one syscall's worth of input; then 5,
+which is a leak rather than a fault.  The offline build is separate and does not
+wait for any of them.
 
 ### Level 9, the programs
 

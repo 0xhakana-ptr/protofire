@@ -20,11 +20,18 @@
 //!
 //! ## What is served today
 //!
-//! Thirty-one numbers, and the split between this table and `process.rs` is
-//! the one that matters: a call that answers inside its own frame is a handler
-//! here, and a call that must **park**, a pipe read, a datagram receive, an
-//! accept, a sleep, is a branch in `process.rs`, because parking needs the
-//! scheduler and a handler taking `&mut SyscallTable` cannot hold a trap frame.
+//! Eighty-eight numbers by the boot's own count, and the split between this
+//! table and `process.rs` is the one that matters: a call that answers inside
+//! its own frame is a handler here, and a call that must **park**, a pipe read,
+//! a datagram receive, an accept, a sleep, is a branch in `process.rs`, because
+//! parking needs the scheduler and a handler taking `&mut SyscallTable` cannot
+//! hold a trap frame.
+//!
+//! The count is the boot's own line rather than a number written here:
+//! `boot.rs` registers the handlers, and this sentence said thirty-one long
+//! after the table had eighty-eight.  A doc comment cannot be checked by a gate
+//! that only resolves paths, which is why the number is spelled as the source
+//! it comes from.
 //!
 //! Every other number answers `Error::NotImplemented` rather than being
 //! absent.  An absent slot would have to be a panic or a silent zero, and both
