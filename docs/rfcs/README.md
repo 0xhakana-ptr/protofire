@@ -119,6 +119,7 @@ its status says which of the two happened.
 | RFC | Status | Subject |
 |-----|--------|---------|
 | [0001](0001-name-a-memory-region-two-processes-both-map.md) | Implemented | Name a memory region two processes both map |
+| [0002](0002-wake-the-waiters-a-futex-word-names.md) | Proposed | Wake the waiters a futex word names, not every blocked task |
 <!-- rfcs-table:end -->
 
 The table is generated from the documents between the two markers above.  Each
