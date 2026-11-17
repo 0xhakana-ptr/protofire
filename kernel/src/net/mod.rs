@@ -100,6 +100,17 @@ mod tests {
     use netdev::LinkDevice;
     use sync::Mutex;
 
+    /// The interface, port table, neighbour cache and stream table are process
+    /// globals.  Rust's test harness runs tests in parallel by default, so two
+    /// tests that install or bind through the same singleton can otherwise
+    /// observe one another's state.  This lock gives the network tests one
+    /// deterministic world at a time without changing the production lock.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn exclusive() -> sync::MutexGuard<'static, ()> {
+        TEST_LOCK.lock()
+    }
+
     /// A card that records what it was asked to send, and hands back the
     /// frames a test queues for it, the same shape a driver has, without a
     /// machine behind it.
@@ -167,6 +178,7 @@ mod tests {
     /// A bound port answers, and binding it again is the wire's refusal.
     #[test]
     fn a_bound_port_has_one_owner() {
+        let _guard = exclusive();
         let socket = bind_udp(PORT_A).expect("a bind");
         assert_eq!(socket.port(), PORT_A);
         assert!(
@@ -179,6 +191,7 @@ mod tests {
     /// receive answers, with the source the delivery was given.
     #[test]
     fn a_delivered_datagram_is_what_the_receive_answers() {
+        let _guard = exclusive();
         let socket = bind_udp(PORT_B).expect("a bind");
         let _ = deliver_udp(
             net::address::Address::V4([10, 0, 2, 2]),
@@ -204,6 +217,7 @@ mod tests {
     /// nothing; the receive that follows answers nothing.
     #[test]
     fn a_datagram_for_an_unbound_port_is_dropped() {
+        let _guard = exclusive();
         let woken = deliver_udp(
             net::address::Address::V4([10, 0, 2, 15]),
             PORT_E,
@@ -226,6 +240,7 @@ mod tests {
     /// datagram does not fit is refused with the datagram kept.
     #[test]
     fn a_receive_refuses_a_datagram_that_does_not_fit_and_keeps_it() {
+        let _guard = exclusive();
         let socket = bind_udp(PORT_C).expect("a bind");
         let mut buffer = [0_u8; 16];
         assert_eq!(socket.try_recv(&mut buffer), Ok(None), "nothing yet");
@@ -258,6 +273,7 @@ mod tests {
     /// sender can act on.
     #[test]
     fn a_full_queue_refuses_with_busy() {
+        let _guard = exclusive();
         let _socket = bind_udp(PORT_D).expect("a bind");
         for index in 0..QUEUE_LIMIT {
             deliver_udp(
@@ -291,6 +307,7 @@ mod tests {
     /// end of file.
     #[test]
     fn the_interface_runs_the_whole_of_the_stack() {
+        let _guard = exclusive();
         let card = FakeCard::new();
         let hardware = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];
         let protocol = [10, 9, 9, 15];
@@ -565,6 +582,7 @@ mod tests {
     /// pump, which is the receive path's own shape.
     #[test]
     fn a_frame_the_card_received_is_a_datagram_after_the_pump() {
+        let _guard = exclusive();
         let card = FakeCard::new();
         let protocol = [10, 9, 9, 15];
         install(Interface::new(
