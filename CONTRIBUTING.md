@@ -17,8 +17,17 @@ That is the gate, and it is the whole of what "green" means.  It runs, in
 order:
 
 - `cargo fmt --check`, refuses formatting drift.
+- `check_source_headers`, refuses a Rust file whose `# File:` header names a
+  path it is not at.  It is a function inside `scripts/verify.sh` rather than a
+  script of its own, because it reads no file the rest of the gate does not.
+- `scripts/check-comment-punctuation.sh`, refuses an em dash and a rule line of
+  box-drawing characters.  `docs/fmts/comments.md` §4 and §6 state the rule;
+  this is the form a commit cannot pass by accident.
 - `scripts/check-docs.sh`, refuses a document that cites a file the tree does
   not have.
+- `scripts/check-rfcs.sh`, refuses an RFC directory that disagrees with itself:
+  a number that is not four decimal digits, a status outside the six, a
+  supersede link that holds at one end only, an index row written by hand.
 - `cargo doc --workspace`, refuses a doc comment that links to an item the
   crate does not have.
 - `cargo build --workspace`, refuses a crate that does not build for the host.
@@ -42,8 +51,9 @@ order:
 - `cargo clippy`, four times, refuses a lint, in every configuration the tree
   builds.
 
-The tiers below `p3` exist so the common case is fast: `p0` is formatting, builds
-and tests; `p1` adds the boot; `p2` adds the three censuses; `p3` adds clippy.
+The tiers below `p3` exist so the common case is fast: `p0` is formatting, the
+documents, the builds and the tests; `p1` adds the boot of every machine with an
+image; `p2` adds the five checks above it; `p3` adds clippy.
 
 `just --list` is the short form of the commands; the recipes are one line each
 and name the command they run.
