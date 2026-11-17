@@ -130,7 +130,8 @@ Then add structure if the module has any:
 - **Do not invent a tag vocabulary.** There is no `//! Module:`, `//! Author:`,
   `//! File:`, `//! License:`, or `//! Status:` convention in `.rs` files, and
   no `.rs` file carries one. (The `# File:` / `# Purpose:` headers you will see
-  in `Makefile`, `Cargo.toml`, and the shell scripts are a separate convention
+  in `Cargo.toml`, the `justfile` and the shell scripts are a separate
+  convention
   for non-Rust files, see §8.)
 
 ---
@@ -317,7 +318,7 @@ can.
 
 ## 8. Non-Rust files
 
-Build tooling, `Makefile`, `Cargo.toml`, the CI workflow, and most of the
+Build tooling, `Cargo.toml`, the `justfile`, the CI workflow, and most of the
 scripts under [`scripts/`](../../scripts/), opens with a two-line header:
 
 ```sh

@@ -421,12 +421,12 @@ Guidance:
   dependency tables (see `arch/Cargo.toml`), not with runtime branching.  New
   architecture-specific code goes in `arch/<machine>/`, and everything above
   names the route.
-- **Register a new feature in three places:** `Cargo.toml`, the feature table in
-  `README.md`, and any Makefile target that needs to pass it. An undocumented
-  feature is invisible to everyone who did not write it.
-- **A feature must not be required to build the kernel.** `cargo build --workspace` with no
-  features has to keep working on all three targets; that is what `make
-  verify-p0` checks.
+- **Register a new feature in the place that turns it on:** `Cargo.toml`, plus
+  the `justfile` recipe or `xtask` command that passes it, if one does.  An
+  undocumented feature is invisible to everyone who did not write it.
+- **A feature must not be required to build the kernel.** `cargo build
+  --workspace` with no features has to keep working on all three targets; that
+  is what `sh scripts/verify.sh p0` checks.
 
 ---
 
@@ -481,8 +481,8 @@ everyday code:
       under §7.
 - [ ] New globals follow the install pattern exactly, including `Drop` cleanup
       and `# Safety` on the unchecked variant.
-- [ ] New feature flags are registered in `Cargo.toml`, `README.md`, and the
-      Makefile.
+- [ ] New feature flags are registered in `Cargo.toml` and the recipe or
+      `xtask` command that turns them on.
 - [ ] New architecture gates outside `arch/` carry the `fact:` or `gap:`
       reason §14 requires, and `sh scripts/check-arch-fanout.sh` is re-recorded
       if they move.

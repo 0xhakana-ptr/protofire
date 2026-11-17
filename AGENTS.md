@@ -46,15 +46,22 @@ sh scripts/verify.sh p3
 
 The tiers accumulate: each one runs everything below it and adds its own.
 
-- **`p0`**, formatting, every crate's tests, the three kernels.
+- **`p0`**, formatting, the documents and their own invariants, every crate's
+  tests, the three kernels, and the commit messages in the range
+  (`scripts/check-commits.sh`).
 - **`p1`**, the boot: `cargo xtask check --machine <each machine with an
   image>`.  A machine is a hardware description as well as an architecture: the
   riscv64 image boots twice, once on a tree that names a PLIC and once
   (`riscv64-aia`) on one that names an APLIC and an IMSIC.  A controller a boot
   never found is a controller no gate has exercised, which is why the AIA nodes
-  live in the gate rather than in a measurement made by hand.
-- **`p2`**, the three censuses, architecture fan-out, layering, per-crate test
-  counts.
+  live in the gate rather than in a measurement made by hand.  A caller can
+  decline the boot with `VERIFY_NO_BOOT=1`, which `scripts/ci.sh` does because a
+  runner may have no QEMU; the run then prints that it declined, so a green line
+  from a run that started nothing does not read like one that booted.
+- **`p2`**, five checks: architecture fan-out and layering (each a census with a
+  baseline), per-crate test counts, and the repository's own integrity in both
+  directions (nothing ignored is tracked, and nothing written is hidden by an
+  ignore rule).
 - **`p3`**, clippy in every configuration the tree builds.
 
 The gate requires the boot for a reason no other tier can cover: every runtime

@@ -58,6 +58,42 @@ image; `p2` adds the five checks above it; `p3` adds clippy.
 `just --list` is the short form of the commands; the recipes are one line each
 and name the command they run.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs `scripts/ci.sh` on every pull request.  It is a
+**subset** of the gate, and it says so rather than passing quietly: a runner
+that is not this tree's development host may have no QEMU and no `/dev/kvm`, so
+CI declines the boot and runs everything else, which is `VERIFY_NO_BOOT=1 sh
+scripts/verify.sh p3` plus `scripts/check-commits.sh` over the pull request's
+commits.
+
+Two rules follow from that shape, and both are why the workflow is work and a
+comment and nothing else:
+
+- **The workflow defines nothing.**  It calls one script, and the script is in
+  the tree where a contributor can run it.  A rule that exists only inside a
+  YAML file is a rule no local command reproduces, which is the drift
+  `AGENTS.md`'s "a rule that can be a gate belongs in a gate" argues against.
+- **A green CI is not the floor.**  The floor is `sh scripts/verify.sh p3` on
+  the development host, boot included.  A change is not ready for review until
+  that is green locally; CI repeats the part a machine without QEMU can repeat.
+
+When the boot is declined, the run says so:
+
+```
+verify[p3]: boot declined (VERIFY_NO_BOOT=1), this run did not start an image
+```
+
+That line is the difference between "the boot passed" and "the boot did not
+run", which is the one distinction a gate that boots has to keep visible.
+
+The commit message is checked by `scripts/check-commits.sh`, which is in the
+gate and in CI.  It applies `scripts/hooks/commit-msg` to every commit in the
+range, so a message that breaks `docs/fmts/commits.md` fails a run even in a
+clone where the hook was never installed.  Install the hook anyway, with the
+command in that specification: the check is cheaper at `git commit` than in a
+run that has already built the workspace.
+
 ## What a change has to carry
 
 **Its gates.**  A behaviour change that no gate exercises is not verified, it is
@@ -73,6 +109,120 @@ have to guess at is worse than no document.
 the baseline in the same commit, with the argument in the baseline's own prose.
 The gate refuses a baseline that no longer describes the tree, in either
 direction.
+
+## Sending a change
+
+Work reaches `master` through a pull request, and `master` is linear.  A
+maintainer lands it by fast-forward, so every commit in the pull request becomes
+a commit on `master` exactly as it was written.  There is no merge commit, and
+nothing is squashed at merge time.
+
+That puts two things on the author:
+
+- **Rebase, do not merge.**  `git rebase origin/master` before asking for review,
+  and again when `master` moves.  A pull request whose history carries a merge
+  commit from `master` cannot be fast-forwarded.
+- **Clean up before review, not at merge.**  `git rebase --autosquash` folds a
+  `fixup!` commit into the one it belongs to.  Nothing is squashed at merge, so a
+  `fixup!` that reaches the pull request reaches `master`.
+
+Rewriting your own branch is normal: `git push --force-with-lease` after a
+rebase, never `--force`.  Say in the pull request that you rewrote it, so a
+reviewer knows why the diff moved.
+
+**One pull request, one change.**  It may carry several commits when the change
+is honestly several steps, but each commit has to stand on its own and pass the
+gate on its own, because that is the unit a bisect will land on.
+
+### What review asks
+
+The gate is necessary and not sufficient.  A reviewer reads four questions:
+
+1. **Does the change do what it says, and only that?**  A drive-by fix is a
+   second pull request.
+2. **Does it carry its evidence?**  A behaviour change names the gate or the log
+   line that shows the mechanism ran.
+3. **Does it move the documents it invalidates?**  `docs/status.md` for what
+   exists, the RFC's status for what was decided, the crate's `//!` header for
+   how it works.
+4. **Does it leave the tree easier to change?**  This is the one question no
+   other rule here answers, and the reviewer is the only reader who can.
+
+**Timing.**  A maintainer gives a pull request its first substantive response
+within seven days.  If seven days pass with nothing, comment on the pull request
+and say so: the promise is the tree's, and a missed one is a defect in this
+document rather than in your change.
+
+**Approval means** the reviewer has read the diff, run the gate, and is willing
+to have their name on the commit.  A green CI run is a precondition, not an
+approval.
+
+## Attribution
+
+Three roles, and they never cross: **people own the work, tools assist.**
+
+| Trailer | Names | Required | Form |
+| --- | --- | --- | --- |
+| `Signed-off-by:` | a person | on every commit | `Name <email>` |
+| `Co-authored-by:` | a person | one per human co-author | `Name <email>` |
+| `Assisted-by:` | a tool | when a tool wrote or shaped the change | `AGENT:MODEL [TOOLS]` |
+
+`Signed-off-by:` is the Developer's Certificate of Origin, version 1.1
+([`DCO`](DCO)): by adding it you state that you wrote the change, or have the
+right to submit it, and that you submit it under this tree's licence.  `git
+commit -s` adds it.  A tool never signs, because a tool cannot make that
+statement.
+
+`Assisted-by:` has no address, because a tool has none, and it names the tool
+rather than the person driving it:
+
+```
+Assisted-by: Claude:claude-sonnet-4.5 coccinelle
+Assisted-by: Deepseek:Deepseek-V4.1-Flash-1017
+```
+
+A change a model drafted and a person read is assisted.  A change a person wrote
+and a formatter reformatted is not: `cargo fmt` and `clippy` are part of the
+build, not collaborators.
+
+**Your contribution lands under this tree's licences.**  Code under Apache-2.0,
+prose under CC BY 4.0, as [`NOTICE`](NOTICE) states.  There is no separate
+agreement to sign and no copyright assignment to make.
+
+Trailers come last, after one blank line, in the order the table lists them.
+They are exempt from the 72-column body wrap; keep each on one line.
+
+## Language
+
+Source code, comments, doc comments, commit messages, and every document under
+`docs/` are written in **English**.  Issues and pull requests may be written in
+English or Simplified Chinese.
+
+The split is not about who is welcome.  It is about what a reader can search.
+`git log`, `grep` and `rustdoc` are the whole of how this tree is looked
+through, and a rule stated in two languages is a rule where the two statements
+drift and the search finds one of them.  A conversation is read once, by the
+person it answers; a document is read by everyone who arrives later.
+
+A commit message outside ASCII is refused by `scripts/hooks/commit-msg` and by
+`scripts/check-commits.sh`.  A comment outside ASCII is not: a name, a quotation
+or a symbol sometimes has no English spelling, and the reviewer decides whether
+the one in front of them is that case.  Write the issue in the language you
+argue in, and the artifact in the one the tree reads.
+
+## Becoming a maintainer
+
+[`MAINTAINERS`](MAINTAINERS) names one person for the whole tree today.  That is
+a fact about the tree's age, not a rule about who may join.
+
+A contributor becomes a maintainer of a subsystem when all three hold:
+
+- they have landed **three changes** to it that a reviewer did not have to
+  rewrite, which is the only measure of judgement this tree has;
+- they have reviewed at least one change to it, and the review caught something
+  or asked a question the author had not considered;
+- an existing maintainer nominates them in a commit that adds an `M:` row to
+  `MAINTAINERS`, and no other maintainer objects within seven days.
 
 ## Adding a crate
 

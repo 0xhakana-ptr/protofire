@@ -48,11 +48,18 @@ Supporting context, if you have not read it yet:
 
 The single most useful thing to know before a first change is which rules a
 machine will check.  At `p0`: formatting (`cargo fmt --all -- --check`), every
-path a document cites ([`scripts/check-docs.sh`](../../scripts/check-docs.sh)),
-every item a doc comment links to (`cargo doc` with `RUSTDOCFLAGS=-D warnings`),
-that the workspace builds and every crate's tests pass (`cargo build
---workspace`, `cargo test --workspace`), and that the kernel builds for all
-three machines (`cargo build -p kernel --target <machine>`).
+Rust file's header naming its own path (`check_source_headers` in
+[`scripts/verify.sh`](../../scripts/verify.sh)), the punctuation §4 and §6 of
+[`comments.md`](comments.md) refuse
+([`scripts/check-comment-punctuation.sh`](../../scripts/check-comment-punctuation.sh)),
+every path a document cites ([`scripts/check-docs.sh`](../../scripts/check-docs.sh)),
+the RFC directory's own invariants
+([`scripts/check-rfcs.sh`](../../scripts/check-rfcs.sh)), every item a doc
+comment links to (`cargo doc` with `RUSTDOCFLAGS=-D warnings`), that the
+workspace builds and every crate's tests pass (`cargo build --workspace`, `cargo
+test --workspace`), that the kernel builds for all three machines (`cargo build
+-p kernel --target <machine>`), and that every commit message in the range obeys
+[`commits.md`](commits.md) ([`scripts/check-commits.sh`](../../scripts/check-commits.sh)).
 
 At `p1`: that the image boots and prints what it must (`cargo xtask check
 --machine <each machine>`).
@@ -60,9 +67,13 @@ At `p1`: that the image boots and prints what it must (`cargo xtask check
 At `p2`: that a dependency points downward
 ([`scripts/check-layering.sh`](../../scripts/check-layering.sh)), that no
 architecture gate sits outside `arch/`
-([`scripts/check-arch-fanout.sh`](../../scripts/check-arch-fanout.sh)), and that
+([`scripts/check-arch-fanout.sh`](../../scripts/check-arch-fanout.sh)), that
 every crate with code has tests and none lost any
-([`scripts/check-crate-tests.sh`](../../scripts/check-crate-tests.sh)).
+([`scripts/check-crate-tests.sh`](../../scripts/check-crate-tests.sh)), that
+nothing ignored is tracked and no build product is
+([`scripts/check-repo-integrity.sh`](../../scripts/check-repo-integrity.sh)), and
+that nothing a contributor wrote is hidden by an ignore rule
+([`scripts/check-ignored-files.sh`](../../scripts/check-ignored-files.sh)).
 
 At `p3`: lints, and every undocumented `unsafe` (`cargo clippy -- -D warnings`).
 
@@ -80,7 +91,7 @@ sh scripts/verify.sh p3
 ```
 
 `p0` is formatting, documentation and tests; `p1` adds the boot; `p2` adds the
-three censuses; `p3` adds clippy in every configuration.  [`AGENTS.md`](../../AGENTS.md)
+five checks; `p3` adds clippy in every configuration.  [`AGENTS.md`](../../AGENTS.md)
 says what each tier is for and why the boot is in the gate rather than an extra.
 
 ## Changing a specification
