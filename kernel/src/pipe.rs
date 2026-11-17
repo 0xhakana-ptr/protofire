@@ -104,6 +104,24 @@ impl Pipe {
         self.ring.lock().write_to(source)
     }
 
+    /// The buffer's capacity in bytes.
+    ///
+    /// `F_GETPIPE_SZ`'s answer, which belongs to the pipe and not to either
+    /// end: both handles read one ring, and a capacity reported per handle
+    /// would be two answers to one question.
+    pub fn capacity(&self) -> usize {
+        self.ring.lock().capacity()
+    }
+
+    /// Resize the buffer, keeping the bytes already in it.
+    ///
+    /// `F_SETPIPE_SZ`'s operation.  A shrink that would lose buffered bytes is
+    /// refused by the ring rather than truncating them: a writer's bytes are
+    /// the reader's to consume, and not this call's to drop.
+    pub fn resize(&self, capacity: usize) -> Result<()> {
+        self.ring.lock().resize(capacity)
+    }
+
     /// Take one read handle back.
     fn close_reader(&self) {
         // A saturating decrement, and an atomic one: a drop runs on whichever

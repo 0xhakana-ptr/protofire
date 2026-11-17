@@ -506,6 +506,71 @@ pub fn set_file_flags(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -
     Ok(Dispatch::complete(0))
 }
 
+/// The descriptor control call: seven commands over one number.
+///
+/// Arguments: the descriptor, the command, the command's own argument, then
+/// three reserved slots that must be zero.  The answer is the command's, and
+/// each one says which in its own arm below.
+///
+/// One number carrying a command word rather than seven numbers is the ABI's
+/// shape, and it is why the command constants are pinned values: a program
+/// compiled against a different `F_GETPIPE_SZ` would ask for a command this
+/// kernel reads as something else entirely.
+///
+/// `F_GETFD` and `F_SETFD` are served as "no per-descriptor flags exist in this
+/// build": `FD_CLOEXEC` is about what an `exec` closes, and this tree's `exec`
+/// replaces the image and keeps every descriptor.  Answering zero and refusing
+/// a set bit is the honest form of that, rather than accepting a bit nothing
+/// acts on.
+pub fn fcntl(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let command = arguments.context.arg(1);
+    let argument = arguments.context.arg(2);
+    validate_zeroed_args(arguments.context, 3)?;
+    let caller = arguments.context.caller_pid;
+
+    match command {
+        fs_abi::F_DUPFD => {
+            let placed = table.duplicate_from_for(descriptor, argument, caller)?;
+            Ok(Dispatch::complete(placed))
+        }
+        fs_abi::F_GETFD => {
+            // No per-descriptor flags exist, so the answer is the empty set and
+            // the descriptor still has to be one this caller holds: a call on
+            // somebody else's number is `InvalidArgument` here as everywhere.
+            table.status_flags_at(descriptor, caller)?;
+            Ok(Dispatch::complete(0))
+        }
+        fs_abi::F_SETFD => {
+            if argument != 0 {
+                return Err(Error::NotImplemented);
+            }
+            table.status_flags_at(descriptor, caller)?;
+            Ok(Dispatch::complete(0))
+        }
+        fs_abi::F_GETFL => {
+            let flags = table.status_flags_at(descriptor, caller)?;
+            Ok(Dispatch::complete(flags))
+        }
+        fs_abi::F_SETFL => {
+            table.set_status_flags_at(descriptor, argument, caller)?;
+            Ok(Dispatch::complete(0))
+        }
+        fs_abi::F_GETPIPE_SZ => {
+            let capacity = table.pipe_capacity_at(descriptor, caller)?;
+            Ok(Dispatch::complete(capacity))
+        }
+        fs_abi::F_SETPIPE_SZ => {
+            let capacity = table.set_pipe_capacity_at(descriptor, argument, caller)?;
+            Ok(Dispatch::complete(capacity))
+        }
+        // A command word this build does not define.  `NotImplemented` rather
+        // than `InvalidArgument`: the caller named a command a newer ABI has,
+        // which is a different fact from a malformed one.
+        _ => Err(Error::NotImplemented),
+    }
+}
+
 /// Report a path's kind and size.
 ///
 /// Arguments: the path, the record, its length, then three reserved slots

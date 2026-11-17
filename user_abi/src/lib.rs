@@ -69,6 +69,8 @@ pub const SYS_CLOSE: usize = SyscallNumber::Close as usize;
 pub const SYS_DUP: usize = SyscallNumber::Dup as usize;
 /// `Dup2`, a duplicate on a descriptor the caller names.
 pub const SYS_DUP2: usize = SyscallNumber::Dup2 as usize;
+/// `Fcntl`, the descriptor control call.
+pub const SYS_FCNTL: usize = SyscallNumber::Fcntl as usize;
 /// `SetLength`, a descriptor's new length.
 pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
 /// `Seek`, a descriptor's new position.
@@ -254,6 +256,22 @@ pub const TIME_RECORD_BYTES: usize = core::mem::size_of::<abi::time::TimeRecord>
 pub const OPEN_READ: usize = abi::fs::OPEN_FLAG_READ;
 /// Open for writing, creating the file when it is not there.
 pub const OPEN_WRITE_CREATE: usize = abi::fs::OPEN_FLAG_WRITE | abi::fs::OPEN_FLAG_CREATE;
+/// `fcntl`'s commands, as the ABI names them.  Re-exported rather than
+/// restated: a program compiled against a different value would ask for a
+/// command the kernel reads as another.
+pub const F_DUPFD: usize = abi::fs::F_DUPFD;
+/// Read the open-file status flags.
+pub const F_GETFL: usize = abi::fs::F_GETFL;
+/// Set the open-file status flags; only `O_NONBLOCK` is settable.
+pub const F_SETFL: usize = abi::fs::F_SETFL;
+/// Read the per-descriptor flags.
+pub const F_GETFD: usize = abi::fs::F_GETFD;
+/// Set the per-descriptor flags.
+pub const F_SETFD: usize = abi::fs::F_SETFD;
+/// Read a pipe's buffer capacity.
+pub const F_GETPIPE_SZ: usize = abi::fs::F_GETPIPE_SZ;
+/// Set a pipe's buffer capacity.
+pub const F_SETPIPE_SZ: usize = abi::fs::F_SETPIPE_SZ;
 /// The size of the ABI's block-device record, and the offsets of its words.
 ///
 /// A program reads the record the handler filled, so the layout it parses is
@@ -567,6 +585,16 @@ pub fn sys_dup(descriptor: usize) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_dup2(descriptor: usize, target: usize) -> usize {
     syscall6(SYS_DUP2, descriptor, target, 0, 0, 0, 0)
+}
+
+/// `fcntl(descriptor, command, argument)`: the command's answer.
+///
+/// `F_DUPFD` answers the new descriptor, `F_GETFL` its status flags,
+/// `F_GETFD` the (empty) per-descriptor flags, and the two pipe commands a
+/// capacity; the setting commands answer zero.
+#[cfg(target_os = "none")]
+pub fn sys_fcntl(descriptor: usize, command: usize, argument: usize) -> usize {
+    syscall6(SYS_FCNTL, descriptor, command, argument, 0, 0, 0)
 }
 
 /// `set_length(descriptor, length)`: zero, or an error's encoding.

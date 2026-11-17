@@ -297,6 +297,11 @@ fn install_registry(namespace: fs::MountTable) {
     // which the number is free.
     table.register(::syscall::SyscallNumber::Dup, crate::syscall::dup);
     table.register(::syscall::SyscallNumber::Dup2, crate::syscall::dup2);
+    // The descriptor control call.  One number and a command word, carrying the
+    // seven commands a program uses to read or move a descriptor's state:
+    // `F_DUPFD`, the two per-descriptor flags, the two status flags, and the
+    // two pipe-capacity commands.
+    table.register(::syscall::SyscallNumber::Fcntl, crate::syscall::fcntl);
     // The truncate.  A number the ABI froze at twenty and this table served
     // nothing for until now: `VNode::set_len` existed and no program could
     // reach it, which is the whole of what that gap was.

@@ -899,6 +899,34 @@ pub(crate) fn serve_io(
         }
         return Some(outcome);
     }
+    if number == SyscallNumber::Fcntl as usize {
+        // `Fcntl(descriptor, command, argument)`: seven commands over one
+        // number, none of which takes a user pointer, so the registry is
+        // reached directly.
+        //
+        // The line names the command and its answer.  A command word is a
+        // number the program chose, so a boot that printed only the answer
+        // could not say which command produced it -- and `F_GETFL` answering
+        // three and `F_DUPFD` answering three are two very different facts.
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" fcntl command ");
+            arch::serial::write_u32(call.arguments[1] as u32);
+            arch::serial::write_str(" on descriptor ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str(" answered ");
+            arch::serial::write_u32(answer as u32);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::Stat as usize {
         // `Stat(path, record, length)`: the path is a NUL-terminated string in
         // the caller's memory, the record is where the kernel writes the ABI's

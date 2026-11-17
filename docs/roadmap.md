@@ -1230,9 +1230,23 @@ each unblocks rather than by size.
    that defect made the boot stop: the program's own `duplicate == held` check
    exited 251 before the lines after it could run.
 
-   What is left on this row is `Fcntl`, `Poll`, `SetFdFlags` and the eleven
-   xattr, file-flag, access and permission calls: all of them are reads or
-   writes of state a filesystem already holds, and none needs a new mechanism.
+   **`Fcntl` has landed too**, as one number carrying seven commands.  Three
+   of them needed state this tree did not have in a descriptor: `F_GETFL`
+   reports the descriptor's access mode beside the node's non-blocking bit,
+   `F_SETFL` writes that bit, and the two pipe-capacity commands read and resize
+   the ring `kernel/src/pipe.rs` owns -- which is why ``F_GETPIPE_SZ`` answers
+   from the pipe and not from a `VNode`, whose `pipe_capacity` exists for
+   filesystems that model a pipe as a file and which no filesystem here
+   overrides.  `F_GETFD` and `F_SETFD` are served as "this build has no
+   per-descriptor flags": `FD_CLOEXEC` is about what an `exec` closes, and this
+   tree's `exec` replaces the image and keeps every descriptor, so accepting the
+   bit would record a promise nothing keeps.
+
+   What is left on this row is `Poll`, `SetFdFlags` and the eleven xattr,
+   file-flag, access and permission calls.  The xattr four are the only ones
+   with a shape still missing: every filesystem that has them already
+   implements them, and what this ABI lacks is the packed list `ListXattr`
+   returns.
 2. **Shared memory**, `ShmGet`, `ShmAt`, `ShmDt`, `ShmCtl`.  Two processes
    naming one region, which is a decision about the address space and not
    wiring.

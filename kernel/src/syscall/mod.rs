@@ -81,6 +81,7 @@ pub use handlers::dccp_send;
 pub use handlers::dup;
 pub use handlers::dup2;
 pub use handlers::fallocate;
+pub use handlers::fcntl;
 pub use handlers::fdatasync;
 pub use handlers::filter_add_rule;
 pub use handlers::filter_get_stats;

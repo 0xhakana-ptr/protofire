@@ -892,6 +892,20 @@ impl Machine {
                 // duplicate answers its own source.
                 ("protofire: process 1 duplicated descriptor 6 as 7", true),
                 ("protofire: process 1 placed descriptor 6 on 12", true),
+                // The descriptor control call.  `F_GETFL` (command 3) answers
+                // the access mode this open named, and `F_DUPFD` (command 0)
+                // answers the floor itself when it is free.  Exact, because
+                // both numbers are facts about this boot: `answered 3` would be
+                // an `F_GETFL` answering the wrong descriptor's mode, and
+                // `answered 1` an `F_DUPFD` that ignored its floor.
+                (
+                    "protofire: process 1 fcntl command 3 on descriptor 6 answered 1",
+                    true,
+                ),
+                (
+                    "protofire: process 1 fcntl command 0 on descriptor 6 answered 7",
+                    true,
+                ),
                 ("protofire: process 1 listed block device 0", true),
                 // The second and third devices, through the dispatcher from
                 // ring 3.  Only x86_64's machine has them, so the program's

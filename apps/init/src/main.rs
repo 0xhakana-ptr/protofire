@@ -97,6 +97,8 @@ use user_abi::sys_exit;
 #[cfg(target_os = "none")]
 use user_abi::sys_fallocate;
 #[cfg(target_os = "none")]
+use user_abi::sys_fcntl;
+#[cfg(target_os = "none")]
 use user_abi::sys_fdatasync;
 #[cfg(target_os = "none")]
 use user_abi::sys_fork;
@@ -438,6 +440,21 @@ pub extern "C" fn _start() -> ! {
         sys_exit(251);
     }
     insist(sys_close(placed));
+
+    // The descriptor control call, on a file whose access mode this program
+    // chose: `F_GETFL` must answer the mode the open asked for, which is a fact
+    // about this descriptor and not a constant.  `F_DUPFD` then places a copy
+    // at or above seven, which is the floor the call exists for.
+    let control = insist(sys_open(GREETING_PATH.as_ptr() as usize, OPEN_READ));
+    if sys_fcntl(control, user_abi::F_GETFL, 0) != OPEN_READ {
+        sys_exit(251);
+    }
+    let high = insist(sys_fcntl(control, user_abi::F_DUPFD, 7));
+    if high < 7 {
+        sys_exit(251);
+    }
+    insist(sys_close(high));
+    insist(sys_close(control));
 
     // The device list and the whole-machine flush.  The record is the ABI's
     // `BlockDeviceInfoRecord`, read field by field at the offsets the ABI

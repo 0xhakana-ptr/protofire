@@ -489,6 +489,157 @@ impl SyscallTable {
         Ok(target)
     }
 
+    /// Duplicate a descriptor onto the lowest free number **at or above**
+    /// `floor`.
+    ///
+    /// `F_DUPFD`'s operation, and the one place it differs from
+    /// [`Self::duplicate_for`] is the floor: a caller that asks for the copy to
+    /// be at least seven gets seven or more and never below, which is how a
+    /// program reserves the low numbers for the standard streams it is about to
+    /// place.
+    ///
+    /// A floor past the table is refused rather than clamped: a copy above the
+    /// last slot does not exist, and answering a lower number instead would
+    /// hand back a descriptor the caller did not ask for.
+    pub fn duplicate_from_for(
+        &mut self,
+        descriptor: usize,
+        floor: usize,
+        caller: Option<u32>,
+    ) -> Result<usize> {
+        self.check_owner(descriptor, caller)?;
+        if floor >= MAX_DESCRIPTORS {
+            return Err(Error::InvalidArgument);
+        }
+        let source = self
+            .descriptors
+            .get(descriptor)
+            .and_then(|slot| slot.as_ref())
+            .ok_or(Error::InvalidArgument)?;
+        let owner = caller.unwrap_or(crate::programs::BOOT_PROCESS);
+        let copy = source.for_owner(owner);
+        for (index, slot) in self.descriptors.iter_mut().enumerate().skip(floor) {
+            if slot.is_none() {
+                *slot = Some(copy);
+                return Ok(index);
+            }
+        }
+        Err(Error::OutOfMemory)
+    }
+
+    /// Whether a descriptor names an open file, and if so the node.
+    ///
+    /// The per-descriptor `fcntl` commands need the node and not only the
+    /// rights: `F_GETFL` reads the node's non-blocking flag and
+    /// `F_GETPIPE_SZ` its capacity, and neither is the descriptor's.  The
+    /// binding that reaches the node lives here rather than in the handler so
+    /// the handler names what it wants instead of reaching into a variant.
+    fn file_node(&self, descriptor: usize, caller: Option<u32>) -> Result<&Arc<dyn fs::VNode>> {
+        self.check_owner(descriptor, caller)?;
+        let slot = self
+            .descriptors
+            .get(descriptor)
+            .ok_or(Error::InvalidArgument)?
+            .as_ref()
+            .ok_or(Error::InvalidArgument)?;
+        let Descriptor::File { node, .. } = slot else {
+            return Err(Error::InvalidArgument);
+        };
+        Ok(node)
+    }
+
+    /// The open-file status flags a descriptor reports: its access mode and the
+    /// node's non-blocking bit.
+    ///
+    /// `F_GETFL`'s answer.  The access mode is the descriptor's, because an
+    /// open for reading and an open for writing are two rights the same node
+    /// can be held with; the non-blocking bit is the **node's**, because it
+    /// belongs to the open file description and this tree's descriptor does not
+    /// keep one. That is a divergence from what POSIX promises two descriptors
+    /// on one file would see, and it is stated here rather than left for a
+    /// reader to find: every node that never blocks answers false, so nothing
+    /// observes it.
+    pub fn status_flags_at(&self, descriptor: usize, caller: Option<u32>) -> Result<usize> {
+        self.check_owner(descriptor, caller)?;
+        let slot = self
+            .descriptors
+            .get(descriptor)
+            .ok_or(Error::InvalidArgument)?
+            .as_ref()
+            .ok_or(Error::InvalidArgument)?;
+        let Descriptor::File {
+            readable, writable, ..
+        } = slot
+        else {
+            return Err(Error::InvalidArgument);
+        };
+        let mut flags = if *readable && *writable {
+            fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE
+        } else if *writable {
+            fs_abi::OPEN_FLAG_WRITE
+        } else {
+            fs_abi::OPEN_FLAG_READ
+        };
+        let node = self.file_node(descriptor, caller)?;
+        if node.is_nonblocking() {
+            flags |= fs_abi::O_NONBLOCK;
+        }
+        Ok(flags)
+    }
+
+    /// Set the non-blocking bit on a descriptor's node.
+    ///
+    /// `F_SETFL`'s operation.  Only [`fs_abi::O_NONBLOCK`] is settable, and
+    /// that restriction is the ABI's: the other status bits name an access
+    /// mode, and an access mode is the open's and not a later call's.
+    pub fn set_status_flags_at(
+        &self,
+        descriptor: usize,
+        flags: usize,
+        caller: Option<u32>,
+    ) -> Result<()> {
+        syscall::validate_known_flags(flags, fs_abi::O_NONBLOCK)?;
+        let node = self.file_node(descriptor, caller)?;
+        node.set_nonblocking(flags & fs_abi::O_NONBLOCK != 0)
+    }
+
+    /// A pipe's buffer capacity, when the descriptor names one.
+    ///
+    /// `F_GETPIPE_SZ`'s answer.  This tree's pipes are not `VNode`s -- a pipe
+    /// end is its own descriptor variant, because it has a liveness count a
+    /// node does not -- so the capacity comes from [`crate::pipe`] rather than
+    /// from the node's `pipe_capacity`, which exists for the filesystems that
+    /// model a pipe as a file.
+    pub fn pipe_capacity_at(&self, descriptor: usize, caller: Option<u32>) -> Result<usize> {
+        self.check_owner(descriptor, caller)?;
+        let end = self
+            .pipe_end(descriptor, caller)
+            .ok_or(Error::InvalidArgument)?;
+        Ok(end.pipe().capacity())
+    }
+
+    /// Resize a pipe's buffer, answering the capacity it became.
+    ///
+    /// `F_SETPIPE_SZ`'s operation.  The answer is the **resulting** capacity
+    /// rather than zero, because the ring rounds a request to a power of two
+    /// and clamps it: a caller that asked for 5000 and was given 8192 must be
+    /// told 8192, or its next `F_GETPIPE_SZ` is the only way to learn what it
+    /// got.
+    pub fn set_pipe_capacity_at(
+        &self,
+        descriptor: usize,
+        capacity: usize,
+        caller: Option<u32>,
+    ) -> Result<usize> {
+        self.check_owner(descriptor, caller)?;
+        let end = self
+            .pipe_end(descriptor, caller)
+            .ok_or(Error::InvalidArgument)?;
+        let pipe = end.pipe();
+        pipe.resize(capacity)?;
+        Ok(pipe.capacity())
+    }
+
     /// Close a descriptor with no ownership check.
     ///
     /// The kernel's own release paths, which already know whose slot they are

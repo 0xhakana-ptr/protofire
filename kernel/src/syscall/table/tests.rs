@@ -2909,3 +2909,238 @@ fn dup2_refuses_a_target_past_the_table() {
         "a refused call changed nothing"
     );
 }
+
+/// `F_DUPFD` places the copy at or above the floor the caller named.
+///
+/// The floor is the whole difference from `Dup`: a program reserving the low
+/// numbers for its standard streams asks for a copy at seven and must not get
+/// three.  Both ends are checked: with a free slot at the floor it takes that
+/// one, and with the floor occupied it takes the next free slot above.
+#[test]
+fn f_dupfd_places_the_copy_at_or_above_the_floor() {
+    let mut table = writable();
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let opened = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open");
+
+    let placed = call(
+        &mut table,
+        SyscallNumber::Fcntl,
+        [opened, fs_abi::F_DUPFD, 7, 0, 0, 0],
+    )
+    .expect("F_DUPFD");
+    assert_eq!(placed, 7, "the floor itself, when it is free");
+
+    // The floor occupied: the next free number above it.
+    let again = call(
+        &mut table,
+        SyscallNumber::Fcntl,
+        [opened, fs_abi::F_DUPFD, 7, 0, 0, 0],
+    )
+    .expect("F_DUPFD onto a taken floor");
+    assert_eq!(again, 8);
+
+    // A floor past the table names a slot that does not exist.
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_DUPFD, MAX_DESCRIPTORS, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument)
+    );
+}
+
+/// `F_GETFL` answers the descriptor's access mode, which is the open's and not
+/// the node's.
+///
+/// Two descriptors on one file, opened differently, answer differently, which
+/// is what makes the answer a fact about the descriptor rather than a constant.
+#[test]
+fn f_getfl_answers_the_descriptors_own_access_mode() {
+    let mut table = writable();
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let reading = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("read-only open");
+    let writing = open_path(
+        &mut table,
+        "/",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE,
+    )
+    .expect("read-write open");
+
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [reading, fs_abi::F_GETFL, 0, 0, 0, 0]
+        ),
+        Ok(fs_abi::OPEN_FLAG_READ)
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [writing, fs_abi::F_GETFL, 0, 0, 0, 0]
+        ),
+        Ok(fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE)
+    );
+}
+
+/// `F_SETFL` accepts the non-blocking bit and refuses an access mode.
+///
+/// An access mode is the open's, so a later call that named one is refused
+/// rather than silently re-opened: a descriptor whose rights changed underneath
+/// its holder is the one thing an open's answer must never do.
+#[test]
+fn f_setfl_accepts_the_nonblocking_bit_and_refuses_the_rest() {
+    let mut table = writable();
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let opened = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open");
+
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_SETFL, fs_abi::O_NONBLOCK, 0, 0, 0]
+        ),
+        Ok(0)
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_SETFL, fs_abi::OPEN_FLAG_WRITE, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument),
+        "an access mode is not a status flag a later call may set"
+    );
+}
+
+/// The two pipe-capacity commands answer the ring's own number, and the set
+/// answers what the ring became rather than what was asked for.
+///
+/// The distinction is the call's whole point: the ring rounds a request to a
+/// power of two, so a caller that asked for 5000 and was given 8192 must be
+/// told 8192.
+#[test]
+fn the_pipe_capacity_commands_answer_what_the_ring_became() {
+    use crate::pipe;
+    use crate::pipe::End;
+
+    let pipe = Arc::new(pipe::Pipe::new(4096));
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let end = table
+        .insert_pipe(End::reader(pipe.clone()), crate::programs::BOOT_PROCESS)
+        .expect("insert");
+
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [end, fs_abi::F_GETPIPE_SZ, 0, 0, 0, 0]
+        ),
+        Ok(4096)
+    );
+    let grown = call(
+        &mut table,
+        SyscallNumber::Fcntl,
+        [end, fs_abi::F_SETPIPE_SZ, 16384, 0, 0, 0],
+    )
+    .expect("F_SETPIPE_SZ");
+    assert_eq!(grown, 16384);
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [end, fs_abi::F_GETPIPE_SZ, 0, 0, 0, 0]
+        ),
+        Ok(16384),
+        "the get reads back what the set made"
+    );
+}
+
+/// The two pipe-capacity commands refuse a descriptor that is not a pipe.
+///
+/// A regular file has no buffer to size, and `InvalidArgument` is the answer a
+/// caller can act on: the number is a descriptor, and it is the wrong kind.
+#[test]
+fn the_pipe_capacity_commands_refuse_a_file() {
+    let mut table = writable();
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let opened = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open");
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_GETPIPE_SZ, 0, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument)
+    );
+}
+
+/// `F_GETFD` answers zero and `F_SETFD` refuses a bit, because this build has
+/// no per-descriptor flags.
+///
+/// `FD_CLOEXEC` is about what an `exec` closes, and this tree's `exec` replaces
+/// the image and keeps every descriptor.  Accepting the bit would be recording
+/// a promise nothing keeps.
+#[test]
+fn the_descriptor_flags_are_honest_about_being_absent() {
+    let mut table = writable();
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let opened = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open");
+
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_GETFD, 0, 0, 0, 0]
+        ),
+        Ok(0),
+        "no flags are set because none exist"
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_SETFD, fs_abi::FD_CLOEXEC, 0, 0, 0]
+        ),
+        Err(Error::NotImplemented),
+        "a bit nothing acts on is refused rather than recorded"
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_SETFD, 0, 0, 0, 0]
+        ),
+        Ok(0),
+        "clearing what is already clear is the no-op it names"
+    );
+}
+
+/// An fcntl command this build does not define is `NotImplemented`, and a
+/// descriptor that is not the caller's is `InvalidArgument`.
+///
+/// The pair is the two refusals the call can make, and they answer different
+/// questions: one names a command a newer ABI has, the other a number that is
+/// not this caller's descriptor at all.
+#[test]
+fn fcntl_refuses_an_unknown_command_and_a_foreign_descriptor() {
+    let mut table = writable();
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let opened = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open");
+
+    assert_eq!(
+        call(&mut table, SyscallNumber::Fcntl, [opened, 9999, 0, 0, 0, 0]),
+        Err(Error::NotImplemented)
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [40, fs_abi::F_GETFL, 0, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument)
+    );
+}

@@ -84,6 +84,30 @@ duplicate that answered its own source would print.  Measured, making
 `duplicate == held` check exited 251 and the log stopped short of the lines
 after it.
 
+**`Fcntl`** is served on the same row, carrying seven commands over one number.
+`F_DUPFD` places a copy at or above a floor the caller names, which is how a
+program reserves the low numbers for the standard streams it is about to place;
+`F_GETFL` answers the descriptor's access mode and the node's non-blocking bit;
+`F_SETFL` accepts only `O_NONBLOCK`, because an access mode is the open's and
+not a later call's; the two pipe commands answer a capacity, and the set answers
+the capacity the ring **became** rather than the one that was asked for, since
+the ring rounds to a power of two; and `F_GETFD`/`F_SETFD` answer "no
+per-descriptor flags exist in this build" rather than recording a `FD_CLOEXEC`
+nothing acts on, because this tree's `exec` keeps every descriptor.
+
+The evidence is two exact gate lines, and both numbers are facts about this
+boot rather than constants a handler could return:
+
+```
+protofire: process 1 fcntl command 3 on descriptor 6 answered 1
+protofire: process 1 fcntl command 0 on descriptor 6 answered 7
+```
+
+Command 3 is `F_GETFL` answering `OPEN_READ`, and command 0 is `F_DUPFD`
+answering the floor itself.  Measured, making `duplicate_from_for` search from
+zero instead of from the floor made the floor assertion fail with `left: 1,
+right: 7`.
+
 The pipe's reader also calls `WaitProcess` after its end-of-file read, and the
 gate requires the kernel's own `a wait answered status ` line on all three
 machines: the guard, the park's retry contract and the exit's wake are on a
