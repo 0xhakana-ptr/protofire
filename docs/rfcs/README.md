@@ -65,8 +65,8 @@ a failing test.
 
 ## Numbering and layout
 
-Files are `docs/rfcs/NNNN-short-title.md`, numbered in the order they are
-accepted, starting at `0001`.  A number is never reused, not even after a
+Files are `docs/rfcs/<four digits>-<short title>.md`, numbered in the order
+they are accepted, starting at `0001`.  A number is never reused, not even after a
 rejection.  [`0000-template.md`](0000-template.md) is not an RFC and is not
 numbered.
 

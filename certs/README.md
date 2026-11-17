@@ -58,9 +58,9 @@ can read.
 
 ## What is here today
 
-`trusted_keys/demo_key.toml` is a placeholder with no key in it, and it says
-so.  A demonstration anchor was considered and not added: an image that ships
-trusting a key generated for the tree is an image that trusts whoever generated
-it, and calling that "the demo set" does not make it not a key.  The first real
-anchor arrives with the boot-integrity check that consumes it, in a change that
-can argue for this machine trusting that root.
+`certs/trusted_keys/demo_key.toml` is a placeholder with no key in it, and it
+says so.  A demonstration anchor was considered and not added: an image that
+ships trusting a key generated for the tree is an image that trusts whoever
+generated it, and calling that "the demo set" does not make it not a key.  The
+first real anchor arrives with the boot-integrity check that consumes it, in a
+change that can argue for this machine trusting that root.

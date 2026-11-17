@@ -42,6 +42,18 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+GIT="${GIT:-git}"
+
+# The documents this gate reads, asked of git rather than listed as globs.  A
+# `*.md` glob at a fixed depth is a list that silently stops covering a
+# directory added later, which is what happened to `docs/rfcs/`: four documents
+# and their citations went unchecked and nothing said so.  A tracked file is one
+# a reader can reach, so `git ls-files` is the set and `vendor/` is the one
+# exclusion, for the reason the punctuation gate states.
+documents() {
+    "$GIT" ls-files '*.md' | grep -v '^vendor/'
+}
+
 work="$(mktemp -d)"
 cleanup() {
     rm -rf "$work"
@@ -57,10 +69,13 @@ failed=0
 # `.md`, `.rs`, `.toml`, `.ld`, `.S`.  That is deliberately narrow: a backticked
 # `VecDeque` is not a path, and a check that guessed would refuse prose.
 # Every Markdown document the tree ships, found rather than listed: a
-# list is the thing that goes stale, and this one did — two documents
-# were added at the root and the gate went on reporting the same
-# citation count, which reads exactly like coverage.
-for document in *.md LICENSES/*.md docs/*.md docs/fmts/*.md; do
+# list is the thing that goes stale, and this one did.  It was four globs
+# (`*.md LICENSES/*.md docs/*.md docs/fmts/*.md`) and by the time anyone
+# counted, `docs/rfcs/` and `certs/` had arrived outside all four: 5 of
+# the 24 tracked documents were unchecked, and the gate reported a count
+# that read as coverage.  `documents` asks git instead, because a
+# document that is not tracked is not shipped.
+for document in $(documents); do
     [ -f "$document" ] || continue
     grep -n -oE '`[A-Za-z0-9_./{}*<>-]+\.(sh|txt|md|rs|toml|ld|S)`' "$document" \
         | sed 's/`//g' \
@@ -94,10 +109,13 @@ done <"$work/paths.txt"
 
 # Relative Markdown links resolve from the document that holds them.
 # Every Markdown document the tree ships, found rather than listed: a
-# list is the thing that goes stale, and this one did — two documents
-# were added at the root and the gate went on reporting the same
-# citation count, which reads exactly like coverage.
-for document in *.md LICENSES/*.md docs/*.md docs/fmts/*.md; do
+# list is the thing that goes stale, and this one did.  It was four globs
+# (`*.md LICENSES/*.md docs/*.md docs/fmts/*.md`) and by the time anyone
+# counted, `docs/rfcs/` and `certs/` had arrived outside all four: 5 of
+# the 24 tracked documents were unchecked, and the gate reported a count
+# that read as coverage.  `documents` asks git instead, because a
+# document that is not tracked is not shipped.
+for document in $(documents); do
     [ -f "$document" ] || continue
     directory="$(dirname "$document")"
     grep -oE '\]\([^)#]+' "$document" 2>/dev/null | sed 's/](//' | while read -r target; do
