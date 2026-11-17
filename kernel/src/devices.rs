@@ -1753,8 +1753,8 @@ fn ping_gateway(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
     }
 }
 
-/// Send one UDP datagram to a port on the gateway nothing owns, and read
-/// the refusal back.
+/// Send UDP datagrams to a port on the gateway nothing owns, and read the
+/// refusal back.
 ///
 /// A port nothing listens on is the one datagram a peer is guaranteed to
 /// answer, and the answer is ICMP's port unreachable carrying the original
@@ -1763,6 +1763,12 @@ fn ping_gateway(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
 /// from.  The exchange is a real one: the refusal was built by QEMU's
 /// user-mode network, and the port it names on the line came out of the
 /// embedded original, not out of this boot's own constants alone.
+///
+/// QEMU's user-mode network can drop the first datagram while the host is
+/// busy, even after the ARP and ICMP exchanges immediately before this one
+/// succeeded.  A bounded resend keeps the assertion the same: every reply
+/// still has to carry this datagram's source port.  It only gives the
+/// emulated wire more than one chance to deliver the request.
 #[cfg(target_os = "none")]
 fn send_udp_probe(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
     let Some(gateway_hardware) = crate::net::arp_hardware_for(GATEWAY_PROTOCOL) else {
@@ -1773,28 +1779,29 @@ fn send_udp_probe(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
     const PAYLOAD: &[u8] = b"protofire";
     const OUR_PORT: u16 = 40000;
     const THEIR_PORT: u16 = 8612;
+    const SEND_ATTEMPTS: u32 = 3;
     let udp_len = net::udp::datagram_len(PAYLOAD.len());
     let packet_len = netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN + udp_len;
 
     // The datagram: Ethernet to the gateway, IPv4 to its address, and the
     // datagram in the payload, the same three layers the ping wrote, with
     // UDP's pseudo-header checksum in the place ICMP's message checksum was.
-    let mut frame = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
+    let mut outbound = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
     net::ethernet::write_header(
-        &mut frame,
+        &mut outbound,
         gateway_hardware,
         mac,
         net::ethernet::ETHERTYPE_IPV4,
     );
     net::ipv4::write_header(
-        &mut frame[netdev::ETHERNET_HEADER_LEN..],
+        &mut outbound[netdev::ETHERNET_HEADER_LEN..],
         OUR_PROTOCOL,
         GATEWAY_PROTOCOL,
         net::ipv4::PROTOCOL_UDP,
         udp_len,
     );
     net::udp::write_datagram(
-        &mut frame[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
+        &mut outbound[netdev::ETHERNET_HEADER_LEN + net::ipv4::HEADER_LEN..],
         OUR_PROTOCOL,
         GATEWAY_PROTOCOL,
         OUR_PORT,
@@ -1802,94 +1809,101 @@ fn send_udp_probe(card: &virtio_net::VirtioNet, mac: [u8; 6]) -> bool {
         PAYLOAD,
     );
 
-    if card.post_receive_buffer().is_err() {
-        arch::serial::write_str("protofire: udp could not post a receive buffer\n");
-        return false;
-    }
-    if let Err(error) = card.submit_frame(&frame[..packet_len]) {
-        arch::serial::write_str("protofire: udp could not send the datagram: ");
-        arch::serial::write_str(match error {
-            abi::Error::TimedOut => "timed out",
-            abi::Error::Busy => "busy",
-            abi::Error::DeviceError => "device error",
-            _ => "error",
-        });
-        arch::serial::write_str("\n");
-        return false;
-    }
-
     let mut waits = 0;
     // SAFETY: the timer's line is enabled by `tick::bring_up`, which the boot
     // ran before this.
     let frequency = unsafe { arch::timer_frequency() };
-    loop {
-        match card.receive_frame(&mut frame) {
-            Ok(Some(length)) => {
-                let _ = card.post_receive_buffer();
-                let frame = &frame[..length];
-                if netdev::ethertype(frame) != Some(net::ethernet::ETHERTYPE_IPV4) {
-                    continue;
-                }
-                let Some(packet) = net::ipv4::parse(&frame[netdev::ETHERNET_HEADER_LEN..]) else {
-                    continue;
-                };
-                if packet.header.protocol != net::ipv4::PROTOCOL_ICMP {
-                    continue;
-                }
-                let at = netdev::ETHERNET_HEADER_LEN + packet.payload_at;
-                let icmp = &frame[at..at + packet.payload_len];
-                let Some(message) = net::icmp::parse(icmp) else {
-                    continue;
-                };
-                if message.kind != net::icmp::DESTINATION_UNREACHABLE
-                    || message.code != net::icmp::PORT_UNREACHABLE
-                {
-                    continue;
-                }
-                // The original datagram the error carries names the sender
-                // this stack claimed to be: its IPv4 header parses, and the
-                // UDP header inside it answers the port the datagram was
-                // sent from.  A refusal about somebody else's datagram is
-                // not this boot's evidence.
-                let original = &icmp[net::icmp::ORIGINAL_DATAGRAM_AT..];
-                let Some(embedded) = net::ipv4::parse(original) else {
-                    continue;
-                };
-                let Some(datagram) = net::udp::parse(
-                    &original[embedded.payload_at..],
-                    embedded.header.source,
-                    embedded.header.destination,
-                ) else {
-                    continue;
-                };
-                if datagram.source_port != OUR_PORT {
-                    continue;
-                }
-                arch::serial::write_str("protofire: udp sent from port ");
-                arch::serial::write_u32(OUR_PORT as u32);
-                arch::serial::write_str(", refused by ");
-                write_ipv4(packet.header.source);
-                arch::serial::write_str(": port unreachable, waited ");
-                arch::serial::write_u32(waits);
-                arch::serial::write_str(" time(s)\n");
-                return true;
-            }
-            Ok(None) => {
-                waits += 1;
-                if waits > TURNS {
-                    arch::serial::write_str("protofire: udp datagram went unanswered after ");
+    if card.post_receive_buffer().is_err() {
+        arch::serial::write_str("protofire: udp could not post a receive buffer\n");
+        return false;
+    }
+    for attempt in 0..SEND_ATTEMPTS {
+        if let Err(error) = card.submit_frame(&outbound[..packet_len]) {
+            arch::serial::write_str("protofire: udp could not send the datagram: ");
+            arch::serial::write_str(match error {
+                abi::Error::TimedOut => "timed out",
+                abi::Error::Busy => "busy",
+                abi::Error::DeviceError => "device error",
+                _ => "error",
+            });
+            arch::serial::write_str("\n");
+            return false;
+        }
+
+        let attempt_end = (attempt + 1) * (TURNS + 1);
+        let mut frame = [0_u8; virtio_net::RECEIVE_BUFFER_LEN];
+        loop {
+            match card.receive_frame(&mut frame) {
+                Ok(Some(length)) => {
+                    let _ = card.post_receive_buffer();
+                    let frame = &frame[..length];
+                    if netdev::ethertype(frame) != Some(net::ethernet::ETHERTYPE_IPV4) {
+                        continue;
+                    }
+                    let Some(packet) = net::ipv4::parse(&frame[netdev::ETHERNET_HEADER_LEN..])
+                    else {
+                        continue;
+                    };
+                    if packet.header.protocol != net::ipv4::PROTOCOL_ICMP {
+                        continue;
+                    }
+                    let at = netdev::ETHERNET_HEADER_LEN + packet.payload_at;
+                    let icmp = &frame[at..at + packet.payload_len];
+                    let Some(message) = net::icmp::parse(icmp) else {
+                        continue;
+                    };
+                    if message.kind != net::icmp::DESTINATION_UNREACHABLE
+                        || message.code != net::icmp::PORT_UNREACHABLE
+                    {
+                        continue;
+                    }
+                    // The original datagram the error carries names the
+                    // sender this stack claimed to be: its IPv4 header
+                    // parses, and the UDP header inside it answers the port
+                    // the datagram was sent from.  A refusal about somebody
+                    // else's datagram is not this boot's evidence.
+                    let original = &icmp[net::icmp::ORIGINAL_DATAGRAM_AT..];
+                    let Some(embedded) = net::ipv4::parse(original) else {
+                        continue;
+                    };
+                    let Some(datagram) = net::udp::parse(
+                        &original[embedded.payload_at..],
+                        embedded.header.source,
+                        embedded.header.destination,
+                    ) else {
+                        continue;
+                    };
+                    if datagram.source_port != OUR_PORT {
+                        continue;
+                    }
+                    arch::serial::write_str("protofire: udp sent from port ");
+                    arch::serial::write_u32(OUR_PORT as u32);
+                    arch::serial::write_str(", refused by ");
+                    write_ipv4(packet.header.source);
+                    arch::serial::write_str(": port unreachable, waited ");
                     arch::serial::write_u32(waits);
-                    arch::serial::write_str(" turn(s)\n");
+                    arch::serial::write_str(" time(s)\n");
+                    return true;
+                }
+                Ok(None) => {
+                    waits += 1;
+                    if waits >= attempt_end {
+                        break;
+                    }
+                    wait_one_turn(frequency);
+                }
+                Err(_) => {
+                    arch::serial::write_str("protofire: udp receive buffer too small\n");
                     return false;
                 }
-                wait_one_turn(frequency);
-            }
-            Err(_) => {
-                arch::serial::write_str("protofire: udp receive buffer too small\n");
-                return false;
             }
         }
     }
+
+    arch::serial::write_str("protofire: udp datagram went unanswered after ");
+    arch::serial::write_u32(waits);
+    arch::serial::write_str(" turn(s)\n");
+    false
 }
 
 /// Spend one bounded turn waiting for a frame: arm the machine's timer for a
