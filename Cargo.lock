@@ -283,6 +283,7 @@ dependencies = [
  "vga",
  "virtio_block",
  "virtio_core",
+ "virtio_gpu",
  "virtio_input",
  "virtio_net",
  "xhci",
@@ -496,6 +497,10 @@ dependencies = [
  "abi",
  "pci",
 ]
+
+[[package]]
+name = "virtio_gpu"
+version = "0.1.0"
 
 [[package]]
 name = "virtio_input"

@@ -1,0 +1,18 @@
+[package]
+name = "virtio_gpu"
+description = "the VirtIO GPU wire format: the control header, the 2D and 3D command bodies, and the responses"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The VirtIO GPU wire format and nothing else: the control header every command
+# carries, the command and response numbers, the 2D command bodies, the 3D
+# command bodies, and the display-info answer.
+#
+# It names nothing of this tree, which is what lets every offset be asserted on
+# a host: a command is the same bytes wherever it is built, so its layout is a
+# fact about a specification and not about a machine.  The half that needs a
+# device -- mapping a BAR, posting the control queue, owning the scanout memory
+# -- is the machine's, the same split `nvme`, `ahci` and `xhci` make.
+[dependencies]

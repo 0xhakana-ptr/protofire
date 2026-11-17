@@ -85,6 +85,17 @@ impl Machine {
         matches!(self, Self::X8664)
     }
 
+    /// Whether this machine is given a virtio GPU.
+    ///
+    /// One machine, and a property of the machine rather than of the driver:
+    /// `q35` carries a PCIe bus the device attaches to, and the other two
+    /// machines' trees carry the display each machine's own device model
+    /// supplies.  The question is asked here rather than in three places so a
+    /// machine that gains a GPU answers it once.
+    pub(crate) const fn has_gpu(self) -> bool {
+        matches!(self, Self::X8664)
+    }
+
     /// Whether this machine is given an xHCI controller with devices on its
     /// bus.
     ///
@@ -225,6 +236,15 @@ impl Machine {
                 // second `1234:1111` for that probe to choose between.
                 "-vga".to_string(),
                 "none".to_string(),
+                // The virtio GPU: a second display function, and the one this
+                // boot proves a scanout through.  `q35` already carries a
+                // bochs display, which the kernel's own probe finds and uses
+                // as the console; this one is separate, and its evidence is a
+                // band the boot paints and a screendump outside the guest
+                // reads back.  Modern interface only, for the reason every
+                // virtio device here asks it: this tree has no legacy parser.
+                "-device".to_string(),
+                "virtio-gpu-pci,disable-legacy=on,id=gpu0".to_string(),
                 "-device".to_string(),
                 "VGA,id=disp0".to_string(),
                 // The same key over the virtio transport the disks ride.

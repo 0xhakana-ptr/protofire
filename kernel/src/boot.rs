@@ -90,6 +90,7 @@ pub fn kernel_main() -> ! {
     crate::ahci::bring_up();
     crate::xhci::bring_up();
     crate::virtio_input::bring_up();
+    crate::virtio_gpu::bring_up();
     let namespace = crate::volume::mount_everything();
     // The mount is where the kernel first allocates in volume, so it is where a
     // check reading a second view of the arena stops agreeing with the
@@ -111,6 +112,15 @@ pub fn kernel_main() -> ! {
         arch::serial::write_u32(crate::console_screen::rows() as u32);
         arch::serial::write_str(" cell(s)\n");
     }
+
+    // The virtio GPU, when the machine has one: its mode is the device's own
+    // answer, the resource is backed by memory this kernel owns, and the band
+    // it presents is the evidence a screendump reads from outside the guest.
+    // After the display probe because the two are different devices on the
+    // same machine and the bochs one owns the console; this one is proven, not
+    // drawn on.
+    crate::virtio_gpu::announce();
+    crate::virtio_gpu::prove();
 
     // The registry that outlives this function, and the policy proven through
     // it rather than beside it.

@@ -65,6 +65,18 @@ const DEVICE_VIRTIO_INPUT_MODERN: u16 = 0x1052;
 const DEVICE_VIRTIO_INPUT_TRANSITIONAL: u16 = 0x1012;
 const CLASS_INPUT: u8 = 0x09;
 
+/// A virtio GPU's ids: device 16 over the PCI transport.
+///
+/// `0x1040` plus sixteen is `0x1050` for the modern interface and `0x1000` plus
+/// sixteen is `0x1010` for the transitional one.  The class is the display
+/// controller's, `0x03`, which QEMU's own monitor reports for
+/// `virtio-gpu-pci`; it is the check that matters for the reason the other
+/// scans give, so the ids are what the boot's line reports rather than what the
+/// scan tests.
+const DEVICE_VIRTIO_GPU_MODERN: u16 = 0x1050;
+const DEVICE_VIRTIO_GPU_TRANSITIONAL: u16 = 0x1010;
+const CLASS_DISPLAY: u8 = 0x03;
+
 /// AHCI's class code: `0x01` mass storage, `0x06` SATA.
 ///
 /// The ids are not the check -- QEMU's `ich9-ahci` reports Intel's `8086:2922`
@@ -1087,6 +1099,26 @@ pub fn find_virtio_input() -> Option<FoundVirtio> {
         class: CLASS_INPUT,
     };
     let (transport, device, config) = find_virtio(&ids, "virtio-input")?;
+    Some(FoundVirtio {
+        transport,
+        device,
+        config,
+    })
+}
+
+/// Scan the bus for a virtio GPU, and bring up its transport.
+///
+/// `None` on a machine with no device, which is the ordinary state on two of
+/// the three machines: QEMU's `virt`: the other two machines' trees carry the
+/// display each machine's own firmware or device model supplies, and a required
+/// virtio GPU on them would be a requirement the machine cannot meet.
+pub fn find_virtio_gpu() -> Option<FoundVirtio> {
+    let ids = VirtioIds {
+        modern: DEVICE_VIRTIO_GPU_MODERN,
+        transitional: DEVICE_VIRTIO_GPU_TRANSITIONAL,
+        class: CLASS_DISPLAY,
+    };
+    let (transport, device, config) = find_virtio(&ids, "virtio-gpu")?;
     Some(FoundVirtio {
         transport,
         device,

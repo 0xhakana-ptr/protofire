@@ -289,6 +289,15 @@
 # has to be above the framework — layer 7, beside `fs`.
 7 virtio_block
 
+# `virtio_gpu` is the GPU's wire format and nothing else: the 24-byte control
+# header, the command and response numbers, the 2D and 3D command bodies, and
+# the display-info answer.  It names no crate at all -- not `virtio_core`,
+# because a control command is the same bytes whoever posts it -- which is what
+# lets the whole layout be asserted on a host.  The half that needs a device is
+# `kernel/src/virtio_gpu.rs`, and the six wire errors the previous tree carried
+# are why the split exists rather than being tidiness.
+0 virtio_gpu
+
 # `virtio_input` is the input device on the same framework: one event queue
 # whose buffers the driver keeps posted, and the eight-byte event the
 # specification defines.  It is a new driver rather than a relocation -- the

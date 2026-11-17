@@ -192,7 +192,7 @@ pub(crate) fn run(
     profile: &str,
     timeout: u64,
     log: Option<&Path>,
-) -> Result<String> {
+) -> Result<Boot> {
     build(machine, profile)?;
 
     let image = image_path(machine, profile);
@@ -346,6 +346,24 @@ pub(crate) fn run(
             qmp_path.display()
         ));
     }
+
+    // Where the sweep of the machine's screen goes.
+    //
+    // A PPM written by QEMU's own `screendump`, which reads the **host's**
+    // image of a scanout rather than anything the guest says about it.  That is
+    // the whole point of it: a boot's line is the driver's claim and a
+    // screendump is the device's state, and only the second can say a pixel
+    // reached a display.  A machine with no GPU has no screen and no file.
+    let screen_path = machine.has_gpu().then(|| {
+        std::env::temp_dir().join(format!(
+            "protofire-{}-{}.ppm",
+            machine.triple(),
+            std::process::id()
+        ))
+    });
+    if let Some(path) = screen_path.as_ref() {
+        let _ = std::fs::remove_file(path);
+    }
     command
         .args(&machine_arguments)
         .arg("-kernel")
@@ -373,6 +391,35 @@ pub(crate) fn run(
     let mut child = command
         .spawn()
         .with_context(|| format!("starting {}", machine.qemu()))?;
+
+    // The screen, read from the device rather than from the guest.
+    //
+    // The boot paints a band and presents it, and the band is only visible if
+    // the whole path ran: the resource was created, memory was attached, a
+    // scanout pointed at it, the pixels were transferred into the host's image,
+    // and that image was flushed.  So the thread waits for the boot's own
+    // presented line and then asks QEMU for a screendump, which is the host's
+    // image of the scanout.  A boot that never printed the line leaves no file,
+    // and the gate's screen check says so.
+    if let Some(screen_path) = screen_path.clone() {
+        let log_for_screen = log_path.clone();
+        let qmp_for_screen = qmp_path.clone();
+        std::thread::spawn(move || {
+            for _ in 0..600 {
+                if std::fs::read_to_string(&log_for_screen)
+                    .map(|text| text.contains("protofire: virtio-gpu scanout "))
+                    .unwrap_or(false)
+                {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            // One more tick's worth of time, so the presentation the line
+            // reports is not racing the read of it.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            screendump(&qmp_for_screen, &screen_path);
+        });
+    }
 
     if machine.has_xhci() {
         // SAFETY: irrelevant -- this is a host side, not a guest one.
@@ -441,13 +488,30 @@ pub(crate) fn run(
 
     let text = std::fs::read_to_string(&log_path)
         .with_context(|| format!("reading the serial log at {}", log_path.display()))?;
+    let screen = screen_path
+        .as_ref()
+        .and_then(|path| std::fs::read(path).ok());
     if log.is_none() {
         // A temporary log is this run's only copy; a caller that wants to read
         // it after a failure has to ask for a path.
         let _ = std::fs::remove_file(&log_path);
     }
+    if let Some(path) = screen_path.as_ref() {
+        let _ = std::fs::remove_file(path);
+    }
     let _ = std::fs::remove_file(&qmp_path);
-    Ok(text)
+    Ok(Boot { log: text, screen })
+}
+
+/// One boot: what the serial port said, and what the screen showed.
+///
+/// The screen is a screendump's bytes, taken after the boot reported its
+/// scanout, and `None` on a machine with no GPU.  It is a PPM, which is the
+/// format QEMU's own `screendump` writes and one this tool can parse without a
+/// decoder crate: a text header and then three bytes a pixel.
+pub(crate) struct Boot {
+    pub log: String,
+    pub screen: Option<Vec<u8>>,
 }
 
 /// Type one key at the virtio keyboard, through QMP.
@@ -511,3 +575,46 @@ fn send_key_over_qmp(qmp_path: &std::path::Path, qcode: &str) {
 /// console no keyboard is bound to, which QEMU refuses with "not bound to a
 /// QemuConsole" rather than delivering it anywhere.
 const VGA_CONSOLE_ID: &str = "disp0";
+
+/// Ask QEMU for a screendump of the virtio GPU's scanout, into `path`.
+///
+/// A screendump reads the **host's** image of the display, which is the only
+/// thing that can say a guest's pixels reached a screen: the guest's own line
+/// says what the driver asked for, and the transfer and the flush are what put
+/// the bytes where a display reads them.  The device is named rather than
+/// chosen because a machine with two displays would otherwise be a screendump
+/// of whichever one QEMU picked.
+///
+/// A failure is silent: the gate reads the file, and a missing file is the
+/// sentence it wants to print.
+fn screendump(qmp_path: &std::path::Path, path: &std::path::Path) {
+    use std::io::Read as _;
+    use std::io::Write as _;
+
+    let mut connected = None;
+    for _ in 0..100 {
+        match std::os::unix::net::UnixStream::connect(qmp_path) {
+            Ok(stream) => {
+                connected = Some(stream);
+                break;
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    let Some(mut stream) = connected else {
+        return;
+    };
+    let mut reply = [0u8; 4096];
+    let _ = stream.read(&mut reply);
+    let _ = writeln!(stream, "{{\"execute\":\"qmp_capabilities\"}}");
+    let _ = stream.read(&mut reply);
+    let _ = writeln!(
+        stream,
+        "{{\"execute\":\"screendump\",\"arguments\":{{\"filename\":\"{}\",\"device\":\"{GPU_CONSOLE_ID}\"}}}}",
+        path.display()
+    );
+    let _ = stream.read(&mut reply);
+}
+
+/// The virtio GPU's device id, as the machine's arguments name it.
+const GPU_CONSOLE_ID: &str = "gpu0";

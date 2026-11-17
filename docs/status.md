@@ -216,6 +216,50 @@ this one.  `input-send-event`'s `device` argument is a **console** and not a
 device: a version that passed a keyboard's id made QEMU abort with
 `Property 'qemu-fixed-text-console.device' not found`.
 
+The virtio GPU is also up, and its scanout is **visible from outside the
+guest**.  `drivers/display/virtio_gpu` at layer 0 holds the wire format: the
+24-byte control header, the command and response numbers, the 2D and 3D bodies,
+and the display-info answer, with twenty-three host tests.  The machine's half
+is `kernel/src/virtio_gpu.rs`: it finds the function, walks the status
+sequence, queries `GET_DISPLAY_INFO`, creates a 2D resource in
+`B8G8R8X8_UNORM`, attaches a page-aligned backing of its own, points scanout
+zero at it, and then transfers and flushes.  Its evidence, required lines of
+the x86_64 gate:
+
+```
+protofire: virtio-gpu display 1280x800 at 0,0, resource 1 on scanout 0
+protofire: virtio-gpu scanout 1280x800, 16 row(s) of 0x2080e0 presented
+```
+
+The mode is the **device's** answer rather than a constant, and the size the
+resource was made is that answer's.  The second line is the driver's claim; the
+gate's screen check is the other half, and it is what makes this different from
+every other device here.  `xtask` asks QEMU for a `screendump` over QMP once
+the presented line appears, which is the **host's** image of the scanout, parses
+the PPM, and requires every pixel of the band's sixteen rows to be the colour
+the boot named and row sixteen not to be.  Both halves were measured to fail on
+their own: a changed proof colour failed the serial line, and a gate expecting
+twelve rows where the guest painted sixteen failed with
+`the band runs past its 12 rows; the pixel at row 12 reads [32, 128, 224]` --
+the real pixel the device was showing.
+
+The crate exists because of six wire errors the previous tree carried, and each
+would have made its 3D path silently useless.  `CTX_CREATE` was `0x0201` where
+the enum makes it `0x0200`, `CTX_DESTROY` was `0x0202` where it is `0x0201`,
+`SUBMIT_3D` was `0x0208` where it is `0x0207`; `RESOURCE_CREATE_3D` named its
+last three words `levels`, `num_samples` and `stride` where the specification
+has `last_level`, `nr_samples` and `flags`, and dropped its padding;
+`TRANSFER_HOST_3D` put the resource id before the box so the device read the
+box's `x` as the id; and `RESOURCE_CREATE_2D` and `RESOURCE_FLUSH` were sized
+from a reader's count of their words rather than from their structs.  Every one
+of them is asserted by a host test now.
+
+The nine GPU syscalls (`181..=189`, VIRGL 3D) are **not** landed, and the
+reason is the machine rather than the tree: they need a guest-owned resource
+table, a DMA path from a user buffer, and `VIRTIO_GPU_F_VIRGL`, which QEMU's
+`virtio-gpu-pci` does not offer and `virtio-gpu-gl-pci` will not start without
+an OpenGL display backend this host cannot give it.
+
 The PC speaker is the one driver whose value a serial port cannot carry: the
 boot plays 1000 Hz and silences it, and
 `protofire: pcspkr played 1000 Hz, then silenced` is the required line.  What a

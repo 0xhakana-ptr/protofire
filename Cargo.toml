@@ -29,6 +29,7 @@ members = [
     "drivers/storage/ahci",
     "drivers/usb/xhci",
     "drivers/display/vga",
+    "drivers/display/virtio_gpu",
     "drivers/net/e1000",
     "libs/allocator",
     "libs/audit",

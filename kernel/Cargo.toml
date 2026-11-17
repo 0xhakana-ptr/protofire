@@ -75,6 +75,10 @@ xhci = { path = "../drivers/usb/xhci" }
 # event's wire shape is the crate's; what an evdev key code means to this
 # boot's console is this crate's file.
 virtio_input = { path = "../drivers/virtio/input" }
+# The VirtIO GPU's wire format: the control header, the command and
+# response numbers, the 2D and 3D bodies, and the display-info answer.
+# What it cannot hold is a device, which is what `virtio_gpu.rs` is.
+virtio_gpu = { path = "../drivers/display/virtio_gpu" }
 # The network card.  A boot with one exercises the frame path; a boot without
 # one is the ordinary state on two of the three machines, and the driver prints
 # nothing then.

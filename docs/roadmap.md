@@ -1096,8 +1096,8 @@ size.
    input path before the USB one.  They come after the framebuffer console
    because that console is what they draw into.
 
-   **`virtio_input` has landed** and **`virtio_gpu` has not.**  The input
-   device is `drivers/virtio/input` at layer 7: one event queue whose buffers
+   **Both have landed.**  The input device is `drivers/virtio/input` at layer
+   7: one event queue whose buffers
    the driver keeps posted, the eight-byte event the specification defines
    (`type: le16`, `code: le16`, `value: le32`), and a `drain` that hands the
    caller the event rather than a meaning.  What an evdev code means to a
@@ -1124,10 +1124,59 @@ size.
    **console** and not a device: a version that passed a keyboard's id made
    QEMU abort with `Property 'qemu-fixed-text-console.device' not found`.
 
-   `virtio_gpu` is 1,605 lines in the old tree plus the nine GPU syscalls, and
-   it is deliberately its own round: it needs a resource the guest owns, a
-   command queue, and an ABI for mapping a framebuffer into a program, none of
-   which the input device shares.
+   The GPU is `drivers/display/virtio_gpu` at layer 0, holding the wire format
+   and nothing else: the 24-byte control header, the command and response
+   numbers, the 2D bodies, the 3D bodies, and the display-info answer.  The
+   machine's half is `kernel/src/virtio_gpu.rs`, which finds the function,
+   walks the status sequence, posts control commands, owns a page-aligned
+   backing for the scanout, and paints and presents a band.  Its evidence,
+   required lines of the x86_64 gate:
+
+   ```
+   protofire: virtio-gpu display 1280x800 at 0,0, resource 1 on scanout 0
+   protofire: virtio-gpu scanout 1280x800, 16 row(s) of 0x2080e0 presented
+   ```
+
+   **The screen is checked from outside the guest**, and that half is the
+   point.  A serial line is the driver's claim; a screendump is the host's
+   image of the scanout, and only it can say a pixel reached a display.  So the
+   gate asks QEMU for one over QMP once the presented line appears, parses the
+   PPM, and requires that every pixel of the band's sixteen rows is the colour
+   the boot named and that row sixteen is not.  Both halves were measured to
+   fail on their own: a changed colour fails the serial line, and a gate that
+   expected twelve rows where the guest painted sixteen failed with
+   `the band runs past its 12 rows; the pixel at row 12 reads [32, 128, 224]`,
+   which is the real pixel the device was showing.
+
+   Six wire errors the previous tree carried, every one of them a reason its
+   3D path could never have worked, and all six caught by this crate's host
+   tests before a boot:
+
+   - `CTX_CREATE` was `0x0201` where the specification's enum makes it
+     `0x0200`, and `CTX_DESTROY` was `0x0202` where it is `0x0201`: the two
+     were each one past where they belong.
+   - `SUBMIT_3D` was `0x0208` where it is `0x0207`, the first number past the
+     3D group's last member.
+   - `RESOURCE_CREATE_3D` named its last three words `levels`, `num_samples`
+     and `stride` where the specification has `last_level`, `nr_samples` and
+     `flags`, and dropped the padding word the struct ends with.
+   - `TRANSFER_HOST_3D` put `resource_id` first, after the header, where the
+     layout has a box of six words, then a 64-bit offset, and only then the
+     resource id -- so the device read the box's `x` as a resource.
+   - `RESOURCE_CREATE_2D` and `RESOURCE_FLUSH` were sized from a reader's
+     count of their words rather than from their structs, so both bodies were
+     one field short.
+   - `TRANSFER_TO_HOST_2D` declared its `resource_id` before the offset and
+     the rectangle, which makes QEMU answer `RESP_ERR_INVALID_RESOURCE_ID` --
+     a message that names the wrong field.
+
+   What this round deliberately does not land is the nine GPU syscalls
+   (`181..=189`, VIRGL 3D): they need a guest-owned resource table, a DMA
+   mapping path from a user buffer, and a host with OpenGL for the emulator to
+   offer `VIRTIO_GPU_F_VIRGL` at all.  This machine's `virtio-gpu-pci` reports
+   no VIRGL, and `virtio-gpu-gl-pci` refuses to start without an OpenGL display
+   backend, so a syscall with a device behind it is the change that needs a
+   machine this host can configure rather than a driver this tree can write.
 6. **`pcspkr`**, last: one line of value, and it needs a timer nobody has
    asked for.
 

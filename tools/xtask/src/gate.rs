@@ -963,6 +963,17 @@ impl Machine {
                 // bound to, whose event is this line.  One line per path is
                 // what says each path delivered rather than one of them.
                 ("protofire: virtio-input up, event queue posted", true),
+                // The virtio GPU: the mode is the **device's** answer to
+                // GET_DISPLAY_INFO, not a constant the driver chose, and the
+                // two numbers are what the hardware said its display was.  The
+                // screen check then reads the band the second line reports out
+                // of a screendump, which is the half a serial log cannot carry.
+                ("protofire: virtio-gpu display ", false),
+                ("protofire: virtio-gpu scanout ", false),
+                (
+                    "protofire: virtio-gpu scanout 1280x800, 16 row(s) of 0x2080e0 presented",
+                    true,
+                ),
                 ("[vioin] device event: kind=1, code=48, value=1", true),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
@@ -2500,7 +2511,8 @@ pub(crate) fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()>
         );
     }
 
-    let log = run(machine, profile, timeout, None)?;
+    let boot = run(machine, profile, timeout, None)?;
+    let log = boot.log.clone();
     // The shared rows, then the ones this machine's own tree produces.  Both
     // are required, and neither is a fallback for the other.
     let all_required = required
@@ -2618,6 +2630,19 @@ pub(crate) fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()>
         }
     }
 
+    // The screen, read from the device rather than from the guest.
+    //
+    // A boot's line says what the driver asked for; a screendump is the host's
+    // image of the scanout, and only it can say a pixel reached a display.  The
+    // band the boot paints is `PROOF_ROWS` rows of one colour across the top of
+    // the surface, so the check is that every pixel of those rows is the colour
+    // the boot's line names and that the row below is not: a band that wrapped,
+    // a stride that was wrong, or a transfer that never ran all fail one of the
+    // two.
+    if machine.has_gpu() {
+        check_screen(boot.screen.as_deref(), machine.label())?;
+    }
+
     println!(
         "check passed: {} ({}) printed {} required line(s) and reached its heap",
         machine.label(),
@@ -2625,6 +2650,122 @@ pub(crate) fn check(machine: Machine, profile: &str, timeout: u64) -> Result<()>
         required_count
     );
     Ok(())
+}
+
+/// The proof band's colour, as the guest writes it: blue, green, red, unused.
+///
+/// Two copies of one number, here and in `kernel/src/virtio_gpu.rs`, for the
+/// reason every device constant is two copies: the guest paints it and the host
+/// reads it back, and a drift is a band the gate cannot find.
+const PROOF_PIXEL_BLUE: u8 = 0xE0;
+const PROOF_PIXEL_GREEN: u8 = 0x80;
+const PROOF_PIXEL_RED: u8 = 0x20;
+
+/// How many rows the band covers, as the guest paints them.
+const PROOF_ROWS: usize = 16;
+
+/// Require the screendump to carry the band the boot painted.
+///
+/// A PPM is three bytes a pixel behind a text header, and the header is where
+/// the width and height come from: the band's width is the surface's, which is
+/// the device's own answer rather than a number this tool guessed.
+fn check_screen(screen: Option<&[u8]>, machine: &str) -> Result<()> {
+    let Some(screen) = screen else {
+        bail!(
+            "check failed: {machine} has a virtio GPU and its screen was never read; \
+             the boot did not report a presented scanout, or the screendump failed"
+        );
+    };
+    let Some((width, height, pixels)) = parse_ppm(screen) else {
+        bail!(
+            "check failed: the screendump is not a P6 PPM this tool can read ({} bytes)",
+            screen.len()
+        );
+    };
+    if height < PROOF_ROWS + 1 {
+        bail!("check failed: the screen is {height} rows, too short to carry the band");
+    }
+
+    // The band's colour, in the order a PPM writes it: red, green, blue.
+    let band = [PROOF_PIXEL_RED, PROOF_PIXEL_GREEN, PROOF_PIXEL_BLUE];
+    let mut wrong = 0usize;
+    let mut first_wrong: Option<(usize, usize, [u8; 3])> = None;
+    for row in 0..PROOF_ROWS {
+        for column in 0..width {
+            let at = (row * width + column) * 3;
+            let pixel = [pixels[at], pixels[at + 1], pixels[at + 2]];
+            if pixel != band {
+                wrong += 1;
+                if first_wrong.is_none() {
+                    first_wrong = Some((column, row, pixel));
+                }
+            }
+        }
+    }
+    if wrong != 0 {
+        let (column, row, pixel) = first_wrong.expect("a wrong pixel names itself");
+        bail!(
+            "check failed: {wrong} of {} band pixel(s) are not {band:?}; \
+             the first is at ({column}, {row}) and reads {pixel:?}",
+            width * PROOF_ROWS
+        );
+    }
+
+    // And the row past the band is not the band's colour: a paint that covered
+    // the whole surface, or a height read from the wrong field, would satisfy
+    // the loop above and say nothing about where the band ended.
+    let at = (PROOF_ROWS * width) * 3;
+    let below = [pixels[at], pixels[at + 1], pixels[at + 2]];
+    if below == band {
+        bail!(
+            "check failed: the band runs past its {PROOF_ROWS} rows; \
+             the pixel at row {PROOF_ROWS} reads {below:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Read a binary PPM's header, and answer its size and its pixels.
+///
+/// `P6`, then the width, the height and the maximum value, each separated by
+/// whitespace, then three bytes a pixel.  QEMU's `screendump` writes exactly
+/// that and nothing more, which is why a parser this small is enough.
+fn parse_ppm(bytes: &[u8]) -> Option<(usize, usize, &[u8])> {
+    let magic_end = bytes.iter().position(|byte| *byte == b'\n')?;
+    if &bytes[..magic_end] != b"P6" {
+        return None;
+    }
+    let mut at = magic_end + 1;
+    let mut fields = [0usize; 3];
+    for field in fields.iter_mut() {
+        let start = at;
+        while at < bytes.len() && bytes[at].is_ascii_digit() {
+            at += 1;
+        }
+        if at == start {
+            return None;
+        }
+        *field = core::str::from_utf8(&bytes[start..at]).ok()?.parse().ok()?;
+        // Exactly one whitespace byte separates a field from what follows, and
+        // after the third it separates the header from the pixels.  A loop that
+        // skipped a **run** of whitespace would eat the first pixel byte when
+        // that byte happened to be one, and this band's first byte is a space:
+        // `0x20` is the red channel of `0x2080e0`.  Measured, the first version
+        // of this parser read a correct screendump and called it unreadable.
+        if at >= bytes.len() || !bytes[at].is_ascii_whitespace() {
+            return None;
+        }
+        at += 1;
+    }
+    let (width, height, maximum) = (fields[0], fields[1], fields[2]);
+    if maximum != 255 || width == 0 || height == 0 {
+        return None;
+    }
+    let pixels = bytes.get(at..)?;
+    if pixels.len() < width * height * 3 {
+        return None;
+    }
+    Some((width, height, pixels))
 }
 
 /// Whether a serial log contains a line, exactly.
