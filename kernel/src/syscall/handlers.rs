@@ -1703,6 +1703,12 @@ pub fn shm_get(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resu
     if bytes == 0 || bytes > memory_abi::MAP_MAX_BYTES {
         return Err(Error::InvalidArgument);
     }
+    // Negative identifiers belong to `IPC_PRIVATE`.  Letting a named key use
+    // one would collide with the counter that hands private identifiers out,
+    // making two regions share a name.
+    if key < memory_abi::IPC_PRIVATE {
+        return Err(Error::InvalidArgument);
+    }
     let create = flags & memory_abi::IPC_CREAT != 0;
     // A key the caller names must exist unless it asked to create it, which is
     // the whole of what `IPC_CREAT` means; `IPC_PRIVATE` skips the question
@@ -1710,7 +1716,10 @@ pub fn shm_get(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resu
     if key != memory_abi::IPC_PRIVATE && !create {
         #[cfg(target_os = "none")]
         {
-            crate::shm::target::lookup(key).ok_or(Error::NotFound)?;
+            let region = crate::shm::target::lookup(key).ok_or(Error::NotFound)?;
+            if region.lock().marked() {
+                return Err(Error::Busy);
+            }
         }
         #[cfg(not(target_os = "none"))]
         return Err(Error::NotImplemented);
@@ -1718,27 +1727,26 @@ pub fn shm_get(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resu
 
     #[cfg(target_os = "none")]
     {
-        // An identifier the caller already holds answers it again: the second
-        // `ShmGet` of a key is a lookup and not a second region, which is what
-        // makes a key a name rather than a reference count.
-        if key != memory_abi::IPC_PRIVATE
-            && let Some(existing) = crate::shm::target::lookup(key)
-        {
-            let region = existing.lock();
-            if bytes > region.bytes() {
-                // A region cannot be grown, and answering a smaller request
-                // from a bigger region is what the design says: the caller
-                // asked for room, and there is at least that much.
+        let identifier = if key == memory_abi::IPC_PRIVATE {
+            let identifier = crate::shm::target::next_private();
+            crate::shm::target::create(identifier, bytes).ok_or(Error::OutOfMemory)?;
+            identifier
+        } else if create {
+            // Lookup and creation are one operation.  A split lookup/create
+            // lets two CPUs both create the same named key.
+            crate::shm::target::get_or_create(key, bytes)?;
+            key
+        } else {
+            let existing = crate::shm::target::lookup(key).ok_or(Error::NotFound)?;
+            let existing = existing.lock();
+            if existing.marked() {
+                return Err(Error::Busy);
+            }
+            if bytes > existing.bytes() {
                 return Err(Error::InvalidArgument);
             }
-            return Ok(Dispatch::complete(key as usize));
-        }
-        let identifier = if key == memory_abi::IPC_PRIVATE {
-            crate::shm::target::next_private()
-        } else {
             key
         };
-        crate::shm::target::create(identifier, bytes).ok_or(Error::OutOfMemory)?;
         Ok(Dispatch::complete(identifier as usize))
     }
     #[cfg(not(target_os = "none"))]
@@ -1783,11 +1791,10 @@ pub fn shm_at(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resul
 
     #[cfg(target_os = "none")]
     {
-        // The count goes up only after the mapping exists, so an attach that
-        // failed is one nothing counts.
-        let base = crate::shm::target::attach(identifier, writable, executable)
-            .ok_or(Error::OutOfMemory)?;
-        let _ = crate::shm::target::noted_attach(identifier);
+        // `attach` owns the whole transition: pending, mapping, then the
+        // attached count.  A second count here would make one mapping look like
+        // two and prevent `IPC_RMID` from ever reaching zero.
+        let base = crate::shm::target::attach(identifier, writable, executable)?;
         Ok(Dispatch::complete(base))
     }
     #[cfg(not(target_os = "none"))]

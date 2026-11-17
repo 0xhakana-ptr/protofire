@@ -68,6 +68,14 @@ pub struct Region {
     key: i32,
     /// How many attaches exist right now, this caller's included.
     attaches: usize,
+    /// How many attaches are being built and are not counted yet.
+    ///
+    /// A region can be marked for destruction while an attach is between
+    /// "looked up" and "mapped".  The attach count is zero in that window, so a
+    /// mark that looked only at it could remove the region and free frames the
+    /// attach is about to map.  The pending count closes that window: a marked
+    /// region is removable only when both counts are zero.
+    pending: usize,
     /// Whether `IPC_RMID` said to free the region when the last one goes.
     marked: bool,
     /// The region's length in bytes, which every attach maps whole.
@@ -90,6 +98,11 @@ impl Region {
         self.attaches
     }
 
+    /// How many attaches are in flight.
+    pub fn pending(&self) -> usize {
+        self.pending
+    }
+
     /// Whether `IPC_RMID` has been asked for.
     pub fn marked(&self) -> bool {
         self.marked
@@ -109,6 +122,7 @@ impl Region {
         Region {
             key,
             attaches: 0,
+            pending: 0,
             marked: false,
             bytes,
             frames: Vec::new(),
@@ -120,20 +134,65 @@ impl Region {
         Region {
             key,
             attaches: 0,
+            pending: 0,
             marked: false,
             bytes,
             frames,
         }
     }
+
+    /// Begin an attach that has not reached the region's count yet.
+    pub fn begin_attach(&mut self) -> bool {
+        if self.marked {
+            return false;
+        }
+        self.pending += 1;
+        true
+    }
+
+    /// Finish a pending attach: the mapping now counts as a real attachment.
+    pub fn finish_attach(&mut self) {
+        debug_assert!(self.pending > 0);
+        self.pending -= 1;
+        self.attaches += 1;
+    }
+
+    /// Abort a pending attach without changing the attach count.
+    pub fn abort_attach(&mut self) {
+        debug_assert!(self.pending > 0);
+        self.pending -= 1;
+    }
+
+    /// Count one attachment inherited by a fork.
+    ///
+    /// A marked region is still valid for an existing mapping, so inheritance
+    /// is allowed; it is a new attach to a region that cannot be removed while
+    /// the parent's attachment exists.
+    pub fn inherit_attach(&mut self) {
+        self.attaches += 1;
+    }
+
+    /// Drop one attachment, answering whether no mapping or attach remains.
+    pub fn detach_one(&mut self) -> bool {
+        if self.attaches == 0 {
+            return false;
+        }
+        self.attaches -= 1;
+        self.attaches == 0 && self.pending == 0
+    }
+
+    /// Whether the region can be removed from the table.
+    pub fn vacant(&self) -> bool {
+        self.attaches == 0 && self.pending == 0
+    }
 }
 
 /// The regions this boot has made.
 ///
-/// A `Vec` and not an array: this lock is taken for the length of one call and
-/// never while another lock of this kernel's is held, so growing it here is not
-/// the defect the scheduler's retired-space array avoids by being fixed.  The
-/// distinction is the reason that array is an array and this is not, and it is
-/// worth stating because a reader who has met one will expect the other.
+/// A `Vec` because the region namespace is dynamic: a boot may create any
+/// number of keys, and the table has no useful fixed ceiling.  The lock is
+/// held for the length of the table operation, and the allocation's lock order
+/// is stated at `get_or_create`.
 #[cfg(target_os = "none")]
 static REGIONS: sync::Mutex<Vec<Arc<sync::Mutex<Region>>>> = sync::Mutex::new(Vec::new());
 
@@ -185,6 +244,9 @@ pub fn identifier_for(
 ) -> Result<i32, abi::Error> {
     if key == abi::memory::IPC_PRIVATE {
         return Ok(private);
+    }
+    if key < abi::memory::IPC_PRIVATE {
+        return Err(abi::Error::InvalidArgument);
     }
     if find(regions, key).is_some() {
         return Ok(key);
@@ -303,6 +365,24 @@ mod tests {
         );
     }
 
+    /// The negative identifier range belongs to `IPC_PRIVATE`.
+    ///
+    /// Allowing a named key there lets a caller collide with the counter that
+    /// hands private identifiers out, which would make two regions answer one
+    /// name.
+    #[test]
+    fn a_named_key_cannot_enter_the_private_range() {
+        let regions = table(&[]);
+        assert_eq!(
+            identifier_for(&regions, -1, -7, true),
+            Err(abi::Error::InvalidArgument)
+        );
+        assert_eq!(
+            identifier_for(&regions, abi::memory::IPC_PRIVATE, -7, false),
+            Ok(-7)
+        );
+    }
+
     /// A fresh region is unattached, unmarked, and knows its own length.
     ///
     /// The three facts an attach depends on: an unmarked region is one no
@@ -313,6 +393,7 @@ mod tests {
         let region = make(0x10, 8192);
         assert_eq!(region.bytes(), 8192);
         assert_eq!(region.attaches(), 0);
+        assert_eq!(region.pending(), 0);
         assert!(!region.marked());
         assert_eq!(region.pages(), 2, "one page per 4096 bytes");
         assert!(
@@ -332,5 +413,59 @@ mod tests {
         assert_eq!(make(1, 4096).pages(), 1);
         assert_eq!(make(1, 4097).pages(), 2);
         assert_eq!(make(1, 0).pages(), 0, "and zero is no pages at all");
+    }
+
+    /// A pending attach keeps a marked region alive until it finishes.
+    ///
+    /// This is the race `IPC_RMID` has with `ShmAt`: the attach has found the
+    /// region but has not incremented `attaches` yet.  A region that was
+    /// removed in that window would hand the attach freed frames to map.
+    #[test]
+    fn a_pending_attach_keeps_a_marked_region_from_being_vacant() {
+        let mut region = make(7, 4096);
+        assert!(region.begin_attach());
+        region.marked = true;
+        assert!(
+            !region.vacant(),
+            "the in-flight attach still owns the region"
+        );
+
+        region.finish_attach();
+        assert_eq!(region.attaches(), 1);
+        assert_eq!(region.pending(), 0);
+        assert!(!region.vacant());
+
+        assert!(region.detach_one(), "the final attach makes it vacant");
+        assert!(region.vacant());
+    }
+
+    /// An aborted attach releases its reservation without inventing a mapping.
+    #[test]
+    fn an_aborted_pending_attach_leaves_no_attachment() {
+        let mut region = make(8, 4096);
+        assert!(region.begin_attach());
+        region.abort_attach();
+        assert_eq!(region.pending(), 0);
+        assert_eq!(region.attaches(), 0);
+        assert!(region.vacant());
+    }
+
+    /// A marked region refuses a new attach but still accepts inheritance.
+    ///
+    /// The parent already holds a mapping, so its fork is not what `IPC_RMID`
+    /// was asked to exclude.  A brand-new `ShmAt` is.
+    #[test]
+    fn a_marked_region_refuses_new_attaches_but_accepts_inheritance() {
+        let mut region = make(9, 4096);
+        region.attaches = 1;
+        region.marked = true;
+        assert!(!region.begin_attach());
+        assert_eq!(region.attaches(), 1);
+
+        region.inherit_attach();
+        assert_eq!(region.attaches(), 2);
+        assert!(!region.detach_one());
+        assert!(region.detach_one());
+        assert!(region.vacant());
     }
 }

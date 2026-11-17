@@ -8,9 +8,8 @@
 //! and a read-only view of the parent's pages.  An exec replaces the task's
 //! image with another program's and starts it from that image's first
 //! instruction, keeping the task, its pid and its window.  The release is the
-//! other end: pages go back once nothing walks them, and
-//! `Scheduler::reap_finished` argues why that moment is the end of the boot
-//! rather than each exit.
+//! other end: pages go back at the switch that leaves the old root, with a
+//! boot-end sweep remaining only as the fallback for a failed root install.
 
 use super::Scheduler;
 #[cfg(target_os = "none")]
@@ -96,7 +95,7 @@ impl Scheduler {
         // returns the pid in one process and zero in the other, which is the
         // whole of what `fork` answers.
         arch::set_return_value(child.context_mut(), 0);
-        self.tasks.push(child);
+        self.admit_task(child);
 
         // **The child starts with its parent's descriptors**, copied and owned
         // by the child.  A `fork` that handed the child nothing would make
@@ -463,7 +462,7 @@ impl Scheduler {
 
         let mut child = Task::new("child", entry, block_top, space);
         child.identify(pid, parent_pid);
-        self.tasks.push(child);
+        self.admit_task(child);
         Some(pid)
     }
 
@@ -539,57 +538,40 @@ impl Scheduler {
         // shares the kernel's entry 0, which covers the code performing the
         // call.
         unsafe { arch::switch_address_space(new_root) };
-        // **Retired, not released.**  The old space is garbage to this CPU the
-        // moment the switch above returns, and it is not garbage to every CPU:
-        // a task is not pinned, and the boot's own log shows migrations, so a
-        // CPU that ran this task a moment ago may still have the old root
-        // installed and be inside its trap path.  Freeing here handed live
-        // frames back to the pool, a data abort inside the heap allocator and
-        // an instruction abort at 0x0, six boots in ten on the machine whose
-        // second CPU migrates most, and the fix is the deferral every finished
-        // task already takes: hold the space until
-        // [`reap_finished`](Self::reap_finished), where every task has finished
-        // and every other CPU has been told to stop.
-        //
-        // A full array leaks the space rather than dropping it: nothing here
-        // can free a frame that another CPU may still reach, and a boot that
-        // has exec'd eight times has already said what it needed to say.
-        if let Some(old_space) = old_space
-            && let Some(slot) = self.retired.iter_mut().find(|slot| slot.is_none())
-        {
-            *slot = Some(old_space);
+        // Shared mappings belonged to the image being replaced.  Move their
+        // logical attach counts now, then release the old space: this CPU has
+        // installed the new root, and no other CPU can hold a task that is not
+        // in its running slot.
+        if let Some(mut old_space) = old_space {
+            for identifier in old_space.detach_logical_attachments() {
+                crate::shm::target::release_space_attach(identifier);
+            }
+            // SAFETY: this CPU switched to the new root above.  A task can be
+            // held by one CPU only; every other CPU that ran it switched away
+            // before releasing its slot, and an idle CPU installs the kernel
+            // root.  The switch above also flushed this CPU's old translations.
+            unsafe { old_space.release() };
         }
         Some(pid)
     }
 
-    /// Release every finished task's address space, answering how many went
-    /// back.
+    /// Sweep any finished task space the exit path could not release.
     ///
-    /// ## When this is safe, and why the caller must say
-    ///
-    /// A finished task's pages are free only when nothing will translate
-    /// through them again.  Clearing the task's slot is **not** that condition:
-    /// the CPU that leaves a task keeps the task's root installed while it
-    /// waits for work, and it can be inside its trap path with no lock held.
-    /// Releasing at each exit produced 186 page faults at `0x8080000030`,
-    /// program 2's stack, in six boots of eight, a frame the kernel still
-    /// walked, handed by the pool to someone else.
-    ///
-    /// So this is called once, after every task has finished and every other
-    /// CPU has been told the boot is over.  At that point no CPU is inside a
-    /// program and none will enter one, which is the whole of the safety
-    /// argument, and it is the caller's to make rather than this function's to
-    /// guess.
+    /// The normal path releases a finished space in the switch that leaves it:
+    /// the CPU installs the next root, or the kernel root when there is no next
+    /// task, before the release.  This sweep remains for a finished task whose
+    /// space was not taken by that path, and is safe at boot's end because
+    /// every CPU has parked.
     ///
     /// A task whose space is already gone is skipped, so a second call answers
     /// zero instead of freeing a frame twice.
     ///
-    /// The spaces an `exec` retired go back here too, and for the same reason:
-    /// they are unreachable from this CPU and not necessarily from every other
-    /// one, and this is the only moment the whole task set is quiescent.
+    /// Answers the cumulative number of process spaces released, not only the
+    /// number this final sweep found.  Per-exit reclamation is the normal path
+    /// now, so a count local to this call would read zero after doing all the
+    /// work correctly.
     #[cfg(target_os = "none")]
     pub fn reap_finished(&mut self) -> usize {
-        let mut reaped = 0;
         for task in &mut self.tasks {
             if task.state != State::Finished {
                 continue;
@@ -601,19 +583,8 @@ impl Scheduler {
             // running a program and none will: every task is `Finished` and
             // every other CPU has been told to stop.
             unsafe { space.release() };
-            reaped += 1;
+            self.spaces_reaped += 1;
         }
-        // The exec'd spaces, under the same promise.  They are released after
-        // the tasks' own so the count above stays the number of processes that
-        // finished, which is what the boot's line reports; these are spaces no
-        // task ever finished in, and a reader asking "how many programs ran and
-        // ended" must not see them added.
-        for slot in &mut self.retired {
-            if let Some(space) = slot.take() {
-                // SAFETY: as above, the machine is finished.
-                unsafe { space.release() };
-            }
-        }
-        reaped
+        self.spaces_reaped
     }
 }

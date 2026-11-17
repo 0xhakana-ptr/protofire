@@ -18,22 +18,35 @@ use super::find;
 
 /// Count one more owner of each frame, answering whether all of them took.
 ///
-/// Every frame is counted before any is mapped, so a refusal happens with
-/// nothing to undo: `add_reference` is the one operation here that can fail
-/// without having done anything, and doing all of them first is what makes the
-/// failure path a loop of releases rather than a loop of unmaps.
+/// Every frame is counted before any is mapped.  A refusal can happen partway
+/// through, so the counts this function already added are rolled back before it
+/// answers false; the old `Iterator::all` version claimed there was nothing to
+/// undo while leaving that prefix behind.
 #[cfg(target_os = "none")]
 fn reference_all(frames: &[usize]) -> bool {
-    if !crate::address_space::with_pool(|pool| {
-        frames.iter().all(|frame| pool.add_reference(*frame))
-    }) {
-        return false;
+    let mut counted = 0usize;
+    let complete = crate::address_space::with_pool(|pool| {
+        for frame in frames {
+            if !pool.add_reference(*frame) {
+                return false;
+            }
+            counted += 1;
+        }
+        true
+    });
+    if complete {
+        return true;
     }
-    // A failure partway through has already counted the frames before it, so
-    // the undo is one release per frame counted.  The pool's own answer for
-    // "was this the last" cannot be true here: this call is what added the
-    // counts it is taking back.
-    true
+    // A refusal at frame N has already counted frames 0..N.  Put exactly those
+    // counts back; `all` hid the prefix from the caller, which made the old
+    // "nothing to undo" sentence false.  The releases cannot free a frame,
+    // because this call just added the only references being dropped.
+    crate::address_space::with_pool(|pool| {
+        for frame in &frames[..counted] {
+            let _ = pool.release_reference(*frame);
+        }
+    });
+    false
 }
 
 /// Drop one reference to each frame, freeing the ones this release was last
@@ -94,6 +107,48 @@ pub(crate) fn create(key: i32, bytes: usize) -> Option<Arc<sync::Mutex<Region>>>
     Some(region)
 }
 
+/// Find a named region or create it without a lookup/create race.
+///
+/// The previous shape looked the key up, released the table lock, allocated
+/// frames and inserted the region.  Two CPUs could both observe "missing" and
+/// insert the same key, leaving one of the regions unreachable forever.  The
+/// existence check and insertion are one critical section now.  Frame
+/// allocation happens inside it as well, because allocating first and checking
+/// afterwards merely moves the duplicate to the rollback path.
+///
+/// The lock order is region table then frame pool.  No path takes the frame
+/// pool and then reaches back into the region table, so this nesting has one
+/// direction.
+#[cfg(target_os = "none")]
+pub(crate) fn get_or_create(
+    key: i32,
+    bytes: usize,
+) -> Result<Arc<sync::Mutex<Region>>, abi::Error> {
+    let mut regions = REGIONS.lock();
+    if let Some(position) = regions.iter().position(|region| region.lock().key == key) {
+        let entry = regions[position].clone();
+        drop(regions);
+        let region = entry.lock();
+        if region.marked() {
+            return Err(abi::Error::Busy);
+        }
+        if bytes > region.bytes() {
+            return Err(abi::Error::InvalidArgument);
+        }
+        drop(region);
+        return Ok(entry);
+    }
+
+    let pages = bytes.div_ceil(paging::PAGE_SIZE);
+    if pages == 0 {
+        return Err(abi::Error::InvalidArgument);
+    }
+    let frames = take_frames(pages).ok_or(abi::Error::OutOfMemory)?;
+    let region = Arc::new(sync::Mutex::new(Region::with_frames(key, bytes, frames)));
+    regions.push(region.clone());
+    Ok(region)
+}
+
 /// Find a region by the identifier a caller passed.
 #[cfg(target_os = "none")]
 pub(crate) fn lookup(identifier: i32) -> Option<Arc<sync::Mutex<Region>>> {
@@ -113,17 +168,29 @@ pub(crate) fn lookup(identifier: i32) -> Option<Arc<sync::Mutex<Region>>> {
 /// record full) happen before any page table has been touched and cost one loop
 /// each. A mapping that fails after some pages are written unmaps those.
 #[cfg(target_os = "none")]
-pub(crate) fn attach(identifier: i32, writable: bool, executable: bool) -> Option<usize> {
-    let region = lookup(identifier)?;
+pub(crate) fn attach(
+    identifier: i32,
+    writable: bool,
+    executable: bool,
+) -> Result<usize, abi::Error> {
+    let region = lookup(identifier).ok_or(abi::Error::NotFound)?;
     let (frames, bytes) = {
-        let region = region.lock();
+        let mut region = region.lock();
+        if !region.begin_attach() {
+            // A region marked by `IPC_RMID` accepts no new attach.  Existing
+            // mappings and a fork's inherited mapping are the two exceptions,
+            // and neither comes through this entry point.
+            return Err(abi::Error::Busy);
+        }
         (region.frames().to_vec(), region.bytes())
     };
     if frames.is_empty() {
-        return None;
+        abort_pending_attach(identifier, &region);
+        return Err(abi::Error::OutOfMemory);
     }
     if !reference_all(&frames) {
-        return None;
+        abort_pending_attach(identifier, &region);
+        return Err(abi::Error::OutOfMemory);
     }
     let base = crate::scheduler::attach_shared(
         crate::per_cpu::current_slot(),
@@ -133,13 +200,39 @@ pub(crate) fn attach(identifier: i32, writable: bool, executable: bool) -> Optio
         writable,
         executable,
     );
-    if base.is_none() {
-        // The attach did not happen, so the references this call added are the
-        // only trace of it.  Taking them back cannot free a frame: this call
-        // is what counted them, so some other owner is still there.
+    match base {
+        None => {
+            // The attach did not happen, so the references this call added are
+            // the only trace of it.  Taking them back cannot free a frame: this
+            // call is what counted them, so some other owner is still there.
+            let _ = release_all(&frames);
+            abort_pending_attach(identifier, &region);
+            Err(abi::Error::OutOfMemory)
+        }
+        Some(base) => {
+            region.lock().finish_attach();
+            Ok(base)
+        }
+    }
+}
+
+/// Abort an in-flight attach and finish a destruction that was waiting on it.
+///
+/// `IPC_RMID` can arrive while the attach is pending.  It sees `vacant ==
+/// false` and leaves the region in the table; if the attach then fails, it is
+/// the abort that made the region vacant, so it also has to be the operation
+/// that removes it.  Without this handoff a marked region with no mapping and
+/// no pending work would leak its frames forever.
+#[cfg(target_os = "none")]
+fn abort_pending_attach(identifier: i32, region: &Arc<sync::Mutex<Region>>) {
+    let destroy = {
+        let mut region = region.lock();
+        region.abort_attach();
+        region.marked() && region.vacant()
+    };
+    if destroy && let Some(frames) = take_destroyed(identifier) {
         let _ = release_all(&frames);
     }
-    base
 }
 
 /// Drop one attach of the region mapped at `address`.
@@ -156,19 +249,8 @@ pub(crate) fn detach(address: usize) -> bool {
         return false;
     };
     let _ = release_all(&frames);
-    // The count moves only for a region still in the table: a region whose last
-    // attach just went is being destroyed, not counted down.
-    let (marked, last) = match lookup(identifier) {
-        Some(region) => {
-            let mut region = region.lock();
-            if region.attaches > 0 {
-                region.attaches -= 1;
-            }
-            (region.marked(), region.attaches() == 0)
-        }
-        None => return true,
-    };
-    if last && marked {
+    let (marked, vacant) = release_attachment(identifier);
+    if vacant && marked {
         // The last attach of a region `IPC_RMID` marked.  The region leaves the
         // table here and its frames go back to the pool; they are taken out of
         // the record first, because releasing a frame takes the page-table lock
@@ -180,12 +262,49 @@ pub(crate) fn detach(address: usize) -> bool {
     true
 }
 
+/// Drop one attachment count, answering the region's mark and vacancy.
+///
+/// The caller has already removed the mapping and released its frame
+/// references.  This is the region-table half: decrement exactly once, and tell
+/// the caller whether a marked region has become removable.
+#[cfg(target_os = "none")]
+fn release_attachment(identifier: i32) -> (bool, bool) {
+    let Some(region) = lookup(identifier) else {
+        return (false, false);
+    };
+    let mut region = region.lock();
+    let _ = region.detach_one();
+    (region.marked(), region.vacant())
+}
+
+/// Account for an address space that is being destroyed.
+///
+/// `AddressSpace::release` has already released that space's frame references.
+/// This decrements the region's logical attachment count, which is otherwise
+/// lost when a process exits without calling `ShmDt`.  Without it,
+/// `IPC_STAT` reports a mapping no process owns and `IPC_RMID` can never see
+/// the last attach leave.
+#[cfg(target_os = "none")]
+pub(crate) fn release_space_attach(identifier: i32) {
+    let (marked, vacant) = release_attachment(identifier);
+    if vacant
+        && marked
+        && let Some(frames) = take_destroyed(identifier)
+    {
+        let _ = release_all(&frames);
+    }
+}
+
 /// Note one more attach of a region, answering how many there now are.
+///
+/// A fork inherits an existing mapping rather than making a new syscall
+/// attachment, so it may count against a region that `IPC_RMID` has marked.
+/// The parent's attach keeps the region alive through the operation.
 #[cfg(target_os = "none")]
 pub(crate) fn noted_attach(identifier: i32) -> Option<usize> {
     let region = lookup(identifier)?;
     let mut region = region.lock();
-    region.attaches += 1;
+    region.inherit_attach();
     Some(region.attaches)
 }
 
@@ -200,16 +319,16 @@ pub(crate) fn mark(identifier: i32) -> bool {
     let Some(region) = lookup(identifier) else {
         return false;
     };
-    let unattached = {
+    let vacant = {
         let mut region = region.lock();
         region.marked = true;
-        region.attaches == 0
+        region.vacant()
     };
     // A region with no attaches goes **here**, because there is no later
     // detach to free it.  A mark that waited for one would be a region nobody
     // could find and a frame nobody would free: found by the boot's own frame
     // census, which read one frame short after this call was the only one.
-    if unattached && let Some(frames) = take_destroyed(identifier) {
+    if vacant && let Some(frames) = take_destroyed(identifier) {
         let _ = release_all(&frames);
     }
     true
@@ -236,11 +355,11 @@ pub(crate) fn take_destroyed(identifier: i32) -> Option<Vec<usize>> {
     let position = regions
         .iter()
         .position(|region| region.lock().key == identifier)?;
-    let (attaches, marked) = {
+    let (vacant, marked) = {
         let region = regions[position].lock();
-        (region.attaches(), region.marked())
+        (region.vacant(), region.marked())
     };
-    if attaches != 0 || !marked {
+    if !vacant || !marked {
         return None;
     }
     let region = regions.swap_remove(position);

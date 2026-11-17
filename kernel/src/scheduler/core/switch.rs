@@ -18,6 +18,8 @@ use arch::Context;
 
 use super::Claim;
 use super::Scheduler;
+#[cfg(target_os = "none")]
+use crate::address_space::AddressSpace;
 use crate::scheduler::task::State;
 #[cfg(target_os = "none")]
 use crate::scheduler::task::Task;
@@ -124,6 +126,11 @@ impl Scheduler {
         // overwrite it with `Finished`.  That is why the flag only ever sets
         // `Finished` and never the other way.
         let leaving = self.running.get(cpu).copied().flatten();
+        #[cfg(target_os = "none")]
+        let mut detached_attachments = alloc::vec::Vec::new();
+        #[cfg(target_os = "none")]
+        let mut finished_space = None;
+        let mut exit_record = None;
         if save
             && let Some(index) = leaving
             && let Some(task) = self.tasks.get_mut(index)
@@ -141,6 +148,17 @@ impl Scheduler {
                 // exactly the machine whose convention differs.
                 task.status = status;
                 self.exited += 1;
+                if let Some(status) = status {
+                    exit_record = Some((task.pid, status));
+                }
+                #[cfg(target_os = "none")]
+                if let Some(space) = task.space.as_mut() {
+                    detached_attachments = space.detach_logical_attachments();
+                }
+                #[cfg(target_os = "none")]
+                {
+                    finished_space = task.space.take();
+                }
                 // A waiter's question just answered itself: a process
                 // finished, and the wait parks on exactly that.  Wake what a
                 // pipe's write wakes, every blocked task, and let the
@@ -173,6 +191,14 @@ impl Scheduler {
             }
         }
 
+        #[cfg(target_os = "none")]
+        for identifier in detached_attachments {
+            crate::shm::target::release_space_attach(identifier);
+        }
+        if let Some((pid, status)) = exit_record {
+            self.record_exit_status(pid, status);
+        }
+
         let Some(next) = self.next_runnable(cpu) else {
             // Nothing to install.  With every task finished the caller stops
             // the machine; with some asleep the caller waits for the tick that
@@ -187,6 +213,27 @@ impl Scheduler {
             // or worse by this CPU *and* another, because the slot also says
             // which task this CPU's frame belongs to.
             self.assign(cpu, usize::MAX);
+            // A CPU with no next task must stop translating through the span of
+            // the program it just left.  The kernel root maps every address
+            // used by this idle path, and the whole-TLB flush discards the old
+            // program's translations.
+            #[cfg(target_os = "none")]
+            // SAFETY: the kernel root covers the code performing the switch.
+            let switched =
+                unsafe { arch::switch_address_space(crate::address_space::kernel_root_table()) };
+            #[cfg(target_os = "none")]
+            if let Some(space) = finished_space {
+                if switched {
+                    self.release_finished_space(space);
+                } else if let Some(index) = leaving
+                    && let Some(task) = self.tasks.get_mut(index)
+                {
+                    // A failed root install is not permission to free the old
+                    // root.  Keep the space on its finished task for the final
+                    // quiescent sweep instead.
+                    task.space = Some(space);
+                }
+            }
             return CallOutcome::Exit;
         };
 
@@ -218,11 +265,26 @@ impl Scheduler {
         // the kernel's entry 0, so it is safe from anywhere in the kernel, and
         // the register is this CPU's own.
         #[cfg(target_os = "none")]
-        if let Some(root) = self.tasks.get(next).and_then(Task::root) {
+        {
+            let root = self
+                .tasks
+                .get(next)
+                .and_then(Task::root)
+                .unwrap_or_else(crate::address_space::kernel_root_table);
             // SAFETY: the root is a live table this scheduler's own task owns,
             // and every root shares the kernel's entry 0, which covers the code
             // performing the call.
-            unsafe { arch::switch_address_space(root) };
+            let switched = unsafe { arch::switch_address_space(root) };
+            #[cfg(target_os = "none")]
+            if let Some(space) = finished_space {
+                if switched {
+                    self.release_finished_space(space);
+                } else if let Some(index) = leaving
+                    && let Some(task) = self.tasks.get_mut(index)
+                {
+                    task.space = Some(space);
+                }
+            }
         }
 
         if exiting {
@@ -246,6 +308,23 @@ impl Scheduler {
         status: Option<usize>,
     ) -> CallOutcome {
         self.schedule_on(cpu, frame, exiting, save, status)
+    }
+
+    /// Return a finished process's address space after this CPU has switched
+    /// away from its root.
+    ///
+    /// A task is held by at most one CPU.  Every CPU that previously ran it
+    /// switched away before releasing its slot, and a CPU with no next task now
+    /// installs the kernel root.  The whole-TLB flush in
+    /// `switch_address_space` also discards translations that could otherwise
+    /// survive the switch.
+    #[cfg(target_os = "none")]
+    fn release_finished_space(&mut self, space: AddressSpace) {
+        // SAFETY: the caller switched this CPU away from the root before this
+        // call, and the task was finished while no other CPU could hold it.
+        unsafe { space.release() };
+        self.spaces_reaped += 1;
+        self.spaces_reaped_at_switch += 1;
     }
 
     /// The next task `cpu` may run, by the placement rule.

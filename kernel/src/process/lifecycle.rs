@@ -245,8 +245,8 @@ pub(crate) fn serve_lifecycle(
     // This boot has one process tree, the programs the kernel started, all
     // children of the boot, so the only wait that can be answered is "has any
     // process finished, and with what".  That is a real answer, and it is the
-    // one a parent in this tree can ask for: a wait for a *particular* child
-    // would need a wait that names a pid, which does not exist yet.
+    // one a parent in this tree can ask for.  A parent that needs a particular
+    // child uses `WaitProcessOf`, whose named status is consumed once.
     //
     // A wait with nothing finished **blocks** rather than spinning: the caller
     // is parked like a pipe's reader, and a process exit is what wakes it.  A
@@ -331,8 +331,8 @@ pub(crate) fn serve_lifecycle(
     // a bare `Option`:
     //
     // - the process ended: its status;
-    // - no task has that pid: `NotFound`, which is a fact the caller can check
-    //   its own argument against;
+    // - no unreported task has that pid: `NotFound`, either because it never
+    //   existed or because a wait already consumed its status;
     // - it has not ended yet: park, and its exit is what wakes the park.
     if number == SyscallNumber::WaitProcessOf as usize {
         let pid = call.arguments[0] as u32;
@@ -346,7 +346,7 @@ pub(crate) fn serve_lifecycle(
                 return Some(CallOutcome::Return(status));
             }
             Some(crate::scheduler::PidWait::NoSuchProcess) => {
-                arch::serial::write_str("protofire: a wait names a process that does not exist\n");
+                arch::serial::write_str("protofire: a wait names no unreported process\n");
                 return Some(CallOutcome::Return(abi::syscall::encode_error(
                     abi::Error::NotFound,
                 )));

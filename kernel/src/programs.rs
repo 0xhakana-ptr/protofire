@@ -602,25 +602,10 @@ pub fn report_and_finish() -> ! {
     }
 
     // Every task is finished and every other CPU has been told the boot is
-    // over, so no CPU is inside a program and none will enter one.  This is the
-    // one moment the whole machine's task set is quiescent, and it is where the
-    // address spaces go back.
-    //
-    // ## Why not at each exit
-    //
-    // Because the first version did exactly that and it was wrong.  A task's
-    // slot is cleared by the switch that leaves it, so "no CPU holds this task"
-    // is true the instant it exits, and it is not the condition that matters.
-    // The other CPU may still be installed on that task's root: it can be in
-    // its own trap path, returning through a frame that belongs to the program,
-    // with the scheduler's lock not held.  Freeing then produced 186 page
-    // faults at `0x8080000030`, program 2's stack, in six boots of eight: a
-    // frame the kernel still walked, in a pool that had given it to someone
-    // else.
-    //
-    // A finished task's pages are not needed for it to stay finished.  Holding
-    // them until the machine stops costs nothing and removes the whole class of
-    // race, which is the trade this boot's programs cannot observe.
+    // over.  The normal reclamation already happened at the switch that left
+    // each task after installing the next or kernel root.  This final call is a
+    // fallback for a space whose root switch failed, and the count it returns
+    // is cumulative rather than the number found by this sweep.
     let reaped = crate::scheduler::reap_address_spaces();
 
     let (switches, exited, delivered) = crate::scheduler::statistics();
@@ -715,6 +700,9 @@ pub fn report_and_finish() -> ! {
     arch::serial::write_str(", ");
     arch::serial::write_u32(crate::address_space::free_frames() as u32);
     arch::serial::write_str(" frame(s) free\n");
+    arch::serial::write_str("protofire: address spaces reaped at switch = ");
+    arch::serial::write_u32(crate::scheduler::spaces_reaped_at_switch() as u32);
+    arch::serial::write_str("\n");
 
     // The device's completion messages, taken from the trap path.
     //

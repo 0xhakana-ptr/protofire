@@ -396,6 +396,12 @@ interrupted context back.  `docs/status.md` carries the exchange and the
 three defects the first boot of it found, one of them in the riscv64 trap
 path itself.
 
+The supervisor path now reaps too: a named wait consumes the exit status once,
+and the next spawn or fork replaces that fully reaped slot in place.  Task
+indices stay stable because `running` and the migration record name them by
+index.  Exit history lives outside the slot, so reusing it does not erase the
+boot's report of what ran.
+
 What the level did **not** promise: **threads**, the tree has one task per
 process, and a thread brings shared address spaces, which is a decision and
 not wiring.  Nor a wait that names a timeout: the tree's waits park until
@@ -1360,11 +1366,11 @@ are recorded here with their evidence and with what closed each one, in the
 order they landed: by what a program could do with them rather than by how hard
 they were to fix.
 
-Every one is fixed except the retired-space bound, and that is not a defect but
-a decision this file now argues: the array is deliberate and documented at the
-field.  The rule this level leaves behind is the one its last item states: a
-test that fails without the fix is the only thing that makes a green gate mean
-the defect is gone.
+Every one is fixed.  The retired-space bound that followed the original five is
+fixed as well: a CPU that leaves its last task installs the kernel root before
+the space is released, so the fixed array is no longer needed.  The rule this
+level leaves behind is the one its last item states: a test that fails without
+the fix is the only thing that makes a green gate mean the defect is gone.
 
 **1. A user pointer's *value* is checked and its *mapping* is not.  P0.
 Fixed.**
@@ -1500,18 +1506,16 @@ program's.  Two host tests pin it, one setting every field and asserting none
 survives, the other asserting the clear can be repeated in case an exec is
 retried.
 
-**The retired-space array is still the leak it was, and deliberately so.**  Its
-documentation says what it is: `exec` runs with the scheduler's lock held, and
-growing a `Vec` there would allocate from the kernel heap while another CPU may
-be spinning on that lock, so the array is fixed and a boot that execs more than
-eight times keeps the last ones alive.  That is a bound this tree chose, not a
-defect it overlooked, and changing it means re-arguing *when* a retired root may
-be freed, which is the address-space activation path.  The shape that would work
-is a release after `shootdown::invalidate_others()`, but an acknowledgement
-proves the *TLB* was flushed and not that another CPU is out of its trap path,
-and the boot's own log shows tasks migrating.  Nothing in this tree execs eight
-times: the boot execs once.  This moves to Level 9, where a shell that runs
-commands makes repeated exec real and makes the argument testable.
+**The retired-space array is gone.**  The condition that made it necessary was
+weaker than the code had noticed: another CPU could retain a finished root only
+if it had no next task.  A CPU with a next task already installed that root
+before resuming; an idle CPU now installs the kernel root.  With the leaving
+switch covering both arms, the CPU that marks the task finished can release its
+space immediately after the switch.  `exec` follows the same rule, so repeated
+exec no longer has an eight-space ceiling.  `reap_finished` remains as a
+boot-end fallback for a failed kernel-root install, not as the normal path.  The
+boot requires `address spaces reaped at switch = 10`, so the cumulative total
+cannot hide spaces that were only collected by the fallback.
 
 **The engineering problems, which are not kernel defects and are not smaller.**
 

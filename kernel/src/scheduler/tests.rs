@@ -989,3 +989,80 @@ fn clearing_image_state_twice_is_harmless() {
     assert_eq!(task.handler, None);
     assert_eq!(task.signal_mask, 0);
 }
+
+/// A named wait consumes one exit status, and the zombie stops answering.
+#[test]
+fn an_exit_status_is_reported_once() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("zombie"));
+    scheduler.tasks[0].identify(7, 0);
+    scheduler.tasks[0].state = super::task::State::Finished;
+    scheduler.tasks[0].status = Some(23);
+
+    assert_eq!(scheduler.consume_exit_status(7), PidWait::Ended(23));
+    assert!(scheduler.tasks[0].status_reported);
+    assert_eq!(
+        scheduler.consume_exit_status(7),
+        PidWait::NoSuchProcess,
+        "the status was reaped"
+    );
+}
+
+/// A fully reaped zombie slot is reused without moving task indices.
+#[test]
+fn a_reaped_slot_is_reused_in_place() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("old"));
+    scheduler.tasks[0].identify(3, 0);
+    scheduler.tasks[0].state = super::task::State::Finished;
+    scheduler.tasks[0].status = Some(0);
+    scheduler.tasks[0].status_reported = true;
+    scheduler.record_exit_status(3, 0);
+
+    let mut replacement = Task::without_space("replacement");
+    replacement.identify(4, 0);
+    scheduler.admit_task(replacement);
+
+    assert_eq!(scheduler.len(), 1, "the stale slot was reused");
+    assert_eq!(scheduler.tasks[0].name, "replacement");
+    assert_eq!(scheduler.tasks[0].pid(), 4);
+    assert_eq!(
+        scheduler.exited_with_status(),
+        vec![(3, 0)],
+        "the report history survives slot reuse"
+    );
+}
+
+/// An unreported zombie is not reused, even after its address space is gone.
+#[test]
+fn a_zombie_without_a_wait_keeps_its_slot() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("zombie"));
+    scheduler.tasks[0].identify(3, 0);
+    scheduler.tasks[0].state = super::task::State::Finished;
+    scheduler.tasks[0].status = Some(0);
+
+    let mut next = Task::without_space("next");
+    next.identify(4, 0);
+    scheduler.admit_task(next);
+
+    assert_eq!(
+        scheduler.len(),
+        2,
+        "the unreported status still needs a slot"
+    );
+    assert_eq!(scheduler.tasks[0].pid(), 3);
+}
+
+/// Exit history survives completion order and reports by process creation id.
+#[test]
+fn exit_history_is_reported_in_pid_order() {
+    let mut scheduler = Scheduler::new();
+    scheduler.record_exit_status(4, 139);
+    scheduler.record_exit_status(1, 116);
+    scheduler.record_exit_status(3, 0);
+    assert_eq!(
+        scheduler.exited_with_status(),
+        vec![(1, 116), (3, 0), (4, 139)]
+    );
+}

@@ -84,6 +84,12 @@ pub struct Task {
     /// number the kernel invented, and a parent waiting for that answer would
     /// read it as the program's own decision.
     pub(crate) status: Option<usize>,
+    /// Whether a wait has consumed that status.
+    ///
+    /// A zombie is the pair of a finished task and an unreported status.  Once
+    /// a wait answers it, the slot may be reused by a later spawn or fork
+    /// without changing any task index held by the scheduler.
+    pub(crate) status_reported: bool,
     /// Where this program's fault handler lives, or `None` for a program that
     /// has none.
     ///
@@ -269,6 +275,7 @@ impl Task {
             pid: 0,
             parent: 0,
             status: None,
+            status_reported: false,
             handler: None,
             last_cpu: usize::MAX,
             ran_off_boot_cpu: usize::MAX,
@@ -295,6 +302,7 @@ impl Task {
             pid: 0,
             parent: 0,
             status: None,
+            status_reported: false,
             handler: None,
             last_cpu: usize::MAX,
             ran_off_boot_cpu: usize::MAX,

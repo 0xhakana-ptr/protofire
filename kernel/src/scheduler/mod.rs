@@ -499,21 +499,38 @@ pub fn advance(frame: &mut arch::Context, exiting: bool) -> arch::CallOutcome {
     })
 }
 
-/// Release every finished task's address space, answering how many went back.
+/// Sweep finished task spaces left by a failed in-switch release.
 ///
-/// Called once, when the machine is finished: every task is `Finished` and
-/// every other CPU has been told to stop.  That is the only moment the whole
-/// task set is quiescent; `Scheduler::reap_finished` has the measurement that
-/// made releasing at each exit wrong.
+/// The normal path releases a space in the switch that leaves it, after the
+/// next root or the kernel root is installed.  This call runs when the machine
+/// is finished and catches a space whose root switch failed, where every CPU is
+/// parked and the old boot-end argument still holds.
 ///
-/// A task whose space is already gone is skipped, so a second call answers
-/// zero rather than freeing a frame twice.
+/// A task whose space is already gone is skipped.  The answer is cumulative, so
+/// a final sweep that finds nothing new still reports the spaces released at
+/// their exits.
 #[cfg(target_os = "none")]
 pub fn reap_address_spaces() -> usize {
     with_scheduler(|scheduler| match scheduler {
         Some(scheduler) => scheduler.reap_finished(),
         None => 0,
     })
+}
+
+/// How many finished process spaces the leaving switch released.
+#[cfg(target_os = "none")]
+pub fn spaces_reaped_at_switch() -> usize {
+    with_scheduler(|scheduler| {
+        scheduler
+            .as_ref()
+            .map_or(0, |scheduler| scheduler.spaces_reaped_at_switch)
+    })
+}
+
+/// A host has no address space or switch that releases one.
+#[cfg(not(target_os = "none"))]
+pub fn spaces_reaped_at_switch() -> usize {
+    0
 }
 
 /// A host build has no address space to release.
@@ -965,6 +982,9 @@ pub(crate) fn unmap_current(cpu: usize, base: usize, length: usize) -> Option<us
         let scheduler = scheduler.as_mut()?;
         let task = scheduler.running.get(cpu).copied().flatten()?;
         let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
+        if space.shared_range_overlaps(base, length) {
+            return None;
+        }
         // SAFETY: as `map_current`.
         Some(unsafe { space.unmap_range(base, length) })
     })
@@ -1311,11 +1331,13 @@ pub fn current_parent() -> Option<u32> {
     with_scheduler(|scheduler| scheduler.as_ref()?.current_parent(cpu))
 }
 
-/// The status of the first process that has exited, if any has.
+/// The status of the first unreported process that has exited, if any has.
 ///
 /// A wait in this boot has one process tree, so "the first exit" is the only
 /// answer it can give; a caller that needs a particular child needs a wait
-/// that names a pid, which is a later change.
+/// that names a pid.  This anonymous form does not reap the zombie; the named
+/// wait does, because only the pid identifies the status a supervisor takes
+/// responsibility for.
 pub fn first_exit_status() -> Option<usize> {
     with_scheduler(|scheduler| {
         scheduler

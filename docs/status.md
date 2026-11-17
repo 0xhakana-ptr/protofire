@@ -28,10 +28,10 @@ tree's, and nothing in it ever handed the kernel a pointer, an ELF or a fault it
 did not mean.  `docs/roadmap.md`'s Level 7.5 states each one with its code site,
 its severity, and what closed it.
 
-All five are fixed, and so are the three engineering findings.  One item is open
-and it is the class rather than an instance: nothing here runs a hostile program,
-so the next defect of this kind will also survive a green gate.  It is listed
-under Open with the reason.
+All five are fixed, the retired-space bound that followed them is fixed, and so
+are the three engineering findings.  One item is open and it is the class rather
+than an instance: nothing here runs a hostile program, so the next defect of this
+kind will also survive a green gate.  It is listed under Open with the reason.
 
 **Fixed.**
 
@@ -95,16 +95,14 @@ under Open with the reason.
   and a fault handler that faults, and expects a refusal rather than a stop.
   That needs a way to produce such an image, which the tree does not have yet.
   It is the one finding of the eight with no commit behind it.
-- **The retired-space array holds eight.**  An `exec` retires the space it
-  replaced rather than releasing it, because another CPU may still be inside
-  its trap path with that root installed; a ninth exec keeps the eighth space
-  alive rather than dropping it.  The bound is deliberate and documented at
-  the field, and lifting it means re-arguing when a retired root is safe to
-  free, which is the address-space activation path.  Nothing in this boot
-  execs more than once, and Level 9 is where repeated exec becomes real.
+**Engineering, all four closed.**
 
-**Engineering, all three closed.**
-
+- **The retired-space array held eight.**  Fixed by making "no CPU holds the
+  root" true at the switch: a CPU with no next task installs the kernel root,
+  and a CPU with a next task installs that task's root before the finished
+  space is released.  `exec` uses the same rule.  The fixed array is gone, and
+  `reap_finished` is now a final fallback for a failed root switch rather than
+  the normal reclamation path.
 - **The gates' `--offline` could not work on a fresh clone.**  Fixed: `vendor/`
   carries the 25 registry crates and `.cargo/config.toml` points `crates.io` at
   it, verified by cloning the tree, pointing `CARGO_HOME` at an empty directory
@@ -157,6 +155,13 @@ Verified by `the timer preempted, `, `a write woke `,
 `forked a process, child pid 4`, `copy-on-write copy at `,
 `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`,
 `process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
+
+A task's exit status is consumed by a **named** `WaitProcessOf` that reads it.
+Until that wait, the finished task is a zombie and keeps its slot; afterwards a
+later spawn or fork replaces that slot in place, so task indices held by the
+scheduler stay stable.  The anonymous `WaitProcess` retains its older
+non-consuming diagnostic contract.  Exit history is recorded separately from
+the reusable slot, retaining the boot report after the zombie itself is gone.
 
 **Descriptor duplication** is served, `Dup` and `Dup2`, and the pair is what a
 program uses to give one handle to a child and keep reading through another.
@@ -2452,23 +2457,23 @@ That last clause is the whole difference from `fork`.  A fork makes two spaces
 map one frame too, and it demotes the page and marks it, so the first write
 gives that process a private copy; a region whose first write unshared would
 not be shared memory.  The boot proves the difference rather than asserting it:
-`/bin/init` makes a region, forks, and both processes attach it, the child
-writes a byte, and the parent reads that byte back from its own mapping:
+`/bin/init` makes and attaches a region, forks, has the child write through the
+**inherited** mapping and exit without `ShmDt`, then has the parent read that
+byte back from its own mapping:
 
 ```
 protofire: program shared memory call 100 answered 0x4649
 protofire: program shared memory call 101 answered 0x807fffe000
-protofire: program shared memory call 101 answered 0x807fffe000
-protofire: program shared memory call 102 answered 0x0
 protofire: program shared memory call 102 answered 0x0
 protofire: shared region crossed
 ```
 
-`100` is `ShmGet`, `101` `ShmAt`, `102` `ShmDt`.  The two attaches answering
-the **same** address is the parent and the child, and the crossed line is the
-parent's own `WriteDebug`, reached only when the byte it read was the child's.
-A probe that mapped private copies in place of the region's frames printed no
-line and exited 234, so the exercise fails on its own claim.
+`100` is `ShmGet`, `101` `ShmAt`, `102` `ShmDt`.  The one attach line is the
+parent before the fork; the child uses that inherited address instead of making
+a second attach.  The crossed line is the parent's own `WriteDebug`, reached
+only when the byte it read was the child's.  A probe that mapped private copies
+in place of the region's frames printed no line and exited 234, so the exercise
+fails on its own claim.
 
 Two defects surfaced here, both found by the boot and neither by a host test.
 `fork_from` built the child with `AddressSpace::new`, whose window is `(0, 0)`,
@@ -2480,7 +2485,19 @@ left the frames in the pool; the frame census read `131071` where it reads
 `131072`, and `mark` now frees a region with no attaches because there is no
 later detach to do it.
 
-**The file interface.**  A program can write, measure, list, move and remove.Eleven numbers serve the filesystem now, `Write` (6), `CreateDir` (19),
+The lifecycle around those calls is a state machine now.  `ShmGet` creates a
+named key atomically, a `ShmAt` is counted as pending until its mapping
+finishes, `IPC_RMID` refuses new attaches to a marked region, and an aborted
+attach destroys a marked region that its own abort made vacant.  A fork keeps
+shared pages writable and records one inherited attach per region instead of
+demoting them with the private pages.  Exit and `exec` remove the region
+attachments before releasing the old space; the switch that leaves the space
+installs the next task's root or the kernel root first.  Generic `Munmap`
+refuses a range that overlaps a shared attachment, so `ShmDt` remains the one
+path that updates both the page table and the region count.
+
+**The file interface.**  A program can write, measure, list, move and remove.
+Eleven numbers serve the filesystem now, `Write` (6), `CreateDir` (19),
 `RemovePath` (21), `Stat` (27), `ReadDir` (28), `Rename` (29) and the five
 `*At` forms (32–36), where a program could previously only open, read and
 close, and `Write` printed a fixed line instead of writing anything.  The boot
@@ -2698,10 +2715,14 @@ What would change the arithmetic is a machine with many more runnable tasks than
 CPUs, and nothing here has that yet.  So the shape stays, and the number is
 recorded so the next reader can see it was measured.
 
-Exited programs' spaces are released at the boot's end rather than at each exit,
-because releasing one while the other CPU was still installed on its root
-faulted 186 times in six boots of eight.  `docs/migration.md` has the per-step
-cost of more CPUs.
+Exited programs' spaces are now released at the switch that leaves them.  The
+earlier boot-end rule existed because a CPU with no next task kept the finished
+program's root installed; release then faulted 186 times in six boots of eight.
+The idle path now installs the kernel root before release, and a switch to a
+next task installs that task's root first.  This also removes the eight-entry
+bound on spaces replaced by `exec`.  The boot requires
+`address spaces reaped at switch = 10`: all ten finished process spaces took
+the normal path, and none was merely collected by the final fallback sweep.
 
 ## The IPv6 side of the network
 

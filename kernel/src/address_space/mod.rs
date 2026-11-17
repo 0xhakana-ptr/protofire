@@ -442,6 +442,18 @@ pub fn free_frames() -> usize {
     tables.frames.free_frames() + tables.frames.available_frames()
 }
 
+/// The kernel's own root table, which an idle CPU can install safely.
+///
+/// Every program root shares this root's entry 0, so switching to it never
+/// removes the kernel mapping a CPU is executing through.  A CPU that has no
+/// next task uses it to stop translating through the span of the program it
+/// just left; once every CPU has done that, the program root and its user
+/// frames can be released instead of waiting for the whole machine to finish.
+#[cfg(target_os = "none")]
+pub fn kernel_root_table() -> usize {
+    TABLES.lock().root.address()
+}
+
 /// Run `f` over the frame pool, with the page-table lock held.
 ///
 /// The one way a caller outside this module can count a reference on a frame

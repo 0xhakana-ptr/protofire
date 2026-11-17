@@ -1298,11 +1298,11 @@ pub extern "C" fn _start() -> ! {
     // make: two address spaces, one frame, and a byte one process writes that
     // the other reads back.
     //
-    // The shape matters.  A fork alone would not do it: `fork` demotes the
-    // shared pages read-only and marks them copy-on-write, so the child's write
-    // would give the child a private copy and the parent would read its own
-    // zero.  The region is attached **after** the fork, so each process maps it
-    // with `ShmAt` and neither mapping is demoted.
+    // The shape matters.  The parent attaches **before** the fork, so the child
+    // inherits a real shared mapping rather than making a second `ShmAt`.  The
+    // fork must carry that attachment across without demoting it to
+    // copy-on-write; a private copy would make the child's write invisible to
+    // the parent.
     //
     // The key is a number this program chose and nothing else knows, which is
     // what makes the child able to find it: the child inherits the key in a
@@ -1310,30 +1310,25 @@ pub extern "C" fn _start() -> ! {
     // either process's memory.
     let key: i32 = 0x4649;
     let region = insist(sys_shm_get(key, SHM_REGION_BYTES, user_abi::IPC_CREAT));
-    let attach_child = sys_fork();
-    if attach_child == 0 {
-        // The child's side: map the region, write its mark, detach, and exit
-        // with the mark so the parent's wait says the write happened.
-        let base = insist(sys_shm_at(
-            region,
-            0,
-            user_abi::PROT_READ | user_abi::PROT_WRITE,
-        ));
-        // SAFETY: `shm_at` just answered an address the kernel mapped writable
-        // for this process, one page long, which is what the call was given.
-        unsafe { core::ptr::write_volatile(base as *mut u8, SHARED_MARK) };
-        insist(sys_shm_dt(base));
-        sys_exit(SHARED_MARK as usize);
-    }
-    // The parent's side: map the same region, wait for the child, and read the
-    // byte it wrote.  The order is deliberate, the parent maps **before** the
-    // wait so both attaches exist at once and the count `IPC_STAT` would report
-    // is two.
     let base = insist(sys_shm_at(
         region,
         0,
         user_abi::PROT_READ | user_abi::PROT_WRITE,
     ));
+    let attach_child = sys_fork();
+    if attach_child == 0 {
+        // The child's side: use the inherited mapping, write its mark, and exit
+        // **without** `ShmDt`.  Exit must remove the logical attachment while
+        // the retired address space keeps its physical frame reference.
+        //
+        // SAFETY: the parent's `shm_at` mapped this address writable, fork
+        // preserved the shared permissions, and the region is one page.
+        unsafe { core::ptr::write_volatile(base as *mut u8, SHARED_MARK) };
+        sys_exit(SHARED_MARK as usize);
+    }
+    // The parent's side: wait for the child and read the byte it wrote through
+    // the same inherited region.  The parent attachment existed before the
+    // fork, so no `ShmAt` is needed here and the base is unchanged.
     let child_status = insist(sys_wait_process_of(attach_child));
     if child_status != SHARED_MARK as usize {
         sys_exit(233);
@@ -1348,9 +1343,10 @@ pub extern "C" fn _start() -> ! {
         sys_exit(234);
     }
     insist(sys_shm_dt(base));
-    // The region is marked **after** the last detach, which is the case
-    // `IPC_RMID` has to handle on its own: nothing is attached, so the mark
-    // frees it here rather than waiting for a detach that will never come.
+    // The child's exit dropped its logical attach and this detach drops the
+    // parent's.  The region is marked **after** the last detach, which is the
+    // case `IPC_RMID` has to handle on its own: nothing is attached, so the
+    // mark frees it here rather than waiting for a detach that will never come.
     // The other order is the one the design chose to survive, a detach that
     // finds the region marked, and both have to free exactly once.  This one
     // is the order the boot exercises because it is the shorter path; a

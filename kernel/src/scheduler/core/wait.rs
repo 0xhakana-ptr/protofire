@@ -165,15 +165,30 @@ impl Scheduler {
     /// - no task has that pid, a fact to report, not a reason to wait;
     /// - it exists and has not ended, which is the one case that parks.
     pub fn block_unless_pid(&mut self, cpu: usize, frame: &Context, pid: u32) -> PidWait {
-        let answer = match self.exit_status(pid) {
-            Some(Some(status)) => PidWait::Ended(status),
-            Some(None) => PidWait::NotYet,
-            None => PidWait::NoSuchProcess,
-        };
+        let answer = self.consume_exit_status(pid);
         if matches!(answer, PidWait::NotYet) {
             self.block(cpu, frame);
         }
         answer
+    }
+
+    /// Consume the exit status of `pid`, if a wait for that process may take
+    /// it.
+    pub(crate) fn consume_exit_status(&mut self, pid: u32) -> PidWait {
+        match self
+            .tasks
+            .iter()
+            .position(|task| task.pid == pid && !task.status_reported)
+        {
+            Some(index) => match self.tasks[index].status {
+                Some(status) => {
+                    self.tasks[index].status_reported = true;
+                    PidWait::Ended(status)
+                }
+                None => PidWait::NotYet,
+            },
+            None => PidWait::NoSuchProcess,
+        }
     }
 
     /// Queue a signal for `pid`, from `sender_pid`, and wake what waits.
@@ -418,6 +433,7 @@ pub enum PidWait {
     Ended(usize),
     /// It exists and has not ended: the caller parks, and its exit wakes.
     NotYet,
-    /// No task has that pid.
+    /// No unreported task has that pid.  Either no process ever had it, or a
+    /// wait already consumed its zombie status.
     NoSuchProcess,
 }

@@ -90,6 +90,7 @@ struct Region {
     frames: Vec<usize>,   // pool frames, each with one reference per attach
     bytes: usize,         // the length every attach maps
     attaches: usize,      // how many mappings exist right now
+    pending: usize,       // attaches between lookup and mapping
     marked: bool,         // ShmCtl said "destroy when the last attach goes"
 }
 ```
@@ -97,10 +98,9 @@ struct Region {
 The table is one `sync::Mutex<Vec<Region>>` beside the scheduler's, reached the
 way the descriptor registry is: a free function in the kernel that the handler
 calls, not a field a handler reaches into.  A `Vec` and not a fixed array,
-because unlike the scheduler's retired-space array this is not on the trap
-path's critical section: the lock is taken for the length of one call and never
-while another lock of this kernel's is held, which is the same discipline
-`syscall::table::REGISTRY` keeps.
+because the key namespace is dynamic and has no useful fixed ceiling.  The lock
+is taken for the length of one table operation, with the region-table then
+frame-pool order stated at `get_or_create`.
 
 ### The four calls
 
@@ -140,9 +140,18 @@ answers where.
 - Each attach runs `add_reference` once per frame and `own`s each frame in the
   calling space's record.  A space that refused the record has the attach
   undone.
+- The region table records an attach as **pending** from the moment `ShmAt`
+  finds the region until the mapping either finishes or aborts.  A pending
+  attach keeps `IPC_RMID` from removing the region, and an aborted attach that
+  leaves a marked region vacant is itself responsible for destroying it.
+- A failed mapping removes every page it wrote and every ownership record it
+  added.  The pool references are then dropped once, by the attach path.
 - Every attach maps **the whole region**.  A partial attach is `ShmAt` with a
   length, and the ABI's version of this call has none; inventing one would be
   inventing an argument the frozen numbering does not have.
+- `Munmap` refuses a range that overlaps a shared attachment.  A shared
+  mapping leaves through `ShmDt`, because that is the operation that also
+  updates the region's attach count.
 
 **`ShmDt(address)`** unmaps an attach and drops one reference per frame.
 
@@ -168,6 +177,23 @@ life.
   not implement are named in Alternatives rather than silently refused as
   unknown.
 
+### Fork, exec and exit
+
+A fork inherits the parent's shared mappings.  The child's pages are **not**
+demoted to copy-on-write: a writable shared page stays writable and both
+processes continue to see one another's writes.  The child records the same
+attach ranges and raises each region's attach count, so `ShmDt`, `IPC_STAT` and
+`IPC_RMID` answer about the child as well.
+
+An `exec` replaces the image and therefore detaches every shared mapping of the
+old image.  This CPU installs the new root before releasing the old space; a task
+cannot be held by two CPUs, and an idle CPU installs the kernel root.  The
+region count and the frame references therefore move in the same operation.
+
+A process that exits without calling `ShmDt` follows the same rule.  Its
+attachment is removed at exit, and the switch that leaves the finished task
+installs the next or kernel root before releasing the address space.
+
 ### The key space, and who may name what
 
 A key is an `i32`.  A named region's key is stored as the program gave it, and
@@ -175,6 +201,10 @@ A key is an `i32`.  A named region's key is stored as the program gave it, and
 the same region, which is the point of a key and also the whole of the
 authority model: **there is none.**  This design does not ask who made a
 region, and it does not care.
+
+A named key must be positive.  The negative half of `i32` belongs to the
+counter that names `IPC_PRIVATE` regions, and allowing a caller to choose a
+negative name would let it collide with a later private identifier.
 
 That is stated rather than implied because the tree already has a MAC policy and
 an `AccessQuery` call, and a reader will reasonably ask why a shared region is
@@ -192,6 +222,7 @@ Every failure is before the first page is mapped or after the last is unmapped:
 - a region out of frames answers `OutOfMemory` and leaves nothing;
 - an attach that cannot record or map a frame unmaps the pages it did map,
   drops each reference, and answers `OutOfMemory`;
+- an attach aborted while its region is marked removes the now-vacant region;
 - a detach frees only on the `true` answer from `release_reference`, which is
   the protocol's own rule and the reason a double detach is not a double free.
 
@@ -225,7 +256,7 @@ assertion is a fault in the program rather than a refusal from the kernel.
 
 **`IPC_RMID` frees immediately.**  Simpler, and wrong: a region with an attach
 is memory a program has mapped, and freeing it under that program is the same
-defect `exec`'s retired-space array exists to avoid.
+defect address-space release avoids by switching roots before it frees pages.
 
 ## Drawbacks
 

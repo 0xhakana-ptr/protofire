@@ -40,8 +40,12 @@ use arch::Context;
 
 use super::task::State;
 use super::task::Task;
-#[cfg(target_os = "none")]
-use crate::address_space::AddressSpace;
+
+/// How many historical exits the boot report retains.
+///
+/// The machine's own boot has far fewer; the bound keeps a long-running
+/// service loop from turning diagnostic history into an unbounded allocation.
+pub const EXIT_HISTORY_LIMIT: usize = 256;
 
 /// The tasks, and which one each CPU is running.
 pub struct Scheduler {
@@ -62,6 +66,12 @@ pub struct Scheduler {
     pub(crate) delivered_signals: usize,
     /// Programs that have exited.
     pub(crate) exited: usize,
+    /// Every exit status, retained after its task slot is reused.
+    ///
+    /// Kept apart from the task slots because a reaped slot may be reused.
+    /// The boot report is a history of the machine's processes, not a snapshot
+    /// of whichever zombie slots happen to remain.
+    pub(crate) exit_history: alloc::vec::Vec<(u32, usize)>,
     /// The next process id this scheduler will hand out.
     ///
     /// Above every id the boot gave, so a boot's programs and a forked child
@@ -99,40 +109,22 @@ pub struct Scheduler {
     /// The most recent task placed back on the CPU it last ran on, as
     /// `(task, cpu)`.
     pub(crate) last_homed: Option<(usize, usize)>,
-    /// The spaces an `exec` replaced, waiting for the one moment they can be
-    /// freed.
+    /// Address spaces released after a process finished.
     ///
-    /// An `exec` swaps a task's space for a new one and the old space is
-    /// garbage at that instant, but **only from this CPU's point of view**.
-    /// The claim the release used to make, that no other CPU ever held this
-    /// task, is false on any boot where a task migrates, and the boot's own log
-    /// says tasks do (`task migrations 4, last process 2 from cpu 0 to cpu 1`).
-    /// A CPU that ran the task a moment ago can still be inside its trap path
-    /// with that root installed, or hold a translation through it; freeing the
-    /// root and its user frames there handed live memory back to the pool, and
-    /// the boot showed the result, a data abort inside the heap allocator
-    /// reading a free-list node that was no longer a list, and an instruction
-    /// abort at 0x0, both on the machine whose second CPU migrates most.
-    ///
-    /// So the space is retired rather than released.  It goes back at
-    /// [`reap_finished`](Self::reap_finished), the same point every finished
-    /// task's space goes back, where "every task has finished and every other
-    /// CPU has been told to stop" makes the release sound.
-    ///
-    /// A fixed array and not a `Vec`: `exec` runs with the scheduler's lock
-    /// held, and growing a `Vec` there allocates from the kernel heap while a
-    /// lock another CPU may be spinning on is held.  The array costs eight
-    /// words of a structure the boot already owns and cannot fail; a boot that
-    /// execs more than this many times keeps the last ones alive rather than
-    /// corrupting anything, which is the honest failure for a diagnostic bound.
+    /// This is cumulative rather than "released by the last call", because the
+    /// release now happens at the exit that leaves the space.  The boot report
+    /// still answers how many process spaces were reclaimed, and a final sweep
+    /// that finds nothing new does not reset the number to zero.
     #[cfg(target_os = "none")]
-    pub(crate) retired: [Option<AddressSpace>; RETIRED_SPACES],
+    pub(crate) spaces_reaped: usize,
+    /// The part released by the switch that left a finished process.
+    ///
+    /// Kept separately from the cumulative count so the boot report can prove
+    /// that normal processes reclaim at their exits rather than all appearing
+    /// to succeed through the final fallback sweep.
+    #[cfg(target_os = "none")]
+    pub(crate) spaces_reaped_at_switch: usize,
 }
-
-/// How many `exec`-replaced spaces this scheduler holds before it stops
-/// recording them.
-#[cfg(target_os = "none")]
-pub const RETIRED_SPACES: usize = 8;
 
 /// What a claim answered.
 ///
@@ -167,16 +159,16 @@ impl Scheduler {
             switches: 0,
             delivered_signals: 0,
             exited: 0,
+            exit_history: alloc::vec::Vec::new(),
             next_pid: 1,
             migrations: 0,
             last_migration: None,
             homed: 0,
             last_homed: None,
             #[cfg(target_os = "none")]
-            // `const { None }` because `AddressSpace` is no longer `Copy`:
-            // the repeat expression requires it, and this builds the array
-            // one element at a time instead.
-            retired: [const { None }; RETIRED_SPACES],
+            spaces_reaped: 0,
+            #[cfg(target_os = "none")]
+            spaces_reaped_at_switch: 0,
         }
     }
 
@@ -188,12 +180,43 @@ impl Scheduler {
     /// answer to "who is running this", and the two would disagree the moment
     /// a second CPU took a task at start.
     pub fn add(&mut self, task: Task) {
+        self.admit_task(task);
+    }
+
+    /// Put a new task into the rotation, reusing a fully reaped slot first.
+    ///
+    /// Task indices are held by `running` and by the migration record, so
+    /// compacting the vector would invalidate live scheduler state.  A slot
+    /// whose process is finished, whose status a wait consumed, and whose space
+    /// is already released is safe to replace in place.  Until a wait consumes
+    /// the status the slot is a zombie and stays visible.
+    pub(crate) fn admit_task(&mut self, task: Task) {
         // The id counter follows the ids the boot actually gave, so a forked
         // child cannot collide with a program the boot started.
         if task.pid() >= self.next_pid {
             self.next_pid = task.pid() + 1;
         }
-        self.tasks.push(task);
+        let reusable = self.tasks.iter().enumerate().find_map(|(index, held)| {
+            (held.state == State::Finished
+                && held.status_reported
+                && held.space.is_none()
+                && !self.running.contains(&Some(index)))
+            .then_some(index)
+        });
+        if let Some(index) = reusable {
+            if self
+                .last_migration
+                .is_some_and(|(task, _, _)| task == index)
+            {
+                self.last_migration = None;
+            }
+            if self.last_homed.is_some_and(|(task, _)| task == index) {
+                self.last_homed = None;
+            }
+            self.tasks[index] = task;
+        } else {
+            self.tasks.push(task);
+        }
     }
 
     /// The number of programs, for a boot line.
@@ -319,21 +342,33 @@ impl Scheduler {
     pub fn exit_status(&self, pid: u32) -> Option<Option<usize>> {
         self.tasks
             .iter()
-            .find(|task| task.pid == pid)
+            .find(|task| task.pid == pid && !task.status_reported)
             .map(Task::status)
     }
 
     /// Every task that exited with a status, in the order it was added.
     pub fn exited_with_status(&self) -> alloc::vec::Vec<(u32, usize)> {
-        self.tasks
-            .iter()
-            .filter_map(|task| task.status.map(|status| (task.pid, status)))
-            .collect()
+        let mut exits = self.exit_history.clone();
+        // Pids are assigned monotonically, so this restores the historical
+        // task-creation order the boot report uses even though live exits are
+        // recorded in completion order.
+        exits.sort_unstable_by_key(|(pid, _)| *pid);
+        exits
+    }
+
+    /// Record one exit, dropping the oldest after the diagnostic bound.
+    pub(crate) fn record_exit_status(&mut self, pid: u32, status: usize) {
+        if self.exit_history.len() == EXIT_HISTORY_LIMIT {
+            self.exit_history.remove(0);
+        }
+        self.exit_history.push((pid, status));
     }
 
     /// The first task that has exited, in the order it was added.
     pub fn first_exited(&self) -> Option<&Task> {
-        self.tasks.iter().find(|task| task.status.is_some())
+        self.tasks
+            .iter()
+            .find(|task| task.status.is_some() && !task.status_reported)
     }
 
     /// Whether a task other than the current one can run.

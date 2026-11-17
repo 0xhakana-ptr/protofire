@@ -139,10 +139,9 @@ pub struct AddressSpace {
     /// A record on the space rather than a table beside it, because an attach
     /// is a fact about one address space: a shared table keyed by root would
     /// leak an entry when the space is reaped, and a sweep of it would be a
-    /// thing to remember rather than a thing the type keeps.  The array is
-    /// bounded for the reason the scheduler's retired-space array is: a slot is
-    /// a fact about a call, four is more than this boot's programs hold at
-    /// once, and a fifth attach is refused rather than resized mid-syscall.
+    /// thing to remember rather than a thing the type keeps.  Four is a stated
+    /// per-address-space bound: a fifth attach is refused rather than resized
+    /// mid-syscall, and the bound is visible to the caller as `OutOfMemory`.
     attaches: [Option<(usize, i32, usize)>; MAX_SHARED_ATTACHES],
 }
 
@@ -488,9 +487,9 @@ impl AddressSpace {
     ///
     /// Every frame is recorded before any is mapped, so a space whose
     /// ownership list is full is refused with nothing written.  A mapping that
-    /// fails partway unmaps and disowns what it did, and answers `false`; the
-    /// references the caller counted are the caller's to take back, because
-    /// this function did not count them.
+    /// fails partway unmaps the pages it wrote and removes every ownership
+    /// record this call added; the references the caller counted are the
+    /// caller's to take back, because this function did not count them.
     ///
     /// # Safety
     ///
@@ -510,21 +509,18 @@ impl AddressSpace {
             user: true,
             cache: paging::Cache::Normal,
         };
+        if permissions.writable && permissions.executable {
+            return false;
+        }
         // The record first: a refusal here costs nothing, and it is the one
         // failure that cannot be undone after pages are live.
-        //
-        // The undo is a search over `owned` for the frames this call added, and
-        // not a counter, because `disown` takes `&mut self` and a loop over
-        // `owned` holds `&self`.  The search is over the frames this call was
-        // given, so it cannot touch a record an earlier call made.
+        let owned_from = self.frames.len();
         for frame in frames {
             if !self.own(*frame) {
                 // The frames themselves are not released: their references are
                 // the caller's, and a detach that never happened is not this
                 // function's to pretend.
-                for taken in frames {
-                    let _ = self.disown(*taken);
-                }
+                self.frames.truncate(owned_from);
                 return false;
             }
         }
@@ -539,9 +535,17 @@ impl AddressSpace {
                 )
             };
             if !ok {
-                // SAFETY: as above; the pages taken back are ones this call
-                // mapped.
-                unsafe { self.undo_anonymous(base, mapped) };
+                // Remove exactly the mappings this call made, then truncate the
+                // ownership records this call added.  The previous version
+                // disowned only mapped pages and left the unmapped tail in the
+                // ownership list; releasing that space later would drop a
+                // reference the failed attach had already taken back.
+                for index in 0..mapped {
+                    let address = base + index * paging::PAGE_SIZE;
+                    // SAFETY: these are the pages this call mapped above.
+                    let _ = unsafe { self.unmap_page(address) };
+                }
+                self.frames.truncate(owned_from);
                 return false;
             }
             mapped += 1;
@@ -611,6 +615,64 @@ impl AddressSpace {
         };
         *slot = Some((base, identifier, pages));
         true
+    }
+
+    /// The shared attachment containing `address`, if one does.
+    fn shared_attach_at(&self, address: usize) -> Option<(usize, i32, usize)> {
+        self.attaches
+            .iter()
+            .flatten()
+            .copied()
+            .find(|(base, _, pages)| {
+                base.checked_add(pages.saturating_mul(paging::PAGE_SIZE))
+                    .is_some_and(|end| (*base..end).contains(&address))
+            })
+    }
+
+    /// Whether `[base, base + length)` overlaps a shared attachment.
+    ///
+    /// Shared mappings have their own detach operation.  A generic `Munmap`
+    /// that removed half of one would release frame references without
+    /// decrementing the region's attach count, so it is refused instead.
+    pub fn shared_range_overlaps(&self, base: usize, length: usize) -> bool {
+        let Some(end) = base.checked_add(length) else {
+            return true;
+        };
+        self.attaches
+            .iter()
+            .flatten()
+            .any(|(attach_base, _, pages)| {
+                let Some(attach_end) =
+                    attach_base.checked_add(pages.saturating_mul(paging::PAGE_SIZE))
+                else {
+                    return true;
+                };
+                *attach_base < end && base < attach_end
+            })
+    }
+
+    /// The region identifiers this space still has attached.
+    ///
+    /// Used by the one-time address-space release to decrement each region's
+    /// logical attach count after its page-table mappings are gone.
+    fn attached_identifiers(&self) -> alloc::vec::Vec<i32> {
+        self.attaches
+            .iter()
+            .flatten()
+            .map(|(_, identifier, _)| *identifier)
+            .collect()
+    }
+
+    /// Detach every shared mapping logically, before the old root is replaced.
+    ///
+    /// The frame references stay until the address space itself is released;
+    /// only the region-table attachment count moves now.  This is what lets
+    /// `IPC_RMID` see `shmdt` or process exit immediately even while the old
+    /// page table waits for SMP quiescence.
+    pub fn detach_logical_attachments(&mut self) -> alloc::vec::Vec<i32> {
+        let attached = self.attached_identifiers();
+        self.attaches = [const { None }; MAX_SHARED_ATTACHES];
+        attached
     }
 
     /// Unmap everything in `[base, base + length)` and give its frames back.
@@ -971,7 +1033,7 @@ impl AddressSpace {
     /// the first version of this function left every one of them behind:
     /// three frames per space on this kernel's four-level walk, measurable in
     /// the boot's free count, and one `exec`'s worth paid at runtime rather
-    /// than only at the boot's end.  They are strictly per space, a fork
+    /// than only at the end of the boot.  They are strictly per space, a fork
     /// shares frames, never tables, so freeing them needs no count.
     ///
     /// # Safety
@@ -979,22 +1041,31 @@ impl AddressSpace {
     /// `self` must not be the installed address space: freeing the root the
     /// machine is translating through is a fault on the next instruction.
     pub unsafe fn release(self) {
-        let mut guard = TABLES.lock();
-        let tables = &mut *guard;
-        for frame in &self.frames {
-            // The protocol, in two lines: release asks whether this was the
-            // last owner, and only a `true` returns the frame.  A frame no
-            // fork ever shared counts zero co-owners, so its first release is
-            // its last, and the ordinary path is unchanged.
-            if tables.frames.release_reference(*frame) {
-                let _ = tables.frames.deallocate(*frame as *mut u8, 1);
+        let attached = self.attached_identifiers();
+        {
+            let mut guard = TABLES.lock();
+            let tables = &mut *guard;
+            for frame in &self.frames {
+                // The protocol, in two lines: release asks whether this was the
+                // last owner, and only a `true` returns the frame.  A frame no
+                // fork ever shared counts zero co-owners, so its first release
+                // is its last, and the ordinary path is unchanged.
+                if tables.frames.release_reference(*frame) {
+                    let _ = tables.frames.deallocate(*frame as *mut u8, 1);
+                }
             }
+            // SAFETY: the walk frees only tables this space's own `map` calls
+            // built, and the root is a frame this space owns; the caller
+            // promises none of them is installed.
+            unsafe { free_user_walk(tables, self.root) };
+            let _ = tables.frames.deallocate(self.root as *mut u8, 1);
         }
-        // SAFETY: the walk frees only tables this space's own `map` calls
-        // built, and the root is a frame this space owns; the caller promises
-        // none of them is installed.
-        unsafe { free_user_walk(tables, self.root) };
-        let _ = tables.frames.deallocate(self.root as *mut u8, 1);
+        // The physical references are gone.  The region's logical attachment
+        // count is updated only after the table lock is dropped, because the
+        // region path may take the frame pool to destroy a marked region.
+        for identifier in attached {
+            crate::shm::target::release_space_attach(identifier);
+        }
     }
 }
 
@@ -1510,15 +1581,18 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
     child.set_window(parent.window.0, parent.window.1);
     child.set_brk(parent.brk);
     child.map_cursor = parent.map_cursor;
+    let inherited_attaches = parent.attaches;
 
     for page in &pages[..count] {
-        // Demote the parent's entry when the page was writable, and record the
-        // child as one more owner, in one pool critical section.
+        let shared = parent.shared_attach_at(page.virtual_address);
+        // A private writable page is demoted for copy-on-write.  A shared page
+        // is not: `fork` inherits the mapping, but the region's promise is that
+        // both mappings keep seeing one another's writes.
         if !share_frame(
             parent.root(),
             page.virtual_address,
             page.physical,
-            page.writable,
+            page.writable && shared.is_none(),
         ) {
             // The share is the child's first claim on the frame, so there is
             // nothing of this page to undo: the child owns nothing yet.
@@ -1542,24 +1616,45 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
         // SAFETY: the frame is shared with the parent, and the address is the
         // parent's own user address, which this space does not map yet.
         //
-        // The child's permissions are the parent's with **one** change: the
-        // page is read-only, because the fork demoted it and the resolver will
-        // give the first writer a private copy.  Everything else travels,
-        // which is the point of `MappedPage` carrying `executable`.  This used
-        // to call `map`, whose signature takes only a writability flag and
-        // hardcodes the execute bit, so every child page came back executable:
-        // a program's data and stack were mapped read-execute, which is
-        // exactly the state `SECURITY.md` says the loader refuses.
+        // A private page is the parent's with one change: read-only, because
+        // the fork demoted it and the resolver will give the first writer a
+        // copy.  A shared page keeps both permission bits; demoting it would
+        // silently turn shared memory back into copy-on-write.
         let permissions = paging::Permissions {
-            writable: false,
+            writable: shared.is_some() && page.writable,
             executable: page.executable,
             user: true,
             cache: paging::Cache::Normal,
         };
+        if permissions.writable && permissions.executable {
+            // SAFETY: `child` was built by this call chain and never handed to
+            // a task, so no CPU translates through its root.
+            unsafe { child.release() };
+            return None;
+        }
         // SAFETY: as above.
         if !unsafe { child.map_page_with(page.virtual_address, page.physical, permissions) } {
             // SAFETY: `child` was built by this call chain and never handed to
             // a task, so no CPU translates through its root.
+            unsafe { child.release() };
+            return None;
+        }
+    }
+
+    // The mappings exist, so the child now owns one logical attachment for each
+    // inherited shared region.  Counting only after success keeps a failed fork
+    // from leaving `IPC_STAT` larger than reality.  If a later count fails,
+    // `child.release` decrements the attachments already recorded.
+    for (base, identifier, pages) in inherited_attaches.into_iter().flatten() {
+        if crate::shm::target::noted_attach(identifier).is_none() {
+            // SAFETY: `child` was built by this call chain and never handed to
+            // a task.
+            unsafe { child.release() };
+            return None;
+        }
+        if !child.remember_attach(base, identifier, pages) {
+            crate::shm::target::release_space_attach(identifier);
+            // SAFETY: as above, and no page table names the child root.
             unsafe { child.release() };
             return None;
         }

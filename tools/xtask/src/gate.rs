@@ -1097,6 +1097,7 @@ impl Machine {
                     "protofire: address spaces reaped 10, 131072 frame(s) free",
                     true,
                 ),
+                ("protofire: address spaces reaped at switch = 10", true),
                 // Ten and not nine: the local-domain exchange forks once more
                 // than the stream exchange did, and the shared-memory exercise
                 // once more again, so the boot runs ten programs.  The number
@@ -1324,15 +1325,15 @@ impl Machine {
                     ("protofire: program ended on cpu 1", true),
                     ("protofire: parallel, programs ended on ", false),
                     // Every finished program's address space went back, and the
-                    // pool it returned to is reported beside it.  The count is
-                    // the programs: one address space each, released once the
-                    // machine is finished.  Releasing at each exit was tried
-                    // and produced 186 page faults in six boots of eight, which
-                    // is why the count is here at the end rather than absent.
+                    // pool it returned to is reported beside it.  The second
+                    // line is the stronger claim: all ten were released by the
+                    // switch that left them after installing the next or kernel
+                    // root, not by the final fallback sweep.
                     (
                         "protofire: address spaces reaped 10, 16384 frame(s) free",
                         true,
                     ),
+                    ("protofire: address spaces reaped at switch = 10", true),
                     // One invalidation, acknowledged, and no wait ran out.
                     // This core's ECAM window is past the identity map, so the
                     // boot creates a mapping for it after the second core is
@@ -2650,6 +2651,7 @@ impl Machine {
                     "protofire: address spaces reaped 10, 16384 frame(s) free",
                     true,
                 ),
+                ("protofire: address spaces reaped at switch = 10", true),
                 // No invalidation, and that is this machine's fact rather than
                 // a gap.  Its ECAM window is at `0x3000_0000`, inside the four
                 // gigabyte identity map, so the boot finds it already mapped
