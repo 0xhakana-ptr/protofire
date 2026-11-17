@@ -59,10 +59,11 @@ recorded where its mechanism is:
   handshake messages are implemented and host-tested; the **call** is not a way
   to reach a server.  `docs/status.md` and `docs/fmts/syscall-abi.md`.
 
-- **No X.509 parser, so no certificate is checked.**  A chain a peer sends is
-  carried opaque and the Finished is verified against a key the caller supplies.
-  A program that trusts a peer's Finished has authenticated the **handshake**,
-  not the peer's name.  `net/src/tls/mod.rs`.
+- **X.509 checking exists, with stated limits.**  `net::x509` parses DER,
+  verifies a chain from its trust anchor, checks CA constraints and matches
+  subject alternative names.  It has no revocation, path building, name
+  constraints or general policy processing, and the TLS call itself still
+  answers `Unsupported` on this machine.  `net/src/x509/mod.rs`.
 
 - **`TlsConnect`'s boot probe proves agreement, not rejection.**  It runs both
   sides of a handshake against each other, so a wrong side never appears in it;

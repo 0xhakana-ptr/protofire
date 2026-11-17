@@ -1280,14 +1280,14 @@ ClientHello, sends it, and answers `Unsupported`, and the boot line says how man
 bytes went so the half that ran is visible.  A call that refused without
 building a hello would be a number and nothing more.
 
-Second, **there is no X.509 parser.**  A certificate chain is DER, and reading it
-is a module of its own: tagged values, an algorithm identifier, a validity
-window, an extension list, and the name matching that decides whether a
-certificate is for the host you meant.  The handshake here carries the chain
-opaque and verifies the Finished against a key the caller supplies.  Half a
-parser would be worse than none: one that read a certificate's fields and skipped
-the extension that says "not for this name" would pass a chain a real client
-refuses.
+Second, **`TlsConnect` does not yet drive the certificate verifier from a live
+peer handshake.**  `net::x509` reads DER, verifies signatures, enforces CA
+constraints and matches subject alternative names, and the trust-anchor calls
+use it.  The TLS call still has no server on this machine to exchange a chain
+with, so its boot probe carries the handshake half and the certificate work is
+proved by host tests against real DER.  A parser that skipped the extension
+which says "not for this name" would pass a chain a real client refuses; the
+current verifier reads that extension and has no common-name fallback.
 
 Third, **the boot probe proves agreement and not rejection.**  It runs both sides
 of a handshake against each other, which is the strongest evidence available

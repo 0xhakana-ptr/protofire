@@ -517,13 +517,11 @@ these is a change to a measurement, and the measurement is in the sentence.
   with `Unsupported`** after sending its hello, because there is no TLS server
   here to answer it; `net::tls` has the record layer, the key schedule and the
   handshake, and the boot proves both sides of a handshake agree.  No X.509
-  parser exists, so a chain is carried opaque.  `docs/status.md` records all
-  three limits where the call is.  `TrustAnchorAdd` (194) and
-  `TrustAnchorRemove` (195) are served as well, over `net::x509`, which parses a
-  real certificate chain, verifies its signatures and matches its names; that is
-  13 host tests against DER openssl wrote, and no boot probe, because the chain
-  check faults in this tree's ECDSA on aarch64 and that defect is its own
-  change.
+  boot probe proves the peer's name, but `TrustAnchorAdd` (194) and
+  `TrustAnchorRemove` (195) are served over `net::x509`, which parses a real
+  certificate chain, verifies its signatures and matches its names.  That is 13
+  host tests against DER openssl wrote; the call still has no live server to
+  verify against.  `docs/status.md` records the limits where the call is.
 - **Routing.**  One interface, one address, one gateway.  A routing table is a
   decision for a tree with two networks.
 - **DNS beyond the literal.**  `ResolveHostname` (93) can answer from a hosts
