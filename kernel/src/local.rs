@@ -169,6 +169,15 @@ pub fn accept(name: &[u8]) -> Result<Option<Halves>> {
     })
 }
 
+/// How many connections are waiting at a name.
+///
+/// The non-destructive half of [`accept`]: `Poll` asks whether an accept would
+/// take something, and a check that removed the connection it found would be
+/// the accept, not the question about it.
+pub fn waiting(name: &[u8]) -> usize {
+    with_registry(|registry| registry.names.waiting(name))
+}
+
 /// Release a name, answering whether anything held it.
 ///
 /// What a process's exit does with the names its descriptors bound, and the

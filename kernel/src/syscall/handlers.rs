@@ -506,6 +506,105 @@ pub fn set_file_flags(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -
     Ok(Dispatch::complete(0))
 }
 
+/// Ask which descriptors are ready, answering how many are.
+///
+/// Arguments: the array of [`fs_abi::PollFd`] records, how many there are, the
+/// timeout in ticks, then three reserved slots that must be zero.
+///
+/// Answers the number of records whose `revents` came out non-zero, and writes
+/// each record's `revents` in place.  A record whose `fd` is negative is
+/// skipped and has its `revents` cleared, so an array built once can be reused
+/// without being rebuilt.
+///
+/// **This call does not block.**  The timeout argument is accepted and ignored,
+/// because parking a caller needs the scheduler and this handler runs with the
+/// registry's lock held: a handler that parked would hold a lock across a
+/// sleep. So a caller that gets zero ready records must ask again after its own
+/// wait, which is the same shape the boot's other polling drivers use.  The
+/// ABI's timeout field is still read and validated, so a caller that passes
+/// garbage there is told rather than silently served.
+pub fn poll(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let count = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 3)?;
+    let buffer = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+
+    // The array has to hold `count` records, and the caller's word for how many
+    // is checked against the buffer rather than trusted: a count larger than
+    // the buffer is a caller reading past what it owns.
+    let needed = count
+        .checked_mul(fs_abi::POLL_FD_SIZE)
+        .ok_or(Error::InvalidArgument)?;
+    if buffer.len() < needed {
+        return Err(Error::InvalidArgument);
+    }
+
+    let mut ready = 0usize;
+    for index in 0..count {
+        let at = index * fs_abi::POLL_FD_SIZE;
+        let fd = i32::from_le_bytes(
+            buffer[at..at + 4]
+                .try_into()
+                .map_err(|_| Error::InternalError)?,
+        );
+        let events_at = at + fs_abi::POLL_FD_EVENTS_OFFSET;
+        let events = u16::from_le_bytes(
+            buffer[events_at..events_at + 2]
+                .try_into()
+                .map_err(|_| Error::InternalError)?,
+        );
+        let revents_at = at + fs_abi::POLL_FD_REVENTS_OFFSET;
+
+        // A negative descriptor is the caller saying "not this one", and its
+        // `revents` is cleared rather than asked about.
+        let revents = if fd < 0 {
+            0
+        } else {
+            let asked = events & fs_abi::POLL_KNOWN_EVENTS;
+            let available = table.readiness_at(fd as usize, arguments.context.caller_pid);
+            // `POLL_ERR` and `POLL_HUP` are reported whether or not they were
+            // asked for, which is the one place this answer is wider than the
+            // question: a caller that did not name them still needs to know
+            // that waiting longer will not help.
+            let always = available & (fs_abi::POLL_ERR | fs_abi::POLL_HUP);
+            (available & asked) | always
+        };
+        buffer[revents_at..revents_at + 2].copy_from_slice(&revents.to_le_bytes());
+        if revents != 0 {
+            ready += 1;
+        }
+    }
+    Ok(Dispatch::complete(ready))
+}
+
+/// Set one descriptor's per-descriptor flags.
+///
+/// Arguments: the descriptor, the flags, then four reserved slots that must be
+/// zero.  Answers zero.
+///
+/// One flag is defined, [`fs_abi::FD_CLOEXEC`]: a descriptor carrying it is
+/// closed when this process **execs a new image**, which is what a program
+/// marking a descriptor that way asks for.  A bit outside the ABI's known set
+/// is `InvalidArgument` rather than stored, for the reason every flag word here
+/// is checked: a bit nothing acts on is a promise the kernel would be recording
+/// and not keeping.
+///
+/// `Fcntl`'s `F_SETFD` is the same operation by another number, and the two
+/// share the table method behind them.  They are separate calls because the ABI
+/// froze both before this tree served either, and a build that answered one and
+/// not the other would be a program's coin flip rather than a kernel's
+/// decision.
+pub fn set_fd_flags(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let flags = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+    validate_known_flags(flags, fs_abi::FD_CLOEXEC)?;
+    table.set_descriptor_flags_at(descriptor, flags as u8, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(0))
+}
+
 /// The descriptor control call: seven commands over one number.
 ///
 /// Arguments: the descriptor, the command, the command's own argument, then
@@ -535,17 +634,15 @@ pub fn fcntl(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
             Ok(Dispatch::complete(placed))
         }
         fs_abi::F_GETFD => {
-            // No per-descriptor flags exist, so the answer is the empty set and
-            // the descriptor still has to be one this caller holds: a call on
-            // somebody else's number is `InvalidArgument` here as everywhere.
-            table.status_flags_at(descriptor, caller)?;
-            Ok(Dispatch::complete(0))
+            let flags = table.descriptor_flags_at(descriptor, caller)?;
+            Ok(Dispatch::complete(usize::from(flags)))
         }
         fs_abi::F_SETFD => {
-            if argument != 0 {
-                return Err(Error::NotImplemented);
-            }
-            table.status_flags_at(descriptor, caller)?;
+            // The ABI's known bits, and nothing else: a caller naming a bit
+            // this build does not define is asking for behaviour it cannot get,
+            // and accepting it would store a flag nothing acts on.
+            syscall::validate_known_flags(argument, fs_abi::FD_CLOEXEC)?;
+            table.set_descriptor_flags_at(descriptor, argument as u8, caller)?;
             Ok(Dispatch::complete(0))
         }
         fs_abi::F_GETFL => {

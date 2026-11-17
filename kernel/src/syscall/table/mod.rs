@@ -336,6 +336,18 @@ impl Descriptor {
 pub struct SyscallTable {
     slots: [Handler; MAX_SYSCALLS],
     descriptors: [Option<Descriptor>; MAX_DESCRIPTORS],
+    /// The per-descriptor flags, one byte beside each slot.
+    ///
+    /// A parallel array rather than a field on [`Descriptor`] because the flag
+    /// is the **descriptor's** and not the handle's: a duplicate starts with
+    /// the same handle and, in this build, the same flags, which is what a
+    /// caller that duplicated a descriptor to hand it on expects.  Putting the
+    /// byte in the enum would have meant touching eleven variants and every
+    /// one of their eighty construction sites for a value none of them uses.
+    ///
+    /// A slot whose descriptor is `None` has nothing to read here, which is
+    /// why the two are cleared together rather than separately.
+    descriptor_flags: [u8; MAX_DESCRIPTORS],
     namespace: Option<Arc<MountTable>>,
 }
 
@@ -345,6 +357,7 @@ impl SyscallTable {
         Self {
             slots: [Handler::Unimplemented; MAX_SYSCALLS],
             descriptors: [const { None }; MAX_DESCRIPTORS],
+            descriptor_flags: [0; MAX_DESCRIPTORS],
             namespace: None,
         }
     }
@@ -431,7 +444,191 @@ impl SyscallTable {
             .descriptors
             .get_mut(descriptor)
             .ok_or(Error::InvalidArgument)?;
-        slot.take().map(|_| ()).ok_or(Error::InvalidArgument)
+        let taken = slot.take().map(|_| ()).ok_or(Error::InvalidArgument);
+        // The flags are the descriptor's, so closing it clears them.  A slot
+        // that kept them would hand the next occupant an `FD_CLOEXEC` nobody
+        // set, which `insert` also guards against and this makes redundant
+        // rather than merely unlikely.
+        self.descriptor_flags[descriptor] = 0;
+        taken
+    }
+
+    /// What is true about a descriptor right now, for `Poll`.
+    ///
+    /// The answer is a subset of [`fs_abi::POLL_KNOWN_EVENTS`], and each bit is
+    /// a fact this kernel can state:
+    ///
+    /// - A **file** is always readable and always writable.  Its bytes are the
+    ///   filesystem's and a read either answers them or answers an error; there
+    ///   is no state in which it would block, so a poll on one never waits.
+    /// - a **pipe end** is readable when the ring holds bytes and writable when
+    ///   it has room.  A read end whose writers are all gone is a hang-up,
+    ///   which is the third fact a pipe can have and the one a reader loops on.
+    /// - A **local-domain** descriptor is two pipe halves, so it answers the
+    ///   read half's state for `POLL_IN` and the write half's for `POLL_OUT`.
+    /// - A **listener** is readable when a connection is waiting, because an
+    ///   accept would return at once.
+    ///
+    /// The rest answer [`fs_abi::POLL_ERR`] rather than a guess.  A datagram
+    /// socket's only non-destructive question in this tree is `try_recv`, which
+    /// consumes the datagram it answers; a TCP stream's buffer has no
+    /// readiness accessor at all.  Reporting them ready would make a caller
+    /// loop on a call that sleeps, and reporting them unready would make it
+    /// miss what arrived: `POLL_ERR` is the honest answer for "this kernel
+    /// cannot say".
+    pub(crate) fn readiness_at(&self, descriptor: usize, caller: Option<u32>) -> u16 {
+        let Ok(()) = self.check_owner(descriptor, caller) else {
+            return fs_abi::POLL_ERR;
+        };
+        let Some(slot) = self
+            .descriptors
+            .get(descriptor)
+            .and_then(|slot| slot.as_ref())
+        else {
+            return fs_abi::POLL_ERR;
+        };
+        match slot {
+            Descriptor::File { .. } => fs_abi::POLL_IN | fs_abi::POLL_OUT,
+            Descriptor::Pipe { end, .. } => {
+                let pipe = end.pipe();
+                match end.kind() {
+                    pipe::Kind::Read => {
+                        let mut ready = 0;
+                        if pipe.available() > 0 {
+                            ready |= fs_abi::POLL_IN;
+                        }
+                        if !pipe.has_writers() {
+                            ready |= fs_abi::POLL_HUP;
+                        }
+                        ready
+                    }
+                    pipe::Kind::Write => {
+                        if pipe.has_readers() && pipe.remaining() > 0 {
+                            fs_abi::POLL_OUT
+                        } else if !pipe.has_readers() {
+                            // A writer with no reader to take its bytes is the
+                            // hang-up on the other side of the same fact.
+                            fs_abi::POLL_ERR
+                        } else {
+                            0
+                        }
+                    }
+                }
+            }
+            Descriptor::Local { halves, .. } => {
+                let reader = halves.reader.pipe();
+                let writer = halves.writer.pipe();
+                let mut ready = 0;
+                if reader.available() > 0 {
+                    ready |= fs_abi::POLL_IN;
+                }
+                if !reader.has_writers() {
+                    ready |= fs_abi::POLL_HUP;
+                }
+                if writer.has_readers() && writer.remaining() > 0 {
+                    ready |= fs_abi::POLL_OUT;
+                }
+                ready
+            }
+            Descriptor::LocalListener { name, .. } => {
+                // A name with a connection waiting is one an accept would take
+                // without blocking.  The check does not consume it: it asks the
+                // table whether one is there, which is what `accept` would ask
+                // second.
+                if crate::local::waiting(name.as_bytes()) > 0 {
+                    fs_abi::POLL_IN
+                } else {
+                    0
+                }
+            }
+            Descriptor::TcpListener { listener, .. } => {
+                if crate::net::tcp_has_pending(*listener) {
+                    fs_abi::POLL_IN
+                } else {
+                    0
+                }
+            }
+            // The four the kernel cannot answer.  See the doc comment above.
+            Descriptor::UdpSocket { .. }
+            | Descriptor::TcpStream { .. }
+            | Descriptor::Raw { .. }
+            | Descriptor::DccpBound { .. }
+            | Descriptor::DccpListener { .. }
+            | Descriptor::DccpConnection { .. } => fs_abi::POLL_ERR,
+        }
+    }
+
+    /// The per-descriptor flags a number carries.
+    ///
+    /// `F_GETFD`'s answer and `SetFdFlags`'s read-back.  Refused for a number
+    /// that is not this caller's descriptor, the same answer every other call
+    /// gives: a number that is not a descriptor to the caller is not one at
+    /// all.
+    pub fn descriptor_flags_at(&self, descriptor: usize, caller: Option<u32>) -> Result<u8> {
+        self.check_owner(descriptor, caller)?;
+        if self
+            .descriptors
+            .get(descriptor)
+            .and_then(|slot| slot.as_ref())
+            .is_none()
+        {
+            return Err(Error::InvalidArgument);
+        }
+        Ok(self.descriptor_flags[descriptor])
+    }
+
+    /// Set one descriptor's flags.
+    ///
+    /// `SetFdFlags`'s whole operation and `F_SETFD`'s.  The caller validates
+    /// the mask against the ABI's known bits before this, so a bit outside them
+    /// never reaches here; what this refuses is a number that is not a
+    /// descriptor, which is the one fact the mask cannot tell it.
+    pub fn set_descriptor_flags_at(
+        &mut self,
+        descriptor: usize,
+        flags: u8,
+        caller: Option<u32>,
+    ) -> Result<()> {
+        self.check_owner(descriptor, caller)?;
+        if self
+            .descriptors
+            .get(descriptor)
+            .and_then(|slot| slot.as_ref())
+            .is_none()
+        {
+            return Err(Error::InvalidArgument);
+        }
+        self.descriptor_flags[descriptor] = flags;
+        Ok(())
+    }
+
+    /// Close every descriptor owned by `owner` that carries `FD_CLOEXEC`, and
+    /// answer how many went.
+    ///
+    /// `exec`'s operation, and the whole point of the flag: a descriptor a
+    /// program marked close-on-exec does not survive the image that replaces
+    /// it. It is a **close**, not a hide, so a pipe's end count drops and a
+    /// reader on the other side sees end-of-file, which is what a descriptor
+    /// that is gone means.
+    ///
+    /// A build that never closed one would make `FD_CLOEXEC` a bit nothing acts
+    /// on, which is the state `F_SETFD` used to refuse to enter.  This is that
+    /// refusal's replacement: the bit is accepted *because* something closes
+    /// it.
+    pub fn close_on_exec(&mut self, owner: u32) -> usize {
+        let mut closed = 0;
+        for index in 0..MAX_DESCRIPTORS {
+            if self.descriptor_flags[index] & fs_abi::FD_CLOEXEC as u8 == 0 {
+                continue;
+            }
+            if self.descriptors[index].is_none() || self.owner_of(index) != Some(owner) {
+                continue;
+            }
+            self.descriptors[index] = None;
+            self.descriptor_flags[index] = 0;
+            closed += 1;
+        }
+        closed
     }
 
     /// Duplicate a descriptor into the lowest free slot, and answer its number.
@@ -489,6 +686,7 @@ impl SyscallTable {
         // the copy goes into, which is what makes `Dup2` usable when the table
         // is full.
         self.descriptors[target] = None;
+        self.descriptor_flags[target] = 0;
         let source = self
             .descriptors
             .get(descriptor)
@@ -496,6 +694,11 @@ impl SyscallTable {
             .ok_or(Error::InvalidArgument)?;
         let owner = caller.unwrap_or(crate::programs::BOOT_PROCESS);
         self.descriptors[target] = Some(source.for_owner(owner));
+        // The copy carries the flags it was duplicated from: a caller that
+        // marked a descriptor close-on-exec and then duplicated it to hand it
+        // to a child's exec has marked both, which is what one handle means in
+        // two slots.
+        self.descriptor_flags[target] = self.descriptor_flags[descriptor];
         Ok(target)
     }
 
@@ -765,6 +968,11 @@ impl SyscallTable {
         for (index, slot) in self.descriptors.iter_mut().enumerate() {
             if slot.is_none() {
                 *slot = Some(descriptor);
+                // A fresh descriptor starts with no flags.  The cell may hold
+                // a previous occupant's byte, and a new handle that inherited
+                // one would be a descriptor closed on an exec it never asked
+                // to be.
+                self.descriptor_flags[index] = 0;
                 return Ok(index);
             }
         }
@@ -1630,6 +1838,22 @@ pub fn accept_dccp(port: u16, owner: u32) -> abi::Result<usize> {
     match crate::net::dccp_accept(port)? {
         Some(id) => table.insert_dccp_connection(id, owner),
         None => Ok(usize::MAX),
+    }
+}
+
+/// Close every close-on-exec descriptor `owner` holds, answering how many.
+///
+/// `exec`'s call into the registry.  It is a free function with the same shape
+/// the crate's other registry entry points have, because `exec` runs in the
+/// scheduler and the table is the syscall module's: the scheduler asks, the
+/// registry answers, and neither names the other's type.
+///
+/// A boot with no registry answers zero, which is the honest number: no
+/// descriptors existed for the flag to act on.
+pub fn close_on_exec(owner: u32) -> usize {
+    match REGISTRY.lock().as_mut() {
+        Some(table) => table.close_on_exec(owner),
+        None => 0,
     }
 }
 

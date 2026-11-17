@@ -348,6 +348,14 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::PermissionMetadataFd,
         crate::syscall::permission_metadata_fd,
     );
+    // The per-descriptor flag.  `FD_CLOEXEC` is one bit, and it means what it
+    // says now: `exec` closes the descriptors carrying it.
+    table.register(
+        ::syscall::SyscallNumber::SetFdFlags,
+        crate::syscall::set_fd_flags,
+    );
+    // The readiness question over an array of descriptors.
+    table.register(::syscall::SyscallNumber::Poll, crate::syscall::poll);
     // The truncate.  A number the ABI froze at twenty and this table served
     // nothing for until now: `VNode::set_len` existed and no program could
     // reach it, which is the whole of what that gap was.

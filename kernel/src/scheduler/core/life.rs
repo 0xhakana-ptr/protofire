@@ -429,6 +429,19 @@ impl Scheduler {
         // running.
         *frame = *task.context();
 
+        // The close-on-exec descriptors, closed **before** the switch: the
+        // flag belongs to the image being replaced, and a descriptor a program
+        // marked for exactly this is the one thing an exec is allowed to take
+        // away.  The count is the boot's evidence that the mechanism ran.
+        let closed = crate::syscall::close_on_exec(pid);
+        if closed > 0 {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(pid);
+            arch::serial::write_str(" closed ");
+            arch::serial::write_u32(closed as u32);
+            arch::serial::write_str(" close-on-exec descriptor(s)\n");
+        }
+
         // SAFETY: the new root is a live table this task owns, and every root
         // shares the kernel's entry 0, which covers the code performing the
         // call.

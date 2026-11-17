@@ -932,6 +932,13 @@ impl Machine {
                     "protofire: process 1 access query, granted 6 of a possible 7, allowed=1",
                     true,
                 ),
+                // The per-descriptor flag, set and cleared, and the readiness
+                // question.  `flags to 1` is `FD_CLOEXEC` and `to 0` is the
+                // caller taking it back; `1 ready` is the file, which has no
+                // state in which a read would block.
+                ("protofire: process 1 set descriptor 6 flags to 1", true),
+                ("protofire: process 1 set descriptor 6 flags to 0", true),
+                ("protofire: process 1 polled 1 descriptor(s), 1 ready", true),
                 ("protofire: process 1 listed block device 0", true),
                 // The second and third devices, through the dispatcher from
                 // ring 3.  Only x86_64's machine has them, so the program's

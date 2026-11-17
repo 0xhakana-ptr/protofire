@@ -142,6 +142,8 @@ use user_abi::sys_open_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_permission_metadata;
 #[cfg(target_os = "none")]
+use user_abi::sys_poll;
+#[cfg(target_os = "none")]
 use user_abi::sys_read;
 #[cfg(target_os = "none")]
 use user_abi::sys_read_console;
@@ -170,6 +172,8 @@ use user_abi::sys_send_signal;
 #[cfg(target_os = "none")]
 #[cfg(target_os = "none")]
 use user_abi::sys_send_to_udp;
+#[cfg(target_os = "none")]
+use user_abi::sys_set_fd_flags;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_file_flags;
 #[cfg(target_os = "none")]
@@ -817,6 +821,31 @@ pub extern "C" fn _start() -> ! {
     {
         sys_exit(251);
     }
+
+    // The per-descriptor flag, and the readiness question.  The flag is read
+    // back as a record rather than trusted: `F_GETFD` is the call that says
+    // whether the byte landed.  The poll asks about a file, which is always
+    // ready, so the answer is one and the record says why.
+    let flagged = insist(sys_open(XATTR_PATH.as_ptr() as usize, OPEN_READ));
+    insist(sys_set_fd_flags(flagged, user_abi::FD_CLOEXEC));
+    if sys_fcntl(flagged, user_abi::F_GETFD, 0) != user_abi::FD_CLOEXEC {
+        sys_exit(251);
+    }
+    insist(sys_set_fd_flags(flagged, 0));
+    if sys_fcntl(flagged, user_abi::F_GETFD, 0) != 0 {
+        sys_exit(251);
+    }
+
+    let mut asked = [user_abi::PollFd {
+        fd: flagged as i32,
+        events: user_abi::POLL_IN,
+        revents: 0,
+    }];
+    let ready = insist(sys_poll(&mut asked));
+    if ready != 1 || asked[0].revents & user_abi::POLL_IN == 0 {
+        sys_exit(251);
+    }
+    insist(sys_close(flagged));
 
     // The remove, of a file made for the purpose: created, closed, gone.
     let scratch = insist(sys_open_at(

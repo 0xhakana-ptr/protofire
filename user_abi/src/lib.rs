@@ -134,6 +134,21 @@ pub const SYS_PERMISSION_METADATA: usize = SyscallNumber::PermissionMetadata as 
 pub const SYS_PERMISSION_METADATA_AT: usize = SyscallNumber::PermissionMetadataAt as usize;
 /// `PermissionMetadataFd`, the same read about a descriptor's file.
 pub const SYS_PERMISSION_METADATA_FD: usize = SyscallNumber::PermissionMetadataFd as usize;
+/// `SetFdFlags`, the per-descriptor flags.
+pub const SYS_SET_FD_FLAGS: usize = SyscallNumber::SetFdFlags as usize;
+/// `Poll`, the readiness question over an array of descriptors.
+pub const SYS_POLL: usize = SyscallNumber::Poll as usize;
+
+/// The poll record, re-exported from the ABI it is the wire format of.
+pub use abi::fs::PollFd;
+/// There is data to read.
+pub const POLL_IN: u16 = abi::fs::POLL_IN;
+/// Writing will not block.
+pub const POLL_OUT: u16 = abi::fs::POLL_OUT;
+/// The poll record's size.
+pub const POLL_FD_SIZE: usize = abi::fs::POLL_FD_SIZE;
+/// `FD_CLOEXEC`, the one per-descriptor flag this build defines.
+pub const FD_CLOEXEC: usize = abi::fs::FD_CLOEXEC;
 /// `SetLength`, a descriptor's new length.
 pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
 /// `Seek`, a descriptor's new position.
@@ -721,6 +736,30 @@ pub fn sys_remove_xattr(path: usize, name: &[u8]) -> usize {
         path,
         name.as_ptr() as usize,
         name.len().saturating_sub(1),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `set_fd_flags(descriptor, flags)`: zero, or an error's encoding.
+#[cfg(target_os = "none")]
+pub fn sys_set_fd_flags(descriptor: usize, flags: usize) -> usize {
+    syscall6(SYS_SET_FD_FLAGS, descriptor, flags, 0, 0, 0, 0)
+}
+
+/// `poll(records)`: how many records came out ready.
+///
+/// The records are the ABI's `PollFd`, and the call writes each `revents` in
+/// place.  It does not block: a zero answer means "nothing yet", and the caller
+/// asks again after its own wait.
+#[cfg(target_os = "none")]
+pub fn sys_poll(records: &mut [PollFd]) -> usize {
+    syscall6(
+        SYS_POLL,
+        records.as_mut_ptr() as usize,
+        records.len(),
+        0,
         0,
         0,
         0,

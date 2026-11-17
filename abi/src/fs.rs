@@ -243,6 +243,45 @@ pub const FD_CLOEXEC: usize = 1;
 /// different bit would have its `F_SETFL` silently do nothing.
 pub const O_NONBLOCK: usize = 0o4000;
 
+// poll: the readiness question
+
+/// The record `Poll` reads and writes, one per descriptor.
+///
+/// `fd` is the descriptor, `events` what the caller wants to know about and
+/// `revents` what turned out to be true.  The layout is eight bytes and it is
+/// the wire's, so a program's own array of these is what the kernel walks; a
+/// `struct` whose padding differed would have the kernel reading a caller's
+/// descriptions as something else.
+///
+/// A negative `fd` is a record the caller wants skipped, and the kernel clears
+/// its `revents` rather than asking about it: an array built once and reused
+/// across calls needs a way to say "not this one" without rebuilding.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PollFd {
+    /// The descriptor, or a negative number for a record to skip.
+    pub fd: i32,
+    /// What the caller wants to know.
+    pub events: u16,
+    /// What is true, written by the kernel.
+    pub revents: u16,
+}
+
+pub const POLL_FD_SIZE: usize = size_of::<PollFd>();
+pub const POLL_FD_EVENTS_OFFSET: usize = offset_of!(PollFd, events);
+pub const POLL_FD_REVENTS_OFFSET: usize = offset_of!(PollFd, revents);
+
+/// There is data to read.
+pub const POLL_IN: u16 = 0x001;
+/// Writing will not block.
+pub const POLL_OUT: u16 = 0x004;
+/// An error condition, which the kernel reports whether or not it was asked.
+pub const POLL_ERR: u16 = 0x008;
+/// Hang-up: the peer closed, and a read will answer end-of-file.
+pub const POLL_HUP: u16 = 0x010;
+/// Every bit this build defines, and therefore the set a caller may ask about.
+pub const POLL_KNOWN_EVENTS: u16 = POLL_IN | POLL_OUT | POLL_ERR | POLL_HUP;
+
 // fallocate modes
 
 /// The range reads as zeros, and the clusters behind it go back to the volume.
@@ -478,6 +517,15 @@ mod tests {
     use crate::fs::PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET;
     use crate::fs::PERMISSION_METADATA_RECORD_RESERVED_OFFSET;
     use crate::fs::PERMISSION_METADATA_RECORD_SIZE;
+    use crate::fs::POLL_ERR;
+    use crate::fs::POLL_FD_EVENTS_OFFSET;
+    use crate::fs::POLL_FD_REVENTS_OFFSET;
+    use crate::fs::POLL_FD_SIZE;
+    use crate::fs::POLL_HUP;
+    use crate::fs::POLL_IN;
+    use crate::fs::POLL_KNOWN_EVENTS;
+    use crate::fs::POLL_OUT;
+    use crate::fs::PollFd;
     use crate::fs::XATTR_ENTRY_RECORD_NAME_LEN_OFFSET;
     use crate::fs::XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET;
     use crate::fs::XATTR_ENTRY_RECORD_SIZE;
@@ -658,6 +706,29 @@ mod tests {
         // `value_len == 0` as "no record" would lose it.
         let empty = XattrEntryRecord::new(4, 0);
         assert_eq!(empty.total_len(), XATTR_ENTRY_RECORD_SIZE + 4);
+    }
+
+    /// The poll record is eight bytes, and its three fields sit where a
+    /// program's own array expects them.
+    ///
+    /// The record crosses the boundary in both directions: a caller fills `fd`
+    /// and `events`, the kernel writes `revents`.  A layout that disagreed
+    /// would have the kernel reading a caller's events as a descriptor.
+    #[test]
+    fn the_poll_record_is_eight_bytes() {
+        assert_eq!(POLL_FD_SIZE, 8);
+        assert_eq!(POLL_FD_SIZE, core::mem::size_of::<PollFd>());
+        assert_eq!(POLL_FD_EVENTS_OFFSET, 4, "the events follow the descriptor");
+        assert_eq!(POLL_FD_REVENTS_OFFSET, 6);
+
+        // The four event bits are distinct, and the known set is exactly them:
+        // a fifth bit in the mask would let a caller ask about something no
+        // descriptor kind answers.
+        assert_eq!(POLL_IN, 0x001);
+        assert_eq!(POLL_OUT, 0x004);
+        assert_eq!(POLL_ERR, 0x008);
+        assert_eq!(POLL_HUP, 0x010);
+        assert_eq!(POLL_KNOWN_EVENTS, POLL_IN | POLL_OUT | POLL_ERR | POLL_HUP);
     }
 
     /// The open flags keep their values, and the known set covers exactly them.

@@ -201,7 +201,45 @@ protofire: process 1 access query, granted 6 of a possible 7, allowed=1
 ```
 
 `438` is `0o666` in decimal, which is what tmpfs gives a new file rather than
-the shared `DEFAULT_FILE_MODE` of `0o644`; `6` is that mode's other-bits.  Both
+the shared `DEFAULT_FILE_MODE` of `0o644`; `6` is that mode's other-bits.
+
+**`SetFdFlags` and `Poll` close the row**, and the first of them reverses a
+decision this tree made in the commit before.  `F_SETFD` used to refuse
+`FD_CLOEXEC` on the argument that `exec` kept every descriptor, so a bit nothing
+acted on must not be recorded.  That argument was true of the build it was
+written for; `exec` now closes what the flag marks, so the bit is accepted
+**because** something keeps the promise.  The flag lives in a byte beside each
+descriptor rather than in the descriptor enum, because eleven variants and their
+eighty construction sites would each have carried a value only one of them uses.
+`Dup2` copies the byte with the handle, `close` clears it, and `insert` clears it
+so a reused slot cannot inherit a close-on-exec nobody asked for.
+
+`Poll` needed a wire format of its own: `abi` had no event mask at all, so
+`fs_abi::PollFd` is new, eight bytes with the descriptor, what the caller wants
+and what turned out to be true.  It answers for four of the eleven descriptor
+kinds, each a fact this kernel can state: a file is always readable and always
+writable, a pipe end answers its ring's state and its writers' liveness, a
+local-domain descriptor answers through its two pipe halves, and a listener is
+readable when an accept would return at once.  The other seven answer
+`POLL_ERR`, and the handler's comment says why: a datagram socket's only
+non-destructive question here is `try_recv`, which consumes the datagram it
+answers, and a TCP stream has no readiness accessor at all.  `POLL_ERR` is the
+honest answer for "this kernel cannot say", where a plausible guess would make a
+caller loop on a call that sleeps or miss what arrived.
+
+**The call does not block.**  Its timeout is validated and ignored, because
+parking needs the scheduler and the handler runs with the registry's lock held.
+A caller that gets zero ready descriptors asks again after its own wait.
+
+```
+protofire: process 1 set descriptor 6 flags to 1
+protofire: process 1 set descriptor 6 flags to 0
+protofire: process 1 polled 1 descriptor(s), 1 ready
+```
+
+All three were measured to fail on their own: not storing the flag stopped the
+boot at the program's own `F_GETFD` check, and making a file answer unready did
+the same at its poll check.  Both
 numbers were measured to fail on their own: packing the list with a zero value
 length stopped the boot, and building the query's token with
 `SecurityToken::system` printed `granted 7 of a possible 7` where the gate

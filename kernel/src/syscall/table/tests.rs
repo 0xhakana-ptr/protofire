@@ -2565,6 +2565,20 @@ fn call_with_path_buffer_and_required(
     Ok(dispatch.value)
 }
 
+/// Call `Poll`: an array of records, how many, and a timeout.
+fn call_with_poll(table: &mut SyscallTable, records: &mut [u8], count: usize) -> Result<usize> {
+    let mut context = SyscallContext::new(SyscallNumber::Poll as usize, [0, count, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(records),
+        second_buffer: None,
+    };
+    let dispatch = table.dispatch(&mut arguments)?;
+    Ok(dispatch.value)
+}
+
 /// Call a call that names a path and one mutable buffer.
 fn call_with_path_buffer(
     table: &mut SyscallTable,
@@ -3261,14 +3275,18 @@ fn the_pipe_capacity_commands_refuse_a_file() {
     );
 }
 
-/// `F_GETFD` answers zero and `F_SETFD` refuses a bit, because this build has
-/// no per-descriptor flags.
+/// `F_GETFD` and `F_SETFD` read and write one byte, and the byte means
+/// something now.
 ///
-/// `FD_CLOEXEC` is about what an `exec` closes, and this tree's `exec` replaces
-/// the image and keeps every descriptor.  Accepting the bit would be recording
-/// a promise nothing keeps.
+/// This test used to assert that `F_SETFD` refused `FD_CLOEXEC` on the argument
+/// that `exec` kept every descriptor and a flag nothing acts on must not be
+/// recorded.  That argument was true of the build it was written for and is not
+/// true of this one: `exec` now closes what the flag marks, so the bit is
+/// accepted **because** something keeps the promise.  The test records the
+/// reversal rather than being deleted, because the refusal was a deliberate
+/// decision and its replacement is one too.
 #[test]
-fn the_descriptor_flags_are_honest_about_being_absent() {
+fn the_descriptor_flags_are_stored_and_read_back() {
     let mut table = writable();
     table.register(SyscallNumber::Fcntl, fcntl);
     let opened = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open");
@@ -3280,7 +3298,7 @@ fn the_descriptor_flags_are_honest_about_being_absent() {
             [opened, fs_abi::F_GETFD, 0, 0, 0, 0]
         ),
         Ok(0),
-        "no flags are set because none exist"
+        "a fresh descriptor carries no flags"
     );
     assert_eq!(
         call(
@@ -3288,8 +3306,17 @@ fn the_descriptor_flags_are_honest_about_being_absent() {
             SyscallNumber::Fcntl,
             [opened, fs_abi::F_SETFD, fs_abi::FD_CLOEXEC, 0, 0, 0]
         ),
-        Err(Error::NotImplemented),
-        "a bit nothing acts on is refused rather than recorded"
+        Ok(0),
+        "the bit is accepted because exec closes what it marks"
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_GETFD, 0, 0, 0, 0]
+        ),
+        Ok(fs_abi::FD_CLOEXEC),
+        "and the read answers it"
     );
     assert_eq!(
         call(
@@ -3298,7 +3325,7 @@ fn the_descriptor_flags_are_honest_about_being_absent() {
             [opened, fs_abi::F_SETFD, 0, 0, 0, 0]
         ),
         Ok(0),
-        "clearing what is already clear is the no-op it names"
+        "clearing what is set is the same call with zero"
     );
 }
 
@@ -3701,5 +3728,281 @@ fn access_query_refuses_a_bad_request() {
         ),
         Err(Error::InvalidArgument),
         "half a record is not an answer"
+    );
+}
+
+/// `SetFdFlags` stores the close-on-exec bit, and `F_GETFD` reads it back.
+///
+/// The two calls are the same byte seen from two numbers, so the test drives
+/// one and reads with the other: a build that stored the flag in one place and
+/// answered from another would pass a test that only used one of them.
+#[test]
+fn set_fd_flags_stores_the_bit_and_f_getfd_reads_it() {
+    let mut table = writable();
+    table.register(SyscallNumber::SetFdFlags, set_fd_flags);
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let opened = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open");
+
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_GETFD, 0, 0, 0, 0]
+        ),
+        Ok(0),
+        "a fresh descriptor carries no flags"
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::SetFdFlags,
+            [opened, fs_abi::FD_CLOEXEC, 0, 0, 0, 0]
+        ),
+        Ok(0)
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_GETFD, 0, 0, 0, 0]
+        ),
+        Ok(fs_abi::FD_CLOEXEC),
+        "the read sees what the write stored"
+    );
+
+    // Clearing it is the same call with zero.
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::SetFdFlags,
+            [opened, 0, 0, 0, 0, 0]
+        ),
+        Ok(0)
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_GETFD, 0, 0, 0, 0]
+        ),
+        Ok(0)
+    );
+}
+
+/// A bit outside the ABI's known set is refused rather than stored, and a
+/// number that is not the caller's descriptor is refused by both calls.
+#[test]
+fn set_fd_flags_refuses_an_unknown_bit_and_a_foreign_number() {
+    let mut table = writable();
+    table.register(SyscallNumber::SetFdFlags, set_fd_flags);
+    table.register(SyscallNumber::Fcntl, fcntl);
+    let opened = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open");
+
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::SetFdFlags,
+            [opened, 0b10, 0, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument),
+        "a second per-descriptor flag is not one this build defines"
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::SetFdFlags,
+            [40, fs_abi::FD_CLOEXEC, 0, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument),
+        "a number that names nothing"
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Fcntl,
+            [opened, fs_abi::F_SETFD, 0b10, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument),
+        "and the fcntl command refuses the same bit"
+    );
+}
+
+/// `exec` closes the descriptors carrying the flag and leaves the rest.
+///
+/// The count is the mechanism's own answer, and the two halves matter equally:
+/// a close that took every descriptor would pass a test that only counted what
+/// went, and one that took none would pass a test that only looked at the
+/// marked one.
+#[test]
+fn close_on_exec_takes_the_marked_descriptors_and_only_those() {
+    let mut table = writable();
+    table.register(SyscallNumber::SetFdFlags, set_fd_flags);
+    let marked = open_path(
+        &mut table,
+        "/a.txt",
+        fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("open a");
+    let kept = open_path(
+        &mut table,
+        "/b.txt",
+        fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("open b");
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::SetFdFlags,
+            [marked, fs_abi::FD_CLOEXEC, 0, 0, 0, 0]
+        ),
+        Ok(0)
+    );
+
+    let closed = table.close_on_exec(crate::programs::BOOT_PROCESS);
+    assert_eq!(closed, 1, "one descriptor carried the flag");
+    assert_eq!(table.open_descriptors(), 1, "and one is left");
+    assert_eq!(
+        table.owner_of(kept),
+        Some(crate::programs::BOOT_PROCESS),
+        "the unmarked descriptor is the one that stayed"
+    );
+    assert_eq!(table.owner_of(marked), None, "the marked one is gone");
+
+    // A descriptor that reuses the closed slot must not inherit the flag: the
+    // byte is cleared with the descriptor, and this is the assertion that says
+    // so.
+    let reused = open_path(
+        &mut table,
+        "/c.txt",
+        fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("open c");
+    assert_eq!(
+        table.descriptor_flags_at(reused, None),
+        Ok(0),
+        "a reused slot starts with no flags"
+    );
+}
+
+/// `Poll` answers a file ready and clears the `revents` of a skipped record.
+///
+/// A file has no state in which a read would block, so both bits are true; the
+/// negative descriptor is the caller saying "not this one", and its answer must
+/// be zero rather than whatever the slot happened to hold.  The record is
+/// parsed with the ABI's offsets, so a handler that wrote the words elsewhere
+/// fails.
+#[test]
+fn poll_answers_a_file_ready_and_skips_a_negative_descriptor() {
+    let mut table = writable();
+    table.register(SyscallNumber::Poll, poll);
+    let opened = open_path(
+        &mut table,
+        "/polled.txt",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE,
+    )
+    .expect("create and open");
+
+    let mut records = [0u8; fs_abi::POLL_FD_SIZE * 2];
+    let first = fs_abi::PollFd {
+        fd: opened as i32,
+        events: fs_abi::POLL_IN,
+        revents: 0,
+    };
+    records[..4].copy_from_slice(&first.fd.to_le_bytes());
+    records[4..6].copy_from_slice(&first.events.to_le_bytes());
+    // The second record is the skip: a negative fd and a `revents` that is not
+    // zero before the call, so a handler that left it alone fails.
+    records[8..12].copy_from_slice(&(-1i32).to_le_bytes());
+    records[12..14].copy_from_slice(&fs_abi::POLL_IN.to_le_bytes());
+    records[14..16].copy_from_slice(&0xFFFFu16.to_le_bytes());
+
+    let ready = call_with_poll(&mut table, &mut records, 2).expect("poll");
+    assert_eq!(ready, 1, "only the file is ready");
+
+    let first_revents = u16::from_le_bytes([records[6], records[7]]);
+    assert_ne!(first_revents & fs_abi::POLL_IN, 0, "the file is readable");
+    assert_eq!(
+        u16::from_le_bytes([records[14], records[15]]),
+        0,
+        "the skipped record's revents is cleared"
+    );
+}
+
+/// `Poll` answers a pipe's read end unready while it is empty and ready once a
+/// byte arrives, and reports the hang-up when the writer goes.
+///
+/// The three states are the three a reader loops on, and each is a different
+/// fact about the pipe: `POLL_IN` is "there is a byte", `0` is "wait", and
+/// `POLL_HUP` is "stop waiting".
+#[test]
+fn poll_reads_a_pipes_state() {
+    use crate::pipe;
+    use crate::pipe::End;
+
+    let pipe = Arc::new(pipe::Pipe::new(64));
+    let mut table = SyscallTable::new();
+    table.register(SyscallNumber::Poll, poll);
+    let reader = table
+        .insert_pipe(End::reader(pipe.clone()), crate::programs::BOOT_PROCESS)
+        .expect("insert");
+
+    // The writer exists before the first question: a pipe with no writer at
+    // all is already at end-of-file, which is the third state this test checks
+    // at the end, and asking the "empty but alive" question of it would be
+    // asserting the wrong fact.
+    let writer = End::writer(pipe.clone());
+
+    let mut records = [0u8; fs_abi::POLL_FD_SIZE];
+    records[..4].copy_from_slice(&(reader as i32).to_le_bytes());
+    records[4..6].copy_from_slice(&fs_abi::POLL_IN.to_le_bytes());
+    assert_eq!(
+        call_with_poll(&mut table, &mut records, 1).expect("poll"),
+        0,
+        "an empty pipe with its writer still open is not ready"
+    );
+
+    let _ = pipe.write_available(b"x");
+    assert_eq!(
+        call_with_poll(&mut table, &mut records, 1).expect("poll"),
+        1
+    );
+    assert_ne!(
+        u16::from_le_bytes([records[6], records[7]]) & fs_abi::POLL_IN,
+        0,
+        "a buffered byte makes it readable"
+    );
+
+    // Drain the byte and drop the writer: the reader's next answer is the
+    // hang-up, which is what ends the loop.
+    let mut drained = [0u8; 1];
+    let _ = pipe.read_available(&mut drained);
+    drop(writer);
+    assert_eq!(
+        call_with_poll(&mut table, &mut records, 1).expect("poll"),
+        1
+    );
+    assert_ne!(
+        u16::from_le_bytes([records[6], records[7]]) & fs_abi::POLL_HUP,
+        0,
+        "with no writer left, the reader is told to stop"
+    );
+}
+
+/// `Poll` refuses an array too small for the count, and a count it cannot
+/// multiply.
+#[test]
+fn poll_refuses_a_bad_array() {
+    let mut table = writable();
+    table.register(SyscallNumber::Poll, poll);
+    let mut records = [0u8; fs_abi::POLL_FD_SIZE];
+    assert_eq!(
+        call_with_poll(&mut table, &mut records, 2),
+        Err(Error::InvalidArgument),
+        "two records do not fit in one record's bytes"
+    );
+    assert_eq!(
+        call_with_poll(&mut table, &mut records, usize::MAX / 4),
+        Err(Error::InvalidArgument),
+        "a count whose byte length overflows is refused, not wrapped"
     );
 }

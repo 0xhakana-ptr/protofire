@@ -1235,6 +1235,70 @@ pub(crate) fn serve_io(
         }
         return Some(outcome);
     }
+    if number == SyscallNumber::Poll as usize {
+        // `Poll(array, count, timeout)`: the array is the caller's records and
+        // the answer is how many came out ready.  The timeout is accepted and
+        // not acted on, which the handler's comment states: parking needs the
+        // scheduler and this path holds the registry's lock.
+        let array = call.arguments[0];
+        let count = call.arguments[1];
+        let length = match count.checked_mul(abi::fs::POLL_FD_SIZE) {
+            Some(length) => length,
+            None => {
+                return Some(CallOutcome::Return(abi::syscall::encode_error(
+                    abi::Error::InvalidArgument,
+                )));
+            }
+        };
+        if !crate::address_space::is_user_range(array, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window, which `is_user_range`
+        // checked, and the pages behind it are the calling task's own
+        // mappings.  The handler writes each record's `revents` and nothing
+        // past the array.
+        let records = unsafe { core::slice::from_raw_parts_mut(array as *mut u8, length) };
+        let outcome = through_registry(&mut context, None, None, Some(records));
+        if let CallOutcome::Return(ready) = outcome
+            && !abi::syscall::is_error_status(ready)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" polled ");
+            arch::serial::write_u32(count as u32);
+            arch::serial::write_str(" descriptor(s), ");
+            arch::serial::write_u32(ready as u32);
+            arch::serial::write_str(" ready\n");
+        }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::SetFdFlags as usize {
+        // `SetFdFlags(descriptor, flags)`: no pointer, so the registry is
+        // reached directly.  Without this branch the call falls through to the
+        // unregistered answer, and a program that set a flag would be told its
+        // number does not exist.
+        let descriptor = call.arguments[0];
+        let flags = call.arguments[1];
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if matches!(outcome, CallOutcome::Return(0)) {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" set descriptor ");
+            arch::serial::write_u32(descriptor as u32);
+            arch::serial::write_str(" flags to ");
+            arch::serial::write_u32(flags as u32);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::Stat as usize {
         // `Stat(path, record, length)`: the path is a NUL-terminated string in
         // the caller's memory, the record is where the kernel writes the ABI's
