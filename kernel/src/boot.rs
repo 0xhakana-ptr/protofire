@@ -156,6 +156,8 @@ pub fn kernel_main() -> ! {
     // that recorded nothing would answer every `GetTimeOfDay` with
     // `Unsupported`, which looks the same as a machine with no timer.
     #[cfg(target_os = "none")]
+    // SAFETY: the boot calls this once, after the table and the interrupt path
+    // exist and before any program runs, which is `bring_up`'s contract.
     match unsafe { crate::time::bring_up() } {
         Some((origin, rate)) => {
             arch::serial::write_str("protofire: time origin ");
@@ -178,6 +180,8 @@ pub fn kernel_main() -> ! {
     // they are **output**, public by definition, and a line that named only
     // "seeded" would be a claim rather than a measurement.
     #[cfg(target_os = "none")]
+    // SAFETY: as above, and the generator's seed reads the same counter the
+    // clock was just brought up on.
     match unsafe { crate::random::seed() } {
         Some(_) => {
             let mut first = [0u8; 8];

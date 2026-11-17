@@ -198,6 +198,8 @@ impl Scheduler {
             Ok(image) => image,
             Err(_) => return None,
         };
+        // SAFETY: a fresh root, owned by the space this builder is making and
+        // by no other.
         let mut space = unsafe { crate::address_space::AddressSpace::new() }?;
         // The loader's own line: the file was read and parsed into segments,
         // which is the one fact the exec'd and opened lines cannot carry
@@ -262,6 +264,9 @@ impl Scheduler {
                     perms.writable |= permissions.writable;
                     perms.executable |= permissions.executable;
                     if perms.writable && perms.executable {
+                        // SAFETY: this space was built by the call chain above
+                        // and no instruction since could have installed it,
+                        // which is `release`'s contract.
                         unsafe { space.release() };
                         return None;
                     }
@@ -282,6 +287,9 @@ impl Scheduler {
                     let mapped_again =
                         unsafe { space.map_page_with(plan.virtual_address, *frame, *perms) };
                     if !mapped_again {
+                        // SAFETY: this space was built by the call chain above
+                        // and no instruction since could have installed it,
+                        // which is `release`'s contract.
                         unsafe { space.release() };
                         return None;
                     }
@@ -289,10 +297,15 @@ impl Scheduler {
                 }
                 // SAFETY: the frame comes from the pool.
                 let Some(frame) = crate::address_space::allocate_image_frame() else {
+                    // SAFETY: this space was built by the call chain above and
+                    // no instruction since could have installed it.
                     unsafe { space.release() };
                     return None;
                 };
                 if !space.own(frame) {
+                    // SAFETY: this space was built by the call chain above and
+                    // no instruction since could have installed it, which is
+                    // `release`'s contract.
                     unsafe { space.release() };
                     return None;
                 }
@@ -313,10 +326,16 @@ impl Scheduler {
                 let mapped_now =
                     unsafe { space.map_page_with(plan.virtual_address, frame, permissions) };
                 if !mapped_now {
+                    // SAFETY: this space was built by the call chain above and
+                    // no instruction since could have installed it, which is
+                    // `release`'s contract.
                     unsafe { space.release() };
                     return None;
                 }
                 let Some(slot) = mapped.iter_mut().find(|slot| slot.is_none()) else {
+                    // SAFETY: this space was built by the call chain above and
+                    // no instruction since could have installed it, which is
+                    // `release`'s contract.
                     unsafe { space.release() };
                     return None;
                 };
@@ -332,16 +351,24 @@ impl Scheduler {
         // or the frames stay taken.  A `?` here would be the same leak the
         // parse order above was moved to avoid.
         let Some(image_top) = image.image_top() else {
+            // SAFETY: this space was built by the call chain above and no
+            // instruction since could have installed it, which is
+            // `release`'s contract.
             unsafe { space.release() };
             return None;
         };
         let stack_page = (image_top + paging::PAGE_SIZE) & !(paging::PAGE_SIZE - 1);
         // SAFETY: the frame comes from the pool.
         let Some(stack_frame) = crate::address_space::allocate_image_frame() else {
+            // SAFETY: this space was built by the call chain above and no
+            // instruction since could have installed it.
             unsafe { space.release() };
             return None;
         };
         if !space.own(stack_frame) {
+            // SAFETY: this space was built by the call chain above and no
+            // instruction since could have installed it, which is
+            // `release`'s contract.
             unsafe { space.release() };
             return None;
         }
@@ -360,6 +387,9 @@ impl Scheduler {
             )
         };
         if !stack_ok {
+            // SAFETY: this space was built by the call chain above and no
+            // instruction since could have installed it, which is
+            // `release`'s contract.
             unsafe { space.release() };
             return None;
         }
@@ -455,10 +485,16 @@ impl Scheduler {
         // address space if it does" are not a pair worth keeping, and the
         // checked form costs one branch on a path that already parsed a file.
         let Some(pid) = self.tasks.get(task_index).map(|task| task.pid()) else {
+            // SAFETY: this space was built by the call chain above and no
+            // instruction since could have installed it, which is
+            // `release`'s contract.
             unsafe { space.release() };
             return None;
         };
         let Some(task) = self.tasks.get_mut(task_index) else {
+            // SAFETY: this space was built by the call chain above and no
+            // instruction since could have installed it, which is
+            // `release`'s contract.
             unsafe { space.release() };
             return None;
         };

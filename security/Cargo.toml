@@ -11,3 +11,6 @@ abi.workspace = true
 rights = { path = "../libs/rights" }
 sync = { path = "../libs/sync" }
 spin.workspace = true
+
+[lints]
+workspace = true

@@ -11,3 +11,6 @@ license.workspace = true
 # either before that is a claim about code that is not written.  `net` and
 # `virt` are in the same state for the same reason.
 [dependencies]
+
+[lints]
+workspace = true

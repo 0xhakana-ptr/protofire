@@ -13,3 +13,6 @@ license.workspace = true
 # not written, and `cargo` says so — `unused dependency abi`, on every build,
 # about the line this file used to carry.
 [dependencies]
+
+[lints]
+workspace = true

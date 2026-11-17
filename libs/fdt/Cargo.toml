@@ -10,3 +10,6 @@ license.workspace = true
 # naming a machine here would put the format below the machine and the machine
 # below the format at once.  It is tested against blobs built in its own tests.
 [dependencies]
+
+[lints]
+workspace = true

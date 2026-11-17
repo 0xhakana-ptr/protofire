@@ -158,6 +158,8 @@ pub fn handle(frame: irq::Frame) -> bool {
             arch::serial::write_str(" of them\n");
             // The woken task may be held by another CPU, whose own clock may
             // not move; the IPI is what makes it re-check.
+            // SAFETY: the boot's own IPI path, installed before any program
+            // ran, and this is the same call the wake beside it makes.
             unsafe { arch::send_ipi_to_others() };
         }
 

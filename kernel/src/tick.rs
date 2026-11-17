@@ -107,6 +107,8 @@ pub fn bring_up() {
     // the time this runs; the line is the architecture's private timer
     // interrupt.
     let line = timer_interrupt();
+    // SAFETY: the line is the machine's timer, whose controller this boot
+    // brought up; enabling it is the whole of arming a tick.
     if !unsafe { arch::enable_interrupt_line(line) } {
         arch::serial::write_str("protofire: timer line not enabled\n");
         return;

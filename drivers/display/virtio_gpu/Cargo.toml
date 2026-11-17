@@ -16,3 +16,6 @@ license.workspace = true
 # device -- mapping a BAR, posting the control queue, owning the scanout memory
 # -- is the machine's, the same split `nvme`, `ahci` and `xhci` make.
 [dependencies]
+
+[lints]
+workspace = true

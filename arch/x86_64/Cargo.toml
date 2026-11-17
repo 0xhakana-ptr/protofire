@@ -28,3 +28,6 @@ irq = { path = "../../libs/irq" }
 # boot path.  Only a host build names it.
 [target.'cfg(not(target_os = "none"))'.dependencies]
 spin.workspace = true
+
+[lints]
+workspace = true

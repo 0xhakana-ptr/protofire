@@ -20,3 +20,6 @@ license.workspace = true
 # a growable buffer.  The crate itself names no allocator: a register map is a
 # set of constants and a sequence is a list of writes it hands to a caller.
 [dev-dependencies]
+
+[lints]
+workspace = true

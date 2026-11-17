@@ -22,3 +22,6 @@ profiler = { path = "../libs/profiler" }
 cell = { path = "../libs/cell" }
 
 [dev-dependencies]
+
+[lints]
+workspace = true

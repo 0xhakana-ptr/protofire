@@ -12,3 +12,5 @@ license.workspace = true
 # service is a contract, and a contract that needed a lock could not be
 # implemented by a driver holding one.
 abi.workspace = true
+[lints]
+workspace = true

@@ -146,6 +146,9 @@ impl Apic {
     /// `0xFEE0_0000` only because that address is below four gigabytes and the
     /// kernel's table re-mapped it uncached.
     pub unsafe fn probe() -> Option<Apic> {
+        // SAFETY: `IA32_APIC_BASE` is a register every x86_64 here defines, and
+        // its value is an address rather than a pointer into memory, so the
+        // read depends on nothing unmapped.
         let base = unsafe { read_msr(IA32_APIC_BASE) };
         if base & APIC_BASE_ENABLE == 0 {
             return None;

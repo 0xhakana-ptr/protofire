@@ -8,3 +8,6 @@ license.workspace = true
 
 # Nothing: two constants and the argument for them.
 [dependencies]
+
+[lints]
+workspace = true

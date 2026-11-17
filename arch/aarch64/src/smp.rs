@@ -265,9 +265,9 @@ pub unsafe extern "C" fn aarch64_secondary_main(slot: usize) -> ! {
     // `0 tick(s)`, so nothing ever preempted it and nothing ever woke it, and
     // the boot core then ran the same task from its own frame.
     //
-    // SAFETY: the boot installed the controller before it started any core, and
-    // both windows are mapped uncached for the life of the boot.
     if let Some(gic) = crate::trap::controller() {
+        // SAFETY: the boot installed the controller before it started any core,
+        // and both windows are mapped uncached for the life of the boot.
         unsafe { gic.enable() };
     }
 
@@ -277,9 +277,9 @@ pub unsafe extern "C" fn aarch64_secondary_main(slot: usize) -> ! {
     // bank per core: the boot's write enabled the timer for the boot core and
     // for no one else.
     //
+    let timer = crate::timer_interrupt();
     // SAFETY: the controller is installed and enabled, and this is a PPI this
     // core is entitled to enable for itself.
-    let timer = crate::timer_interrupt();
     if !unsafe { crate::enable_interrupt_line(timer) } {
         crate::serial::write_str("protofire: a started core has no timer line\n");
     }

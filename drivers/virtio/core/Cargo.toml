@@ -22,3 +22,6 @@ abi.workspace = true
 # The bus: a virtio PCI device is found through a capability walk, and the walk
 # is `pci`'s.  This crate names the bus, and the bus does not name virtio.
 pci = { path = "../../bus/pci" }
+
+[lints]
+workspace = true

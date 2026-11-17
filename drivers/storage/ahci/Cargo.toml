@@ -21,3 +21,6 @@ license.workspace = true
 
 # The tests build a command header and an identify structure, neither of which
 # needs an allocator beyond the identify test's page-shaped answer.
+
+[lints]
+workspace = true

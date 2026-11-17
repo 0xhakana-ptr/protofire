@@ -106,6 +106,7 @@ pub fn wake_them() {
     }
     // SAFETY: every started CPU installed its vector and enabled its software
     // line before it recorded that it was online.
+    // SAFETY: the boot's own IPI path, installed before any program ran.
     let sent = unsafe { arch::send_ipi_to_others() };
     arch::serial::write_str("protofire: work available, ");
     arch::serial::write_str(if sent {
@@ -136,6 +137,7 @@ fn prove_an_ipi_reaches_them(started: usize) {
     // A mask of no one is a call that would be a self-interrupt on some
     // machines and an error on others, and there is nothing to prove either
     // way.
+    // SAFETY: the boot's own IPI path, installed before any program ran.
     let sent = unsafe { arch::send_ipi_to_others() };
     if !sent {
         arch::serial::write_str("protofire: no ipi sent, no started cpu to take one\n");

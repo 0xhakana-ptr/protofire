@@ -437,6 +437,9 @@ impl Gic {
     #[cfg(target_os = "none")]
     pub unsafe fn enable_interrupt(&self, number: usize) -> bool {
         if !Distributor::is_private_interrupt(number) {
+            // SAFETY: the distributor is the one this controller was built
+            // from and it is mapped; the number is the caller's, and an
+            // interrupt this GIC does not own is refused inside.
             return unsafe { self.enable_shared_interrupt(number) };
         }
         // SAFETY: a private interrupt's registers are the first entries of each

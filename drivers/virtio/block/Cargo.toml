@@ -17,3 +17,6 @@ abi.workspace = true
 block = { path = "../../../devices/block" }
 virtio_core = { path = "../core" }
 spin.workspace = true
+
+[lints]
+workspace = true

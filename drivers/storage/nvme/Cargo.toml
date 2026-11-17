@@ -17,3 +17,6 @@ license.workspace = true
 
 # The tests build a register file and a command, neither of which needs an
 # allocator; nothing here does.
+
+[lints]
+workspace = true

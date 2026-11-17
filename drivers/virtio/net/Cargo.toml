@@ -18,3 +18,6 @@ abi.workspace = true
 netdev = { path = "../../../devices/netdev" }
 virtio_core = { path = "../core" }
 spin.workspace = true
+
+[lints]
+workspace = true

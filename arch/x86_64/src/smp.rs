@@ -168,6 +168,8 @@ pub fn current_cpu_id() -> usize {
         // SAFETY: reads the APIC's id register, whose window the boot's page
         // table maps.
         match unsafe { crate::apic::Apic::probe() } {
+            // SAFETY: `probe` answered a controller, so the window it reads is
+            // mapped; the id register is at a fixed offset inside it.
             Some(apic) => (unsafe { apic.id() }) as usize,
             None => 0,
         }
@@ -262,6 +264,9 @@ fn wait(units: u32) {
 /// whose code runs untranslated through the boot page table.
 #[cfg(target_os = "none")]
 pub unsafe fn start_secondary_harts(timer_slice_us: u64) -> usize {
+    // SAFETY: the boot ran on this machine before any program did, so the local
+    // APIC's window is identity mapped, and this is the boot CPU's own
+    // controller at the address it always answers at.
     let Some(apic) = (unsafe { crate::apic::Apic::probe() }) else {
         return 0;
     };
@@ -418,6 +423,8 @@ pub unsafe extern "C" fn x86_64_secondary_main(slot: usize) -> ! {
     // SAFETY: the APIC's window is mapped, and this is the CPU's own
     // controller.
     match unsafe { local_apic_up() } {
+        // SAFETY: the started CPU has an enabled controller, which is what
+        // `local_apic_up` just answered, and it is this CPU's own.
         Some(apic) => unsafe { crate::trap::set_timer_controller(apic) },
         None => crate::serial::write_str("protofire: a started cpu has no apic\n"),
     }
@@ -427,6 +434,9 @@ pub unsafe extern "C" fn x86_64_secondary_main(slot: usize) -> ! {
     // preempts, and the boot's measurement is the only one there is.  The
     // registers are this CPU's own, at the one address every CPU's local APIC
     // answers at.
+    // SAFETY: the APIC this CPU reads is enabled and its window is mapped,
+    // which is the state `local_apic_up` left; the counter's rate is a register
+    // and not a memory location.
     if let Some(frequency) = unsafe { crate::timer_frequency() } {
         let slice = TIMER_SLICE_US.load(Ordering::Acquire) as u64;
         // SAFETY: the APIC is enabled and the table installed, so a tick is a

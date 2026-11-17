@@ -376,6 +376,9 @@ pub(crate) fn device_table_for(
 /// The leaf table that holds `address`, if the walk reaches one.
 #[cfg(target_os = "none")]
 pub(crate) fn leaf_for(root: &PageTable, address: usize) -> Option<&'static PageTable> {
+    // SAFETY: the caller passes a table this kernel built and still owns, and a
+    // `PageTable` is exactly one page, which is the type's invariant rather
+    // than a claim about this address.
     let mut table: &'static PageTable = unsafe { &*(root as *const PageTable) };
     for level in [Level::Root, Level::Second, Level::Third] {
         let word = table.entry(index(level, address));

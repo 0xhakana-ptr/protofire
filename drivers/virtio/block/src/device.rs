@@ -480,6 +480,11 @@ impl BlockDevice for VirtioBlock {
     }
 
     fn read_blocks(&self, lba: u64, buffer: &mut [u8]) -> Result<()> {
+        // SAFETY: the trait's requirement is that the buffer stays live and
+        // unmoved until the request is done, and this caller satisfies it by
+        // construction: the borrow is held for the whole of this function,
+        // nothing else can name it, and `wait` below runs before the borrow
+        // ends.  The device is the queuing kind, so the constraint is real.
         let ticket = unsafe { self.submit_read(lba, buffer)? };
         self.wait(ticket)
     }

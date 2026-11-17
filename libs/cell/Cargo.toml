@@ -8,3 +8,6 @@ license.workspace = true
 
 # Nothing: this crate is `core` and a safety argument.
 [dependencies]
+
+[lints]
+workspace = true

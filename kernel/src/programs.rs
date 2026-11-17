@@ -186,6 +186,8 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
     use crate::address_space::AddressSpace;
     use crate::process;
 
+    // SAFETY: a fresh root, owned by this space and by no other, which is the
+    // constructor's contract.
     let mut space = unsafe { AddressSpace::new() }?;
     let image = crate::address_space::allocate_image_frame()?;
     let stack = crate::address_space::allocate_image_frame()?;

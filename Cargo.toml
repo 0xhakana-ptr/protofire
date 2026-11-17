@@ -56,6 +56,20 @@ edition = "2024"
 authors = ["Raiden Lumine"]
 license = "Apache-2.0"
 
+[workspace.lints.clippy]
+# Every `unsafe` block carries its argument, and this is what makes that a
+# build error rather than a review habit.  `docs/fmts/unsafe-and-safety.md`
+# states the rule; before this table existed that document claimed the lint was
+# denied and reported zero, and neither was true: the tree had 42 blocks whose
+# `SAFETY:` comment was a function's rather than the block's, and a lint that is
+# not on cannot report anything.
+#
+# The table is at the workspace because the rule is the tree's, and each crate
+# opts in with `[lints] workspace = true`, which is what makes a new crate
+# choose rather than inherit by accident: a crate that forgot would be one the
+# rule silently skipped.
+undocumented_unsafe_blocks = "deny"
+
 [workspace.dependencies]
 abi = { path = "abi" }
 sync = { path = "libs/sync" }

@@ -21,3 +21,6 @@ spin.workspace = true
 # default: with it off every increment is compiled out, so a boot that does not
 # want the measurement does not pay for it.
 perf_baseline = []
+
+[lints]
+workspace = true

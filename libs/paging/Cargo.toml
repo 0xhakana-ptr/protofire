@@ -10,3 +10,6 @@ license.workspace = true
 # over it is arithmetic, and neither names a machine, a frame allocator or a
 # lock.  A crate with no dependencies is one that can be tested anywhere.
 [dependencies]
+
+[lints]
+workspace = true

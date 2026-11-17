@@ -12,3 +12,6 @@ license.workspace = true
 [dependencies]
 abi.workspace = true
 arch = { path = "../../../arch" }
+
+[lints]
+workspace = true

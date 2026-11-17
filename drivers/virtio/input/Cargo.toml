@@ -22,3 +22,6 @@ spin.workspace = true
 
 [dev-dependencies]
 
+
+[lints]
+workspace = true

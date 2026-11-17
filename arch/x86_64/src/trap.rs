@@ -326,7 +326,10 @@ fn finish_interrupt(frame: &mut Context) {
     // being read only when a handler needs it.
     let shared = if frame.vector < 32 {
         let direction = frame.vector == PAGE_FAULT_VECTOR as u64 && frame.fault_was_write();
-        irq::Frame::fault(frame.vector as usize, unsafe { fault_address() }, direction)
+        // SAFETY: reads `cr2`, which the CPU wrote for this fault; the read has
+        // no side effect and is not privileged at ring 0.
+        let address = unsafe { fault_address() };
+        irq::Frame::fault(frame.vector as usize, address, direction)
     } else {
         irq::Frame::device(frame.vector as usize)
     };
@@ -366,7 +369,10 @@ fn finish_interrupt(frame: &mut Context) {
             && crate::is_user_context(frame)
             && let Some(sink) = fault_sink()
         {
-            sink(frame, frame.vector as usize, unsafe { fault_address() });
+            // SAFETY: as above, and this is the same fault the frame above
+            // already asked about, so the register is the one it wrote.
+            let address = unsafe { fault_address() };
+            sink(frame, frame.vector as usize, address);
             return;
         }
         // Not fatal: a device with no driver raises its line whether or not
@@ -375,6 +381,8 @@ fn finish_interrupt(frame: &mut Context) {
         crate::serial::write_str("protofire: unhandled interrupt ");
         crate::serial::write_u32(frame.vector as u32);
         crate::serial::write_str(" at ");
+        // SAFETY: as above; a diagnostic reading the register the fault wrote
+        // takes no risk the two arms above did not.
         crate::serial::write_hex(unsafe { fault_address() } as u64);
         crate::serial::write_str(" rip ");
         crate::serial::write_hex(frame.instruction_pointer);

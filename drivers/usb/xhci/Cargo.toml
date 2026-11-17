@@ -22,3 +22,6 @@ license.workspace = true
 
 # The tests build page-shaped descriptors and ring-shaped command tables,
 # which needs a buffer; nothing in the crate itself does.
+
+[lints]
+workspace = true

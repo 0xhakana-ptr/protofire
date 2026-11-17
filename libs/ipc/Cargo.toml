@@ -10,3 +10,6 @@ license.workspace = true
 # The error type a refused resize returns, and nothing else.  A ring that needed
 # a lock or a scheduler would not be a ring.
 abi.workspace = true
+
+[lints]
+workspace = true

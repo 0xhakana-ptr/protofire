@@ -16,3 +16,6 @@ license.workspace = true
 
 # The tests build a surface that records what was painted, which needs a
 # growable buffer.  The crate itself allocates the grid's cells and nothing else.
+
+[lints]
+workspace = true

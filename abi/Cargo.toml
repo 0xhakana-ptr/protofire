@@ -12,3 +12,6 @@ license.workspace = true
 # test it guards reads a file this crate does not own yet, and enabling it is
 # the change that moves the payloads.
 payload_assembly = []
+
+[lints]
+workspace = true

@@ -117,7 +117,7 @@ The comparison happens **under the same lock the wake takes**.  That single fact
 is the whole of futex's correctness and it is the same argument `block_unless`
 already makes: a waiter that read the word before the lock could park after the
 wake it wanted had already fired, and nothing would ever wake it.  So the
-comparison is inside the critical section even though it reads user memory —
+comparison is inside the critical section even though it reads user memory,
 and that is where this design has to be careful, which the next section is
 about.
 
@@ -176,7 +176,7 @@ with the same mechanics `block_unless` uses, and the trap path's existing
 `switch_without_saving` is what runs something else.  The difference is that the
 task records `Waiting { .. }` instead of `Blocked`, and that the answer the
 program gets on resumption is "woken" rather than "retry your call": a futex
-wait that returns is done, and the program re-reads the word itself — which is
+wait that returns is done, and the program re-reads the word itself, which is
 the contract every futex implementation has, and the reason the kernel never
 reads the word again.
 
@@ -191,7 +191,7 @@ validator already proved reachable, and it is the only user-memory access the
 scheduler takes while holding its lock.**  It is safe for a reason that survives
 scrutiny: the page is mapped and user-reachable (`user_range` said so before the
 lock), the fault it could still take is the copy-on-write fault on a demoted
-page, and that resolver does **not** take the scheduler's lock — it takes the
+page, and that resolver does **not** take the scheduler's lock, it takes the
 page-table lock, and the order scheduler-then-tables is the order this kernel
 already keeps.  A page that faults for any other reason is a program's bug and
 stops the machine, which is the state Level 7.5 spent five commits making
@@ -293,7 +293,7 @@ current waiter's correctness argument depend on a key it does not need.
   line is the shape this tree uses for every mechanism:
   `protofire: futex woke 1 waiter on one key`, required whole, with the count.
 - **The negative control**: with `wake_key` replaced by `wake_blocked`, the same
-  boot must still pass that line — which is the point of the exercise, because a
+  boot must still pass that line, which is the point of the exercise, because a
   broadcast also wakes the one waiter.  So the exercise that matters asserts the
   **bound**: a second waiter on a *different* key must still be parked after the
   wake, and its own wake is what releases it.  The program asserts that itself

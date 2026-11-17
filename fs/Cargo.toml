@@ -20,3 +20,6 @@ sync = { path = "../libs/sync" }
 memory = { path = "../memory" }
 block = { path = "../devices/block" }
 unicode = { path = "../libs/unicode" }
+
+[lints]
+workspace = true

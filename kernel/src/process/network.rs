@@ -857,7 +857,11 @@ pub(crate) fn serve_network(
         // buffer and the sender record and nothing past them, which is what
         // the record's length check is for.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        // SAFETY: the sender record passed `user_range` above with the write
+        // flag, so every page of it is writable in this task's own root.
         let sender =
+            // SAFETY: the sender record passed `user_range` above with the
+            // write flag, so every page of it is writable in this task's root.
             unsafe { core::slice::from_raw_parts_mut(sender_record as *mut u8, sender_len) };
 
         crate::net::pump();
@@ -945,6 +949,8 @@ pub(crate) fn serve_network(
         // buffer and the sender record and nothing past them.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
         let sender =
+            // SAFETY: the sender record passed `user_range` above with the
+            // write flag, so every page of it is writable in this task's root.
             unsafe { core::slice::from_raw_parts_mut(sender_record as *mut u8, sender_len) };
 
         // The card's ring is drained before the question is asked, the same

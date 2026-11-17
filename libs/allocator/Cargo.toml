@@ -27,3 +27,6 @@ profiler = { path = "../profiler" }
 # save/restore, and one place to get that order wrong is enough.
 sync = { path = "../sync" }
 cell = { path = "../cell" }
+
+[lints]
+workspace = true

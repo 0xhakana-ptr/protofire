@@ -19,3 +19,6 @@ license.workspace = true
 # business.  Not `arch`: a card is not a machine.
 [dependencies]
 abi.workspace = true
+
+[lints]
+workspace = true

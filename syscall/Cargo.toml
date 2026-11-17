@@ -8,3 +8,6 @@ license.workspace = true
 
 [dependencies]
 abi.workspace = true
+
+[lints]
+workspace = true

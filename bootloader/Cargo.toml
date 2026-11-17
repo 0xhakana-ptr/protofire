@@ -21,3 +21,6 @@ kernel = { path = "../kernel" }
 # `cfg(target_arch)` table in this manifest would be a place a fourth machine
 # has to be taught, which is what `scripts/check-arch-fanout.sh` counts.
 arch = { path = "../arch" }
+
+[lints]
+workspace = true

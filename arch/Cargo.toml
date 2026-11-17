@@ -26,3 +26,6 @@ arch_aarch64 = { path = "aarch64" }
 
 [target.'cfg(target_arch = "riscv64")'.dependencies]
 arch_riscv64 = { path = "riscv64" }
+
+[lints]
+workspace = true

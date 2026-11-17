@@ -95,3 +95,6 @@ async_io = { path = "../async_io" }
 # any other above it, which is what makes it something a kernel may use rather
 # than something a kernel is shaped by.
 crypto = { path = "../libs/crypto" }
+
+[lints]
+workspace = true

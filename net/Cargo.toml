@@ -21,3 +21,6 @@ license.workspace = true
 abi.workspace = true
 crypto = { path = "../libs/crypto" }
 netdev = { path = "../devices/netdev" }
+
+[lints]
+workspace = true

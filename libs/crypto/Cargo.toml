@@ -11,3 +11,6 @@ license.workspace = true
 # that a new dependency shows up in the diff.
 [dependencies]
 abi.workspace = true
+
+[lints]
+workspace = true

@@ -10,3 +10,6 @@ license.workspace = true
 # the error type and `arch` for the register window; declaring either before
 # that is a claim about code that is not written.
 [dependencies]
+
+[lints]
+workspace = true

@@ -63,6 +63,8 @@ pub(crate) fn serve_io(
                     if woken > 0 {
                         // SAFETY: the boot's own IPI path, installed before
                         // any program ran.
+                        // SAFETY: the boot's own IPI path, installed before
+                        // any program ran.
                         unsafe { arch::send_ipi_to_others() };
                     }
                 }
@@ -148,6 +150,8 @@ pub(crate) fn serve_io(
                         // move: without this, the woken task stays Runnable
                         // and unclaimed for ever, and both cores end up
                         // waiting.
+                        // SAFETY: the boot's own IPI path, installed before
+                        // any program ran.
                         unsafe { arch::send_ipi_to_others() };
                     }
                 }
@@ -957,7 +961,11 @@ pub(crate) fn serve_io(
         // `user_range` checked, and the pages behind them are mapped in the
         // calling task's own root.  The handler reads both
         // and writes neither.
+        // SAFETY: both ranges passed `user_range` above, which walks the
+        // calling task's own root; the handler reads the name and writes the
+        // value, each inside the length it was given.
         let name = unsafe { core::slice::from_raw_parts_mut(name as *mut u8, name_length) };
+        // SAFETY: as above; the value range was validated with the read flag.
         let value = unsafe { core::slice::from_raw_parts(value as *const u8, value_length) };
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
@@ -1002,6 +1010,8 @@ pub(crate) fn serve_io(
         // calling task's own root, which `user_range` checked.  The handler
         // writes the destination and reads the name.
         let name = unsafe { core::slice::from_raw_parts(name as *const u8, name_length) };
+        // SAFETY: the destination passed `user_range` above with the write
+        // flag, so every page of it is writable in this task's own root.
         let destination =
             unsafe { core::slice::from_raw_parts_mut(destination as *mut u8, length) };
         let mut context = syscall::SyscallContext::new(number, call.arguments)

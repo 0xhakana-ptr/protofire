@@ -12,3 +12,6 @@ license.workspace = true
 alloc_profiler = []
 
 [dependencies]
+
+[lints]
+workspace = true

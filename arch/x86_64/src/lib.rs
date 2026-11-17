@@ -353,6 +353,8 @@ fn measured_clock() -> Option<u64> {
 /// recorded it.
 #[cfg(target_os = "none")]
 pub unsafe fn arm_timer(frequency: u64, microseconds: u64) -> u64 {
+    // SAFETY: the local APIC is this CPU's own and is enabled before a timer
+    // is armed; the controller answers a register, not a memory location.
     let Some(apic) = (unsafe { trap::timer_controller() }) else {
         return 0;
     };
@@ -376,6 +378,8 @@ pub unsafe fn arm_timer(frequency: u64, microseconds: u64) -> u64 {
 /// Has no side effect; reads the APIC's page.
 #[cfg(target_os = "none")]
 pub unsafe fn timer_control() -> u64 {
+    // SAFETY: the local APIC is this CPU's own and is enabled before a
+    // timer is armed; the controller answers a register, not memory.
     let Some(apic) = (unsafe { trap::timer_controller() }) else {
         return 0;
     };
@@ -391,6 +395,8 @@ pub unsafe fn timer_control() -> u64 {
 /// no effect beyond clearing a mask bit that was already set.
 #[cfg(target_os = "none")]
 pub unsafe fn disarm_timer() {
+    // SAFETY: the local APIC is this CPU's own and is enabled before a
+    // timer is armed; the controller answers a register, not memory.
     let Some(apic) = (unsafe { trap::timer_controller() }) else {
         return;
     };
@@ -624,6 +630,9 @@ pub fn boot_cpu_owns_this_trap() -> bool {
 pub unsafe fn send_ipi_to_others() -> bool {
     // SAFETY: the caller's contract: every started CPU answers this vector.
     match unsafe { Apic::probe() } {
+        // SAFETY: the probe answered a controller for this CPU, and an IPI is a
+        // write to the APIC's own registers, which the probe just proved
+        // reachable.
         Some(apic) => unsafe { apic.send_to_others(apic::IPI_VECTOR) },
         None => false,
     }

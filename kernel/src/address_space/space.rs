@@ -343,6 +343,8 @@ impl AddressSpace {
         // Entry 0 is the kernel's shared table and entry 1 and above are this
         // space's; the second level is found, never created.
         let root_slot = index(Level::Root, virtual_address);
+        // SAFETY: `self.root` is this space's own root frame, live for as long
+        // as the space is, and a `PageTable` is exactly one page.
         let root_word = unsafe { &*(self.root as *const PageTable) }.entry(root_slot);
         if root_word == 0 {
             return None;
@@ -1149,22 +1151,35 @@ pub fn allocate_image_frame() -> Option<usize> {
 /// must fit in one page.  The frames the pool hands out are zeroed and live.
 #[cfg(target_os = "none")]
 pub unsafe fn image_space(bytes: &[u8], image_va: usize, stack_va: usize) -> Option<AddressSpace> {
+    // SAFETY: a fresh root, owned by this space and by no other.
     let mut space = unsafe { AddressSpace::new() }?;
     let Some(image_frame) = allocate_image_frame() else {
+        // SAFETY: `space` was built by this call chain and never
+        // handed to a task, so no CPU translates through its root;
+        // that is `release`'s whole contract.
         unsafe { space.release() };
         return None;
     };
     if !space.own(image_frame) {
+        // SAFETY: `space` was built by this call chain and never
+        // handed to a task, so no CPU translates through its root;
+        // that is `release`'s whole contract.
         unsafe { space.release() };
         return None;
     }
     let Some(stack_frame) = allocate_image_frame() else {
         // The image frame is recorded, so the release takes it back with the
         // root, which is the whole of why the order above is the order.
+        // SAFETY: `space` was built by this call chain and never
+        // handed to a task, so no CPU translates through its root;
+        // that is `release`'s whole contract.
         unsafe { space.release() };
         return None;
     };
     if !space.own(stack_frame) {
+        // SAFETY: `space` was built by this call chain and never
+        // handed to a task, so no CPU translates through its root;
+        // that is `release`'s whole contract.
         unsafe { space.release() };
         return None;
     }
@@ -1194,9 +1209,14 @@ pub unsafe fn image_space(bytes: &[u8], image_va: usize, stack_va: usize) -> Opt
         user: true,
         cache: paging::Cache::Normal,
     };
+    // SAFETY: both frames are this space's own and both addresses are the
+    // caller's window, which this space does not map yet.
     let mapped = unsafe { space.map(image_va, image_frame, image_permissions) }
         && unsafe { space.map(stack_va, stack_frame, stack_permissions) };
     if !mapped {
+        // SAFETY: `space` was built by this call chain and never
+        // handed to a task, so no CPU translates through its root;
+        // that is `release`'s whole contract.
         unsafe { space.release() };
         return None;
     }
@@ -1289,6 +1309,8 @@ pub struct MappedPage {
 /// than a state to tolerate.
 #[cfg(target_os = "none")]
 pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usize> {
+    // SAFETY: the space's own root frame, live for the borrow of `space`, and a
+    // `PageTable` is exactly one page.
     let root = unsafe { &*(space.root() as *const PageTable) };
     let mut count = 0;
 
@@ -1305,6 +1327,8 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
         if !second.present || second.is_leaf {
             return None;
         }
+        // SAFETY: an entry `map_page_with` wrote, naming a table this kernel
+        // allocated and has not freed while the space lives.
         let second_table = unsafe { &*(second.address as *const PageTable) };
         for second_index in 0..paging::ENTRIES_PER_TABLE {
             let word = second_table.entry(second_index);
@@ -1315,6 +1339,7 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
             if !third.present || third.is_leaf {
                 return None;
             }
+            // SAFETY: as above, one level down.
             let third_table = unsafe { &*(third.address as *const PageTable) };
             for third_index in 0..paging::ENTRIES_PER_TABLE {
                 let word = third_table.entry(third_index);
@@ -1325,6 +1350,7 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
                 if !leaf_table_entry.present || leaf_table_entry.is_leaf {
                     return None;
                 }
+                // SAFETY: as above, at the level that holds the leaves.
                 let leaf_table = unsafe { &*(leaf_table_entry.address as *const PageTable) };
                 for leaf_index in 0..paging::ENTRIES_PER_TABLE {
                     let word = leaf_table.entry(leaf_index);
@@ -1464,6 +1490,7 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
     }; MAX_FORK_PAGES];
     let count = mapped_pages(parent, &mut pages)?;
 
+    // SAFETY: a fresh root, owned by the child and by no other.
     let mut child = unsafe { AddressSpace::new() }?;
     // The child runs in its parent's window and can reserve in it.
     //
@@ -1495,6 +1522,9 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
         ) {
             // The share is the child's first claim on the frame, so there is
             // nothing of this page to undo: the child owns nothing yet.
+            // SAFETY: `child` was built by this call chain and never
+            // handed to a task, so no CPU translates through its root;
+            // that is `release`'s whole contract.
             unsafe { child.release() };
             return None;
         }
@@ -1503,6 +1533,9 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
             // undo that one share before the release, or the count would name
             // a co-owner that no longer exists.
             unshare_frame(page.physical);
+            // SAFETY: `child` was built by this call chain and never
+            // handed to a task, so no CPU translates through its root;
+            // that is `release`'s whole contract.
             unsafe { child.release() };
             return None;
         }
@@ -1525,6 +1558,8 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
         };
         // SAFETY: as above.
         if !unsafe { child.map_page_with(page.virtual_address, page.physical, permissions) } {
+            // SAFETY: `child` was built by this call chain and never handed to
+            // a task, so no CPU translates through its root.
             unsafe { child.release() };
             return None;
         }
