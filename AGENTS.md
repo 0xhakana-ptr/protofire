@@ -47,7 +47,8 @@ sh scripts/verify.sh p3
 The tiers accumulate: each one runs everything below it and adds its own.
 
 - **`p0`**, formatting, the documents and their own invariants, every crate's
-  tests, the three kernels, and the commit messages in the range
+  tests, the three kernels, and the commits in the range: each message against
+  the hook, and no merge commit, because `master` lands by fast-forward
   (`scripts/check-commits.sh`).
 - **`p1`**, the boot: `cargo xtask check --machine <each machine with an
   image>`.  A machine is a hardware description as well as an architecture: the

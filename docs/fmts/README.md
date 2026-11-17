@@ -58,8 +58,9 @@ the RFC directory's own invariants
 comment links to (`cargo doc` with `RUSTDOCFLAGS=-D warnings`), that the
 workspace builds and every crate's tests pass (`cargo build --workspace`, `cargo
 test --workspace`), that the kernel builds for all three machines (`cargo build
--p kernel --target <machine>`), and that every commit message in the range obeys
-[`commits.md`](commits.md) ([`scripts/check-commits.sh`](../../scripts/check-commits.sh)).
+-p kernel --target <machine>`), and that every commit in the range obeys
+[`commits.md`](commits.md) with no merge among them
+([`scripts/check-commits.sh`](../../scripts/check-commits.sh)).
 
 At `p1`: that the image boots and prints what it must (`cargo xtask check
 --machine <each machine>`).

@@ -28,6 +28,8 @@ order:
 - `scripts/check-rfcs.sh`, refuses an RFC directory that disagrees with itself:
   a number that is not four decimal digits, a status outside the six, a
   supersede link that holds at one end only, an index row written by hand.
+- `scripts/check-commits.sh`, refuses a commit message the hook refuses, and a
+  merge commit in the range `master` is about to receive.
 - `cargo doc --workspace`, refuses a doc comment that links to an item the
   crate does not have.
 - `cargo build --workspace`, refuses a crate that does not build for the host.
@@ -112,16 +114,40 @@ direction.
 
 ## Sending a change
 
-Work reaches `master` through a pull request, and `master` is linear.  A
-maintainer lands it by fast-forward, so every commit in the pull request becomes
-a commit on `master` exactly as it was written.  There is no merge commit, and
-nothing is squashed at merge time.
+**Work happens on a branch.**  `master` is a landing strip, not a workbench: it
+only ever moves by fast-forward, so every commit that arrives is one that was
+already reviewed on a branch.  This applies to the maintainer as much as to a
+contributor, and for a mechanical reason rather than a stylistic one: the gate's
+commit-message check reads `origin/master..HEAD`, which on `master` with nothing
+unpushed is empty, and an empty range checks no message at all
+([`scripts/check-commits.sh`](scripts/check-commits.sh) says so rather than
+calling it a pass).
+
+Name the branch for the change: `futex-wake-key`, not `fix` or `my-work`.
+
+```sh
+git switch -c futex-wake-key origin/master
+# work, commit
+git rebase --autosquash origin/master
+sh scripts/verify.sh p3
+git push -u origin futex-wake-key
+```
+
+A maintainer lands the branch by fast-forward:
+
+```sh
+git switch master && git merge --ff-only futex-wake-key && git push
+```
+
+`--ff-only` is not a preference either: it is what makes the linearity a fact
+rather than a hope, and it refuses rather than silently creating a merge.
 
 That puts two things on the author:
 
 - **Rebase, do not merge.**  `git rebase origin/master` before asking for review,
   and again when `master` moves.  A pull request whose history carries a merge
-  commit from `master` cannot be fast-forwarded.
+  commit from `master` cannot be fast-forwarded, so `scripts/check-commits.sh`
+  refuses one and names it.
 - **Clean up before review, not at merge.**  `git rebase --autosquash` folds a
   `fixup!` commit into the one it belongs to.  Nothing is squashed at merge, so a
   `fixup!` that reaches the pull request reaches `master`.
