@@ -1,0 +1,32 @@
+# File: .github/workflows/ci.yml
+# Purpose: Run `scripts/ci.sh` on a pull request, and define nothing itself.
+#
+# This file is four lines of work and one comment block, on purpose.  Every rule
+# CI enforces is in the tree, in `scripts/ci.sh`, which a contributor runs by
+# hand; the workflow names that script and nothing else.  A condition, an
+# argument or an inline command here would be a second definition of the gate,
+# and a second definition drifts from the first.  The same argument is why the
+# previous tree's overgrown `Makefile` needed a gate whose only job was checking
+# that its own recipes still agreed with each other.
+#
+# `scripts/ci.sh` declines the boot: a runner may have no QEMU and no `/dev/kvm`,
+# and the boot's own tier is `sh scripts/verify.sh p3` on the development host.
+# The script prints a line when it declines, so a green run here cannot be
+# mistaken for a run that started an image.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run the gate
+        run: sh scripts/ci.sh

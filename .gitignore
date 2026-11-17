@@ -39,6 +39,17 @@
 !.rustfmt.toml
 
 #
+# The workflow, and the reason it needs a rule of its own.
+#
+# `.*` above hides a dotfile, which is right for this tree's own untracked
+# state.  `.github/` is neither: it is the file GitHub reads to run the gate,
+# and a rule that hid it would leave a clone with no CI and no message saying
+# so.  `check-ignored-files.sh` refuses that state, which is how the rule was
+# found here rather than in a review of a pull request that never ran.
+!.github/
+!.github/**
+
+#
 # The vendored registry sources, and everything in them.
 #
 # `.*` above is the rule that hides a dotfile, and it is right for this tree's

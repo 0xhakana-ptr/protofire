@@ -29,6 +29,7 @@
 #   sh scripts/verify.sh            # p0
 #   sh scripts/verify.sh p1         # p0 + the boot
 #   VERIFY_TIER=p3 sh scripts/verify.sh
+#   VERIFY_NO_BOOT=1 sh scripts/verify.sh p3   # the floor without an image
 
 set -eu
 
@@ -64,6 +65,17 @@ MACHINES="x86_64-unknown-none aarch64-unknown-none riscv64gc-unknown-none-elf"
 # exercised there, and a gate that booted only the PLIC machine called the
 # whole AIA path implemented rather than verified.
 BOOTABLE_MACHINES="x86_64 aarch64 riscv64 riscv64-aia"
+
+# A caller can decline the boot, and the line p1 prints when it does is the
+# difference between "the boot passed" and "the boot did not run".  A gate that
+# boots has to keep that distinction visible: a log with no image in it and a
+# log with a passing image in it otherwise read the same, and the second is the
+# one a reader assumes.  `scripts/ci.sh` is the caller that sets this, because a
+# CI runner may have no QEMU and no `/dev/kvm`; a person on the development host
+# runs p3 without it.
+NO_BOOT="${VERIFY_NO_BOOT:-0}"
+
+NO_BOOT="${VERIFY_NO_BOOT:-0}"
 
 step() {
     printf '==> verify[%s]: %s\n' "$VERIFY_TIER" "$1"
@@ -167,6 +179,16 @@ run_p0() {
     step "scripts/check-rfcs.sh"
     sh scripts/check-rfcs.sh || fail "the RFC directory and its index disagree with themselves"
 
+    # The commit message is part of the change, and until this step nothing in
+    # the gate read `git log`: `scripts/hooks/commit-msg` runs at `git commit`
+    # only if a contributor installed it by hand, so a message could break every
+    # rule in `docs/fmts/commits.md` and this tier stayed green.  The script
+    # pipes each commit through that same hook rather than restating its rules,
+    # so the check at commit time and the check here cannot disagree.
+    step "scripts/check-commits.sh"
+    sh scripts/check-commits.sh \
+        || fail "a commit message breaks the rules in docs/fmts/commits.md"
+
     # The same question one level in: a doc comment that names an item the
     # crate does not have is a reader sent somewhere that is not there, and
     # `cargo doc` is what knows.  It denies `rustdoc::broken_intra_doc_links`
@@ -203,11 +225,17 @@ run_p1() {
     # the heap, and a gate that booted only x86_64 called that green, so p1 now
     # boots each machine that has an image, and riscv64 is added when it has
     # one rather than when someone remembers.
-    for machine in $BOOTABLE_MACHINES; do
-        step "cargo xtask check --machine $machine"
-        cargo run --offline --quiet -p xtask -- check --machine "$machine" \
-            || fail "the $machine image did not print its required lines"
-    done
+    if [ "$NO_BOOT" = "1" ]; then
+        step "boot declined (VERIFY_NO_BOOT=1)"
+        printf 'verify[%s]: boot declined (VERIFY_NO_BOOT=1), this run did not start an image\n' \
+            "$VERIFY_TIER"
+    else
+        for machine in $BOOTABLE_MACHINES; do
+            step "cargo xtask check --machine $machine"
+            cargo run --offline --quiet -p xtask -- check --machine "$machine" \
+                || fail "the $machine image did not print its required lines"
+        done
+    fi
 }
 
 run_p2() {
