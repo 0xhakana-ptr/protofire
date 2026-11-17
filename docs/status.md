@@ -60,11 +60,16 @@ its severity, and the order they should land.
   read `1` with the old stack mapping put back.  See `docs/roadmap.md`'s Level
   7.5 for why the first version of that line counted the wrong side.
 
+- **A fault handler is never withdrawn.**  `hand_the_fault_to_the_program` now
+  takes the handler instead of reading it, so the second fault falls through to
+  the death path rather than re-entering a handler that may be the fault's own
+  cause.  Taking it is not a latch: a program may arm another after surviving
+  one, which the two host tests pin in both directions.  The boot's handler
+  still runs exactly once: `process 3 handled its own fault at
+  0x80c0000000 (vector 14)`.
+
 **Open.**
 
-- **A fault handler is never withdrawn.** `install_exception_handler`'s comment
-  says the second fault kills the program; `hand_the_fault_to_the_program` reads
-  the handler and never clears it.
 - **The ELF loader has unchecked additions** in its segment and dynamic-section
   bounds, so a shaped image panics a debug kernel and can wrap a release one.
 - **`exec` does not reset per-process state.** The fault handler, the signal

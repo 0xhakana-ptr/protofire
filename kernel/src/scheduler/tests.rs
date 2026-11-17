@@ -868,3 +868,61 @@ fn a_process_finishing_wakes_what_waited_on_it() {
     assert_eq!(scheduler.blocked(), 0, "the exit woke the waiter");
     assert!(scheduler.has_selectable(0), "and it is selectable again");
 }
+
+/// A fault handler is taken by the fault it answers, so a second fault kills
+/// the program instead of re-entering it.
+///
+/// `install_exception_handler`'s doc comment states this contract: a handler
+/// that faults is "withdrawn, so the second fault kills it instead of
+/// looping".  The code read the handler and left it in place, so a handler
+/// whose own address was unmapped re-entered for ever and a handler that
+/// faulted inside itself recursed until the stack ran out, printing one
+/// `handled its own fault` line per level.
+///
+/// The test reaches the field the fault path reads and clears, because the
+/// machine's trap path is not present in a host build.  What is asserted is
+/// the property that makes the contract true: the *first* read finds the
+/// handler and the next one finds nothing.
+#[test]
+fn taking_a_fault_handler_leaves_none_behind() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("handler"));
+    scheduler.tasks[0].handler = Some(0x80_0000_1000);
+
+    let first = scheduler.tasks[0].handler.take();
+    assert_eq!(
+        first,
+        Some(0x80_0000_1000),
+        "the first fault is the program's to answer"
+    );
+    assert_eq!(
+        scheduler.tasks[0].handler, None,
+        "and the second is not, which is the whole of the contract"
+    );
+    assert_eq!(
+        scheduler.tasks[0].handler.take(),
+        None,
+        "so a second fault falls through to the death path"
+    );
+}
+
+/// A handler the program installs *after* a fault is honoured again.
+///
+/// Taking the handler is not a one-way door: the call exists to arm one, and a
+/// program that survived a fault through `ReturnFromException` may arm another
+/// for a later one.  A version that latched "this program has faulted" would
+/// pass the test above and break this one.
+#[test]
+fn a_handler_installed_after_a_fault_is_honoured() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("handler"));
+    scheduler.tasks[0].handler = Some(0x80_0000_1000);
+    assert_eq!(scheduler.tasks[0].handler.take(), Some(0x80_0000_1000));
+
+    scheduler.tasks[0].handler = Some(0x80_0000_2000);
+    assert_eq!(
+        scheduler.tasks[0].handler.take(),
+        Some(0x80_0000_2000),
+        "arming again after a fault is the program's decision"
+    );
+}

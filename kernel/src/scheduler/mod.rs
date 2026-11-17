@@ -224,11 +224,23 @@ pub fn return_from_exception(resume: usize, answer: usize, frame: &mut arch::Con
 /// any runaway does.
 #[cfg(target_os = "none")]
 fn hand_the_fault_to_the_program(frame: &mut arch::Context, vector: usize, address: usize) -> bool {
+    // The handler is **taken**, not read: one lock acquisition answers "was one
+    // installed" and clears it, because the two facts are one decision.  The
+    // doc comment on `install_exception_handler` states the contract this
+    // implements: a handler that faults is withdrawn, so the second fault kills
+    // it instead of looping.  Reading the handler and leaving it in place was
+    // the defect: a handler whose own address is unmapped re-entered for ever,
+    // and a handler that faults inside itself recursed until the stack ran out,
+    // with the log's `handled its own fault` line printing once per level.
+    //
+    // Taking it here is also what makes `ReturnFromException`'s contract
+    // honest: the program can install a new handler afterwards if it wants one
+    // for a later fault, which is a decision at the call and not a default.
     let Some(handler) = with_scheduler(|scheduler| {
-        let scheduler = scheduler.as_ref()?;
+        let scheduler = scheduler.as_mut()?;
         let cpu = this_cpu();
         let index = scheduler.running.get(cpu).copied().flatten()?;
-        scheduler.tasks.get(index)?.handler
+        scheduler.tasks.get_mut(index)?.handler.take()
     }) else {
         return false;
     };

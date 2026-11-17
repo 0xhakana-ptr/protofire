@@ -1389,14 +1389,24 @@ fork, and with the probe restoring the old stack mapping the same line read `1`.
 The gate requires the zero on all three machines.  A host test pins the count's
 conjunction, so a counter that tested either bit alone fails without a boot.
 
-**3. A fault handler is never withdrawn, so it can re-enter for ever.  P1.**
+**3. A fault handler is never withdrawn, so it can re-enter for ever.  P1.
+Fixed.**
 
-`install_exception_handler`'s doc comment says a handler that faults is
+`install_exception_handler`'s doc comment said a handler that faults is
 "withdrawn, so the second fault kills it instead of looping".
-`hand_the_fault_to_the_program` reads `task.handler` and never writes it back,
-so the second fault re-enters the handler, and a handler whose own address is
-unmapped loops until the stack runs out.  The comment describes the fix; the
-code does not do it.
+`hand_the_fault_to_the_program` read `task.handler` and never wrote it back, so
+the second fault re-entered the handler, and a handler whose own address was
+unmapped looped until the stack ran out, printing one `handled its own fault`
+line per level.
+
+The read is now a `take`.  One lock acquisition answers "was a handler
+installed" and clears it, because those are one decision and two acquisitions
+would leave a window in which two CPUs both answered "yes" to the same handler.
+Taking it is not a latch: a program that survives a fault through
+`ReturnFromException` can arm another, which is why there are two host tests and
+not one, and the second test exists to fail a version that set a "has faulted"
+flag instead.  The boot's own handler still runs: `process 3 handled its own
+fault at 0x80c0000000 (vector 14)` appears once, as it did before.
 
 **4. The ELF loader has unchecked additions.  P1.**
 
