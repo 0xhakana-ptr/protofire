@@ -164,6 +164,42 @@ architecture crate, which names nothing of this tree and is tested on a host:
 BAR5's registers, a port's block, the command header, the PRD entry, the
 Host-to-Device FIS and the ATA identify structure.
 
+The xHCI controller is also up, with three USB devices behind it: a keyboard, a
+mouse core and a mass-storage stick.  It enumerates the bus, addresses each
+device, moves a real SCSI exchange over the bulk endpoints (INQUIRY, a
+capacity read, a sector read), records the disk as a third block device, and
+reads the keyboard's interrupt endpoint into an HID report whose bytes are a
+PS/2 Set 1 scancode.  Its evidence, all required lines of the x86_64 gate:
+
+```
+protofire: xhci at 0xfeb94000, 16384 byte(s)
+[xhci  ] controller initialised and running
+[xhci  ] mass storage initialised at slot 1
+[usbmsd] INQUIRY: vendor='QEMU' product='QEMU HARDDISK'
+[usbmsd] USB mass storage: 16384 blocks x 512 bytes = 8 MiB
+[usbmsd] recorded as block device 2
+[xhci  ] HID keyboard ready at slot 2
+[hid  ] keyboard report: modifiers=0x00 keys=[04,00,00,00,00,00]
+```
+
+The HID line is a key the host typed, not one the boot invented: `xtask` writes
+`sendkey a` to QEMU's monitor after the boot's own `ReadConsole` exercise has
+finished, and `04` is the HID usage for `a`.  The keyboard report does not
+produce a value from the boot's own code, so the line is evidence that an
+interrupt-IN transfer completed with a report the device built.  Its formal
+half is `drivers/usb/xhci` at layer 0, relocated out of the previous tree's
+drivers, with twenty-four host tests on the TRB layout, the descriptor walk,
+the report parser and the SCSI command blocks.
+
+The PC speaker is the one driver whose value a serial port cannot carry: the
+boot plays 1000 Hz and silences it, and
+`protofire: pcspkr played 1000 Hz, then silenced` is the required line.  What a
+listener hears is out of band, so the check is QEMU's traces -- the command
+word `0xB6`, the divisor `0xa9`/`0x04` (1193, which is 1000 Hz), and a gate
+transition on port 0x61 -- landing on the hardware the specification names.
+The driver is `kernel/src/pcspkr.rs`; there is no formal half because the
+whole of it is one divisor and two gate bits, and the ports are the machine's.
+
 The virtio network card is **attached on all four boots**.  `virtio_net` brings
 a card up, the same status sequence the block device runs, the address read
 from the configuration region under `VIRTIO_NET_F_MAC`, and both queues,

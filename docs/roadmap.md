@@ -1054,12 +1054,58 @@ size.
    the way must be as well-formed as the first.
 4. **`xhci`** and USB HID/MSD.  The largest of the six by far, the old tree's
    at 3,451 + 1,177 + 642 + 545.  A keyboard, a mouse and a stick.
+
+   **It has landed**, in two rounds: the wire format as `drivers/usb/xhci` at
+   layer 0 with twenty-four host tests, and the machine's half as four kernel
+   files -- the controller, `usb_hid`, `usb_msd` and `usb_mouse`.  The boot
+   enumerates the bus, finds a mass-storage device and a keyboard, moves a real
+   SCSI exchange (INQUIRY, a capacity read, a sector read) over the bulk
+   endpoints, records the disk as a third block device, and reads the
+   keyboard's interrupt endpoint into a report whose bytes are a PS/2 Set 1
+   scancode.  Its evidence, all required lines of the x86_64 gate:
+
+   ```
+   [xhci  ] controller initialised and running
+   [xhci  ] mass storage initialised at slot 1
+   [usbmsd] INQUIRY: vendor='QEMU' product='QEMU HARDDISK'
+   [usbmsd] USB mass storage: 16384 blocks x 512 bytes = 8 MiB
+   [usbmsd] recorded as block device 2
+   [xhci  ] HID keyboard ready at slot 2
+   [hid  ] keyboard report: modifiers=0x00 keys=[04,00,00,00,00,00]
+   ```
+
+   The `[hid  ]` line is a key the host typed: `xtask` writes `sendkey a` to
+   QEMU's monitor once the boot is past its `ReadConsole` exercise, and `04` is
+   the HID usage for `a`, which the report prints as the device sent it.
+
+   Three defects the relocation had to fix, each one a reason the old tree's
+   controller never enumerated anything:
+
+   - The controller's MMIO base was mapped a second time: the bus scan had
+     already mapped it, and `map_device` answers false for a window it holds,
+     so the bring-up took the failure and skipped the controller entirely.
+   - Every log line was written with `write!` where the sink needed a newline,
+     so sixty-seven fragments arrived as one line and three gate lines matched
+     nothing.  The macro writes a whole line now.
+   - The keyboard's `Interval` field is the **exponent** of the period, not the
+     period, so a report interval of 8 became 256 frames; and a hub port reset
+     is `PORTSC`'s selector 4 with the change bit 20, where clearing bit 21
+     stalls the port rather than acknowledging the reset.
 5. **`virtio_gpu`** and **`virtio_input`.**  The same two devices on the
    emulator this tree is developed on, which is the cheaper way to prove the
    input path before the USB one.  They come after the framebuffer console
    because that console is what they draw into.
 6. **`pcspkr`**, last: one line of value, and it needs a timer nobody has
    asked for.
+
+   **It has landed**, as `kernel/src/pcspkr.rs`: PIT channel 2 in mode 3 off
+   the fixed 1.193182 MHz clock, and port 0x61's low two bits opening the PIT
+   gate and the speaker's own.  The boot plays 1000 Hz and silences it, and
+   `protofire: pcspkr played 1000 Hz, then silenced` is a required line of the
+   x86_64 gate.  What a serial line cannot carry is what a listener hears, so
+   the out-of-band check is QEMU's traces: the command word `0xB6`, the divisor
+   `0xa9`/`0x04` -- 1193, which is 1000 Hz -- and a gate transition on 0x61,
+   landing on the hardware the specification names.
 
 **What the old tree had and this list does not:** `hda` (857 lines) and its
 protocol (751).  It is not on the list because nothing in this tree has a
