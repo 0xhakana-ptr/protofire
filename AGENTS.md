@@ -23,6 +23,10 @@ healthy `AGENTS.md` gets shorter as the gates get stronger.
 - **What is missing overall, and which gap blocks which?**
   [`docs/roadmap.md`](docs/roadmap.md).  It carries the counts and the command
   that re-takes them, so the answer is measured rather than remembered.
+- **What was decided, and why?**, [`docs/rfcs/`](docs/rfcs/README.md), from its
+  own README.  A change that adds an interface, starts a subsystem, or changes a
+  format or a policy a document states as settled needs one **before** the code,
+  and the README says which changes those are.
 - **What does a change have to satisfy?**, [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **How does a subsystem work?**, the crate's own `//!` header.
 - **What may a contributor rely on?**, this file, and the gate's own header

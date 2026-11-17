@@ -158,6 +158,15 @@ run_p0() {
     step "scripts/check-docs.sh"
     sh scripts/check-docs.sh || fail "a document cites a file the tree does not have"
 
+    # The design record's own invariants: one decimal number per RFC, a status
+    # from the fixed set, supersede links that agree at both ends, and an index
+    # generated from the documents rather than maintained beside them.  It runs
+    # here and not in a later tier because a document that disagrees with itself
+    # is the same class of failure as a citation that does not resolve, and it
+    # costs a fraction of a build.
+    step "scripts/check-rfcs.sh"
+    sh scripts/check-rfcs.sh || fail "the RFC directory and its index disagree with themselves"
+
     # The same question one level in: a doc comment that names an item the
     # crate does not have is a reader sent somewhere that is not there, and
     # `cargo doc` is what knows.  It denies `rustdoc::broken_intra_doc_links`

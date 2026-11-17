@@ -71,7 +71,7 @@ protofire/
 │
 │   the tree's own operations
 ├── docs/            the documents: status, roadmap, architecture,
-│                    migration, async_io, fmts/, this file
+│                    migration, async_io, rfcs/, fmts/, this file
 ├── scripts/         the gates: verify.sh, the checks, the baselines
 ├── tools/           xtask, the build tool
 ├── certs/           trust anchors
