@@ -75,11 +75,21 @@ its severity, and the order they should land.
   sum replaced by a wrapping one; the loader's own prose records why the obvious
   first version of two of them proved nothing.
 
+- **`exec` does not reset per-process state.**  `Task::clear_image_state`
+  clears the fault handler, the signal mask, a suspend in flight, every armed
+  signal, the queued signals and a delivery mid-flight, and `exec_current`
+  calls it after swapping the space.  The pid, parent, descriptors and the
+  scheduler's own `last_cpu` are deliberately kept, which the method states.
+
 **Open.**
 
-- **`exec` does not reset per-process state.** The fault handler, the signal
-  mask and the pending-signal ring survive into the new image, and the
-  retired-space array holds eight before it leaks.
+- **The retired-space array holds eight.**  An `exec` retires the space it
+  replaced rather than releasing it, because another CPU may still be inside
+  its trap path with that root installed; a ninth exec keeps the eighth space
+  alive rather than dropping it.  The bound is deliberate and documented at
+  the field, and lifting it means re-arguing when a retired root is safe to
+  free, which is the address-space activation path.  Nothing in this boot
+  execs more than once, and Level 9 is where repeated exec becomes real.
 
 The engineering findings are in the same place: the gates' `--offline` cannot
 work on a clone with no vendor directory and a cold cargo cache, and the two

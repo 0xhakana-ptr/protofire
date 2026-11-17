@@ -307,6 +307,46 @@ impl Task {
         }
     }
 
+    /// Clear everything that belonged to the image this task was running.
+    ///
+    /// `exec` replaces a task's space and its context, and the two are only
+    /// half of what a process *is*: the fault handler, the signal mask, the
+    /// queued signals, the per-signal handlers, and a delivery mid-flight all
+    /// belong to the program that installed them.  They survived into the new
+    /// image, so a program that exec'd inherited the previous program's fault
+    /// handler, its mask and its undelivered signals, which is a channel
+    /// between two images that never agreed to share anything.
+    ///
+    /// What is **not** cleared here is deliberate:
+    ///
+    /// - the pid, the parent and the exit status, because `exec` replaces a
+    ///   program in a process and the process is the same one afterwards;
+    /// - the descriptors the image left open, because closing them is
+    ///   `close_on_exec`'s job and it closes only the ones marked, which is a
+    ///   different rule with its own call;
+    /// - `last_cpu` and `ran_off_boot_cpu`, because they are the scheduler's
+    ///   record of where this *task* ran, not the program's;
+    /// - the space and the context, because the caller replaces those itself
+    ///   and a method that also did would be a second owner of the same two
+    ///   fields.
+    ///
+    /// Compiled for the target and for the tests, and nowhere else: the exec
+    /// path is its one production caller and a host has none, so a host build
+    /// with no test would have this method and no caller.
+    #[cfg(any(target_os = "none", test))]
+    pub(crate) fn clear_image_state(&mut self) {
+        self.handler = None;
+        self.signal_mask = 0;
+        self.suspend_restore = None;
+        self.signal_handlers = [const { None }; SIGNAL_COUNT];
+        self.signals = [const { None }; TASK_SIGNAL_QUEUE];
+        // A delivery mid-flight is one the old image's handler was about to
+        // run.  Clearing `delivery` without clearing what it displaced would
+        // leave a saved context no `SigReturn` will ever claim.
+        self.delivery = None;
+        self.delivery_saved = None;
+    }
+
     /// The address space's root, which is what a switch writes.
     #[cfg(target_os = "none")]
     pub fn root(&self) -> Option<usize> {

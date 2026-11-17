@@ -468,6 +468,15 @@ impl Scheduler {
         // than returning, because the new space is already installed in the
         // task and it is the one the epilogue will run on.
         let old_space = task.space.replace(space);
+        // Everything else that belonged to the image being replaced.  A space
+        // and a context are only half of what a process is: the fault handler,
+        // the signal mask, the queued signals, the per-signal handlers and a
+        // delivery mid-flight all belonged to the program that is going away,
+        // and they used to survive into the new image.  A program that exec'd
+        // then inherited the previous program's fault handler and its
+        // undelivered signals, which is a channel between two images that never
+        // agreed to share anything.
+        task.clear_image_state();
         // A fresh context, not a copy: the program starts at its own first
         // instruction, on a stack that carries the exec block and nothing from
         // the program it replaced.

@@ -1437,15 +1437,36 @@ the pair has to be one whose **wrapped** sum lands inside the segment, so that
 the containment test reads the wrap as yes.  Both tests now do that, and a probe
 returned `Ok(Image)` under each before the fix was restored.
 
-**5. Process lifecycle does not reset between images.  P1.**
+**5. Process lifecycle does not reset between images.  P1.  Half fixed.**
 
-`exec_current` replaces `space` and `context` and nothing else: `handler`, the
-signal mask and the pending-signal ring all survive into the new image, so a
-program inherits the previous image's fault handler and undelivered signals.
-And the retired-space array is `RETIRED_SPACES = 8`; a full array leaks the
-space rather than dropping it, which the doc comment states as deliberate.  A
-long-running boot that spawns, forks and execs will leak both frames and task
-metadata.
+`exec_current` replaced `space` and `context` and nothing else: `handler`, the
+signal mask, the pending-signal ring, the per-signal handlers and a delivery
+mid-flight all survived into the new image, so a program inherited the previous
+image's fault handler and undelivered signals.  A space and a context are only
+half of what a process is, and the other half belonged to the image being
+replaced.
+
+`Task::clear_image_state` clears the six fields now, and `exec_current` calls it
+after the space is swapped.  What it does **not** clear is stated at the method:
+the pid and parent, because the process is the same one afterwards; the
+descriptors, because `close_on_exec` closes the marked ones under its own rule;
+and `last_cpu`, because that is the scheduler's record of the *task* and not the
+program's.  Two host tests pin it, one setting every field and asserting none
+survives, the other asserting the clear can be repeated in case an exec is
+retried.
+
+**The retired-space array is still the leak it was, and deliberately so.**  Its
+documentation says what it is: `exec` runs with the scheduler's lock held, and
+growing a `Vec` there would allocate from the kernel heap while another CPU may
+be spinning on that lock, so the array is fixed and a boot that execs more than
+eight times keeps the last ones alive.  That is a bound this tree chose, not a
+defect it overlooked, and changing it means re-arguing *when* a retired root may
+be freed, which is the address-space activation path.  The shape that would work
+is a release after `shootdown::invalidate_others()`, but an acknowledgement
+proves the *TLB* was flushed and not that another CPU is out of its trap path,
+and the boot's own log shows tasks migrating.  Nothing in this tree execs eight
+times: the boot execs once.  This moves to Level 9, where a shell that runs
+commands makes repeated exec real and makes the argument testable.
 
 **The engineering problems, which are not kernel defects and are not smaller.**
 

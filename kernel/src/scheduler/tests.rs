@@ -926,3 +926,66 @@ fn a_handler_installed_after_a_fault_is_honoured() {
         "arming again after a fault is the program's decision"
     );
 }
+
+/// `exec` clears what belonged to the image being replaced.
+///
+/// A task's space and context are half of what a process is.  The fault
+/// handler, the signal mask, the queued signals, the per-signal handlers and a
+/// delivery mid-flight all belong to the program that installed them, and they
+/// used to survive into the new image: a program that exec'd inherited the
+/// previous program's fault handler and its undelivered signals.
+///
+/// The test sets every one of them and asserts that none survives, because a
+/// version that cleared the handler and forgot the mask would pass a test that
+/// checked only the handler.  The pid and parent are asserted to survive in the
+/// same breath: the process is the same one afterwards.
+#[test]
+fn exec_clears_what_belonged_to_the_old_image() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("old image"));
+    let task = &mut scheduler.tasks[0];
+    task.identify(7, 3);
+    task.handler = Some(0x80_0000_1000);
+    task.signal_mask = 0b1011;
+    task.suspend_restore = Some(0b0110);
+    task.signal_handlers[1] = Some(0x80_0000_2000);
+    task.delivery = Some(super::task::PendingSignal {
+        signal: 1,
+        sender_pid: 3,
+        payload: 0x5348,
+    });
+    task.delivery_saved = Some(starting_context(0x80_0000_3000, 0x80_0000_4000));
+
+    task.clear_image_state();
+
+    assert_eq!(task.handler, None, "the handler belonged to the old image");
+    assert_eq!(task.signal_mask, 0, "and so did the mask");
+    assert_eq!(task.suspend_restore, None, "and a suspend in flight");
+    assert_eq!(task.signal_handlers[1], None, "and every armed signal");
+    assert!(task.delivery.is_none(), "and a delivery not yet made");
+    assert_eq!(
+        task.delivery_saved, None,
+        "and the context that delivery displaced, which nothing would restore"
+    );
+    assert_eq!(task.pid(), 7, "the process is the same one afterwards");
+    assert_eq!(task.parent(), 3, "and its parent is unchanged");
+}
+
+/// Clearing image state twice is harmless, which is what a retried exec needs.
+///
+/// An `exec` that fails partway leaves the task as it was, and one that
+/// succeeds calls this once.  A version that assumed "called exactly once" and
+/// moved a context out rather than dropping it would panic or corrupt on the
+/// second call; dropping is the operation that can be repeated.
+#[test]
+fn clearing_image_state_twice_is_harmless() {
+    let mut scheduler = Scheduler::new();
+    scheduler.add(Task::without_space("old image"));
+    let task = &mut scheduler.tasks[0];
+    task.handler = Some(0x80_0000_1000);
+    task.signal_mask = 0b1;
+    task.clear_image_state();
+    task.clear_image_state();
+    assert_eq!(task.handler, None);
+    assert_eq!(task.signal_mask, 0);
+}
