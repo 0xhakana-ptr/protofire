@@ -94,6 +94,8 @@ check-riscv64:
 run-riscv64-aia:
     cargo run --offline --quiet -p xtask -- run --machine riscv64-aia
 
+# Boot the riscv64 image on the AIA machine and require the lines only that
+# machine prints.
 check-riscv64-aia:
     cargo run --offline --quiet -p xtask -- check --machine riscv64-aia
 
