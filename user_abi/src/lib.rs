@@ -82,6 +82,32 @@ pub const XATTR_ENTRY_RECORD_NAME_LEN_OFFSET: usize = abi::fs::XATTR_ENTRY_RECOR
 /// Where a packed record's name starts, from the record's own first byte.
 pub const XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET: usize =
     abi::fs::XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET;
+/// The three access bits an `AccessQuery` requirement is made of.
+pub const ACCESS_READ_BIT: u16 = abi::fs::ACCESS_READ_BIT;
+/// The write bit.
+pub const ACCESS_WRITE_BIT: u16 = abi::fs::ACCESS_WRITE_BIT;
+/// The execute bit.
+pub const ACCESS_EXECUTE_BIT: u16 = abi::fs::ACCESS_EXECUTE_BIT;
+/// The flag word's "the requirement is met" bit.
+pub const ACCESS_QUERY_FLAG_ALLOWED: u32 = abi::fs::ACCESS_QUERY_FLAG_ALLOWED;
+
+/// The access record's size and the offsets a caller reads it with.
+pub const ACCESS_QUERY_RECORD_SIZE: usize = abi::fs::ACCESS_QUERY_RECORD_SIZE;
+/// Where the granted bits sit.
+pub const ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET: usize =
+    abi::fs::ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET;
+/// Where the flag word sits.
+pub const ACCESS_QUERY_RECORD_FLAGS_OFFSET: usize = abi::fs::ACCESS_QUERY_RECORD_FLAGS_OFFSET;
+
+/// The ownership record's size and the offsets a caller reads it with.
+pub const PERMISSION_METADATA_RECORD_SIZE: usize = abi::fs::PERMISSION_METADATA_RECORD_SIZE;
+/// Where the owner's uid sits.
+pub const PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET: usize =
+    abi::fs::PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET;
+/// Where the mode sits.
+pub const PERMISSION_METADATA_RECORD_MODE_OFFSET: usize =
+    abi::fs::PERMISSION_METADATA_RECORD_MODE_OFFSET;
+
 /// Where a packed record's value starts, from the record's own first byte.
 pub const XATTR_ENTRY_RECORD_VALUE_OFFSET_OFFSET: usize =
     abi::fs::XATTR_ENTRY_RECORD_VALUE_OFFSET_OFFSET;
@@ -96,6 +122,18 @@ pub const SYS_GET_XATTR: usize = SyscallNumber::GetXattr as usize;
 pub const SYS_LIST_XATTR: usize = SyscallNumber::ListXattr as usize;
 /// `RemoveXattr`, remove one extended attribute.
 pub const SYS_REMOVE_XATTR: usize = SyscallNumber::RemoveXattr as usize;
+/// `AccessQuery`, whether the caller may do something with a path.
+pub const SYS_ACCESS_QUERY: usize = SyscallNumber::AccessQuery as usize;
+/// `AccessQueryAt`, the same question anchored at a descriptor.
+pub const SYS_ACCESS_QUERY_AT: usize = SyscallNumber::AccessQueryAt as usize;
+/// `AccessQueryFd`, the same question about a descriptor's file.
+pub const SYS_ACCESS_QUERY_FD: usize = SyscallNumber::AccessQueryFd as usize;
+/// `PermissionMetadata`, who owns a path and what its mode is.
+pub const SYS_PERMISSION_METADATA: usize = SyscallNumber::PermissionMetadata as usize;
+/// `PermissionMetadataAt`, the same read anchored at a descriptor.
+pub const SYS_PERMISSION_METADATA_AT: usize = SyscallNumber::PermissionMetadataAt as usize;
+/// `PermissionMetadataFd`, the same read about a descriptor's file.
+pub const SYS_PERMISSION_METADATA_FD: usize = SyscallNumber::PermissionMetadataFd as usize;
 /// `SetLength`, a descriptor's new length.
 pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
 /// `Seek`, a descriptor's new position.
@@ -683,6 +721,40 @@ pub fn sys_remove_xattr(path: usize, name: &[u8]) -> usize {
         path,
         name.as_ptr() as usize,
         name.len().saturating_sub(1),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `access_query(path, required, record)`: zero, with the record filled.
+///
+/// The record is the ABI's `AccessQueryRecord`: the bits required, the bits
+/// granted, and a flag word saying whether the requirement is met.
+#[cfg(target_os = "none")]
+pub fn sys_access_query(path: usize, required: u16, record: &mut [u8]) -> usize {
+    syscall6(
+        SYS_ACCESS_QUERY,
+        path,
+        usize::from(required),
+        record.as_mut_ptr() as usize,
+        record.len(),
+        0,
+        0,
+    )
+}
+
+/// `permission_metadata(path, record)`: zero, with the record filled.
+///
+/// The record is the ABI's `PermissionMetadataRecord`: the owner's uid and gid
+/// and the mode.
+#[cfg(target_os = "none")]
+pub fn sys_permission_metadata(path: usize, record: &mut [u8]) -> usize {
+    syscall6(
+        SYS_PERMISSION_METADATA,
+        path,
+        record.as_mut_ptr() as usize,
+        record.len(),
         0,
         0,
         0,

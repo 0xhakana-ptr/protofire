@@ -53,7 +53,7 @@ fs::tmpfs               -   10
 init                  493    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 ipc                   344    9
 irq                   463   12
-kernel                45039  228
+kernel                45778  232
 netdev                  137    3
 memory               2289   36
 net                 23719  337 # the protocols a machine configures and names itself with, beside the ones it carries: DHCP's four messages, DNS's query and answer, and the prefix a router lets a host configure itself from, each with the host tests a boot cannot isolate
@@ -62,7 +62,7 @@ pci                  2596   44
 power                 324   12
 profiler              312    2
 rights                 78    3
-security             1281   14
+security             1357   16
 service_manager        62    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 shell                 134    0 # exempt: entry symbols, a panic handler and an empty main; a test of those is a boot
 sound                   7    0

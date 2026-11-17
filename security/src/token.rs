@@ -154,6 +154,36 @@ impl SecurityToken {
         self.mac_type
     }
 
+    /// A token built from a caller's MAC label alone.
+    ///
+    /// The dispatcher knows a caller's MAC type and not its uid, its group or
+    /// its integrity level, so this is the most a handler can be handed: an
+    /// identity whose subject label is the caller's and whose every other fact
+    /// is the **guest** default's.
+    ///
+    /// That choice is the point of the function.  A guest token is not a kernel
+    /// one, so [`Self::may_bypass_discretionary_permissions`] answers false and
+    /// an access query computed from it is a real question about the mode bits
+    /// rather than a rubber stamp.  Building the token with
+    /// [`Self::system`] instead would answer "allowed" for every file in the
+    /// tree, which is what a caller asking the question already knows and did
+    /// not need a syscall for.
+    ///
+    /// A `MAC_TYPE_SYSTEM` caller gets a guest-identity token carrying that
+    /// label, which is the same answer [`Self::system`] gives for the MAC
+    /// checker and a different one for the discretionary bypass.  The
+    /// difference is deliberate and it is the only honest one available: the
+    /// label is all the dispatcher has, and a system label is not a statement
+    /// that the caller is the kernel.
+    pub const fn for_mac_type(mac_type: MacType) -> Self {
+        Self::new(
+            DEFAULT_GUEST_USER_ID,
+            DEFAULT_GUEST_GROUP_ID,
+            IntegrityLevel::Medium,
+        )
+        .with_mac_type(mac_type)
+    }
+
     /// Return a copy of this token with `mac_type` set (used at creation and
     /// by exec domain transitions).
     pub const fn with_mac_type(mut self, mac_type: MacType) -> Self {
@@ -265,5 +295,51 @@ impl SecurityToken {
     // powers so maintenance shells do not silently widen ordinary write scope.
     pub const fn may_bypass_read_only_mounts(self) -> bool {
         self.is_recovery_mode()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! What `for_mac_type` promises, which is the difference between an access
+    //! query that reads the mode bits and one that rubber-stamps them.
+
+    use super::DEFAULT_GUEST_GROUP_ID;
+    use super::DEFAULT_GUEST_USER_ID;
+    use super::IntegrityLevel;
+    use super::MAC_TYPE_SYSTEM;
+    use super::MAC_TYPE_UNTRUSTED;
+    use super::ROOT_USER_ID;
+    use super::SecurityToken;
+
+    /// A token built from a label carries that label and nothing of the kernel.
+    ///
+    /// The identity is the guest default's, because the dispatcher has no uid
+    /// to hand over: the label is the whole of what it knows.
+    #[test]
+    fn a_label_token_carries_the_label_and_a_guest_identity() {
+        let token = SecurityToken::for_mac_type(MAC_TYPE_UNTRUSTED);
+        assert_eq!(token.mac_type(), MAC_TYPE_UNTRUSTED);
+        assert_eq!(token.user_id, DEFAULT_GUEST_USER_ID);
+        assert_eq!(token.primary_group_id, DEFAULT_GUEST_GROUP_ID);
+        assert_eq!(token.integrity, IntegrityLevel::Medium);
+    }
+
+    /// And it does **not** bypass the discretionary check, even when the label
+    /// is the system one.
+    ///
+    /// This is the property the access query depends on.
+    /// `SecurityToken::system` is a kernel token and bypasses; a label token is
+    /// not, so a query computed from one is a real reading of the mode bits
+    /// rather than the same "allowed" for every file.
+    #[test]
+    fn a_label_token_does_not_bypass_and_a_system_token_does() {
+        let labelled = SecurityToken::for_mac_type(MAC_TYPE_SYSTEM);
+        assert!(!labelled.may_bypass_discretionary_permissions());
+        assert!(!labelled.is_kernel_token(), "a label is not an identity");
+        assert_ne!(labelled.user_id, ROOT_USER_ID, "and it is not the root");
+
+        let kernel = SecurityToken::system();
+        assert!(kernel.may_bypass_discretionary_permissions());
+        assert!(kernel.is_kernel_token());
     }
 }

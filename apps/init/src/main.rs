@@ -73,6 +73,8 @@ use user_abi::sys_accept_local;
 #[cfg(target_os = "none")]
 use user_abi::sys_accept_tcp;
 #[cfg(target_os = "none")]
+use user_abi::sys_access_query;
+#[cfg(target_os = "none")]
 use user_abi::sys_bind_local;
 #[cfg(target_os = "none")]
 use user_abi::sys_bind_udp;
@@ -137,6 +139,8 @@ use user_abi::sys_network_status;
 use user_abi::sys_open;
 #[cfg(target_os = "none")]
 use user_abi::sys_open_at;
+#[cfg(target_os = "none")]
+use user_abi::sys_permission_metadata;
 #[cfg(target_os = "none")]
 use user_abi::sys_read;
 #[cfg(target_os = "none")]
@@ -765,6 +769,52 @@ pub extern "C" fn _start() -> ! {
         attribute_name,
         &mut attribute,
     )) {
+        sys_exit(251);
+    }
+
+    // The ownership read and the access query, on the same file.  The read is
+    // unchecked and says what the mode is; the query says what this process may
+    // do with it, which is a different answer and the one that needs an
+    // identity.  Both records are parsed with the ABI's offsets, so a handler
+    // that wrote the words elsewhere fails here.
+    let mut ownership = [0u8; user_abi::PERMISSION_METADATA_RECORD_SIZE];
+    insist(sys_permission_metadata(
+        XATTR_PATH.as_ptr() as usize,
+        &mut ownership,
+    ));
+    let mode = u16::from_le_bytes(
+        ownership[user_abi::PERMISSION_METADATA_RECORD_MODE_OFFSET
+            ..user_abi::PERMISSION_METADATA_RECORD_MODE_OFFSET + 2]
+            .try_into()
+            .unwrap_or_default(),
+    );
+    // tmpfs creates files `0o666`, and the mode is asserted as that number
+    // rather than as "not zero": a handler that answered a default would pass
+    // the weaker check.
+    if mode != 0o666 {
+        sys_exit(251);
+    }
+
+    let mut access = [0u8; user_abi::ACCESS_QUERY_RECORD_SIZE];
+    insist(sys_access_query(
+        XATTR_PATH.as_ptr() as usize,
+        user_abi::ACCESS_WRITE_BIT,
+        &mut access,
+    ));
+    let granted = u16::from_le_bytes(
+        access[user_abi::ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET
+            ..user_abi::ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET + 2]
+            .try_into()
+            .unwrap_or_default(),
+    );
+    let flags = u32::from_le_bytes(
+        access[user_abi::ACCESS_QUERY_RECORD_FLAGS_OFFSET
+            ..user_abi::ACCESS_QUERY_RECORD_FLAGS_OFFSET + 4]
+            .try_into()
+            .unwrap_or_default(),
+    );
+    if granted & user_abi::ACCESS_WRITE_BIT == 0 || flags & user_abi::ACCESS_QUERY_FLAG_ALLOWED == 0
+    {
         sys_exit(251);
     }
 

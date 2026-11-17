@@ -906,6 +906,32 @@ impl Machine {
                     "protofire: process 1 fcntl command 0 on descriptor 6 answered 7",
                     true,
                 ),
+                // The four extended-attribute calls, each reporting a number
+                // only a correct path produces.  `9` is `user.motd` without its
+                // terminator, `5` is `hello`, and `46` is the packed list:
+                // thirty-two bytes of record header, the nine name bytes and
+                // the five value bytes.  Exact, because `46` is arithmetic a
+                // packing that dropped a field could not reach by accident.
+                (
+                    "protofire: process 1 set an attribute, 9 byte name, 5 byte value",
+                    true,
+                ),
+                ("protofire: process 1 read attribute, 5 byte value", true),
+                (
+                    "protofire: process 1 listed attributes, 46 packed byte(s)",
+                    true,
+                ),
+                // The ownership read and the access query, on the same file.
+                // `438` is `0o666` in decimal, which is what tmpfs gives a new
+                // file and not the shared `DEFAULT_FILE_MODE`; `granted 6` is
+                // that mode's other-bits, read against the caller's label
+                // rather than against a token that would have bypassed the
+                // mode and answered `7`.
+                ("protofire: process 1 permission metadata, mode 438", true),
+                (
+                    "protofire: process 1 access query, granted 6 of a possible 7, allowed=1",
+                    true,
+                ),
                 ("protofire: process 1 listed block device 0", true),
                 // The second and third devices, through the dispatcher from
                 // ring 3.  Only x86_64's machine has them, so the program's

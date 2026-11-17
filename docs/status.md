@@ -179,6 +179,34 @@ program that ended at 200 with no line saying why.  The name is a map key and a
 key with a trailing zero is a different key, which is why the wrapper subtracts
 the terminator and the kernel reads exactly the bytes it is told about.
 
+**The three access queries and the three ownership reads** close Level 8's first
+row.  The reads are the unchecked half: who owns a path and what its mode is,
+from `Metadata::permission_metadata_record`, with no identity involved.  The
+queries are the checked half and they needed something the dispatcher did not
+carry, so `SecurityToken::for_mac_type` is new: a token built from the caller's
+MAC label and the guest defaults, which is the most a handler can be handed and
+deliberately **not** a kernel token.
+
+That distinction is the mechanism.  `SecurityToken::system` is a kernel token,
+`may_bypass_discretionary_permissions` answers true for it, and an access query
+computed from one would answer "allowed" for every file in the tree; the call
+would be a syscall that only confirms what the caller already knew.  A token
+built from the label does not bypass, so the answer is a real reading of the
+mode bits.  The evidence is a line whose number would be `7` under the wrong
+token:
+
+```
+protofire: process 1 permission metadata, mode 438
+protofire: process 1 access query, granted 6 of a possible 7, allowed=1
+```
+
+`438` is `0o666` in decimal, which is what tmpfs gives a new file rather than
+the shared `DEFAULT_FILE_MODE` of `0o644`; `6` is that mode's other-bits.  Both
+numbers were measured to fail on their own: packing the list with a zero value
+length stopped the boot, and building the query's token with
+`SecurityToken::system` printed `granted 7 of a possible 7` where the gate
+requires `6`.
+
 The pipe's reader also calls `WaitProcess` after its end-of-file read, and the
 gate requires the kernel's own `a wait answered status ` line on all three
 machines: the guard, the park's retry contract and the exit's wake are on a

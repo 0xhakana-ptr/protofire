@@ -321,6 +321,33 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::RemoveXattr,
         crate::syscall::remove_xattr,
     );
+    // The three access queries and the three ownership reads.  The queries
+    // need an identity and compute against it; the reads are the unchecked
+    // half, who owns a file and what its bits are.
+    table.register(
+        ::syscall::SyscallNumber::AccessQuery,
+        crate::syscall::access_query,
+    );
+    table.register(
+        ::syscall::SyscallNumber::AccessQueryAt,
+        crate::syscall::access_query_at,
+    );
+    table.register(
+        ::syscall::SyscallNumber::AccessQueryFd,
+        crate::syscall::access_query_fd,
+    );
+    table.register(
+        ::syscall::SyscallNumber::PermissionMetadata,
+        crate::syscall::permission_metadata,
+    );
+    table.register(
+        ::syscall::SyscallNumber::PermissionMetadataAt,
+        crate::syscall::permission_metadata_at,
+    );
+    table.register(
+        ::syscall::SyscallNumber::PermissionMetadataFd,
+        crate::syscall::permission_metadata_fd,
+    );
     // The truncate.  A number the ABI froze at twenty and this table served
     // nothing for until now: `VNode::set_len` existed and no program could
     // reach it, which is the whole of what that gap was.

@@ -1252,10 +1252,19 @@ each unblocks rather than by size.
    is the encoding and the three branches over a path, plus the one branch that
    names two user buffers.
 
-   What is left on this row is `Poll`, `SetFdFlags` and the six access and
-   permission calls, and none of the seven needs a new shape: the access
-   machinery and the permission records exist in `fs`, and what they lack is a
-   caller.
+   **The six access and permission calls have landed**, in both forms: three
+   that read a path's owner and mode, and three that ask whether the caller may
+   do something with it.  The reads were wiring.  The queries needed one new
+   thing, `SecurityToken::for_mac_type`, because the dispatcher carries a MAC
+   label and not a full identity, and the token that label builds must not be a
+   kernel one: a kernel token bypasses the discretionary check, and an access
+   query computed from one answers "allowed" for every file in the tree.
+
+   What is left on this row is `Poll` and `SetFdFlags`.  Both need a wire format
+   rather than a handler, which is why they are a separate change: `Poll` asks a
+   readiness question over a set of descriptors and has no event mask in `abi`
+   at all, and `SetFdFlags` overlaps `Fcntl`'s `F_SETFD` closely enough that the
+   two need deciding together rather than one after the other.
 2. **Shared memory**, `ShmGet`, `ShmAt`, `ShmDt`, `ShmCtl`.  Two processes
    naming one region, which is a decision about the address space and not
    wiring.

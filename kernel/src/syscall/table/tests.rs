@@ -2497,6 +2497,74 @@ fn call_with_name(
     Ok(dispatch.value)
 }
 
+/// Call a call that names an anchor descriptor, a relative path and a buffer.
+///
+/// `PermissionMetadataAt`'s shape and `AccessQueryAt`'s: the descriptor is
+/// argument 0, the path is argument 1, and the record follows.
+fn call_with_anchor(
+    table: &mut SyscallTable,
+    number: SyscallNumber,
+    anchor: usize,
+    path: &str,
+    buffer: &mut [u8],
+) -> Result<usize> {
+    let mut context = SyscallContext::new(number as usize, [anchor, 0, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: Some(path),
+        second_path: None,
+        buffer: Some(buffer),
+        second_buffer: None,
+    };
+    let dispatch = table.dispatch(&mut arguments)?;
+    Ok(dispatch.value)
+}
+
+/// Call a call that names a descriptor and a buffer, with no path.
+///
+/// `PermissionMetadataFd`'s shape: the descriptor is argument 0 and the record
+/// is argument 1.
+fn call_with_descriptor_record(
+    table: &mut SyscallTable,
+    number: SyscallNumber,
+    descriptor: usize,
+    buffer: &mut [u8],
+) -> Result<usize> {
+    let mut context = SyscallContext::new(number as usize, [descriptor, 0, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: None,
+        second_path: None,
+        buffer: Some(buffer),
+        second_buffer: None,
+    };
+    let dispatch = table.dispatch(&mut arguments)?;
+    Ok(dispatch.value)
+}
+
+/// Call a call that names a path, a required-access word and a buffer.
+///
+/// `AccessQuery`'s shape: the path is argument 0, the required bits argument 1,
+/// and the record follows.
+fn call_with_path_buffer_and_required(
+    table: &mut SyscallTable,
+    number: SyscallNumber,
+    path: &str,
+    required: u16,
+    buffer: &mut [u8],
+) -> Result<usize> {
+    let mut context = SyscallContext::new(number as usize, [0, usize::from(required), 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: Some(path),
+        second_path: None,
+        buffer: Some(buffer),
+        second_buffer: None,
+    };
+    let dispatch = table.dispatch(&mut arguments)?;
+    Ok(dispatch.value)
+}
+
 /// Call a call that names a path and one mutable buffer.
 fn call_with_path_buffer(
     table: &mut SyscallTable,
@@ -3412,5 +3480,226 @@ fn get_xattr_answers_not_found_and_refuses_a_short_buffer() {
             &mut anywhere
         ),
         Err(Error::NotFound)
+    );
+}
+
+/// The ownership read answers the file's real mode, not a default.
+///
+/// The record is the ABI's eight bytes, parsed with the ABI's own offsets: a
+/// handler that wrote the words where `#[repr(C)]` does not put them fails
+/// here.  The file is created by this test, so the mode it reads is the one
+/// tmpfs gave it rather than one the test guessed.
+#[test]
+fn permission_metadata_names_the_owner_and_the_mode() {
+    // The mode is tmpfs's own, and it is `0o666` rather than the shared
+    // `DEFAULT_FILE_MODE`: a scratch filesystem's files are writable by
+    // everyone with access to the mount, which is what makes it scratch.  The
+    // constant is named here and the assertion is against it, so a tmpfs that
+    // changed its mind fails this test rather than passing on a number the test
+    // invented.
+    const TMPFS_FILE_MODE: u16 = 0o666;
+
+    let mut table = writable();
+    table.register(SyscallNumber::PermissionMetadata, permission_metadata);
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    open_path(&mut table, "/owned.txt", flags).expect("create");
+    let path = "/owned.txt";
+
+    let mut record = [0u8; fs_abi::PERMISSION_METADATA_RECORD_SIZE];
+    assert_eq!(
+        call_with_path_buffer(
+            &mut table,
+            SyscallNumber::PermissionMetadata,
+            path,
+            &mut record
+        ),
+        Ok(0)
+    );
+    let uid = u32::from_le_bytes(
+        record[fs_abi::PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET
+            ..fs_abi::PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET + 4]
+            .try_into()
+            .expect("four bytes"),
+    );
+    let gid = u32::from_le_bytes(
+        record[fs_abi::PERMISSION_METADATA_RECORD_OWNER_GID_OFFSET
+            ..fs_abi::PERMISSION_METADATA_RECORD_OWNER_GID_OFFSET + 4]
+            .try_into()
+            .expect("four bytes"),
+    );
+    let mode = u16::from_le_bytes(
+        record[fs_abi::PERMISSION_METADATA_RECORD_MODE_OFFSET
+            ..fs_abi::PERMISSION_METADATA_RECORD_MODE_OFFSET + 2]
+            .try_into()
+            .expect("two bytes"),
+    );
+    assert_eq!(uid, security::token::ROOT_USER_ID, "the owner is the root");
+    assert_eq!(gid, security::token::ROOT_GROUP_ID);
+    assert_eq!(mode, TMPFS_FILE_MODE, "a new tmpfs file's own mode");
+}
+
+/// The ownership reads answer the same record through all three forms.
+///
+/// A path, a path anchored at a descriptor and the descriptor itself name one
+/// file, so the three must agree byte for byte.  They are compared to each
+/// other rather than to a constant: the record is the file's, and a test that
+/// pinned it would pass on a handler that answered a plausible constant.
+#[test]
+fn the_three_ownership_forms_agree() {
+    let mut table = writable();
+    table.register(SyscallNumber::PermissionMetadata, permission_metadata);
+    table.register(SyscallNumber::PermissionMetadataAt, permission_metadata_at);
+    table.register(SyscallNumber::PermissionMetadataFd, permission_metadata_fd);
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    let held = open_path(&mut table, "/same.txt", flags).expect("create and hold");
+    // The anchor is the directory, because a relative path resolves against
+    // it: anchoring at the file itself would be asking a file to be a parent.
+    let anchor = open_path(&mut table, "/", fs_abi::OPEN_FLAG_READ).expect("open /");
+
+    let mut by_path = [0u8; fs_abi::PERMISSION_METADATA_RECORD_SIZE];
+    call_with_path_buffer(
+        &mut table,
+        SyscallNumber::PermissionMetadata,
+        "/same.txt",
+        &mut by_path,
+    )
+    .expect("permission_metadata");
+
+    let mut by_at = [0u8; fs_abi::PERMISSION_METADATA_RECORD_SIZE];
+    call_with_anchor(
+        &mut table,
+        SyscallNumber::PermissionMetadataAt,
+        anchor,
+        "same.txt",
+        &mut by_at,
+    )
+    .expect("permission_metadata_at");
+
+    let mut by_fd = [0u8; fs_abi::PERMISSION_METADATA_RECORD_SIZE];
+    call_with_descriptor_record(
+        &mut table,
+        SyscallNumber::PermissionMetadataFd,
+        held,
+        &mut by_fd,
+    )
+    .expect("permission_metadata_fd");
+
+    assert_eq!(by_path, by_at, "the anchored form agrees with the path");
+    assert_eq!(by_path, by_fd, "the descriptor form agrees with the path");
+    assert_ne!(
+        by_path,
+        [0u8; fs_abi::PERMISSION_METADATA_RECORD_SIZE],
+        "and both are filled"
+    );
+}
+
+/// An access query is a real reading of the mode bits.
+///
+/// The caller's token is built from its MAC label and **not** from the kernel's
+/// identity, so it does not bypass the mode: a file owned by root with mode
+/// `0o644` grants a guest read and denies write and execute.  That is the whole
+/// reason the call exists, and a token built with `SecurityToken::system` would
+/// answer "allowed" for all three.
+#[test]
+fn access_query_reads_the_mode_against_the_caller() {
+    // tmpfs creates files `0o666`, so a guest is granted read and write and
+    // denied execute.  The denied bit is the one that matters: a token built
+    // with `SecurityToken::system` bypasses the mode and would answer
+    // "allowed" for all three, which is the defect this assertion rules out.
+    const TMPFS_FILE_MODE: u16 = 0o666;
+    assert_eq!(
+        TMPFS_FILE_MODE & 0o7,
+        0o6,
+        "others read and write, not execute"
+    );
+
+    let mut table = writable();
+    table.register(SyscallNumber::AccessQuery, access_query);
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    open_path(&mut table, "/queried.txt", flags).expect("create");
+
+    let ask = |table: &mut SyscallTable, required: u16| {
+        let mut record = [0u8; fs_abi::ACCESS_QUERY_RECORD_SIZE];
+        let answer = call_with_path_buffer_and_required(
+            table,
+            SyscallNumber::AccessQuery,
+            "/queried.txt",
+            required,
+            &mut record,
+        );
+        (answer, record)
+    };
+
+    // Read: granted, and the allowed flag is set.
+    let (answer, read) = ask(&mut table, fs_abi::ACCESS_READ_BIT);
+    assert_eq!(answer, Ok(0));
+    let granted = u16::from_le_bytes(
+        read[fs_abi::ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET
+            ..fs_abi::ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET + 2]
+            .try_into()
+            .expect("two bytes"),
+    );
+    let flags_word = u32::from_le_bytes(
+        read[fs_abi::ACCESS_QUERY_RECORD_FLAGS_OFFSET
+            ..fs_abi::ACCESS_QUERY_RECORD_FLAGS_OFFSET + 4]
+            .try_into()
+            .expect("four bytes"),
+    );
+    assert_eq!(granted & fs_abi::ACCESS_READ_BIT, fs_abi::ACCESS_READ_BIT);
+    assert_ne!(flags_word & fs_abi::ACCESS_QUERY_FLAG_ALLOWED, 0);
+    assert_ne!(flags_word & fs_abi::ACCESS_QUERY_FLAG_CAN_READ, 0);
+
+    // Execute: the bit is not granted, and the allowed flag is clear.  This is
+    // the half a bypassing token would get wrong: the mode says no, and a
+    // kernel token would have said yes.
+    let (answer, execute) = ask(&mut table, fs_abi::ACCESS_EXECUTE_BIT);
+    assert_eq!(answer, Ok(0));
+    let flags_word = u32::from_le_bytes(
+        execute[fs_abi::ACCESS_QUERY_RECORD_FLAGS_OFFSET
+            ..fs_abi::ACCESS_QUERY_RECORD_FLAGS_OFFSET + 4]
+            .try_into()
+            .expect("four bytes"),
+    );
+    assert_eq!(
+        flags_word & fs_abi::ACCESS_QUERY_FLAG_ALLOWED,
+        0,
+        "a guest may not execute a root-owned 0o666 file"
+    );
+    assert_eq!(flags_word & fs_abi::ACCESS_QUERY_FLAG_CAN_EXECUTE, 0);
+}
+
+/// An access query refuses a bit outside the three the ABI defines, and a
+/// record too small to hold the answer.
+#[test]
+fn access_query_refuses_a_bad_request() {
+    let mut table = writable();
+    table.register(SyscallNumber::AccessQuery, access_query);
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    open_path(&mut table, "/bad.txt", flags).expect("create");
+
+    let mut record = [0u8; fs_abi::ACCESS_QUERY_RECORD_SIZE];
+    assert_eq!(
+        call_with_path_buffer_and_required(
+            &mut table,
+            SyscallNumber::AccessQuery,
+            "/bad.txt",
+            0b1000,
+            &mut record
+        ),
+        Err(Error::InvalidArgument),
+        "a fourth access bit is not one this ABI defines"
+    );
+
+    let mut small = [0u8; 2];
+    assert_eq!(
+        call_with_path_buffer_and_required(
+            &mut table,
+            SyscallNumber::AccessQuery,
+            "/bad.txt",
+            fs_abi::ACCESS_READ_BIT,
+            &mut small
+        ),
+        Err(Error::InvalidArgument),
+        "half a record is not an answer"
     );
 }

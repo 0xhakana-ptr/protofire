@@ -1086,6 +1086,155 @@ pub(crate) fn serve_io(
         let outcome = through_registry(&mut context, Some(path), None, Some(name));
         return Some(outcome);
     }
+    if number == SyscallNumber::PermissionMetadata as usize
+        || number == SyscallNumber::PermissionMetadataFd as usize
+    {
+        // Both write an eight-byte record into the caller's buffer.  The path
+        // form names it in argument 0, the descriptor form in argument 1, and
+        // the record and its length follow.
+        let (path_argument, record_argument) =
+            if number == SyscallNumber::PermissionMetadata as usize {
+                (0, 1)
+            } else {
+                // The descriptor form has no path, so the first argument is the
+                // descriptor and the path comes from the table.
+                (usize::MAX, 1)
+            };
+        let record = call.arguments[record_argument];
+        let length = call.arguments[record_argument + 1];
+        if !crate::address_space::is_user_range(record, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let path = if path_argument == usize::MAX {
+            None
+        } else {
+            match copy_user_path(call.arguments[path_argument], &mut path_bytes) {
+                Ok(path) => Some(path),
+                Err(_) => {
+                    return Some(CallOutcome::Return(abi::syscall::encode_error(
+                        abi::Error::InvalidArgument,
+                    )));
+                }
+            }
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window, which `is_user_range`
+        // checked, and the pages behind it are the calling task's own
+        // mappings.  The handler writes the record and nothing past it.
+        let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, path, None, Some(destination));
+        if matches!(outcome, CallOutcome::Return(0)) && length >= 8 {
+            // The mode, in decimal, which is the field a reader can compare
+            // against what the filesystem created.  The uid and gid are the
+            // root's on every volume this boot mounts, so the mode is the
+            // number that varies.  Decimal rather than octal because the
+            // serial writer has no octal form, and a `0o` prefix in front of a
+            // decimal number would be a line that lies about its own base.
+            // The mode's offset is the ABI's, not a number read off the
+            // struct: the record is `u32, u32, u16, u16` and the mode is the
+            // third field, at eight.  Reading `[6]` and `[7]` gave the high
+            // half of the gid, and the line said `mode 0`.
+            let offset = abi::fs::PERMISSION_METADATA_RECORD_MODE_OFFSET;
+            let mode = u16::from_le_bytes([destination[offset], destination[offset + 1]]);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" permission metadata, mode ");
+            arch::serial::write_u32(u32::from(mode & 0o7777));
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::PermissionMetadataAt as usize {
+        // The anchored form: the descriptor, the path, the record, its length.
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[1], &mut path_bytes) else {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        };
+        let record = call.arguments[2];
+        let length = call.arguments[3];
+        if !crate::address_space::is_user_range(record, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: as above.
+        let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, Some(path), None, Some(destination));
+        return Some(outcome);
+    }
+    if number == SyscallNumber::AccessQuery as usize
+        || number == SyscallNumber::AccessQueryAt as usize
+        || number == SyscallNumber::AccessQueryFd as usize
+    {
+        // The three access queries: the path (or descriptor) first, the
+        // required bits next, then the record and its length.  Which argument
+        // is the record depends on whether the form carries a path.  The
+        // required bits need no handling here: the context carries the whole
+        // argument row, and the handler reads them where the ABI puts them.
+        let record_argument = if number == SyscallNumber::AccessQueryAt as usize {
+            3
+        } else {
+            2
+        };
+        let record = call.arguments[record_argument];
+        let length = call.arguments[record_argument + 1];
+        if !crate::address_space::is_user_range(record, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let path = if number == SyscallNumber::AccessQueryFd as usize {
+            None
+        } else {
+            let at = if number == SyscallNumber::AccessQueryAt as usize {
+                1
+            } else {
+                0
+            };
+            match copy_user_path(call.arguments[at], &mut path_bytes) {
+                Ok(path) => Some(path),
+                Err(_) => {
+                    return Some(CallOutcome::Return(abi::syscall::encode_error(
+                        abi::Error::InvalidArgument,
+                    )));
+                }
+            }
+        };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: as above.
+        let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+        let outcome = through_registry(&mut context, path, None, Some(destination));
+        if matches!(outcome, CallOutcome::Return(0)) && length >= 8 {
+            let granted = u16::from_le_bytes([destination[2], destination[3]]);
+            let flags = u32::from_le_bytes([
+                destination[4],
+                destination[5],
+                destination[6],
+                destination[7],
+            ]);
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" access query, granted ");
+            arch::serial::write_u32(u32::from(granted));
+            arch::serial::write_str(" of a possible 7, allowed=");
+            arch::serial::write_u32(u32::from(flags & abi::fs::ACCESS_QUERY_FLAG_ALLOWED != 0));
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::Stat as usize {
         // `Stat(path, record, length)`: the path is a NUL-terminated string in
         // the caller's memory, the record is where the kernel writes the ABI's

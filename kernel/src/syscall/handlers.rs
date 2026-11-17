@@ -823,6 +823,232 @@ fn stat_resolved(
     Ok(Dispatch::complete(0))
 }
 
+/// Read a path's ownership and mode.
+///
+/// Arguments: the path, the record, its length, then three reserved slots that
+/// must be zero.  The record is the ABI's
+/// [`fs_abi::PermissionMetadataRecord`], eight bytes: the owner's uid and gid
+/// and the mode.
+///
+/// This is the *unchecked* half of the access question, and the distinction is
+/// deliberate: it says who owns a file and what its bits are, which is what a
+/// listing shows, and it does not say whether **this** caller may do anything
+/// with it.  That is [`access_query`]'s question, and it needs an identity to
+/// answer.
+pub fn permission_metadata(
+    table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 3)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    permission_metadata_resolved(
+        table,
+        arguments.context,
+        &resolved,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
+/// Read the ownership and mode of a path relative to a descriptor.
+///
+/// Arguments: the descriptor, the path, the record, its length, then two
+/// reserved slots that must be zero.
+pub fn permission_metadata_at(
+    table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let dirfd = arguments.context.arg(0);
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    validate_zeroed_args(arguments.context, 4)?;
+    let resolved = table.resolve_at(dirfd, path, arguments.context.caller_pid)?;
+    permission_metadata_resolved(
+        table,
+        arguments.context,
+        &resolved,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
+/// Read the ownership and mode of the file a descriptor names.
+///
+/// Arguments: the descriptor, the record, its length, then three reserved slots
+/// that must be zero.
+///
+/// The record is read from the descriptor's anchor, the same path `stat_fd`
+/// uses, so a program holding a descriptor it never learned the name of can
+/// still ask who owns the file and what its mode is.
+pub fn permission_metadata_fd(
+    table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 3)?;
+    let path = table.path_of(descriptor, arguments.context.caller_pid)?;
+    permission_metadata_resolved(
+        table,
+        arguments.context,
+        &path,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
+/// The whole of a permission-metadata read, on a resolved path.
+fn permission_metadata_resolved(
+    table: &mut SyscallTable,
+    context: &SyscallContext,
+    resolved: &str,
+    buffer: Option<&mut [u8]>,
+) -> Result<Dispatch> {
+    // The MAC check first, for the reason `stat` keeps that order: a denial and
+    // a "not found" are different answers, and the one that leaks less does not
+    // distinguish them.
+    let subject = context.identity.unwrap_or(mac::MAC_TYPE_UNLABELED);
+    mac::check_file(
+        subject,
+        resolved,
+        mac::MAC_CLASS_FILE,
+        mac::MAC_PERM_READ,
+        0,
+    )?;
+
+    let buffer = buffer.ok_or(Error::InvalidArgument)?;
+    if buffer.len() < fs_abi::PERMISSION_METADATA_RECORD_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let (filesystem, relative) = namespace.resolve(resolved)?;
+    let metadata = filesystem.stat(&relative)?;
+    let record = metadata.permission_metadata_record();
+    let at = fs_abi::PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET;
+    buffer[at..at + 4].copy_from_slice(&record.owner_uid.to_le_bytes());
+    let at = fs_abi::PERMISSION_METADATA_RECORD_OWNER_GID_OFFSET;
+    buffer[at..at + 4].copy_from_slice(&record.owner_gid.to_le_bytes());
+    let at = fs_abi::PERMISSION_METADATA_RECORD_MODE_OFFSET;
+    buffer[at..at + 2].copy_from_slice(&record.mode.to_le_bytes());
+    // The record's last two bytes are the ABI's padding, and they are written
+    // as zero rather than left as the caller's: a field the kernel does not
+    // define is not one a caller may read a stale byte out of.
+    let at = fs_abi::PERMISSION_METADATA_RECORD_RESERVED_OFFSET;
+    buffer[at..at + 2].copy_from_slice(&0u16.to_le_bytes());
+    Ok(Dispatch::complete(0))
+}
+
+/// Ask whether the caller may do something with a path.
+///
+/// Arguments: the path, the required access bits, the record, its length, then
+/// two reserved slots that must be zero.  Answers zero, with the record filled.
+///
+/// The record is the ABI's [`fs_abi::AccessQueryRecord`], eight bytes: the bits
+/// that were required, the bits that are granted, and a flag word saying
+/// whether the requirement is met and which of the three it covers.
+///
+/// **The identity is the caller's MAC label and nothing more**, because that is
+/// all the dispatcher carries.  A token built from that label is not a kernel
+/// token, so it does not bypass the mode bits: the answer is a real reading of
+/// the file's mode against the caller, which is the whole reason the call
+/// exists.  Building the token with `SecurityToken::system` would answer
+/// "allowed" for every file in the tree instead.
+pub fn access_query(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let required = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 4)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    access_query_resolved(
+        table,
+        arguments.context,
+        &resolved,
+        required,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
+/// Ask the access question about a path relative to a descriptor.
+///
+/// Arguments: the descriptor, the path, the required access bits, the record,
+/// its length, then one reserved slot that must be zero.
+pub fn access_query_at(
+    table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let dirfd = arguments.context.arg(0);
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let required = arguments.context.arg(2);
+    validate_zeroed_args(arguments.context, 5)?;
+    let resolved = table.resolve_at(dirfd, path, arguments.context.caller_pid)?;
+    access_query_resolved(
+        table,
+        arguments.context,
+        &resolved,
+        required,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
+/// Ask the access question about the file a descriptor names.
+///
+/// Arguments: the descriptor, the required access bits, the record, its length,
+/// then two reserved slots that must be zero.
+pub fn access_query_fd(
+    table: &mut SyscallTable,
+    arguments: &mut Arguments<'_>,
+) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let required = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 4)?;
+    let path = table.path_of(descriptor, arguments.context.caller_pid)?;
+    access_query_resolved(
+        table,
+        arguments.context,
+        &path,
+        required,
+        arguments.buffer.as_deref_mut(),
+    )
+}
+
+/// The whole of an access query, on a resolved path.
+fn access_query_resolved(
+    table: &mut SyscallTable,
+    context: &SyscallContext,
+    resolved: &str,
+    required: usize,
+    buffer: Option<&mut [u8]>,
+) -> Result<Dispatch> {
+    // A required set with a bit outside the three the ABI defines is a caller
+    // that meant something this kernel does not have.  The bits are the wire
+    // format, so the check is the caller's word against the ABI's mask and not
+    // against a number invented here.
+    if required & !usize::from(fs_abi::ACCESS_QUERY_KNOWN_ACCESS_MASK) != 0 {
+        return Err(Error::InvalidArgument);
+    }
+    let buffer = buffer.ok_or(Error::InvalidArgument)?;
+    if buffer.len() < fs_abi::ACCESS_QUERY_RECORD_SIZE {
+        return Err(Error::InvalidArgument);
+    }
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let (filesystem, relative) = namespace.resolve(resolved)?;
+    let metadata = filesystem.stat(&relative)?;
+
+    // The caller's label, and a token that does not bypass the mode bits.  See
+    // the three handlers above for why the label is the whole of the identity
+    // the dispatcher can hand over.
+    let label = context.identity.unwrap_or(mac::MAC_TYPE_UNLABELED);
+    let token = security::token::SecurityToken::for_mac_type(label);
+    let record = metadata
+        .access_query_context_for(required as u16, token)
+        .public_access_query_record();
+
+    let at = fs_abi::ACCESS_QUERY_RECORD_REQUIRED_ACCESS_OFFSET;
+    buffer[at..at + 2].copy_from_slice(&record.required_access.to_le_bytes());
+    let at = fs_abi::ACCESS_QUERY_RECORD_GRANTED_MODE_BITS_OFFSET;
+    buffer[at..at + 2].copy_from_slice(&record.granted_mode_bits.to_le_bytes());
+    let at = fs_abi::ACCESS_QUERY_RECORD_FLAGS_OFFSET;
+    buffer[at..at + 4].copy_from_slice(&record.flags.to_le_bytes());
+    Ok(Dispatch::complete(0))
+}
+
 /// The ABI's kind word for a node's kind.
 ///
 /// The two enums live on opposite sides of the boundary, the filesystem's is
