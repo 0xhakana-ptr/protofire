@@ -96,7 +96,7 @@ pub extern "C" fn _start() -> ! {
     // makes at the next install of this context, the first tick after the
     // parent's send, not the send itself, because a context mid-flight on
     // another CPU is the kernel's to leave alone.
-    let handler = signal_handler as usize;
+    let handler = signal_handler as *const () as usize;
     insist(sys_set_signal_handler(SIGUSR1, 1, handler));
     let parent = insist(sys_get_ppid());
     insist(sys_send_signal(parent, SIGUSR1, 0x5348));
