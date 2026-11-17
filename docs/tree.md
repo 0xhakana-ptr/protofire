@@ -74,9 +74,18 @@ protofire/
 │                    migration, async_io, rfcs/, fmts/, this file
 ├── scripts/         the gates: verify.sh, the checks, the baselines
 ├── tools/           xtask, the build tool
+├── vendor/           the registry's sources, so `--offline` means something
 ├── certs/           trust anchors
 └── LICENSES/
 ```
+
+`vendor/` is the one directory here that is **not** this tree's writing.  It is
+the 25 crates `Cargo.lock` names from the registry, laid out as `cargo vendor`
+wrote them, and `.cargo/config.toml` replaces `crates.io` with it.  Nothing in
+it may be edited: `.cargo-checksum.json` beside each crate is a hash of the
+bytes, so a hand edit is a build that refuses its own sources.  `vendor/README.md`
+says how to regenerate it, and the source-header, punctuation and architecture
+gates each skip it for that reason.
 
 The three crates above the first divider are one conversation seen from
 three sides, and they sit alone because every other group is *behind* the

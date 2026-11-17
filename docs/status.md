@@ -127,7 +127,8 @@ ring-3 programs: one that sleeps and maps memory, one blocked on a pipe, and one
 writing to it.  The sleeping one is `/bin/init`, which then does the rest of the
 boot's demonstration itself, it forks, spawns `/bin/shell` twice, exchanges
 signals with each child, and reads the clock and two ABI records, so the boot's
-`every program exited` counts **six** exits from the three tasks it started.
+`every program exited` counts **ten** exits from the three tasks it started:
+each fork adds a child, and the last one is the shared-memory exercise's.
 The four parts below are the same on all three machines, so they are stated
 once.  A machine's own section carries only what differs.
 
@@ -602,8 +603,8 @@ identity, the block device's transmit queue to 200, the card's receive queue to
 ```
 protofire: block message wired to imsic page 0x28000000, identity 200, vector 2, queue 0
 protofire: net message wired to imsic page 0x28000000, identity 201, vector 2, queue 0
-protofire: block completion message(s) taken = 2
-protofire: network message(s) taken = 1
+protofire: block completion message(s) taken = 6
+protofire: network message(s) taken = 8
 ```
 
 Two counts rather than one total is the claim: a sum would say a message
@@ -716,7 +717,7 @@ gone from the table.  Measured on x86_64:
 ```
 protofire: tcp connected, listener 1, stream 2
 protofire: tcp echoed 9 byte(s) of 9, round trip
-protofire: tcp closed, both ends done
+protofire: tcp closed, both ends held in time wait
 ```
 
 The exchange never touches the card: both ends are connections in the
@@ -2392,7 +2393,7 @@ than the list.
 |---|---|---|
 | the memory layer | **done**, `Mmap`, `Munmap`, `Brk`, `ReclaimPages` served | the `program memory call` lines below |
 | a process a program can start | **done**, `SpawnProcess` plus the six signal calls | `process 1 spawned /bin/shell as pid 5` |
-| a way to reach the table from ring 3 | **done**, 102 numbers reachable, the registry holding 81 of them | `syscall table installed, 81 number(s) served` |
+| a way to reach the table from ring 3 | **done**, 121 numbers reachable, the registry holding 100 of them | `syscall table installed, 100 number(s) served` |
 | **a handle that can be given away** | **not started** | `Descriptor` still has two variants, `File` and `Pipe` |
 
 The last one is the one that matters now, and the fourth line of the old list
@@ -2411,7 +2412,7 @@ boot shows a program using two of them:
 
 ```
 protofire: program memory call 67 answered 0x807ffff000
-protofire: program memory call 92 answered 0x8040003000
+protofire: program memory call 92 answered 0x8040005000
 ```
 
 `67` is `Mmap` and `92` is `Brk`.  The mapping's base is the last page of init's
@@ -2487,18 +2488,18 @@ execs a program that does the whole of it against the tmpfs and shows each
 answer beside the call that produced it:
 
 ```
-protofire: process 1 opened note.txt via descriptor 0
+protofire: process 1 opened note.txt via descriptor 1
 protofire: process 1 wrote 19 byte(s) to a file
-protofire: process 1 opened note.txt via descriptor 0
-protofire: process 1 stat'd note.txt via descriptor 0, kind file, size 19
-protofire: process 1 created directory notes via descriptor 0
-protofire: process 1 opened at.txt via descriptor 5
+protofire: process 1 opened note.txt via descriptor 1
+protofire: process 1 stat'd note.txt via descriptor 1, kind file, size 19
+protofire: process 1 created directory notes via descriptor 1
+protofire: process 1 opened at.txt via descriptor 0
 protofire: process 1 wrote 4 byte(s) to a file
-protofire: process 1 stat'd at.txt via descriptor 5, kind file, size 4
+protofire: process 1 stat'd at.txt via descriptor 0, kind file, size 4
 protofire: process 1 read /tmp/notes entry 0
-protofire: process 1 renamed note.txt via descriptor 0 to kept.txt via descriptor 0
+protofire: process 1 renamed note.txt via descriptor 1 to kept.txt via descriptor 1
 protofire: process 1 stat'd /tmp/kept.txt, kind file, size 19
-protofire: process 1 removed scratch.txt via descriptor 0
+protofire: process 1 removed scratch.txt via descriptor 1
 ```
 
 The descriptor number on those lines is the table's, not the program's, which
@@ -2573,7 +2574,7 @@ protofire: process 1 spawned /bin/shell as pid 5
 protofire: process 5 sent signal 10 to process 1
 protofire: a signal wait answered signal 10 from process 5
 protofire: a suspend answered signal 10 from process 6, mask put back
-protofire: every program exited, 6 exit(s), 429 tick(s), 32 switch(es), 2 signal delivery(ies)
+protofire: every program exited, 10 exit(s), 2870 tick(s), 47 switch(es), 2 signal delivery(ies)
 ```
 
 The spawn shares one image construction with `exec`, read, parse, map,
@@ -2610,7 +2611,7 @@ side's build rather than drifting until a host test notices.
 
 Verified by the lines above on every machine, by the gate's required lines
 for the spawn, the two waits and the suspend, and by `protofire: syscall
-table installed, 81 number(s) served` with the census at **102 of 196**
+table installed, 100 number(s) served` with the census at **121 of 196**
 reachable from ring 3.
 
 **The clock and the generator.**  `GetTimeOfDay` (70), `GetRandom` (75),
@@ -2623,7 +2624,7 @@ randomness that must differ, and reads both records back against the ABI's own
 constants.
 
 ```
-protofire: time origin 0x22d9e808 at 2611 MHz
+protofire: time origin 0x76344d6e at 2612 MHz
 protofire: random seeded, two reads differ
 protofire: process 1 read the clock, 16 byte(s)
 protofire: process 1 drew random bytes, 16 byte(s)
@@ -2658,7 +2659,7 @@ Two defects the first ring-3 boot of this found:
 
 Verified by the six lines above on every machine, by the gate's required lines
 for all four calls, and by `protofire: syscall table installed, 81 number(s)
-served` with the census at **102 of 196**.
+served` with the census at **121 of 196**.
 
 **The second CPU.**  A task is not pinned, so one that is preempted or woken
 is placed again, and the boot counts and names the placement.  Placement
@@ -3051,7 +3052,7 @@ attached: it enables the file's **highest** identity, one past any a device
 could be given, writes that identity into **this hart's own MSI page** exactly
 as an MSI-X table entry would, and reads it back with the `stopei` claim.
 
-    protofire: imsic at 0x28000000, hart file 0, 255 identit(ies), self-test identity 254 delivered and claimed
+    protofire: imsic at 0x28000000, stride 4096, hart file 0, 255 identit(ies), self-test identity 254 delivered and claimed
 
 That line is the evidence: the page's address, the bare-identity data word, the
 pending bit, the enable bit and the claim were all executed. QEMU's `virt` with
@@ -3127,7 +3128,7 @@ identity.  Measured on `-machine virt,aia=aplic-imsic`: **8 of 8 boots** take
 the completion message, and the census line reports it:
 
     protofire: block message wired to imsic page 0x28000000, identity 200, vector 2
-    protofire: block completion message(s) taken = 2
+    protofire: block completion message(s) taken = 6
 
 The count is 2 and not one per completion because an IMSIC file holds **one
 pending bit per identity**: completions that arrive before the first is claimed

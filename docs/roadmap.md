@@ -33,13 +33,14 @@ echo "missing  $(comm -13 /tmp/served.txt /tmp/declared.txt | wc -l)"
 grep -E '^[0-9]+ ' scripts/layering.txt
 ```
 
-Four machines boot, and **109 of the 196 numbers are served**, after the memory,
+Four machines boot, and **121 of the 196 numbers are served**, after the memory,
 filesystem, process, time, network and driver levels.  That is the number the
 census command above answers, and it is the one to re-take rather than trust:
-it was 102 before the descriptor and attribute calls landed, and the three
-numbers of drift are the reason this paragraph names its command.
+it was 109 before shared memory landed and 102 before that, and the drift is
+the reason this paragraph names its command rather than stating the number
+twice.  The command is the authority; running it is how 121 was measured.
 
-The boot's own line, `syscall table installed, 88 number(s) served`, counts
+The boot's own line, `syscall table installed, 100 number(s) served`, counts
 only the registry's half, the numbers whose handler functions live in
 `boot.rs`'s table.  The rest are the ones `process/` serves itself: the
 scheduler's, the pipe's, and the ones that need a ring-3 address turned into a
@@ -65,7 +66,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **194,870 lines of Rust across 47 crates**, which is
+The tree is **199,076 lines of Rust across 47 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -158,45 +159,59 @@ whose "reachable" column used to say no, which is why this table is now short.
 
 ### The syscall census, by family
 
-Of 196 numbers, **102 are served**.  The 94 that are not fall into these
+Of 196 numbers, **121 are served**.  The 75 that are not fall into these
 groups; the count is the number of numbers in the group, not the work involved.
-The network has no row, which is the change since this table was first taken:
-each of its 43 numbers is served, so nothing from it is left to list.
+The network has no row, and neither do the filesystem interface, the
+descriptors, shared memory or the extended attributes: every number in those
+families is served now, which is what closed Level 8's first two rows.  The
+enum's names are matched against the census command at the top of this file,
+and the rows below are what it printed on the day this paragraph was written.
 
 | family | numbers | in the kernel today |
 |---|---|---|
-| filesystem metadata and mutation (`SetFdFlags`, the access and permission queries) | 7 | the access machinery exists and nothing has given it an identity to check |
-| descriptors (`Dup`, `Dup2`, `Fcntl`, `Poll`) | 4 | the descriptor holds the handle and the rights; what is missing is a way to copy one, and a readiness question for `Poll` |
-| shared memory, timers, multiplexing and queues (`Shm*`, `Futex`, `EventFd`, `TimerFd`, `SignalFd`, `Mq*`, `Epoll*`, `Timer*`) | 21 | none, and each is one mechanism rather than one call |
+| timers, multiplexing, queues and futex (`Futex`, `EventFd`, `TimerFd`, `SignalFd`, `Epoll*`, `Mq*`, `Timer*`) | 17 | none.  Each is one mechanism, and `Futex` is the one whose shape this tree's scheduler argues about: see `docs/rfcs/0002` |
 | identity (`GetUid`, `GetGid`, `AddUser`, `RemoveUser`, `SetUserPassword`, `SetSecurityDescriptor`) | 6 | `security` has the types and nothing has asked them |
 | introspection and scheduling (`ListProcesses`, `ListThreads`, `ListProcessFaults`, `KernelLog`, `Prctl`, `Ptrace`, `Seccomp`, `SchedSetAffinity`, `SchedGetAffinity`) | 9 | the scheduler exists; these report on it or move a task |
 | the app and the machine (`ArgCount`, `ArgValue`, `EnvCount`, `EnvValue`, `CurrentDir`, `SetCurrentDir`, `AppId`, `AppVersion`, `ImagePath`, `ManifestPath`, `Yield`, `RestartSyscall`, `CompactMemory`, `Mlock`, `Munlock`, `Madvise`) | 16 | assorted, and most are a record a program reads |
 | io_uring (`IoUringSetup`, `IoUringEnter`) | 2 | none, and it is a second way to do what the calls above already do |
 | GPU (`GpuCtxCreate`, `GpuCtxDestroy`, `GpuDeviceInfo`, `GpuResCreate3d`, `GpuResUnref`, `GpuSetScanout`, `GpuSubmit3d`, `GpuTransferFromHost3d`, `GpuTransferToHost3d`) | 9 | none, a VIRGL context over a device this tree does not have |
 | mounts and volumes (`Mount`, `Umount`, `ListMounts`, `RepairVolume`, `FuseMount`) | 5 | the mount table exists |
-| extended attributes (`SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`) | 4 | every filesystem that has them implements them; what is missing is the wire format for a packed list |
 | power, audit, policy and packages (`Cpufreq*`, `Audit*`, `MacSetPathType`, `ServiceDeclare`, `ServiceStartAll`, `InstallPackage`) | 11 | `power`'s governors and `audit`'s ring exist; the calls do not |
 
-The twelve rows sum to exactly 94, because each number is assigned to one row by
-name, the edges between families (`ListThreads` is process introspection *and*
-scheduling) are settled by where the row's handler would live, and that
-assignment is the census's one judgement call.  The counts come from matching
-the enum's names, which is how they can be re-taken; the code block at the top
-of this file shows the command.
+The eight rows sum to exactly 75, and that is a property rather than a
+coincidence: each number is assigned to one row by name, the edges between
+families (`ListThreads` is process introspection *and* scheduling) are settled
+by where the row's handler would live, and the census's one judgement call is
+that assignment.  The counts come from the enum's names, which is how they can
+be re-taken: `comm -13` of the census command's two lists is the unserved set,
+and sorting it by hand into these eight rows is the only step that is not a
+command.
 
-Two of those rows were wrong when this table was first taken, and the error is
-worth keeping: the network row said 34 while the enum has **43** names that are
-network, seven `Dccp*`, five `Ipsec*`, six `Mrt*`, four `Filter*` and
-`TlsConnect` were not counted in the parenthetical, and the "rest" row
-absorbed the difference at 56.  One row's undercount is invisible in a total
-that another row's overcount fills, which is why the rows are asserted to sum
-rather than the total alone.
+This table has been wrong three ways, and each is worth keeping because each is
+a different failure.  It **miscounted** a row: the network row said 34 while the
+enum has **43** network names, seven `Dccp*`, five `Ipsec*`, six `Mrt*`, four
+`Filter*` and `TlsConnect` were left out of the parenthetical, and the "rest"
+row absorbed the difference at 56.  A row's undercount is invisible in a total
+another row's overcount fills, which is why the rows are asserted to sum and not
+only the total.
 
-The table then went stale rather than wrong: it kept saying 51 served while the
-network level served all 43 of its numbers and the rest stood still.  That is
-the same defect as a remembered count, so the check is mechanical now, the
-groups are asserted to partition the unserved set, and the numbers above are
-what the command block at the top prints.
+It then went **stale**: it kept saying 51 served while the network level served
+all 43 of its numbers and the rest stood still.
+
+And it went stale **at scale** while the reading was in progress: it still
+listed `SetFdFlags`, `Poll`, `Dup`, `Dup2`, `Fcntl`, the six access and
+permission calls, the four extended attributes and the four shared-memory calls
+as unserved, eighty-seven numbers in all, after the commits that served every
+one of them had landed.  That is the same defect as a remembered count one level
+up: a table describing work as missing costs the next reader the work of
+re-deriving what is done.
+
+The answer is not a better table, it is a narrower table.  Five families came
+off it entirely when they finished, which is why the eight rows above are the
+whole of what is left and why the largest of them is seventeen.  The numbers are
+the command block's, re-taken rather than remembered, and the day a row goes
+from "none" to "done" it comes off this file and `docs/status.md` gains the boot
+line that says so.
 
 ---
 
@@ -668,7 +683,7 @@ list too: a stream advertises the room it has and refuses a byte past it.
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-194,870 across 47 crates.  The difference is not lost work, it is work the new
+199,076 across 47 crates.  The difference is not lost work, it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 
@@ -691,7 +706,7 @@ The measurements, taken from `16b5ef8` (the previous kernel's last commit):
 | `network` | 39,240 | **done**, the stack is one tenth of it: IPv4, IPv6, ICMP, ICMPv6, NDP, UDP, TCP, DHCP, DNS, SLAAC and the six protocols below it, with all 43 calls a program reaches |
 | `drivers` | 18,828 | **partial**, virtio-blk, virtio-net, the display, the NVMe controller and the AHCI controller; Level 7 states the order, and its first three items have landed |
 | `user` | 19,145 | **partial**, three programs; the old shell's body and command set are not here |
-| `syscall` | 15,647 | **partial**, 102 of 196 numbers |
+| `syscall` | 15,647 | **partial**, 121 of 196 numbers |
 | `abi` | 4,725 | **done**, the numbering, the records, the boot information |
 | `util` | 574 | folded into the crates that use it |
 

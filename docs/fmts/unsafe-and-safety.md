@@ -14,12 +14,26 @@ machine.
 The tree uses `unsafe` for the things only `unsafe` can do: MMIO, inline
 assembly, pointer-level context-switch mechanics, and the boundary where the
 kernel reads or writes memory a user program owns. Every one of those sites
-carries an argument, `clippy::undocumented_unsafe_blocks` reports zero in
-every configuration the tree builds for, and the manifests deny it, so
-`cargo clippy --workspace --all-targets -- -D warnings`, the host half of
-the gate, with the per-target halves beside it in `scripts/verify.sh p3`
-refuses a new one that has none.  There are no fuzz targets in this tree, so
-there is no fuzz configuration to refuse anything.
+carries an argument, and that is the rule this document states.
+
+The rule is **not yet a gate**, and this paragraph used to claim it was: it
+said the manifests denied `clippy::undocumented_unsafe_blocks` and that the lint
+reported zero, and neither was true, because no manifest in the tree carried a
+`[lints]` table at all.  Measured by adding one and denying that lint on
+`kernel` for one run: **42 blocks** in that crate alone have a `SAFETY:` comment
+that the lint does not recognise, mostly one-line blocks whose argument is a
+sentence away from the code rather than on the line above it.  This document was
+correct about what the rule is and wrong about what enforced it, which is worse
+than saying nothing: a reader budgets a review habit that a build was supposed
+to have.
+
+`cargo clippy --workspace --all-targets -- -D warnings`, the host half of the
+gate, with the per-target halves beside it in `scripts/verify.sh p3`, refuses a
+warning; it does not yet refuse a missing argument, because the lint is not on.
+Turning it on is a change with 42 fixes in it and a gate line to go with them,
+and it belongs in a commit of its own rather than in the one that found this.
+There are no fuzz targets in this tree, so there is no fuzz configuration to
+refuse anything.
 The tree reached that state by writing the argument for each block rather than
 a comment-shaped placeholder, and the work found real defects along the way,
 because an argument that has to name the bound a read relies on is an argument

@@ -86,6 +86,10 @@ that argues for it in the baseline's own prose, which is why
   `docs/fmts/comments.md` §4 and §6 in the form a commit cannot pass by
   accident.  The rule was prose and the tree held 1,600 lines that broke it,
   which is this section's own argument for existing.
+- **`scripts/check-rfcs.sh`**, `docs/rfcs/` agrees with itself: one four-digit
+  decimal number per document, a status from the six, supersede links that hold
+  at both ends, and an index generated from the documents instead of kept beside
+  them.  `--record` rewrites the table; a hand-written row fails the check.
 
 The architecture census is at **zero** and stays there.  Its one historical row
 was `bootloader/src/main.rs`, and the row was wrong in a way worth remembering:

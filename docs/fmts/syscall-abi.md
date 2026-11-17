@@ -27,8 +27,16 @@ carries the short version; where the two disagree, this document wins.
 3. **Append-only.** Numbers are assigned once and never change meaning, not
    even to reclaim a slot nobody uses.
 4. **Validate before you touch.** A user pointer is never dereferenced on the
-   strength of being non-null. Every pointer is checked against the user
-   address window before the handler reads or writes it.
+   strength of being non-null. Every pointer is checked before the handler
+   reads or writes it, and the check is two questions rather than one: the range
+   lies in the user window, **and** every page of it is mapped in the calling
+   task's own page table.  `address_space::user_range(address, length, write)`
+   is the check; a write is admitted on a page that is writable or that a fork
+   left copy-on-write, and a read needs only a mapped, user-reachable page.
+   The window test alone is not the rule and never was: it admits any number in
+   a gigabyte of address space, including one no program ever mapped, and a
+   kernel that dereferenced such an address took a fault at ring 0 and stopped
+   the machine.  `docs/roadmap.md`'s Level 7.5 has the measurement.
 5. **Every change is documented and tested in the same PR.** Numbering rules are
    only real if a test fails when they are broken.
 
@@ -193,13 +201,13 @@ A pointer from ring 3 is a number, and this section is the rule for it.
 The registry's own handlers still take borrows, `Arguments::path` and
 `Arguments::buffer`, built by the kernel code that owns the buffer, and a
 borrow needs no validation.  The boundary exists where programs call:
-`Read` and `Write` to a pipe take a ring-3 buffer, and the handler validates
-the range with `is_user_range` before it touches a byte, because an address
-that arrives in a register is a number until something checks it.
+`Read` and `Write` to a pipe take a ring-3 buffer, and the dispatcher validates
+the range with `address_space::user_range` before it touches a byte, because an
+address that arrives in a register is a number until something checks it.  The
+check is the window and the mapping, as principle 4 states; `is_user_range` is
+the window half alone and is not what a call site uses.
 
 The calls a ring-3 program can make today, and the slots each carries:
-
-The calls a ring-3 program can make today, and the slots each carries.
 
 - **`Open`**, `a0` the path, a NUL-terminated string in the caller's memory;
   `a1` the flags; `a2`-`a3` reserved zero.
