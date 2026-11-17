@@ -89,6 +89,10 @@ use user_abi::sys_create_dir_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_create_raw_socket;
 #[cfg(target_os = "none")]
+use user_abi::sys_dup;
+#[cfg(target_os = "none")]
+use user_abi::sys_dup2;
+#[cfg(target_os = "none")]
 use user_abi::sys_exit;
 #[cfg(target_os = "none")]
 use user_abi::sys_fallocate;
@@ -407,6 +411,33 @@ pub extern "C" fn _start() -> ! {
     if typed != 0 {
         sys_exit(255);
     }
+
+    // The two duplicates, exercised where the descriptor table is already
+    // holding a file: `Dup` answers a second handle on the same file, and
+    // `Dup2` puts one on a number the caller names.  Both are checked on what
+    // makes them distinct rather than on their answers alone -- the duplicate
+    // reads the original's bytes, and the placed copy's number is the one that
+    // was asked for.
+    let held = insist(sys_open(GREETING_PATH.as_ptr() as usize, OPEN_READ));
+    let duplicate = insist(sys_dup(held));
+    if duplicate == held {
+        sys_exit(251);
+    }
+    let placed = insist(sys_dup2(held, 12));
+    if placed != 12 {
+        sys_exit(251);
+    }
+    // Closing the original leaves both copies, which is what a handle rather
+    // than an alias means.  The placed copy is read to prove it names the same
+    // file: a fresh empty descriptor would answer zero bytes.
+    insist(sys_close(duplicate));
+    insist(sys_close(held));
+    let mut copied = [0u8; 4];
+    let read = insist(sys_read(placed, &mut copied));
+    if read == 0 {
+        sys_exit(251);
+    }
+    insist(sys_close(placed));
 
     // The device list and the whole-machine flush.  The record is the ABI's
     // `BlockDeviceInfoRecord`, read field by field at the offsets the ABI

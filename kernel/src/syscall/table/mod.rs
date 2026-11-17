@@ -424,6 +424,71 @@ impl SyscallTable {
         slot.take().map(|_| ()).ok_or(Error::InvalidArgument)
     }
 
+    /// Duplicate a descriptor into the lowest free slot, and answer its number.
+    ///
+    /// `Dup`'s whole operation.  The caller keeps the original; the table gains
+    /// a second handle on the same thing, which for a file is the same node at
+    /// the same offset and for a pipe is the same end with its count raised.
+    /// That is the difference the descriptor's own copy already carries,
+    /// because a duplicate and a `fork`'s inherited copy are the same operation
+    /// on the table and only the owner differs.
+    ///
+    /// The owner is the caller's, not the original's: a descriptor a process
+    /// duplicates is that process's, and a table that kept the original's owner
+    /// would hand the copy to a process that no longer exists.
+    pub fn duplicate_for(&mut self, descriptor: usize, caller: Option<u32>) -> Result<usize> {
+        self.check_owner(descriptor, caller)?;
+        let source = self
+            .descriptors
+            .get(descriptor)
+            .and_then(|slot| slot.as_ref())
+            .ok_or(Error::InvalidArgument)?;
+        let owner = caller.unwrap_or(crate::programs::BOOT_PROCESS);
+        let copy = source.for_owner(owner);
+        self.insert(copy)
+    }
+
+    /// Duplicate a descriptor **onto** a number the caller names.
+    ///
+    /// `Dup2`'s whole operation, and its two departures from
+    /// [`Self::duplicate_for`] are the operation rather than convenience: the
+    /// target's number is the caller's choice, and if the target already names
+    /// an open descriptor that descriptor is closed first -- the sequence a
+    /// caller relies on to put a file on standard output without a moment in
+    /// which the number is free for another thread to take.
+    ///
+    /// A target equal to the source is **not** an error and changes nothing:
+    /// the ABI's answer is the same number, and a caller that used `Dup2` as a
+    /// checked "is this descriptor mine" gets its answer without losing the
+    /// descriptor it asked about.
+    pub fn duplicate_onto_for(
+        &mut self,
+        descriptor: usize,
+        target: usize,
+        caller: Option<u32>,
+    ) -> Result<usize> {
+        self.check_owner(descriptor, caller)?;
+        if target >= MAX_DESCRIPTORS {
+            return Err(Error::InvalidArgument);
+        }
+        if target == descriptor {
+            return Ok(target);
+        }
+        // Close what the target holds before the copy is made, so a table with
+        // no free slot still succeeds: the slot the target occupied is the one
+        // the copy goes into, which is what makes `Dup2` usable when the table
+        // is full.
+        self.descriptors[target] = None;
+        let source = self
+            .descriptors
+            .get(descriptor)
+            .and_then(|slot| slot.as_ref())
+            .ok_or(Error::InvalidArgument)?;
+        let owner = caller.unwrap_or(crate::programs::BOOT_PROCESS);
+        self.descriptors[target] = Some(source.for_owner(owner));
+        Ok(target)
+    }
+
     /// Close a descriptor with no ownership check.
     ///
     /// The kernel's own release paths, which already know whose slot they are

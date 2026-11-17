@@ -57,6 +57,33 @@ Verified by `the timer preempted, `, `a write woke `,
 `copy-on-write promote at `, `loaded /bin/init, `, `process 1 exec'd /bin/init`,
 `process 1 opened /greeting.txt`, and `exit statuses 1 -> 116`.
 
+**Descriptor duplication** is served, `Dup` and `Dup2`, and the pair is what a
+program uses to give one handle to a child and keep reading through another.
+`Dup` answers the lowest free slot, which is also the answer to "is this number
+in use": a program that wants the next free descriptor asks by duplicating one.
+`Dup2` places the copy on a number the caller names and closes whatever that
+number held first, which is what makes it succeed on a full table -- the slot
+the target occupied is the one the copy takes -- and what lets a program put a
+file on standard output without a window in which the number is free.  A target
+equal to the source answers the source and changes nothing, because the caller
+asking "is this number mine" must not lose the descriptor it asked about.
+
+The copy is a **handle**, not an alias: for a file it shares the node and keeps
+its own offset, and for a pipe it raises the end's count, so a reader sees
+end-of-file only after the last handle goes.  Both properties are exercised
+from ring 3, and the gate asserts the two numbers the boot printed:
+
+```
+protofire: process 1 duplicated descriptor 6 as 7
+protofire: process 1 placed descriptor 6 on 12
+```
+
+The lines are exact rather than prefixes, because `as 6` is the defect a
+duplicate that answered its own source would print.  Measured, making
+`duplicate_for` answer the source's number failed the boot: the program's own
+`duplicate == held` check exited 251 and the log stopped short of the lines
+after it.
+
 The pipe's reader also calls `WaitProcess` after its end-of-file read, and the
 gate requires the kernel's own `a wait answered status ` line on all three
 machines: the guard, the park's retry contract and the exit's wake are on a

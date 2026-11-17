@@ -893,6 +893,50 @@ pub fn close(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
     Ok(Dispatch::complete(0))
 }
 
+/// Duplicate a descriptor into the lowest free slot.
+///
+/// Arguments: the descriptor, then five reserved slots that must be zero.
+/// Answers the new descriptor's number.
+///
+/// The copy and the original are two handles on one thing, which is what the
+/// call is for: a program can hand one to a child and keep reading through the
+/// other, or close one and keep the other.  For a file they share the node and
+/// each keeps its own offset; for a pipe the end's count rises by one, so a
+/// reader sees end-of-file only after the last handle goes.
+///
+/// The number is **not** necessarily above the original: the answer is the
+/// lowest free slot, which is what makes this the call a program uses to learn
+/// whether a number is in use at all.
+pub fn dup(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    let copy = table.duplicate_for(descriptor, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(copy))
+}
+
+/// Duplicate a descriptor onto a number the caller names.
+///
+/// Arguments: the descriptor, the target number, then four reserved slots that
+/// must be zero.  Answers the target.
+///
+/// Two differences from [`dup`], and both are the reason this call exists.  The
+/// number is the caller's, which is how a program puts a file on standard
+/// output without a window in which the number is free.  And the target's
+/// previous descriptor is closed first, so a full table still succeeds: the
+/// slot the target occupied is the one the copy takes.
+///
+/// A target equal to the source answers the source and changes nothing.  That
+/// is not a special case bolted on: a caller asking "is this number mine" gets
+/// its answer, and a call that closed and re-opened the descriptor would answer
+/// a different question.
+pub fn dup2(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let descriptor = arguments.context.arg(0);
+    let target = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+    let placed = table.duplicate_onto_for(descriptor, target, arguments.context.caller_pid)?;
+    Ok(Dispatch::complete(placed))
+}
+
 /// Report the MAC policy's state.
 ///
 /// Arguments: five reserved slots that must be zero.  Answers

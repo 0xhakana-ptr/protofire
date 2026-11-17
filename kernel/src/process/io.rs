@@ -851,6 +851,54 @@ pub(crate) fn serve_io(
         }
         return Some(outcome);
     }
+    if number == SyscallNumber::Dup as usize {
+        // `Dup(descriptor)`: a second handle on the same thing, on the lowest
+        // free number.  No pointer, so the registry is reached directly and the
+        // five reserved slots are the handler's to refuse.
+        //
+        // The line is the new number, which is a fact only this path can
+        // report: a program's descriptor numbers are its own and it prints none
+        // of them, and a `Dup` that answered without making a handle would be
+        // indistinguishable from one that worked.
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" duplicated descriptor ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str(" as ");
+            arch::serial::write_u32(answer as u32);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::Dup2 as usize {
+        // `Dup2(descriptor, target)`: the copy lands on the number the caller
+        // named, and whatever that number held is closed first.  The line says
+        // where it landed and that the answer was that target, which is the one
+        // property separating this call from `Dup`.
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" placed descriptor ");
+            arch::serial::write_u32(call.arguments[0] as u32);
+            arch::serial::write_str(" on ");
+            arch::serial::write_u32(answer as u32);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
     if number == SyscallNumber::Stat as usize {
         // `Stat(path, record, length)`: the path is a NUL-terminated string in
         // the caller's memory, the record is where the kernel writes the ABI's

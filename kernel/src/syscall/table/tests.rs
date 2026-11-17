@@ -2697,3 +2697,215 @@ fn get_random_writes_nothing_for_a_zero_length() {
     );
     assert_eq!(buffer, [0xAAu8; 8], "the buffer was not touched");
 }
+
+/// `Dup` answers the lowest free slot, and the copy is a second handle on the
+/// same node.
+///
+/// The two halves are what the call is for, and they are separate claims: a
+/// duplicate that answered a high number would be a table that leaked slots,
+/// and one that answered a low number but named a different node would be a
+/// second open.  The read-back is what tells them apart: a byte read through
+/// the copy is the byte the original would have read.
+#[test]
+fn dup_answers_the_lowest_free_slot_on_the_same_node() {
+    let mut table = writable();
+    table.register(SyscallNumber::Dup, dup);
+    table.register(SyscallNumber::Read, read);
+    // A file with a known byte in it, so "the copy names the same node" is a
+    // byte read through the copy rather than a success that any descriptor
+    // would have given.  The create flag makes it, and the write puts the byte
+    // there, because a duplicate that answered a fresh empty file must fail
+    // the read-back.
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    let opened = open_path(&mut table, "/dup-note.txt", flags).expect("create and open");
+    assert_eq!(opened, 0, "the first slot");
+    table.write_at(opened, b"x", None).expect("write one byte");
+
+    let copy = call(&mut table, SyscallNumber::Dup, [opened, 0, 0, 0, 0, 0]).expect("dup");
+    assert_eq!(copy, 1, "the next free slot");
+    assert_eq!(
+        table.open_descriptors(),
+        2,
+        "the original is still open: a duplicate adds a handle"
+    );
+
+    // Closing the original leaves the copy: a duplicate is a handle, not an
+    // alias that dies with its source.
+    assert_eq!(
+        call(&mut table, SyscallNumber::Close, [opened, 0, 0, 0, 0, 0]),
+        Ok(0)
+    );
+    assert_eq!(table.open_descriptors(), 1);
+    // Read at an explicit offset rather than at the descriptor's own position:
+    // the write moved that position to the end, and the duplicate copied it, so
+    // a read there would answer zero bytes and say nothing about the node.
+    let mut bytes = [0u8; 1];
+    assert_eq!(
+        read_into(&mut table, copy, 0, &mut bytes),
+        Ok(1),
+        "the copy still names the file"
+    );
+    assert_eq!(bytes, [b'x'], "and it read the file's first byte");
+}
+
+/// `Dup` of a number that names nothing is refused, and so is a duplicate of
+/// another process's descriptor.
+///
+/// Both answers are `InvalidArgument`, and for the same reason: a number that
+/// is not this caller's descriptor is not a descriptor to it at all, and a
+/// caller told "denied" would learn which numbers exist.
+#[test]
+fn dup_refuses_a_number_that_is_not_the_callers() {
+    let mut table = writable();
+    table.register(SyscallNumber::Dup, dup);
+    assert_eq!(
+        call(&mut table, SyscallNumber::Dup, [0, 0, 0, 0, 0, 0]),
+        Err(Error::InvalidArgument),
+        "an empty slot is not a descriptor"
+    );
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Dup,
+            [MAX_DESCRIPTORS, 0, 0, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument),
+        "a number past the table names nothing"
+    );
+}
+
+/// `Dup2` places the copy on the number the caller names, and answers it.
+///
+/// The placement is the whole difference from `Dup`: a caller naming three gets
+/// three, whatever the lowest free slot is.
+#[test]
+fn dup2_places_the_copy_on_the_named_number() {
+    let mut table = writable();
+    table.register(SyscallNumber::Dup2, dup2);
+    let opened = open_path(
+        &mut table,
+        "/",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE,
+    )
+    .expect("open");
+    assert_eq!(opened, 0);
+
+    let placed = call(&mut table, SyscallNumber::Dup2, [opened, 7, 0, 0, 0, 0]).expect("dup2");
+    assert_eq!(placed, 7, "the number the caller named");
+    assert_eq!(table.open_descriptors(), 2);
+    assert_eq!(
+        table.owner_of(7),
+        Some(crate::programs::BOOT_PROCESS),
+        "the copy is the caller's"
+    );
+}
+
+/// `Dup2` closes what the target held first, so a full table still succeeds.
+///
+/// This is the property a caller relies on to put a file on standard output:
+/// the number must be free the moment it is named, and the copy must land even
+/// when every slot is in use.
+#[test]
+fn dup2_replaces_the_target_and_works_on_a_full_table() {
+    let mut table = writable();
+    table.register(SyscallNumber::Dup2, dup2);
+    table.register(SyscallNumber::Close, close);
+
+    let source = open_path(
+        &mut table,
+        "/",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE,
+    )
+    .expect("open");
+    // Fill every remaining slot, so the table has no free slot at all.
+    let mut filled = 1;
+    for _ in 1..MAX_DESCRIPTORS {
+        if open_path(
+            &mut table,
+            "/",
+            fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE,
+        )
+        .is_ok()
+        {
+            filled += 1;
+        }
+    }
+    assert_eq!(filled, MAX_DESCRIPTORS, "the table is full");
+
+    // The target is an occupied slot, and the copy must still land on it: the
+    // descriptor there is closed first, which is what makes room.
+    let placed = call(&mut table, SyscallNumber::Dup2, [source, 3, 0, 0, 0, 0])
+        .expect("dup2 onto an occupied slot with no free slot");
+    assert_eq!(placed, 3);
+    assert_eq!(
+        table.open_descriptors(),
+        MAX_DESCRIPTORS,
+        "one closed and one opened: the count is unchanged"
+    );
+}
+
+/// `Dup2` with the target equal to the source answers the source and leaves it
+/// alone.
+///
+/// The tempting implementation closes and re-opens, which would work for a file
+/// and lose a pipe end whose count it decremented before raising it.  The
+/// answer is what a caller uses to ask "is this number mine", so it must not
+/// change the thing it was asked about.
+#[test]
+fn dup2_onto_itself_changes_nothing() {
+    let mut table = writable();
+    table.register(SyscallNumber::Dup2, dup2);
+    let opened = open_path(
+        &mut table,
+        "/",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE,
+    )
+    .expect("open");
+    let before = table.open_descriptors();
+
+    let placed = call(
+        &mut table,
+        SyscallNumber::Dup2,
+        [opened, opened, 0, 0, 0, 0],
+    )
+    .expect("dup2 onto itself");
+    assert_eq!(placed, opened);
+    assert_eq!(table.open_descriptors(), before, "nothing was added");
+    assert_eq!(
+        table.owner_of(opened),
+        Some(crate::programs::BOOT_PROCESS),
+        "and the descriptor is still the caller's"
+    );
+}
+
+/// `Dup2` refuses a target past the table, and a source that names nothing.
+#[test]
+fn dup2_refuses_a_target_past_the_table() {
+    let mut table = writable();
+    table.register(SyscallNumber::Dup2, dup2);
+    let opened = open_path(
+        &mut table,
+        "/",
+        fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE,
+    )
+    .expect("open");
+    assert_eq!(
+        call(
+            &mut table,
+            SyscallNumber::Dup2,
+            [opened, MAX_DESCRIPTORS, 0, 0, 0, 0]
+        ),
+        Err(Error::InvalidArgument),
+        "a target past the table has no slot to place the copy in"
+    );
+    assert_eq!(
+        call(&mut table, SyscallNumber::Dup2, [99, 3, 0, 0, 0, 0]),
+        Err(Error::InvalidArgument),
+        "a source that names nothing"
+    );
+    assert_eq!(
+        table.open_descriptors(),
+        1,
+        "a refused call changed nothing"
+    );
+}

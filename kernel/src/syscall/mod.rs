@@ -78,6 +78,8 @@ pub use handlers::dccp_connect;
 pub use handlers::dccp_listen;
 pub use handlers::dccp_recv;
 pub use handlers::dccp_send;
+pub use handlers::dup;
+pub use handlers::dup2;
 pub use handlers::fallocate;
 pub use handlers::fdatasync;
 pub use handlers::filter_add_rule;

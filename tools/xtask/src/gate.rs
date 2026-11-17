@@ -879,6 +879,19 @@ impl Machine {
                 // calls answering through the dispatcher rather than the
                 // fallthrough.
                 ("protofire: block devices listed 4", true),
+                // The two duplicates.  A program's descriptor number is its
+                // own and the kernel prints neither, so what the log carries is
+                // the *result*: the same bytes read through a copy after the
+                // original was closed.  The line is the read-back rather than
+                // the call's status, because a `Dup` that answered a number
+                // without making a handle would satisfy a status.
+                // Exact, because both numbers are facts about this boot: the
+                // duplicate took the slot after the file (6), and the placed
+                // copy landed on the number the program named (12).  A prefix
+                // check would pass on `as 6`, which is the defect where a
+                // duplicate answers its own source.
+                ("protofire: process 1 duplicated descriptor 6 as 7", true),
+                ("protofire: process 1 placed descriptor 6 on 12", true),
                 ("protofire: process 1 listed block device 0", true),
                 // The second and third devices, through the dispatcher from
                 // ring 3.  Only x86_64's machine has them, so the program's

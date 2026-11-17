@@ -291,6 +291,12 @@ fn install_registry(namespace: fs::MountTable) {
     );
     table.register(::syscall::SyscallNumber::Sync, crate::syscall::sync);
     table.register(::syscall::SyscallNumber::Close, crate::syscall::close);
+    // The two duplicates.  `Dup` answers the lowest free slot and `Dup2` places
+    // the copy on a number the caller names, closing whatever was there: the
+    // pair is how a program puts a file on standard output without a window in
+    // which the number is free.
+    table.register(::syscall::SyscallNumber::Dup, crate::syscall::dup);
+    table.register(::syscall::SyscallNumber::Dup2, crate::syscall::dup2);
     // The truncate.  A number the ABI froze at twenty and this table served
     // nothing for until now: `VNode::set_len` existed and no program could
     // reach it, which is the whole of what that gap was.

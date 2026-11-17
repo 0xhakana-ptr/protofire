@@ -65,6 +65,10 @@ pub const SYS_READ: usize = SyscallNumber::Read as usize;
 pub const SYS_WRITE: usize = SyscallNumber::Write as usize;
 /// `Close`.
 pub const SYS_CLOSE: usize = SyscallNumber::Close as usize;
+/// `Dup`, a duplicate on the lowest free descriptor.
+pub const SYS_DUP: usize = SyscallNumber::Dup as usize;
+/// `Dup2`, a duplicate on a descriptor the caller names.
+pub const SYS_DUP2: usize = SyscallNumber::Dup2 as usize;
 /// `SetLength`, a descriptor's new length.
 pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
 /// `Seek`, a descriptor's new position.
@@ -543,6 +547,26 @@ pub fn sys_write(descriptor: usize, buffer: &[u8]) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_close(descriptor: usize) -> usize {
     syscall6(SYS_CLOSE, descriptor, 0, 0, 0, 0, 0)
+}
+
+/// `dup(descriptor)`: the new descriptor's number, or an error's encoding.
+///
+/// The copy and the original are two handles on one thing: a file's node is
+/// shared and its offset is not, and a pipe's end counts the copy as a live
+/// handle, so a reader sees end-of-file only after both have gone.
+#[cfg(target_os = "none")]
+pub fn sys_dup(descriptor: usize) -> usize {
+    syscall6(SYS_DUP, descriptor, 0, 0, 0, 0, 0)
+}
+
+/// `dup2(descriptor, target)`: the target, or an error's encoding.
+///
+/// The number is the caller's, and whatever the target held is closed first,
+/// so this succeeds even when every slot is in use -- which is what makes it
+/// the call a program uses to put a file on standard output.
+#[cfg(target_os = "none")]
+pub fn sys_dup2(descriptor: usize, target: usize) -> usize {
+    syscall6(SYS_DUP2, descriptor, target, 0, 0, 0, 0)
 }
 
 /// `set_length(descriptor, length)`: zero, or an error's encoding.

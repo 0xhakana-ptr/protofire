@@ -1213,6 +1213,26 @@ each unblocks rather than by size.
    `AccessQueryFd`, `PermissionMetadata`, `PermissionMetadataAt`,
    `PermissionMetadataFd`.  These are the leftover of Level 2 and the cheapest
    row on this page: the filesystem already implements every operation.
+
+   **`Dup` and `Dup2` have landed**, and they were the two on this row that
+   needed something no filesystem has: a second **handle** on one thing.
+   `Descriptor::for_owner` already existed for `fork`, and a duplicate is the
+   same operation on the table with a different owner, so the change was two
+   table methods and two handlers rather than a new mechanism.  The two calls
+   differ in exactly the ways that matter: `Dup` answers the lowest free slot,
+   `Dup2` places the copy on a number the caller names and closes what that
+   number held first, and `Dup2` onto its own source answers the source and
+   changes nothing.
+
+   The evidence is two exact gate lines, `duplicated descriptor 6 as 7` and
+   `placed descriptor 6 on 12`, and both are exact rather than prefixes because
+   `as 6` is what a duplicate that answered its source would print.  Measured,
+   that defect made the boot stop: the program's own `duplicate == held` check
+   exited 251 before the lines after it could run.
+
+   What is left on this row is `Fcntl`, `Poll`, `SetFdFlags` and the eleven
+   xattr, file-flag, access and permission calls: all of them are reads or
+   writes of state a filesystem already holds, and none needs a new mechanism.
 2. **Shared memory**, `ShmGet`, `ShmAt`, `ShmDt`, `ShmCtl`.  Two processes
    naming one region, which is a decision about the address space and not
    wiring.
