@@ -109,6 +109,19 @@ if [ "$failed" -ne 0 ]; then
     exit 1
 fi
 
+# An empty range is the one result that must not borrow the wording of a pass.
+# `HEAD` on `origin/master` with nothing unpushed is exactly this case, and a
+# line reading "every message obeys the hook" over zero commits is a claim about
+# nothing, which is the reading `AGENTS.md` refuses.  It is not a failure: a
+# maintainer who committed and pushed already had the hook run at `git commit`.
+if [ "$count" -eq 0 ]; then
+    printf 'check-commits: no commits in `%s`, so no message was checked\n' "$RANGE"
+    printf 'check-commits: this is not a pass for any message; commit on a branch\n'
+    printf 'check-commits: so the range is non-empty, and install the hook\n'
+    printf 'check-commits: (see docs/fmts/commits.md) so `git commit` checks it\n'
+    exit 0
+fi
+
 printf 'check-commits: %d commit(s) in `%s`, every message obeys the hook\n' \
     "$count" "$RANGE"
 [ -z "$NOTE" ] || printf 'check-commits: %s\n' "$NOTE"
