@@ -16,22 +16,22 @@ assembly, pointer-level context-switch mechanics, and the boundary where the
 kernel reads or writes memory a user program owns. Every one of those sites
 carries an argument, and that is the rule this document states.
 
-The rule is **not yet a gate**, and this paragraph used to claim it was: it
-said the manifests denied `clippy::undocumented_unsafe_blocks` and that the lint
-reported zero, and neither was true, because no manifest in the tree carried a
-`[lints]` table at all.  Measured by adding one and denying that lint on
-`kernel` for one run: **42 blocks** in that crate alone have a `SAFETY:` comment
-that the lint does not recognise, mostly one-line blocks whose argument is a
-sentence away from the code rather than on the line above it.  This document was
-correct about what the rule is and wrong about what enforced it, which is worse
-than saying nothing: a reader budgets a review habit that a build was supposed
-to have.
+The rule is a gate: `[workspace.lints.clippy]` denies
+`undocumented_unsafe_blocks`, every crate opts in with `[lints] workspace =
+true`, and `cargo clippy --workspace --all-targets -- -D warnings`, the host
+half of the gate with the per-target halves beside it in
+`scripts/verify.sh p3`, refuses a block whose argument is not there.
 
-`cargo clippy --workspace --all-targets -- -D warnings`, the host half of the
-gate, with the per-target halves beside it in `scripts/verify.sh p3`, refuses a
-warning; it does not yet refuse a missing argument, because the lint is not on.
-Turning it on is a change with 42 fixes in it and a gate line to go with them,
-and it belongs in a commit of its own rather than in the one that found this.
+It was not always.  This document once said the manifests denied that lint and
+that it reported zero, and **neither was true**: no manifest carried a `[lints]`
+table, so nothing was enforced and the claim cost a reader the review habit a
+build was supposed to have.  Turning the lint on found 42 blocks, most of them
+one-line `unsafe` calls inside an `unsafe fn` whose `# Safety` paragraph covered
+the function and not the block.  Two lessons are worth keeping from that: a
+document that says what is enforced is making a claim somebody can check in one
+command, and the argument belongs at the block because that is where the
+compiler can see it.
+
 There are no fuzz targets in this tree, so there is no fuzz configuration to
 refuse anything.
 The tree reached that state by writing the argument for each block rather than
