@@ -89,6 +89,7 @@ pub mod time;
 pub mod usb_hid;
 pub mod usb_mouse;
 pub mod usb_msd;
+pub mod virtio_input;
 pub mod volume;
 pub mod xhci;
 

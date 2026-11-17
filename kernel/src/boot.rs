@@ -89,6 +89,7 @@ pub fn kernel_main() -> ! {
     crate::nvme::bring_up();
     crate::ahci::bring_up();
     crate::xhci::bring_up();
+    crate::virtio_input::bring_up();
     let namespace = crate::volume::mount_everything();
     // The mount is where the kernel first allocates in volume, so it is where a
     // check reading a second view of the arena stops agreeing with the

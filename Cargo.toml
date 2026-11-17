@@ -22,6 +22,7 @@ members = [
     "drivers/virtio/core",
     "drivers/virtio/block",
     "drivers/virtio/net",
+    "drivers/virtio/input",
     "drivers/bus/pci",
     "drivers/display/text",
     "drivers/storage/nvme",

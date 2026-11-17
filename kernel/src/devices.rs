@@ -55,6 +55,16 @@ const NVME_DEVICE_ID: u16 = 0x0010;
 const NVME_CLASS: u8 = 0x01;
 const NVME_SUBCLASS: u8 = 0x08;
 
+/// A virtio input device's ids: device 18 over the PCI transport.
+///
+/// The modern device id is `0x1040` plus the device's own number, and the
+/// transitional one adds the number to `0x1000`.  The class is what QEMU's
+/// `virtio-keyboard-pci` reports -- an input device, `0x09` -- and it is the
+/// check that matters, the same reasoning the two disks' scans state.
+const DEVICE_VIRTIO_INPUT_MODERN: u16 = 0x1052;
+const DEVICE_VIRTIO_INPUT_TRANSITIONAL: u16 = 0x1012;
+const CLASS_INPUT: u8 = 0x09;
+
 /// AHCI's class code: `0x01` mass storage, `0x06` SATA.
 ///
 /// The ids are not the check -- QEMU's `ich9-ahci` reports Intel's `8086:2922`
@@ -1057,6 +1067,26 @@ pub fn find_xhci() -> Option<FoundXhci> {
 /// that refused to boot because a disk was absent could not be debugged.
 pub fn find_virtio_block() -> Option<FoundVirtio> {
     let (transport, device, config) = find_virtio(&BLOCK_IDS, "virtio-blk")?;
+    Some(FoundVirtio {
+        transport,
+        device,
+        config,
+    })
+}
+
+/// Scan the bus for a virtio input device, and bring up its transport.
+///
+/// `None` on a machine with no device, which is the ordinary state on two of
+/// the three machines: this one is the keyboard over the virtio transport the
+/// tree's other devices share, and the emulator's other keyboards ride
+/// whichever bus their machine describes.
+pub fn find_virtio_input() -> Option<FoundVirtio> {
+    let ids = VirtioIds {
+        modern: DEVICE_VIRTIO_INPUT_MODERN,
+        transitional: DEVICE_VIRTIO_INPUT_TRANSITIONAL,
+        class: CLASS_INPUT,
+    };
+    let (transport, device, config) = find_virtio(&ids, "virtio-input")?;
     Some(FoundVirtio {
         transport,
         device,

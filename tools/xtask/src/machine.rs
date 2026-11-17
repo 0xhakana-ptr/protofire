@@ -216,6 +216,33 @@ impl Machine {
                 "qemu-xhci".to_string(),
                 "-device".to_string(),
                 "usb-kbd".to_string(),
+                // The console the virtio keyboard is bound to.
+                //
+                // `-vga none` suppresses the machine's own display function and
+                // `VGA,id=disp0` puts the same model back with an id: one
+                // display device, the one the kernel's probe already finds, and
+                // now a name QMP can address.  A second display would be a
+                // second `1234:1111` for that probe to choose between.
+                "-vga".to_string(),
+                "none".to_string(),
+                "-device".to_string(),
+                "VGA,id=disp0".to_string(),
+                // The same key over the virtio transport the disks ride.
+                //
+                // The input layer hands a typed key to **one** handler, not to
+                // every device that takes input: `qemu_input_find_handler`
+                // returns the first match and `qemu_input_event_send_impl`
+                // calls exactly that one.  Measured, adding this device made
+                // the USB keyboard's `[hid  ]` report line vanish from the log
+                // while the virtio one's arrived, which is the unicast seen
+                // from the other side.  So the two keyboards are routed apart:
+                // this one is bound to the console above, and the monitor's
+                // `sendkey` -- which names no console and reaches the first
+                // console-less handler, the USB keyboard -- types to that one
+                // while QMP's `input-send-event`, whose `device` names a
+                // console, types to this one.
+                "-device".to_string(),
+                "virtio-keyboard-pci,disable-legacy=on,display=disp0".to_string(),
                 "-device".to_string(),
                 "usb-storage,drive=usb0".to_string(),
                 "-drive".to_string(),

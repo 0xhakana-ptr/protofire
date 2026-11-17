@@ -1095,6 +1095,39 @@ size.
    emulator this tree is developed on, which is the cheaper way to prove the
    input path before the USB one.  They come after the framebuffer console
    because that console is what they draw into.
+
+   **`virtio_input` has landed** and **`virtio_gpu` has not.**  The input
+   device is `drivers/virtio/input` at layer 7: one event queue whose buffers
+   the driver keeps posted, the eight-byte event the specification defines
+   (`type: le16`, `code: le16`, `value: le32`), and a `drain` that hands the
+   caller the event rather than a meaning.  What an evdev code means to a
+   console is this boot's decision, so `kernel/src/virtio_input.rs` is the file
+   that translates, through the same table `usb_hid` already carries.  Its
+   evidence, required lines of the x86_64 gate:
+
+   ```
+   protofire: virtio-input up, event queue posted
+   [vioin] device event: kind=1, code=48, value=1
+   ```
+
+   The two keyboards are typed through two channels because QEMU's input layer
+   delivers a key to **one** handler, not to every device that takes input:
+   `qemu_input_find_handler` walks its list and returns the first match, and
+   `qemu_input_event_send_impl` calls exactly that one.  Measured, adding this
+   device made the USB keyboard's `[hid  ]` line vanish while the virtio one's
+   arrived, which is the unicast seen from the other side.  So the virtio
+   keyboard is bound to a console of its own (`VGA,id=disp0`, with `-vga none`
+   so the machine still has exactly one display for the kernel's probe), the
+   monitor's `sendkey` -- which names no console and reaches the USB keyboard
+   -- types to that one, and QMP's `input-send-event` names this console and
+   reaches the virtio one.  `input-send-event`'s `device` argument is a
+   **console** and not a device: a version that passed a keyboard's id made
+   QEMU abort with `Property 'qemu-fixed-text-console.device' not found`.
+
+   `virtio_gpu` is 1,605 lines in the old tree plus the nine GPU syscalls, and
+   it is deliberately its own round: it needs a resource the guest owns, a
+   command queue, and an ABI for mapping a framebuffer into a program, none of
+   which the input device shares.
 6. **`pcspkr`**, last: one line of value, and it needs a timer nobody has
    asked for.
 

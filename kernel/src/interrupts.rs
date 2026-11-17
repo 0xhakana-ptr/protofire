@@ -167,6 +167,7 @@ pub fn handle(frame: irq::Frame) -> bool {
         // same wait every polling driver here asks of its device, and the same
         // fallback the controller's interrupt path names for itself.
         crate::xhci::poll();
+        crate::virtio_input::poll();
 
         return true;
     }

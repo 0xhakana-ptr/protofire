@@ -326,6 +326,26 @@ pub(crate) fn run(
     }
 
     let mut command = Command::new(machine.qemu());
+    // The QMP socket the virtio keyboard's key is typed through.
+    //
+    // The monitor's `sendkey` names no console, so it reaches the first
+    // console-less input handler -- the USB keyboard.  `input-send-event` is
+    // the one that names a console, and its `device` argument is the console
+    // the machine bound that keyboard to; the two keyboards are therefore
+    // typed through two different channels, each one addressed to its own.
+    let qmp_path = std::env::temp_dir().join(format!(
+        "protofire-{}-{}.qmp",
+        machine.triple(),
+        std::process::id()
+    ));
+    if machine.has_xhci() {
+        let _ = std::fs::remove_file(&qmp_path);
+        command.arg("-qmp");
+        command.arg(format!(
+            "unix:path={},server=on,wait=off",
+            qmp_path.display()
+        ));
+    }
     command
         .args(&machine_arguments)
         .arg("-kernel")
@@ -358,14 +378,8 @@ pub(crate) fn run(
         // SAFETY: irrelevant -- this is a host side, not a guest one.
         let mut stdin = child.stdin.take().expect("the monitor's stdin");
         let log_for_keys = log_path.clone();
+        let qmp_for_keys = qmp_path.clone();
         std::thread::spawn(move || {
-            // The keys go in **after** the boot's own program exercise reads
-            // the console: that check asserts nothing was typed, and a report
-            // still in the queue when it runs is bytes the check did not
-            // expect -- measured, exit 255.  The log is the signal: when it
-            // names every program exited, the exercise is over and the keys
-            // are safe.  A boot that never gets there is a boot the keys were
-            // never for.
             // The keys go in **after** the boot's own program exercise reads
             // the console: that check asserts nothing was typed, and a report
             // still in the queue when it runs is bytes the check did not
@@ -383,12 +397,16 @@ pub(crate) fn run(
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            for key in ["a", "b"] {
+            // The USB keyboard hears the monitor's key, and the virtio one
+            // hears the key QMP addresses to the console it is bound to.
+            // `a` and `b` so a reader can tell the two reports apart.
+            {
                 use std::io::Write as _;
-                let _ = writeln!(stdin, "sendkey {key}");
+                let _ = writeln!(stdin, "sendkey a");
                 let _ = stdin.flush();
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
+            send_key_over_qmp(&qmp_for_keys, "b");
             // The monitor stays open; QEMU owns the pipe from here.
             std::mem::forget(stdin);
         });
@@ -428,5 +446,68 @@ pub(crate) fn run(
         // it after a failure has to ask for a path.
         let _ = std::fs::remove_file(&log_path);
     }
+    let _ = std::fs::remove_file(&qmp_path);
     Ok(text)
 }
+
+/// Type one key at the virtio keyboard, through QMP.
+///
+/// The monitor's `sendkey` reaches the first input handler that named no
+/// console, and that is the USB keyboard.  This path is the other half: QEMU's
+/// input layer has exactly one handler per event, and `input-send-event` names
+/// the **console** whose handler takes it, so the key arrives at the virtio
+/// keyboard the machine bound to that console and at nothing else.
+///
+/// A failure here is silent on purpose: the machine's log is what says whether
+/// the key arrived, and a thread that printed its own error would be a second
+/// account of one fact.  A key that never arrives leaves the gate's line
+/// missing, which is the failure this caller wants seen.
+fn send_key_over_qmp(qmp_path: &std::path::Path, qcode: &str) {
+    use std::io::Read as _;
+    use std::io::Write as _;
+
+    // QEMU creates the socket at startup, so a connect that fails is a machine
+    // that has not got there yet.
+    let mut connected = None;
+    for _ in 0..100 {
+        match std::os::unix::net::UnixStream::connect(qmp_path) {
+            Ok(stream) => {
+                connected = Some(stream);
+                break;
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    let Some(mut stream) = connected else {
+        return;
+    };
+
+    // QMP greets, and wants the capability handshake before anything else.
+    // The replies are read rather than parsed: this caller asks one question
+    // and the machine's log is the answer it can check.
+    let mut reply = [0u8; 4096];
+    let _ = stream.read(&mut reply);
+    let _ = writeln!(stream, "{{\"execute\":\"qmp_capabilities\"}}");
+    let _ = stream.read(&mut reply);
+
+    // A press and the release that follows it, the pair a real key sends.
+    for down in [true, false] {
+        let event = format!(
+            "{{\"execute\":\"input-send-event\",\"arguments\":{{\"device\":\"{VGA_CONSOLE_ID}\",\
+             \"events\":[{{\"type\":\"key\",\"data\":{{\"down\":{down},\
+             \"key\":{{\"type\":\"qcode\",\"data\":\"{qcode}\"}}}}}}]}}}}"
+        );
+        let _ = writeln!(stream, "{event}");
+        let _ = stream.read(&mut reply);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// The console the virtio keyboard is bound to, as the machine's arguments
+/// name it.
+///
+/// Two copies of one name, here and in `machine.rs`, because the device is
+/// created there and addressed here: a drift would be a key typed at a
+/// console no keyboard is bound to, which QEMU refuses with "not bound to a
+/// QemuConsole" rather than delivering it anywhere.
+const VGA_CONSOLE_ID: &str = "disp0";

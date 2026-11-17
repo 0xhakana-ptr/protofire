@@ -1,0 +1,24 @@
+[package]
+name = "virtio_input"
+description = "the VirtIO input device: the event queue, the event's wire shape, and the key codes it carries"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The VirtIO input device over the framework `virtio_core` provides: one
+# event queue, whose buffers the driver keeps posted and whose completions a
+# caller drains, and the eight-byte event the specification defines.
+#
+# The device reports Linux evdev key codes, not scancodes and not
+# characters; translating them into what this tree's console reads is the
+# caller's business, which is why the callback takes the event and not a
+# meaning.  This is a new driver rather than a relocation: the previous
+# tree's virtio_input was the MMIO device on the device-tree machines, and
+# this one speaks the PCI transport this tree's virtio devices share.
+[dependencies]
+virtio_core = { path = "../core" }
+spin.workspace = true
+
+[dev-dependencies]
+

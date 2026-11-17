@@ -191,6 +191,31 @@ half is `drivers/usb/xhci` at layer 0, relocated out of the previous tree's
 drivers, with twenty-four host tests on the TRB layout, the descriptor walk,
 the report parser and the SCSI command blocks.
 
+**Virtio input** is up beside the USB device, and the tree now has two
+keyboards whose reports are both in the log.  `drivers/virtio/input` at layer 7
+holds the device: one event queue whose buffers the driver keeps posted, the
+specification's eight-byte event, and a `drain` that hands the caller the event
+rather than a meaning.  `kernel/src/virtio_input.rs` is where an evdev key code
+becomes a scancode, through the same table `usb_hid` already uses.  Its
+evidence, required lines of the x86_64 gate:
+`protofire: virtio-input up, event queue posted` and
+`[vioin] device event: kind=1, code=48, value=1`.
+
+That second key arrives through a **different channel** from the first, and the
+reason is a property of the emulator worth recording.  QEMU's input layer
+delivers an event to one handler, not to every device that takes input:
+`qemu_input_find_handler` returns the first match and
+`qemu_input_event_send_impl` calls exactly that one.  Measured, adding the
+virtio keyboard made the USB keyboard's `[hid  ]` line vanish while the virtio
+one's arrived, which is the same unicast seen from the other side.  So the two
+keyboards are routed apart: the virtio one is bound to its own console
+(`VGA,id=disp0`, with `-vga none` so the machine still has exactly one display
+for the kernel's probe), the monitor's `sendkey` names no console and reaches
+the USB keyboard, and QMP's `input-send-event` names that console and reaches
+this one.  `input-send-event`'s `device` argument is a **console** and not a
+device: a version that passed a keyboard's id made QEMU abort with
+`Property 'qemu-fixed-text-console.device' not found`.
+
 The PC speaker is the one driver whose value a serial port cannot carry: the
 boot plays 1000 Hz and silences it, and
 `protofire: pcspkr played 1000 Hz, then silenced` is the required line.  What a

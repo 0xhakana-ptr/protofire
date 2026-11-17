@@ -952,6 +952,18 @@ impl Machine {
                 ("[usbmsd] recorded as block device 2", true),
                 ("[xhci  ] HID keyboard ready at slot 2", true),
                 ("[hid  ] keyboard report: modifiers=", false),
+                // The virtio keyboard's own key, typed through QMP.  The
+                // evdev code for `b` is 48 and a press is a value of one.
+                //
+                // The two keyboards are typed through two channels because
+                // QEMU's input layer hands a key to **one** handler: the
+                // monitor's `sendkey` names no console and reaches the USB
+                // keyboard, whose report is the `[hid  ]` line above, and
+                // `input-send-event` names the console the virtio keyboard is
+                // bound to, whose event is this line.  One line per path is
+                // what says each path delivered rather than one of them.
+                ("protofire: virtio-input up, event queue posted", true),
+                ("[vioin] device event: kind=1, code=48, value=1", true),
                 (
                     "protofire: filesystem mounted and read /greeting.txt through syscall open/read/close, label ",
                     false,

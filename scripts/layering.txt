@@ -289,6 +289,15 @@
 # has to be above the framework — layer 7, beside `fs`.
 7 virtio_block
 
+# `virtio_input` is the input device on the same framework: one event queue
+# whose buffers the driver keeps posted, and the eight-byte event the
+# specification defines.  It is a new driver rather than a relocation -- the
+# previous tree's virtio_input was the MMIO device on its device-tree
+# machines, and this one speaks the PCI transport this tree's virtio devices
+# share.  What the events mean to a console is the caller's business, which
+# is why the drain hands the caller the event and not a meaning.
+7 virtio_input
+
 # `virtio_net` is the second device on the framework, and the one that proved
 # every queue operation had to name its queue: a block device uses one queue, so
 # its driver could not tell "the queue I selected" from "the queue I mean", and a
