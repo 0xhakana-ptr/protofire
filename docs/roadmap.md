@@ -66,7 +66,7 @@ sh scripts/check-crate-tests.sh            # every crate, its lines, its tests
 sh scripts/check-layering.sh               # the crates and their layers
 ```
 
-The tree is **199,076 lines of Rust across 47 crates**, which is
+The tree is **199,216 lines of Rust across 47 crates**, which is
 `find . -name '*.rs' -not -path './target/*' | xargs cat | wc -l` and not the
 census's sum: that one walks each crate's directory and so counts the three
 machine crates twice, inside `arch/` and on their own.
@@ -683,7 +683,7 @@ list too: a stream advertises the room it has and refuses a byte past it.
 ### The rest of the road: rewriting what the previous kernel had
 
 The previous kernel was 301,718 lines across nine module trees; this one is
-199,076 across 47 crates.  The difference is not lost work, it is work the new
+199,216 across 47 crates.  The difference is not lost work, it is work the new
 architecture has to **do again, in its own shape**, and that word is the
 important one.
 
@@ -806,7 +806,7 @@ belong to their modules until a third user appears; and **a journal for the
 formats that need none**.  `ext4`'s journal is the template because it is the
 hardest case, not because every filesystem has to grow one.
 
-### Level 7, the drivers
+### Level 7, the drivers, **done**
 
 The old tree's `drivers/` was 18,828 lines and this tree has virtio-blk and
 virtio-net.  The migration is **six bodies of work plus what the old tree did
@@ -856,7 +856,14 @@ size.
   made it four.  The number is still exact and the comment now says what it
   counts.
 
-**What is left, in the order it matters:**
+**What is left, in the order it matters.  Every item below landed, and the
+numbering is kept because the order is the argument.**  Each paragraph began as
+"it is not here yet" and now ends with what landed and the boot line that shows
+it, which makes the heading wrong and the order still right: 7.1, 7.2a and 7.2b
+came first because a console changes what a demonstration *is*, and the rest
+followed in that order.  The one thing the section still states as absent is
+VIRGL, and its paragraph says why: the machine this host can configure does not
+offer it.
 
 1. **The framebuffer console.**  This is the one that changes what the machine
    *is*.  Today a boot has a serial port and nothing else, so every
