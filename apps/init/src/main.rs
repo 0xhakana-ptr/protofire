@@ -1268,6 +1268,24 @@ pub extern "C" fn _start() -> ! {
     insist(sys_close(notes));
     insist(sys_close(tmp));
 
+    // A pointer the kernel must refuse: one page above the mapping above, so
+    // the address is inside this program's window and **not** mapped.  This is
+    // the defect the check exists for.  Until `user_range` walked the page
+    // tables, a range like this passed the window test and the kernel
+    // dereferenced it, and a kernel-mode fault stopped the machine; the boot
+    // would have ended at the fault line instead of at this exit.
+    //
+    // The call is `open`, whose first argument is a path pointer this kernel
+    // copies byte by byte, and whose answer for a refused range is
+    // `InvalidArgument`.  A raw `syscall6` rather than a wrapper, because the
+    // point is to hand the kernel a number no Rust slice could name: the whole
+    // defect is that a word is not an address.
+    let unmapped = mapping + MMAP_BYTES;
+    let refused = user_abi::syscall6(user_abi::SYS_OPEN, unmapped, OPEN_READ, 0, 0, 0, 0);
+    if user_abi::decode_error(refused) != Some(user_abi::INVALID_ARGUMENT) {
+        sys_exit(232);
+    }
+
     sys_exit(first)
 }
 

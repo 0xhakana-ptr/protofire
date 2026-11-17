@@ -107,14 +107,14 @@ pub(crate) fn serve_signals(
                 abi::Error::InvalidArgument,
             )));
         }
-        if !crate::address_space::is_user_range(record, length) {
+        if !crate::address_space::user_range(record, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
         }
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handler writes
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handler writes
         // the record and nothing past it.
         let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         match crate::scheduler::wait_signal(frame) {
@@ -170,14 +170,14 @@ pub(crate) fn serve_signals(
                 abi::Error::InvalidArgument,
             )));
         }
-        if !crate::address_space::is_user_range(record, length) {
+        if !crate::address_space::user_range(record, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
         }
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.
         let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         match crate::scheduler::sigsuspend(frame, mask as u32) {
             Some((signal, sender_pid, payload)) => {

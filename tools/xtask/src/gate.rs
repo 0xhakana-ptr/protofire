@@ -1208,6 +1208,23 @@ impl Machine {
                 ("protofire: loaded /bin/init, ", false),
                 ("protofire: process 1 exec'd /bin/init", true),
                 ("protofire: process 1 opened /greeting.txt", true),
+                // The refused pointer: an address inside the program's own
+                // window that its page tables do not map.  This is the line the
+                // defect produced as a **kernel fault** and a stopped machine
+                // before `user_range` walked the root; requiring it is
+                // requiring that the check ran on a real call from ring 3 and
+                // answered `InvalidArgument` instead of dereferencing the
+                // number.
+                //
+                // A prefix, because the address is the program's mapping and
+                // moves with it.  The program asserts the specific error itself
+                // (exit 232 on anything else), so a kernel that refused for
+                // some other reason fails on the status rather than passing
+                // here.
+                (
+                    "protofire: refused a pointer to an unmapped page at ",
+                    false,
+                ),
                 // The child's death, as the kernel reports it: which process,
                 // the address its write named, and the status the pair reads.
                 // A prefix, because the address is the program's own code page
@@ -1387,6 +1404,23 @@ impl Machine {
                     ("protofire: loaded /bin/init, ", false),
                     ("protofire: process 1 exec'd /bin/init", true),
                     ("protofire: process 1 opened /greeting.txt", true),
+                    // The refused pointer: an address inside the program's own
+                    // window that its page tables do not map.  This is the line
+                    // the defect produced as a **kernel fault** and a stopped
+                    // machine before `user_range` walked the root; requiring it
+                    // is requiring that the check ran on a real call from ring
+                    // 3 and answered `InvalidArgument` instead of dereferencing
+                    // the number.
+                    //
+                    // A prefix, because the address is the program's mapping
+                    // and moves with it.  The program asserts the specific
+                    // error itself (exit 232 on anything else), so a kernel
+                    // that refused for some other reason fails on the status
+                    // rather than passing here.
+                    (
+                        "protofire: refused a pointer to an unmapped page at ",
+                        false,
+                    ),
                     // The child's death, as the kernel reports it: which
                     // process, the address its write named, and the status
                     // the pair reads.  A prefix, because the address is the
@@ -2505,6 +2539,23 @@ impl Machine {
                 ("protofire: loaded /bin/init, ", false),
                 ("protofire: process 1 exec'd /bin/init", true),
                 ("protofire: process 1 opened /greeting.txt", true),
+                // The refused pointer: an address inside the program's own
+                // window that its page tables do not map.  This is the line the
+                // defect produced as a **kernel fault** and a stopped machine
+                // before `user_range` walked the root; requiring it is
+                // requiring that the check ran on a real call from ring 3 and
+                // answered `InvalidArgument` instead of dereferencing the
+                // number.
+                //
+                // A prefix, because the address is the program's mapping and
+                // moves with it.  The program asserts the specific error itself
+                // (exit 232 on anything else), so a kernel that refused for
+                // some other reason fails on the status rather than passing
+                // here.
+                (
+                    "protofire: refused a pointer to an unmapped page at ",
+                    false,
+                ),
                 // The child's death, as the kernel reports it: which process,
                 // the address its write named, and the status the pair reads.
                 // A prefix, because the address is the program's own code page

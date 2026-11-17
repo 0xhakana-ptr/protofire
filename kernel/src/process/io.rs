@@ -35,7 +35,7 @@ pub(crate) fn serve_io(
         let descriptor = call.arguments[0];
         let buffer = call.arguments[1];
         let length = call.arguments[2];
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -104,7 +104,7 @@ pub(crate) fn serve_io(
         let descriptor = call.arguments[0];
         let buffer = call.arguments[1];
         let length = call.arguments[2];
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -174,7 +174,7 @@ pub(crate) fn serve_io(
         let descriptor = call.arguments[0];
         let buffer = call.arguments[1];
         let length = call.arguments[2];
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -185,8 +185,8 @@ pub(crate) fn serve_io(
             )));
         };
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The stream's send
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The stream's send
         // reads the bytes; a copy-on-write page demoted by an earlier write
         // faults into the resolver like any other access.
         let source = unsafe { core::slice::from_raw_parts(buffer as *const u8, length) };
@@ -212,7 +212,7 @@ pub(crate) fn serve_io(
         // it is before it has anything to write through.
         let buffer = call.arguments[0];
         let length = call.arguments[1];
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -220,9 +220,9 @@ pub(crate) fn serve_io(
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        // SAFETY: the range is inside the user window, which `is_user_range`
-        // checked, and the pages behind it are the calling task's own mappings,
-        // installed on this CPU.  The bytes are read and nothing is written.
+        // SAFETY: the range is inside the user window and mapped in the calling
+        // task's own root, which `user_range` checked.  The bytes are read and
+        // nothing is written.
         let source = unsafe { core::slice::from_raw_parts(buffer as *const u8, length) };
         // Through the arch console and not the registry.  The registry's
         // `Arguments` carries a `&mut [u8]`, which is right for a call that
@@ -242,7 +242,7 @@ pub(crate) fn serve_io(
         // so the range is checked before the registry sees it.
         let buffer = call.arguments[1];
         let length = call.arguments[2];
-        if length == 0 || !crate::address_space::is_user_range(buffer, length) {
+        if length == 0 || !crate::address_space::user_range(buffer, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -250,9 +250,9 @@ pub(crate) fn serve_io(
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        // SAFETY: the range is inside the user window, which `is_user_range`
-        // checked, and the pages behind it are the calling task's own
-        // mappings.  The handler writes the record and nothing past it.
+        // SAFETY: the range is inside the user window and mapped in the calling
+        // task's own root, which `user_range` checked.  The handler writes the
+        // record and nothing past it.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
         let outcome = through_registry(&mut context, None, None, Some(destination));
         if let CallOutcome::Return(answer) = outcome
@@ -295,7 +295,7 @@ pub(crate) fn serve_io(
         if length == 0 {
             return Some(CallOutcome::Return(0));
         }
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -303,10 +303,9 @@ pub(crate) fn serve_io(
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        // SAFETY: the range is inside the user window, which `is_user_range`
-        // checked, and the pages behind it are the calling task's own
-        // mappings.  The handler writes the bytes it read and nothing past
-        // the length.
+        // SAFETY: the range is inside the user window and mapped in the calling
+        // task's own root, which `user_range` checked.  The handler writes the
+        // bytes it read and nothing past the length.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
         return Some(through_registry(
             &mut context,
@@ -328,7 +327,7 @@ pub(crate) fn serve_io(
         // ring 3 is a number until something checks it.
         let buffer = call.arguments[1];
         let length = call.arguments[2];
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -337,8 +336,8 @@ pub(crate) fn serve_io(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handler reads the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handler reads the
         // bytes; a copy-on-write page demoted by an earlier write faults into
         // the resolver like any other access.
         let source = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
@@ -533,7 +532,7 @@ pub(crate) fn serve_io(
         if length == 0 {
             return Some(CallOutcome::Return(0));
         }
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -596,7 +595,7 @@ pub(crate) fn serve_io(
         let descriptor = call.arguments[0];
         let buffer = call.arguments[1];
         let length = call.arguments[2];
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -721,11 +720,11 @@ pub(crate) fn serve_io(
     // *borrows*, a shape that exists precisely so no handler ever turns a
     // word into a pointer.  A program cannot hand over a borrow: it hands over
     // words, and this is the one place that turns them back, behind the check
-    // that makes the turn sound.  `is_user_range` says the range is one a
-    // program of this kernel could have mapped; the pages behind it are the
-    // calling task's own, installed on this CPU, and a write into one that
-    // copy-on-write demoted faults into the resolver, which is why that path
-    // exists.
+    // that makes the turn sound.  `user_range` asks two questions: the range is
+    // one a program of this kernel could have mapped, and every page of it is
+    // mapped in the calling task's own root, for reading or for writing as the
+    // call needs.  A write into a page copy-on-write demoted is admitted
+    // because the resolver can serve that fault, which is why that path exists.
     if number == SyscallNumber::Open as usize {
         // `Open(path, flags)`: the path is a NUL-terminated string in the
         // caller's memory, the flags are the ABI's own open flags, and the two
@@ -791,7 +790,7 @@ pub(crate) fn serve_io(
         if length == 0 {
             return Some(CallOutcome::Return(0));
         }
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -803,8 +802,8 @@ pub(crate) fn serve_io(
         .with_identity(security::mac::MAC_TYPE_SYSTEM)
         .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handler writes only
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handler writes only
         // what the filesystem read.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
         return Some(through_registry(
@@ -942,21 +941,21 @@ pub(crate) fn serve_io(
         };
         let name = call.arguments[1];
         let name_length = call.arguments[2];
-        if !crate::address_space::is_user_range(name, name_length) {
+        if !crate::address_space::user_range(name, name_length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
         }
         let value = call.arguments[3];
         let value_length = call.arguments[4];
-        if !crate::address_space::is_user_range(value, value_length) {
+        if !crate::address_space::user_range(value, value_length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
         }
         // SAFETY: both ranges are inside the user window, which
-        // `is_user_range` checked, and the pages behind them are the calling
-        // task's own mappings, installed on this CPU.  The handler reads both
+        // `user_range` checked, and the pages behind them are mapped in the
+        // calling task's own root.  The handler reads both
         // and writes neither.
         let name = unsafe { core::slice::from_raw_parts_mut(name as *mut u8, name_length) };
         let value = unsafe { core::slice::from_raw_parts(value as *const u8, value_length) };
@@ -987,22 +986,21 @@ pub(crate) fn serve_io(
         };
         let name = call.arguments[1];
         let name_length = call.arguments[2];
-        if !crate::address_space::is_user_range(name, name_length) {
+        if !crate::address_space::user_range(name, name_length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
         }
         let destination = call.arguments[3];
         let length = call.arguments[4];
-        if !crate::address_space::is_user_range(destination, length) {
+        if !crate::address_space::user_range(destination, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
         }
-        // SAFETY: both ranges are inside the user window, which
-        // `is_user_range` checked, and the pages behind them are the calling
-        // task's own mappings.  The handler writes the destination and reads
-        // the name.
+        // SAFETY: both ranges are inside the user window and mapped in the
+        // calling task's own root, which `user_range` checked.  The handler
+        // writes the destination and reads the name.
         let name = unsafe { core::slice::from_raw_parts(name as *const u8, name_length) };
         let destination =
             unsafe { core::slice::from_raw_parts_mut(destination as *mut u8, length) };
@@ -1038,7 +1036,7 @@ pub(crate) fn serve_io(
         };
         let buffer = call.arguments[1];
         let length = call.arguments[2];
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1046,9 +1044,9 @@ pub(crate) fn serve_io(
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        // SAFETY: the range is inside the user window, which `is_user_range`
-        // checked, and the pages behind it are the calling task's own
-        // mappings.  The handler writes the packed list and nothing past it.
+        // SAFETY: the range is inside the user window and mapped in the calling
+        // task's own root, which `user_range` checked.  The handler writes the
+        // packed list and nothing past it.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
         let outcome = through_registry(&mut context, Some(path), None, Some(destination));
         if let CallOutcome::Return(filled) = outcome
@@ -1072,7 +1070,7 @@ pub(crate) fn serve_io(
         };
         let name = call.arguments[1];
         let name_length = call.arguments[2];
-        if !crate::address_space::is_user_range(name, name_length) {
+        if !crate::address_space::user_range(name, name_length, false) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1102,7 +1100,7 @@ pub(crate) fn serve_io(
             };
         let record = call.arguments[record_argument];
         let length = call.arguments[record_argument + 1];
-        if !crate::address_space::is_user_range(record, length) {
+        if !crate::address_space::user_range(record, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1123,9 +1121,9 @@ pub(crate) fn serve_io(
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        // SAFETY: the range is inside the user window, which `is_user_range`
-        // checked, and the pages behind it are the calling task's own
-        // mappings.  The handler writes the record and nothing past it.
+        // SAFETY: the range is inside the user window and mapped in the calling
+        // task's own root, which `user_range` checked.  The handler writes the
+        // record and nothing past it.
         let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         let outcome = through_registry(&mut context, path, None, Some(destination));
         if matches!(outcome, CallOutcome::Return(0)) && length >= 8 {
@@ -1159,7 +1157,7 @@ pub(crate) fn serve_io(
         };
         let record = call.arguments[2];
         let length = call.arguments[3];
-        if !crate::address_space::is_user_range(record, length) {
+        if !crate::address_space::user_range(record, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1188,7 +1186,7 @@ pub(crate) fn serve_io(
         };
         let record = call.arguments[record_argument];
         let length = call.arguments[record_argument + 1];
-        if !crate::address_space::is_user_range(record, length) {
+        if !crate::address_space::user_range(record, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1250,7 +1248,7 @@ pub(crate) fn serve_io(
                 )));
             }
         };
-        if !crate::address_space::is_user_range(array, length) {
+        if !crate::address_space::user_range(array, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1258,10 +1256,9 @@ pub(crate) fn serve_io(
         let mut context = syscall::SyscallContext::new(number, call.arguments)
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
-        // SAFETY: the range is inside the user window, which `is_user_range`
-        // checked, and the pages behind it are the calling task's own
-        // mappings.  The handler writes each record's `revents` and nothing
-        // past the array.
+        // SAFETY: the range is inside the user window and mapped in the calling
+        // task's own root, which `user_range` checked.  The handler writes each
+        // record's `revents` and nothing past the array.
         let records = unsafe { core::slice::from_raw_parts_mut(array as *mut u8, length) };
         let outcome = through_registry(&mut context, None, None, Some(records));
         if let CallOutcome::Return(ready) = outcome
@@ -1312,7 +1309,7 @@ pub(crate) fn serve_io(
         };
         let record = call.arguments[1];
         let length = call.arguments[2];
-        if !crate::address_space::is_user_range(record, length) {
+        if !crate::address_space::user_range(record, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1321,8 +1318,8 @@ pub(crate) fn serve_io(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handler writes the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handler writes the
         // record and nothing past it.
         let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         let outcome = through_registry(&mut context, Some(path), None, Some(destination));
@@ -1426,7 +1423,7 @@ pub(crate) fn serve_io(
         };
         let buffer = call.arguments[2];
         let length = call.arguments[3];
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1435,8 +1432,8 @@ pub(crate) fn serve_io(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handler writes the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handler writes the
         // record and the name, and nothing past either.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
         let outcome = through_registry(&mut context, Some(path), None, Some(destination));
@@ -1474,7 +1471,7 @@ pub(crate) fn serve_io(
         } else {
             (call.arguments[2], call.arguments[3])
         };
-        if !crate::address_space::is_user_range(buffer, length) {
+        if !crate::address_space::user_range(buffer, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1483,8 +1480,8 @@ pub(crate) fn serve_io(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The stat writes the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The stat writes the
         // sixteen-byte record and the listing writes the record and the name,
         // nothing past either.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
@@ -1557,7 +1554,7 @@ pub(crate) fn serve_io(
         };
         let record = call.arguments[2];
         let length = call.arguments[3];
-        if !crate::address_space::is_user_range(record, length) {
+        if !crate::address_space::user_range(record, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -1566,8 +1563,8 @@ pub(crate) fn serve_io(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handler writes the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handler writes the
         // record and nothing past it.
         let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         let outcome = through_registry(&mut context, Some(path), None, Some(destination));
@@ -1652,7 +1649,7 @@ pub(crate) fn serve_io(
         let buffer = call.arguments[2];
         let length = call.arguments[3];
         if offset != crate::syscall::READ_OFFSET_CURRENT
-            || !crate::address_space::is_user_range(buffer, length)
+            || !crate::address_space::user_range(buffer, length, true)
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
@@ -1664,8 +1661,8 @@ pub(crate) fn serve_io(
             )));
         };
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The stream's receive
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The stream's receive
         // writes the buffer and nothing past it.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
 

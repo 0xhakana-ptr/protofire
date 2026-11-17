@@ -21,17 +21,34 @@ path named here has to exist.
 ## Known defects
 
 Five kernel defects and three engineering ones were reported against this tree
-by a contributor, and all five kernel ones were confirmed against the code.
-They are **recorded here rather than fixed** because each needs a change of its
-own and a test that fails without it, and because the reason they survived every
-green gate is itself worth stating: the boot's programs are this tree's, and
-nothing in it ever hands the kernel a pointer, an ELF or a fault it did not
-mean.  `docs/roadmap.md`'s Level 7.5 states each one with its code site, its
-severity, and the order they should land.
+by a contributor, and all five kernel ones were confirmed against the code.  Each
+needs a change of its own and a test that fails without it, and the reason they
+survived every green gate is itself worth stating: the boot's programs are this
+tree's, and nothing in it ever handed the kernel a pointer, an ELF or a fault it
+did not mean.  `docs/roadmap.md`'s Level 7.5 states each one with its code site,
+its severity, and the order they should land.
 
-- **A user pointer's value is checked and its mapping is not.** Every
-  `is_user_range` caller dereferences the address afterwards, and an unmapped
-  one faults in the kernel, where `interrupts::handle` has no kernel-mode arm.
+**Fixed.**
+
+- **A user pointer's value is checked and its mapping is not.**  Fixed by
+  `address_space::user_range(address, length, write)`, which keeps the window
+  arithmetic and then walks **the running task's own root** one page at a time,
+  through `table::range_allowed`.  Every buffer-taking call site now calls it:
+  `open`, `read`, `write`, `stat` and its three relatives, the directory
+  listings, the four extended-attribute calls, the three permission-metadata
+  reads, the three access queries, `poll`, the signal record, every socket and
+  raw-packet buffer, and the two `copy_user_*` helpers.  A **write** is admitted
+  on a page the table marks writable and on one the pool marks copy-on-write,
+  because that second case is what a fork leaves and refusing it would break
+  every program that forked; a read needs only a mapped, user-reachable page.
+  The evidence is a line the refusal path prints and the gate requires on all
+  three machines, `protofire: refused a pointer to an unmapped page at ...`,
+  produced by a call from `/bin/init` with an address inside its own window and
+  outside its mappings; with the walk removed the same boot takes 1,737 kernel
+  faults at one instruction and never ends.
+
+**Open.**
+
 - **W^X is declared and bypassed.** `AddressSpace::map` hardcodes
   `executable: true`, the fork path maps every page through it, and the
   copy-on-write resolver widens with `..entry.permissions`, which keeps the

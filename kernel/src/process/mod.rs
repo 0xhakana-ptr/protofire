@@ -209,12 +209,15 @@ fn copy_user_name(
     length: usize,
     bytes: &mut [u8; NAME_MAX],
 ) -> Result<&str, abi::Error> {
-    if length == 0 || length > NAME_MAX || !crate::address_space::is_user_range(name_ptr, length) {
+    if length == 0
+        || length > NAME_MAX
+        || !crate::address_space::user_range(name_ptr, length, false)
+    {
         return Err(abi::Error::InvalidArgument);
     }
-    // SAFETY: the range is inside the user window and not empty, which
-    // `is_user_range` checked, and the pages behind it are the calling task's
-    // own mappings, installed on this CPU.
+    // SAFETY: the range is inside the user window and mapped in the calling
+    // task's own root, which `user_range` checked, and the pages behind it are
+    // that task's mappings, installed on this CPU.
     let source = unsafe { core::slice::from_raw_parts(name_ptr as *const u8, length) };
     bytes[..length].copy_from_slice(source);
     core::str::from_utf8(&bytes[..length]).map_err(|_| abi::Error::InvalidArgument)
@@ -229,13 +232,21 @@ const NAME_MAX: usize = abi::network::HOST_NAME_MAX;
 fn copy_user_path(path_ptr: usize, bytes: &mut [u8; OPEN_PATH_MAX]) -> Result<&str, abi::Error> {
     let mut length = 0;
     loop {
-        if length == OPEN_PATH_MAX || !crate::address_space::is_user_range(path_ptr + length, 1) {
+        // The add is checked, not the sum: `path_ptr + length` overflows for a
+        // pointer near the top of the address space, which a debug build turns
+        // into a panic **in the kernel** and a release build into a wrapped
+        // number that the window check would then judge on its own, probably
+        // admitting it.  A caller that names `usize::MAX` is one the kernel
+        // must refuse, not one it computes an address for.
+        let Some(address) = path_ptr.checked_add(length) else {
+            return Err(abi::Error::InvalidArgument);
+        };
+        if length == OPEN_PATH_MAX || !crate::address_space::user_range(address, 1, false) {
             return Err(abi::Error::InvalidArgument);
         }
-        // SAFETY: the byte is inside the user window, which `is_user_range`
-        // just checked, and the pages behind it are the calling task's own
-        // mappings, installed on this CPU.
-        let byte = unsafe { *((path_ptr + length) as *const u8) };
+        // SAFETY: the byte is in the user window and mapped in the calling
+        // task's own root, which `user_range` just checked.
+        let byte = unsafe { *(address as *const u8) };
         bytes[length] = byte;
         if byte == 0 {
             break;

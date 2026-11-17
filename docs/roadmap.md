@@ -1321,23 +1321,37 @@ it ever passes the kernel a pointer it did not mean.  They are recorded here as
 work with their evidence, ordered by what a program could do with them rather
 than by how hard they are to fix.
 
-**1. A user pointer's *value* is checked and its *mapping* is not.  P0.**
+**1. A user pointer's *value* is checked and its *mapping* is not.  P0.
+Fixed.**
 
-`address_space::is_user_range` is the whole validation most call sites do, and
-its own doc comment says what it does not check: "what it does **not** check is
+`address_space::is_user_range` was the whole validation most call sites did, and
+its own doc comment said what it did not check: "what it does **not** check is
 that the pages are mapped".  Then `copy_user_path` and the `from_raw_parts`
-calls below it dereference the address.  A program that passes a number inside
-the window and outside its mappings faults **in the kernel**, and
-`interrupts::handle` has no kernel-mode arm: it tries the write fault as
-copy-on-write, then `describe_fault`, then answers `false` and the machine
-stops.  Every `Open`, `WaitSignal`, socket send and the three paths just added
-for the extended attributes reach user memory this way.
+calls below it dereferenced the address.  A program that passed a number inside
+the window and outside its mappings faulted **in the kernel**, and
+`interrupts::handle` has no kernel-mode arm: it tried the write fault as
+copy-on-write, then `describe_fault`, then answered `false` and the machine
+stopped.
 
-What a fix needs is a real `copy_from_user`/`copy_to_user`: a page-table walk
-against **the calling task's own root** rather than the window's bounds, or an
-exception-table fixup that resumes the copy at the instruction after it.  The
-first is cheaper here, because `address_space` already owns the walk
-(`permissions_of`) and the scheduler already hands a handler the current space.
+The fix took the first of the two shapes named here.  `address_space::user_range`
+keeps the window arithmetic and then walks **the running task's own root** one
+page at a time, through `table::range_allowed`, which shares the leaf walk with
+`permissions_of` so the validator and the fault handler cannot disagree about a
+page.  A write is admitted on a page the table marks writable **and** on one the
+pool marks copy-on-write, because refusing the second would break every program
+that forked, whose pages are read-only in the table by design.  Every
+buffer-taking call site now goes through it, including the two `copy_user_*`
+helpers, and `copy_user_path` grew a `checked_add` because the loop's own
+`path_ptr + length` was the second unchecked addition in the same file.
+
+The evidence, and it is two-sided.  `/bin/init` calls `open` with an address one
+page past its own mapping: the boot prints
+`protofire: refused a pointer to an unmapped page at 0x8080000000, for a read`
+and the program asserts the answer is `InvalidArgument` (exit 232 on anything
+else; it exits 116, the greeting's first byte).  With the walk short-circuited
+the same boot takes **1,737** `fault at 0x8080000000, read, not mapped` lines at
+`rip 0x136534` and never reaches its exit.  The gate requires the refusal line on
+all three machines, so a boot that stops walking the root fails there.
 
 **2. W^X is declared and bypassed in two places.  P0.**
 

@@ -1958,15 +1958,22 @@ pub fn send_to_udp(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> R
 /// the number stops being a number: `a1` is an address only when the flag says
 /// it is one, and the two cases are one branch apart.
 ///
-/// A pointer outside the user window, or a length the window cannot hold, is
-/// [`Error::InvalidArgument`], the ABI's own refusal, and not a fault.
+/// A pointer outside the user window, a length the window cannot hold, or a
+/// page the calling task has not mapped is [`Error::InvalidArgument`], the
+/// ABI's own refusal, and not a fault.  The mapping is the check this function
+/// exists for: the window test alone admitted any number in a gigabyte, and the
+/// copy below then faulted with the kernel's own privilege.
+///
+/// A host build compiles this, because the four handlers that call it are
+/// ordinary code that happens to take a pointer; there `user_range` answers the
+/// window's question and the walk is the target's.
 fn read_user_address6(pointer: usize) -> Result<[u8; 16]> {
-    if !crate::address_space::is_user_range(pointer, 16) {
+    if !crate::address_space::user_range(pointer, 16, false) {
         return Err(Error::InvalidArgument);
     }
-    // SAFETY: the range is inside the user window, which `is_user_range`
-    // checked, and the pages behind it are the calling task's own mappings,
-    // installed on this CPU.  Sixteen bytes are read and nothing past them.
+    // SAFETY: the range is inside the user window and mapped in the calling
+    // task's own root, which `user_range` checked.  Sixteen bytes are read and
+    // nothing past them.
     let bytes = unsafe { core::slice::from_raw_parts(pointer as *const u8, 16) };
     let mut address = [0_u8; 16];
     address.copy_from_slice(bytes);

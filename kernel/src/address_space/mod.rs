@@ -54,15 +54,147 @@ pub const USER_LIMIT: usize = USER_BASE + USER_WINDOW * USER_WINDOWS;
 ///    one byte at the last valid address is fine; a read of four that crosses
 ///    the boundary is not.
 ///
-/// What it does **not** check is that the pages are mapped.  A valid-looking
-/// address into an unmapped page faults when the kernel touches it, and that
-/// fault is the program's, the kernel would have to copy the page tables into
-/// a walk to know, and a fault is the machine's own answer.
+/// What it does **not** check is that the pages are mapped, and it is not the
+/// check a call should use.  `user_range` is: it does the arithmetic here and
+/// then asks the page tables, which is the difference between "a number this
+/// kernel could have mapped" and "a page this program has".  This function
+/// remains because the arithmetic is exactly what a host can test, and because
+/// one caller, the loader, validates an address before any space exists to
+/// walk.
 pub fn is_user_range(address: usize, length: usize) -> bool {
     let Some(end) = address.checked_add(length) else {
         return false;
     };
     address >= USER_BASE && end <= USER_LIMIT
+}
+
+/// Whether every page `address` through `address + length` touches is one the
+/// running task actually has, for the access `write` names.
+///
+/// This is the check a handler calls before it turns a ring-3 word into a
+/// borrow, and it is two questions in one function on purpose:
+///
+/// 1. the window arithmetic, [`is_user_range`], which refuses a kernel address,
+///    a wrapping range and a range that crosses the window's end;
+/// 2. a walk of **the running task's own root**, one page at a time, which
+///    refuses an address that is inside the window and mapped to nothing.
+///
+/// The second question is the one that was missing.  `is_user_range` alone let
+/// a program pass any number in a gigabyte of address space that happened to be
+/// unmapped, and the kernel then dereferenced it; `interrupts::handle` has no
+/// kernel-mode arm, so the fault stopped the machine.  A walk costs the page
+/// tables and answers the program's mistake with `InvalidArgument`, which is a
+/// number the ABI defines and a program can act on.
+///
+/// A **write** is allowed on a page the table marks writable and on one the
+/// pool marks copy-on-write, which is a read-only entry a fork left: the fault
+/// that write would take is the recoverable one.  A read needs only a mapped,
+/// user-reachable page.
+///
+/// `false` also answers "no root is installed", which is a call made before any
+/// program ran.  The boot's own calls pass real addresses into the boot's own
+/// memory and do not come through here.
+///
+/// A host build has no page tables and no root register, so the walk is the
+/// target's; the window arithmetic is not, which is why this function compiles
+/// everywhere and answers the window's question on a host.  That keeps the
+/// handlers that call it buildable in a `cargo test --workspace`, which is what
+/// noticed the difference: a `target_os` gate here made four handlers fail to
+/// compile on the host, and they are ordinary code that happens to take a
+/// pointer.
+pub fn user_range(address: usize, length: usize, write: bool) -> bool {
+    if !is_user_range(address, length) {
+        // A range outside the window is a program that computed an address
+        // wrongly, and the line names it rather than leaving a reader to infer
+        // which call refused what.  This is the failure path of a check that is
+        // on every buffer-taking syscall, so the line is printed only when the
+        // answer is `false`: a boot that never prints it made no illegal call.
+        #[cfg(target_os = "none")]
+        {
+            arch::serial::write_str("protofire: refused a pointer outside the user window at ");
+            arch::serial::write_hex(address as u64);
+            arch::serial::write_str("\n");
+        }
+        return false;
+    }
+    // A zero-length range has no page to walk and is trivially the caller's.
+    // It is admitted here rather than by every caller, because a read of zero
+    // bytes from an unmapped address is not a memory access at all.
+    if length == 0 {
+        return true;
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        // A host has no page tables to walk, so the window's answer is the
+        // whole of what this build can say.  The tests below exercise the
+        // arithmetic; the walk is the target's and is exercised by a boot.
+        let _ = write;
+        true
+    }
+    #[cfg(target_os = "none")]
+    {
+        let Some(root) = arch::installed_root_table() else {
+            return false;
+        };
+        let guard = TABLES.lock();
+        if table::range_allowed(&guard, root, address, length, write) {
+            return true;
+        }
+        // The window test passed and the walk refused, which is the case this
+        // function was added for: an address a program could have mapped and
+        // did not.  The line is printed only on the refusal path, so a boot
+        // that made no illegal call prints nothing here, and a boot that made
+        // one names the address instead of stopping at a fault in the kernel.
+        arch::serial::write_str("protofire: refused a pointer to an unmapped page at ");
+        arch::serial::write_hex(address as u64);
+        arch::serial::write_str(if write {
+            ", for a write\n"
+        } else {
+            ", for a read\n"
+        });
+        false
+    }
+}
+
+/// Visit each page a range touches, answering whether every visit said yes.
+///
+/// A free function over a predicate rather than a loop in the walk, for the
+/// reason [`permissions_at`] is one: a host has no page tables, and the
+/// arithmetic that decides *which* pages a range names is the part that can be
+/// wrong in a way no walk would catch, a range that walks one page too few at a
+/// boundary, or one that loops for ever on a length near `usize::MAX`.
+///
+/// The last page is the one holding `address + length - 1`, so a range ending
+/// exactly on a page boundary does not visit the page after it.
+///
+/// Compiled for the target and for the tests, and nowhere else: the target's
+/// walk is its one production caller, and a host's only reader is the test
+/// below.  A host build with no test would have this function and no caller,
+/// which is what the lint says, and a `#[cfg(any(target_os = "none",
+/// test))]` is the honest description of who uses it.
+#[cfg(any(target_os = "none", test))]
+pub(crate) fn every_page(
+    address: usize,
+    length: usize,
+    mut visit: impl FnMut(usize) -> bool,
+) -> bool {
+    let Some(end) = address.checked_add(length) else {
+        return false;
+    };
+    if length == 0 {
+        return true;
+    }
+    let mut page = address & !(paging::PAGE_SIZE - 1);
+    let last = (end - 1) & !(paging::PAGE_SIZE - 1);
+    loop {
+        if !visit(page) {
+            return false;
+        }
+        if page == last {
+            return true;
+        }
+        page += paging::PAGE_SIZE;
+    }
 }
 
 /// The address of a linker symbol, by name.
@@ -533,6 +665,104 @@ mod tests {
         assert!(
             !is_user_range(usize::MAX - 1, 8),
             "an overflowing range is not a user range"
+        );
+    }
+
+    /// A range visits exactly the pages it touches, and no others.
+    ///
+    /// This is the arithmetic half of [`super::user_range`], and the four cases
+    /// below are the four ways it can be off by one:
+    ///
+    /// - one byte in the middle of a page visits that page only;
+    /// - a range ending **on** a boundary does not visit the page after it,
+    ///   which is the classic off-by-one and would refuse a legal buffer whose
+    ///   length happens to be a page multiple;
+    /// - a range starting at an offset and crossing the boundary visits two;
+    /// - a zero-length range visits nothing at all, which a loop that computed
+    ///   its last page without checking would turn into a wrap to page zero.
+    ///
+    /// The page numbers are counted as well as checked, because "the right
+    /// pages were visited" and "the right number of pages were visited" are
+    /// different claims and the second is what a range check needs.
+    #[test]
+    fn a_range_visits_the_pages_it_touches_and_no_others() {
+        use super::every_page;
+        use paging::PAGE_SIZE;
+
+        const BASE: usize = 0x80_0000_0000;
+
+        let mut seen = alloc::vec::Vec::new();
+        assert!(every_page(BASE + 0x100, 0x10, |page| {
+            seen.push(page);
+            true
+        }));
+        assert_eq!(seen, [BASE], "one byte in the middle of a page");
+
+        let mut seen = alloc::vec::Vec::new();
+        assert!(every_page(BASE, PAGE_SIZE, |page| {
+            seen.push(page);
+            true
+        }));
+        assert_eq!(
+            seen,
+            [BASE],
+            "a range ending on a boundary stops at the page it ends in"
+        );
+
+        let mut seen = alloc::vec::Vec::new();
+        assert!(every_page(BASE + PAGE_SIZE - 1, 2, |page| {
+            seen.push(page);
+            true
+        }));
+        assert_eq!(
+            seen,
+            [BASE, BASE + PAGE_SIZE],
+            "a range crossing a boundary visits both pages"
+        );
+
+        let mut visited = 0;
+        assert!(every_page(BASE, 0, |_| {
+            visited += 1;
+            true
+        }));
+        assert_eq!(visited, 0, "a zero-length range touches nothing");
+
+        // A refusal stops the walk: the predicate is the answer and a range
+        // whose third page is bad must not be walked further.
+        let mut visited = 0;
+        assert!(!every_page(BASE, PAGE_SIZE * 4, |_| {
+            visited += 1;
+            visited < 3
+        }));
+        assert_eq!(visited, 3, "the walk stopped at the page that refused");
+    }
+
+    /// A range that overflows visits nothing, rather than looping for ever.
+    ///
+    /// `address + length` overflows near the top of the address space, and an
+    /// unchecked `end - 1` there is the largest possible "last page": the loop
+    /// would climb from the start to that, wrapping, and never reach it.
+    ///
+    /// The second assertion is the one that keeps this test honest about what
+    /// it covers: `USER_LIMIT - 1 + 8` does **not** overflow, because the user
+    /// window ends far below `usize::MAX`, so the walk visits those pages and
+    /// refusing them is the window check's job and not this one's.  The two
+    /// questions are separate, which is why [`super::user_range`] asks the
+    /// window first.
+    #[test]
+    fn a_wrapping_range_visits_nothing() {
+        use super::every_page;
+        assert!(!every_page(usize::MAX - 1, 8, |_| true));
+
+        let mut visited = 0;
+        assert!(every_page(super::USER_LIMIT - 1, 8, |_| {
+            visited += 1;
+            true
+        }));
+        assert_eq!(visited, 2, "no overflow here, so the pages are walked");
+        assert!(
+            !super::is_user_range(super::USER_LIMIT - 1, 8),
+            "and the window is what refuses the range; the walk cannot"
         );
     }
 

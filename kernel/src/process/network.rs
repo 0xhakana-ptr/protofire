@@ -39,7 +39,11 @@ pub(crate) fn serve_network(
         let length = call.arguments[4];
         if length == 0
             || length > abi::network::SOCK_OPT_MAX
-            || !crate::address_space::is_user_range(value, length)
+            || !crate::address_space::user_range(
+                value,
+                length,
+                number == SyscallNumber::GetSockOpt as usize,
+            )
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
@@ -49,8 +53,8 @@ pub(crate) fn serve_network(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The setter reads the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The setter reads the
         // buffer and the getter writes it, each inside the length checked
         // above.
         let buffer = unsafe { core::slice::from_raw_parts_mut(value as *mut u8, length) };
@@ -83,7 +87,7 @@ pub(crate) fn serve_network(
         let (record, length) = (call.arguments[0], call.arguments[1]);
         if length == 0
             || length > net::x509::CERTIFICATE_MAX
-            || !crate::address_space::is_user_range(record, length)
+            || !crate::address_space::user_range(record, length, false)
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
@@ -93,8 +97,8 @@ pub(crate) fn serve_network(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handler copies the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handler copies the
         // document and reads nothing past the length checked above.
         let buffer = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         let outcome = through_registry(&mut context, None, None, Some(buffer));
@@ -210,7 +214,11 @@ pub(crate) fn serve_network(
         let (record, length) = (call.arguments[0], call.arguments[1]);
         if length == 0
             || length > abi::network::FILTER_RULE_DEF_SIZE.max(abi::network::FILTER_STATS_SIZE)
-            || !crate::address_space::is_user_range(record, length)
+            || !crate::address_space::user_range(
+                record,
+                length,
+                number == SyscallNumber::FilterGetStats as usize,
+            )
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
@@ -220,8 +228,8 @@ pub(crate) fn serve_network(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The add reads a record
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The add reads a record
         // of the length it was given and the stats call writes one, each
         // inside the length checked above and each against the size the
         // handler itself states.
@@ -253,7 +261,7 @@ pub(crate) fn serve_network(
         let (record, length) = (call.arguments[0], call.arguments[1]);
         if length == 0
             || length > abi::network::MRT_VIF_DEF_SIZE.max(abi::network::MRT_MFC_DEF_SIZE)
-            || !crate::address_space::is_user_range(record, length)
+            || !crate::address_space::user_range(record, length, false)
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
@@ -263,8 +271,8 @@ pub(crate) fn serve_network(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handler reads a
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handler reads a
         // record of the length it was given, against the size it states.
         let buffer = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         let outcome = through_registry(&mut context, None, None, Some(buffer));
@@ -295,7 +303,11 @@ pub(crate) fn serve_network(
         let length = call.arguments[2];
         if length == 0
             || length > net::dccp::MAX_DATAGRAM.max(64 * 1024)
-            || !crate::address_space::is_user_range(buffer, length)
+            || !crate::address_space::user_range(
+                buffer,
+                length,
+                number == SyscallNumber::DccpRecv as usize,
+            )
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
@@ -305,8 +317,8 @@ pub(crate) fn serve_network(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The send reads the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The send reads the
         // buffer and the receive writes it, each inside the length checked
         // above.
         let buffer = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
@@ -434,7 +446,11 @@ pub(crate) fn serve_network(
                 > abi::network::IPSEC_SP_DEF_SIZE
                     .max(abi::network::IPSEC_SA_DEF_SIZE)
                     .max(abi::network::IPSEC_STATS_SIZE)
-            || !crate::address_space::is_user_range(record, length)
+            || !crate::address_space::user_range(
+                record,
+                length,
+                number == SyscallNumber::IpsecGetStats as usize,
+            )
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
@@ -444,8 +460,8 @@ pub(crate) fn serve_network(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handlers read or
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handlers read or
         // write one record, each against the size it states.
         let buffer = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         let outcome = through_registry(&mut context, None, None, Some(buffer));
@@ -601,7 +617,7 @@ pub(crate) fn serve_network(
             }
             _ => (call.arguments[1], call.arguments[2]),
         };
-        if !crate::address_space::is_user_range(record, length) {
+        if !crate::address_space::user_range(record, length, true) {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
             )));
@@ -610,8 +626,8 @@ pub(crate) fn serve_network(
             .with_identity(security::mac::MAC_TYPE_SYSTEM)
             .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
         // SAFETY: the range is inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind it are the calling
-        // task's own mappings, installed on this CPU.  The handlers write the
+        // `user_range` checked, and the pages behind it are mapped in the
+        // calling task's own root.  The handlers write the
         // record and nothing past it, which is what their length check is for.
         let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
         let outcome = through_registry(&mut context, None, None, Some(destination));
@@ -693,14 +709,14 @@ pub(crate) fn serve_network(
         let send_buffer = if number == SyscallNumber::SendRawPacket as usize {
             let buffer = call.arguments[3];
             let length = call.arguments[4];
-            if !crate::address_space::is_user_range(buffer, length) {
+            if !crate::address_space::user_range(buffer, length, false) {
                 return Some(CallOutcome::Return(abi::syscall::encode_error(
                     abi::Error::InvalidArgument,
                 )));
             }
             // SAFETY: the range is inside the user window and not empty,
-            // which `is_user_range` checked, and the pages behind it are the
-            // calling task's own mappings, installed on this CPU.  The handler
+            // which `user_range` checked, and the pages behind it are mapped in
+            // the calling task's own root.  The handler
             // reads the bytes.
             Some(unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) })
         } else {
@@ -741,14 +757,14 @@ pub(crate) fn serve_network(
         let send_buffer = if number == SyscallNumber::SendToUdp as usize {
             let buffer = call.arguments[2];
             let length = call.arguments[3];
-            if !crate::address_space::is_user_range(buffer, length) {
+            if !crate::address_space::user_range(buffer, length, false) {
                 return Some(CallOutcome::Return(abi::syscall::encode_error(
                     abi::Error::InvalidArgument,
                 )));
             }
             // SAFETY: the range is inside the user window and not empty,
-            // which `is_user_range` checked, and the pages behind it are the
-            // calling task's own mappings, installed on this CPU.  The
+            // which `user_range` checked, and the pages behind it are mapped in
+            // the calling task's own root.  The
             // handler reads the bytes; a copy-on-write page demoted by an
             // earlier write faults into the resolver like any other access.
             Some(unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) })
@@ -822,8 +838,8 @@ pub(crate) fn serve_network(
         } else {
             abi::network::UDP_SENDER_RECORD_SIZE
         };
-        if !crate::address_space::is_user_range(buffer, length)
-            || !crate::address_space::is_user_range(sender_record, sender_len)
+        if !crate::address_space::user_range(buffer, length, true)
+            || !crate::address_space::user_range(sender_record, sender_len, true)
             || sender_len < record_size
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
@@ -836,8 +852,8 @@ pub(crate) fn serve_network(
             )));
         };
         // SAFETY: both ranges are inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind them are the calling
-        // task's own mappings, installed on this CPU.  The receive writes the
+        // `user_range` checked, and the pages behind them are mapped in the
+        // calling task's own root.  The receive writes the
         // buffer and the sender record and nothing past them, which is what
         // the record's length check is for.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
@@ -911,8 +927,8 @@ pub(crate) fn serve_network(
                 abi::Error::InvalidArgument,
             )));
         }
-        if !crate::address_space::is_user_range(buffer, length)
-            || !crate::address_space::is_user_range(sender_record, sender_len)
+        if !crate::address_space::user_range(buffer, length, true)
+            || !crate::address_space::user_range(sender_record, sender_len, true)
         {
             return Some(CallOutcome::Return(abi::syscall::encode_error(
                 abi::Error::InvalidArgument,
@@ -924,8 +940,8 @@ pub(crate) fn serve_network(
             )));
         };
         // SAFETY: both ranges are inside the user window and not empty, which
-        // `is_user_range` checked, and the pages behind them are the calling
-        // task's own mappings, installed on this CPU.  The receive writes the
+        // `user_range` checked, and the pages behind them are mapped in the
+        // calling task's own root.  The receive writes the
         // buffer and the sender record and nothing past them.
         let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
         let sender =

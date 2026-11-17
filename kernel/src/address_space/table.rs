@@ -409,6 +409,22 @@ pub(crate) fn leaf_for(root: &PageTable, address: usize) -> Option<&'static Page
 /// the one that matters, not the boot CPU's.
 #[cfg(target_os = "none")]
 pub(crate) fn permissions_of(root: usize, address: usize) -> Option<Option<Permissions>> {
+    leaf_entry(root, address).map(|entry| entry.map(|entry| entry.permissions))
+}
+
+/// The leaf entry `address` reaches in `root`, or why there is none.
+///
+/// One walk, two readers: [`permissions_of`] wants what a faulting address is
+/// mapped as, and [`range_allowed`] wants the frame as well, because a page a
+/// fork demoted is read-only in the table and still writable to the program
+/// that owns it.  Two copies of this loop would be two answers to the same
+/// question, and the first one to drift would be a validator that disagreed
+/// with the fault handler about the same page.
+///
+/// `None` means the walk found no leaf, `Some(None)` a **block** entry above
+/// the leaf level, which a 4 KiB walk cannot describe.
+#[cfg(target_os = "none")]
+fn leaf_entry(root: usize, address: usize) -> Option<Option<Entry>> {
     // SAFETY: the caller passes a root table this kernel installed.
     let root = unsafe { &*(root as *const PageTable) };
     let mut table: &'static PageTable = root;
@@ -420,7 +436,7 @@ pub(crate) fn permissions_of(root: usize, address: usize) -> Option<Option<Permi
         let entry = arch::paging::decode(word, level);
         if entry.is_leaf {
             // A block mapping: the walk stops above the 4 KiB level and this
-            // function cannot describe the permissions of a page inside it.
+            // function cannot describe a page inside it.
             return Some(None);
         }
         // SAFETY: an entry this kernel wrote, naming a table it allocated.
@@ -430,7 +446,46 @@ pub(crate) fn permissions_of(root: usize, address: usize) -> Option<Option<Permi
     if word == 0 {
         return None;
     }
-    Some(Some(arch::paging::decode(word, Level::Leaf).permissions))
+    Some(Some(arch::paging::decode(word, Level::Leaf)))
+}
+
+/// Whether every page of a caller's range is one the caller may actually use.
+///
+/// The half of a user-pointer check that needs page tables, split from the
+/// window arithmetic so the arithmetic can be tested on a host (see
+/// [`super::every_page`]) and so this remains a walk and nothing else.
+///
+/// A **read** needs a mapped, user-reachable page.  A **write** needs more: the
+/// page must be writable, or the pool must have marked it copy-on-write, which
+/// is the state a fork leaves behind.  That second case is why this cannot be a
+/// permission-bit test: a demoted page is read-only in the table by design, and
+/// refusing a write to it would break every program that forked.
+///
+/// A block mapping and an absent entry are both refusals.  The first is honest
+/// caution (`Some(None)` is a page this 4 KiB walk cannot describe); the second
+/// is the defect this function exists for: an address inside the user window
+/// that nothing ever mapped used to reach `from_raw_parts` and fault **in the
+/// kernel**.
+#[cfg(target_os = "none")]
+pub(crate) fn range_allowed(
+    tables: &Tables,
+    root: usize,
+    address: usize,
+    length: usize,
+    write: bool,
+) -> bool {
+    super::every_page(address, length, |page| match leaf_entry(root, page) {
+        Some(Some(entry)) => {
+            if !entry.permissions.user {
+                return false;
+            }
+            if !write {
+                return true;
+            }
+            entry.permissions.writable || tables.frames.is_cow(entry.address)
+        }
+        _ => false,
+    })
 }
 
 /// The machine's entry encoding, for an entry going into a table at `level`.

@@ -252,6 +252,15 @@ pub fn decode_error(status: usize) -> Option<abi::Error> {
     abi::syscall::decode_result(status).err()
 }
 
+/// The error a refused user pointer carries, re-exported so a program can name
+/// it without depending on `abi`.
+///
+/// A program that hands the kernel a pointer has one failure worth telling
+/// apart from the rest: the pointer was refused, which says nothing about the
+/// thing it was going to name.  Naming the variant here is what lets a program
+/// assert the specific refusal rather than accept any error word.
+pub const INVALID_ARGUMENT: abi::Error = abi::Error::InvalidArgument;
+
 /// Whether a status word is the refusal a number this build does not serve
 /// answers.
 ///
