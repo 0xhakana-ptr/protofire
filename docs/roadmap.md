@@ -1353,23 +1353,41 @@ the same boot takes **1,737** `fault at 0x8080000000, read, not mapped` lines at
 `rip 0x136534` and never reaches its exit.  The gate requires the refusal line on
 all three machines, so a boot that stops walking the root fails there.
 
-**2. W^X is declared and bypassed in two places.  P0.**
+**2. W^X is declared and bypassed in two places.  P0.  Fixed.**
 
 `SECURITY.md` states that a segment both writable and executable is refused,
-and `loader::checked` does refuse it.  Two paths re-open it afterwards.
+and `loader::checked` does refuse it.  Three paths re-opened it afterwards.
 
-`AddressSpace::map` hardcodes `executable: true`, and the fork path calls
-`child.map(page.virtual_address, page.physical, false)` for every page, so a
-child's data and stack are mapped executable.  The copy-on-write resolver then
-widens with `Permissions { writable: true, ..entry.permissions }`, which keeps
-`executable`, so the child's first write makes the page read-write-execute.
+`AddressSpace::map` took a `writable` flag and hardcoded `executable: true`,
+and the fork path called `child.map(va, phys, false)` for every page, so a
+child's data and stack were executable.  The copy-on-write resolver widened with
+`Permissions { writable: true, ..entry.permissions }`, which keeps `executable`.
+And `build_image_space` merged two segments sharing a page with `|=` on both
+bits, which is exactly the pair the loader refuses arrived at from two legal
+segments.
 
-And `build_image_space` merges two segments that share a page with
-`perms.writable |= permissions.writable; perms.executable |= permissions.executable`,
-which is exactly the pair `loader::checked` refuses, arrived at from two
-segments that are each legal.  The merge is not wrong in itself; the widening
-is, and a page two segments share needs the **intersection** of what they may
-do, or the segments need to stop sharing a page.
+The fix removes the place a wrapper could invent a permission.  `map` now takes
+a `Permissions` and each of its callers states what it means: the loaded image's
+page is read-execute, its stack read-write, and the boot's own two pages the
+same pair.  `MappedPage` grew an `executable` field so a fork can carry the
+parent's permissions across with one change, the demotion, instead of
+re-deriving them from a boolean; the resolver refuses a page that would end up
+writable and executable rather than quietly promoting it; and the segment merge
+refuses the image whose shared page needs both.  `map_user_page` was a fourth
+path: a `pub` helper with no callers at all, mapping into the kernel's own root
+with both bits set.  It is deleted rather than fixed, because a function no gate
+can reach is not a function.
+
+The evidence is a measurement, and it took two attempts.  The first version
+counted the **child's** pages after the fork, which reads zero by construction
+because the fork has just demoted them all read-only; a probe that put the
+hardcoded execute bit back still read zero, which is what a probe reading zero
+information looks like.  The line that means something counts the **parent's**
+pages before the fork:
+`protofire: the parent has 0 writable-executable page(s)`, printed on every
+fork, and with the probe restoring the old stack mapping the same line read `1`.
+The gate requires the zero on all three machines.  A host test pins the count's
+conjunction, so a counter that tested either bit alone fails without a boot.
 
 **3. A fault handler is never withdrawn, so it can re-enter for ever.  P1.**
 

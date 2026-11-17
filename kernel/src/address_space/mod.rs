@@ -465,19 +465,21 @@ pub use space::MAX_FORK_PAGES;
 #[cfg(target_os = "none")]
 pub use space::MAX_IMAGE_FRAMES;
 pub use space::MAX_OWNED_FRAMES;
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", test))]
 pub use space::MappedPage;
 pub use space::USER_BASE;
 #[cfg(target_os = "none")]
 pub use space::allocate_image_frame;
+#[cfg(test)]
+pub(crate) use space::count_writable_executable;
 #[cfg(target_os = "none")]
 pub use space::fork_from;
 #[cfg(target_os = "none")]
 pub use space::image_space;
 #[cfg(target_os = "none")]
-pub use space::map_user_page;
-#[cfg(target_os = "none")]
 pub use space::mapped_pages;
+#[cfg(target_os = "none")]
+pub use space::writable_executable_pages;
 
 #[cfg(test)]
 mod tests {
@@ -763,6 +765,66 @@ mod tests {
         assert!(
             !super::is_user_range(super::USER_LIMIT - 1, 8),
             "and the window is what refuses the range; the walk cannot"
+        );
+    }
+
+    /// The W^X count is of pages that are **both**, not of one bit or the
+    /// other.
+    ///
+    /// The rule `SECURITY.md` states is a conjunction: a page that is writable
+    /// and executable is refused.  A counter that tested either bit alone would
+    /// report a program's whole text as a violation (read-execute) or its whole
+    /// data and stack (read-write) and be useless, and a counter that tested
+    /// `||` would have found the defect everywhere instead of where it was.
+    ///
+    /// The three pairs below are the three meanings a user page can have, and
+    /// the fourth, `false`/`false`, is a read-only page, which is text that has
+    /// not been marked executable and is not a violation either.
+    #[test]
+    fn only_a_page_that_is_both_is_counted() {
+        use super::MappedPage;
+        use super::count_writable_executable;
+
+        let page = |writable, executable| MappedPage {
+            virtual_address: super::USER_BASE,
+            physical: 0x1000,
+            writable,
+            executable,
+        };
+
+        assert_eq!(
+            count_writable_executable(&[page(true, true)]),
+            1,
+            "the one pair the rule refuses"
+        );
+        assert_eq!(
+            count_writable_executable(&[page(true, false)]),
+            0,
+            "a stack or a data segment is not a violation"
+        );
+        assert_eq!(
+            count_writable_executable(&[page(false, true)]),
+            0,
+            "text is not a violation"
+        );
+        assert_eq!(
+            count_writable_executable(&[page(false, false)]),
+            0,
+            "a read-only page is not a violation"
+        );
+
+        // And the count is a count, not a boolean: two violating pages beside
+        // three legal ones answer 2.  A version that stopped at the first would
+        // pass the single-page assertions above.
+        assert_eq!(
+            count_writable_executable(&[
+                page(true, true),
+                page(true, false),
+                page(true, true),
+                page(false, true),
+                page(false, false),
+            ]),
+            2
         );
     }
 

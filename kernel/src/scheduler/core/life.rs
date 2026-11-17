@@ -56,6 +56,30 @@ impl Scheduler {
         // ownership of the same frames, which the pool's co-owner count would
         // then believe was two spaces when there was one.
         let parent_space = self.tasks.get(parent)?.space.as_ref()?;
+
+        // The pages this fork is about, read back out of the **parent's** table
+        // before it is demoted.
+        //
+        // W^X is a property of the pages a program gets, and the fork is the
+        // one path that reads a whole space out and builds another from it.
+        // What made the defect possible was upstream of the fork: every page a
+        // program had was mapped through a wrapper that hardcoded the execute
+        // bit, so a stack or a data segment was writable **and** executable
+        // before any fork happened, and the child inherited the pair.
+        //
+        // So the count is taken here, on the parent, and the rule requires it
+        // to be zero.  Counting the child instead would count pages the fork
+        // has just demoted read-only, which is zero by construction and proves
+        // nothing: that was the first version of this line, and a probe that
+        // restored the hardcoded execute bit still read zero.
+        #[cfg(target_os = "none")]
+        {
+            let writable_executable = crate::address_space::writable_executable_pages(parent_space);
+            arch::serial::write_str("protofire: the parent has ");
+            arch::serial::write_u32(writable_executable as u32);
+            arch::serial::write_str(" writable-executable page(s)\n");
+        }
+
         // SAFETY: the parent's space is live and this boot is the only writer.
         let child_space = unsafe { crate::address_space::fork_from(parent_space) }?;
 
@@ -213,10 +237,34 @@ impl Scheduler {
                     && let Some((_, frame, perms)) = slot
                 {
                     // The page is shared: this segment's bytes join the frame
-                    // it already has, and the permissions widen to whatever
-                    // both segments need.
+                    // it already has, and its permissions have to be computed
+                    // from **both** segments rather than from one union.
+                    //
+                    // What was here was `|=` on each bit, which is exactly the
+                    // pair `loader::checked` refuses arrived at from two
+                    // segments that are each legal: a read-write data segment
+                    // ending in a page a read-execute text segment starts in
+                    // produced read-write-**execute**.  W^X is a rule about the
+                    // page a program gets, not about the segment a file
+                    // describes, and a page that two segments share has to
+                    // satisfy both restrictions.
+                    //
+                    // The honest answer is a refusal.  The loader's own rule
+                    // is that a segment both writable and executable is not
+                    // loaded, and the page a shared frame produces is the same
+                    // state; a page that must be writable for one segment and
+                    // executable for another cannot be given to a program
+                    // without breaking that rule.  Intersecting the writable
+                    // bits would make the page read-only for the data segment
+                    // that needs to write it, which is a different bug with a
+                    // fault as its symptom; refusing names the image's shape
+                    // as the problem, which is what it is.
                     perms.writable |= permissions.writable;
                     perms.executable |= permissions.executable;
+                    if perms.writable && perms.executable {
+                        unsafe { space.release() };
+                        return None;
+                    }
                     if plan.copy_len > 0 {
                         // SAFETY: both ranges are in bounds, the loader
                         // checked the file range, and the frame is a whole

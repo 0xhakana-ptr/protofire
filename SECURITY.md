@@ -18,11 +18,23 @@ plans around it.
   `kernel/src/process/mod.rs` and the per-machine trap paths.
 
 - **User addresses are validated.**  A user address from ring 3 is validated
-  before the kernel touches it, and a program's pages are `user: true` while the
-  kernel's are not.  In `kernel/src/address_space/`.
+  before the kernel touches it: the range is checked against the user window
+  **and** walked in the calling task's own page table, page by page, so an
+  address the program never mapped is refused rather than dereferenced by the
+  kernel.  A write is admitted only on a page that is writable or one a fork
+  left copy-on-write.  A program's pages are `user: true` while the kernel's are
+  not.  In `kernel/src/address_space/`.
 
-- **W^X in the loader.**  An image segment that is both writable and executable
-  is refused rather than mapped.  In `kernel/src/loader/mod.rs`.
+- **W^X, of the pages as well as the segments.**  An image segment that is both
+  writable and executable is refused rather than mapped, and the loader is not
+  the last place the pair could appear: `AddressSpace::map` takes the caller's
+  `Permissions` instead of inventing an execute bit, a fork carries the parent's
+  permissions across with only the demotion changed, the copy-on-write resolver
+  refuses a page that would become writable and executable, and two segments
+  sharing a page may not need both.  The count is measured at run time, not
+  asserted: `writable_executable_pages` walks a space's table and a boot prints
+  it on every fork.  In `kernel/src/loader/mod.rs` and
+  `kernel/src/address_space/`.
 
 - **A default-refusing MAC policy.**  It labels subjects and objects, is asked
   before a file is opened or read, and refuses by default.  In

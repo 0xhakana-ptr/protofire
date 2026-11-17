@@ -218,9 +218,28 @@ fn build_task(number: u16, reader_end: usize, writer_end: usize) -> Option<Task>
 
     let base = process::program_base(number);
     let stack_page = process::program_stack_page(number);
+    // The same pair `image_space` maps for a loaded program, stated here for
+    // the boot's own: the image is machine code and is read-execute, the stack
+    // holds the hand-over words and is read-write and not executable.  The
+    // stack was executable until `map` stopped inventing the execute bit, and
+    // nothing about a program's stack ever wanted one.
+    let image_permissions = paging::Permissions {
+        writable: false,
+        executable: true,
+        user: true,
+        cache: paging::Cache::Normal,
+    };
+    let stack_permissions = paging::Permissions {
+        writable: true,
+        executable: false,
+        user: true,
+        cache: paging::Cache::Normal,
+    };
     // SAFETY: both frames belong to this space, and the two virtual addresses
     // are this program's own window.
-    let mapped = unsafe { space.map(base, image, false) && space.map(stack_page, stack, true) };
+    let mapped = unsafe {
+        space.map(base, image, image_permissions) && space.map(stack_page, stack, stack_permissions)
+    };
     if !mapped {
         arch::serial::write_str("protofire: a program could not be mapped\n");
         return None;

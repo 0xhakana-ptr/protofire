@@ -47,12 +47,21 @@ its severity, and the order they should land.
   outside its mappings; with the walk removed the same boot takes 1,737 kernel
   faults at one instruction and never ends.
 
+- **W^X is declared and bypassed.**  `AddressSpace::map` now takes a
+  `Permissions` rather than a writability flag with a hardcoded execute bit, so
+  every caller states what its page means; `MappedPage` carries `executable` so
+  a fork hands the child the parent's permissions with only the demotion
+  changed; the copy-on-write resolver refuses a page that would become writable
+  and executable; `build_image_space` refuses an image whose two segments share
+  a page that needs both; and `map_user_page`, a `pub` helper with no callers
+  that mapped into the kernel's own root with both bits, is deleted.  The
+  evidence is `protofire: the parent has 0 writable-executable page(s)`, counted
+  out of the page tables on every fork and required by the gate; the same line
+  read `1` with the old stack mapping put back.  See `docs/roadmap.md`'s Level
+  7.5 for why the first version of that line counted the wrong side.
+
 **Open.**
 
-- **W^X is declared and bypassed.** `AddressSpace::map` hardcodes
-  `executable: true`, the fork path maps every page through it, and the
-  copy-on-write resolver widens with `..entry.permissions`, which keeps the
-  execute bit.
 - **A fault handler is never withdrawn.** `install_exception_handler`'s comment
   says the second fault kills the program; `hand_the_fault_to_the_program` reads
   the handler and never clears it.

@@ -1225,6 +1225,18 @@ impl Machine {
                     "protofire: refused a pointer to an unmapped page at ",
                     false,
                 ),
+                // W^X, counted out of the page tables on every fork.  This is
+                // the one measurement the rule has: the parent's pages are
+                // walked before the fork demotes them, and the number is how
+                // many are writable **and** executable.  Required whole with
+                // the zero, because the defect was that this number was not
+                // zero: `AddressSpace::map` hardcoded the execute bit, so a
+                // program's stack and data were both.  A probe putting that bit
+                // back made this line read 1.
+                (
+                    "protofire: the parent has 0 writable-executable page(s)",
+                    true,
+                ),
                 // The child's death, as the kernel reports it: which process,
                 // the address its write named, and the status the pair reads.
                 // A prefix, because the address is the program's own code page
@@ -1420,6 +1432,19 @@ impl Machine {
                     (
                         "protofire: refused a pointer to an unmapped page at ",
                         false,
+                    ),
+                    // W^X, counted out of the page tables on every fork.  This
+                    // is the one measurement the rule has: the parent's pages
+                    // are walked before the fork demotes them, and the number
+                    // is how many are writable **and** executable.  Required
+                    // whole with the zero, because the defect was
+                    // that this number was not zero: `AddressSpace::map`
+                    // hardcoded the execute bit, so a program's stack and data
+                    // were both.  A probe putting that bit back made this line
+                    // read 1.
+                    (
+                        "protofire: the parent has 0 writable-executable page(s)",
+                        true,
                     ),
                     // The child's death, as the kernel reports it: which
                     // process, the address its write named, and the status
@@ -2555,6 +2580,18 @@ impl Machine {
                 (
                     "protofire: refused a pointer to an unmapped page at ",
                     false,
+                ),
+                // W^X, counted out of the page tables on every fork.  This is
+                // the one measurement the rule has: the parent's pages are
+                // walked before the fork demotes them, and the number is how
+                // many are writable **and** executable.  Required whole with
+                // the zero, because the defect was that this number was not
+                // zero: `AddressSpace::map` hardcoded the execute bit, so a
+                // program's stack and data were both.  A probe putting that bit
+                // back made this line read 1.
+                (
+                    "protofire: the parent has 0 writable-executable page(s)",
+                    true,
                 ),
                 // The child's death, as the kernel reports it: which process,
                 // the address its write named, and the status the pair reads.

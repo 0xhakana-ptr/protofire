@@ -29,8 +29,6 @@ use super::USER_LIMIT;
 #[cfg(target_os = "none")]
 use super::table::GRANULE;
 #[cfg(target_os = "none")]
-use super::table::IDENTITY_LIMIT;
-#[cfg(target_os = "none")]
 use super::table::TABLES;
 #[cfg(target_os = "none")]
 use super::table::Tables;
@@ -193,17 +191,27 @@ impl AddressSpace {
     /// addresses with `user: true`, which is the one mapping that must not
     /// exist.
     ///
+    /// The permissions are the caller's, and that is a change with a reason.
+    /// This function used to take a `writable` flag and hardcode
+    /// `executable: true`, which made every page it mapped executable: the
+    /// fork path used it for a child's data and stack, and the boot's own
+    /// two-page programs used it for an image that is one word of machine code
+    /// and a stack of numbers.  A caller that has to state what it means cannot
+    /// mean "plus execute" by accident, which is the whole of this tree's W^X
+    /// rule: `SECURITY.md` says a segment both writable and executable is
+    /// refused, and a convenience wrapper that invented the execute bit was
+    /// arriving at the same state from a legal caller.
+    ///
     /// # Safety
     ///
     /// `virtual_address` must be in the program's range, page-aligned, and not
     /// already mapped; `physical` must be a live frame.
-    pub unsafe fn map(&mut self, virtual_address: usize, physical: usize, writable: bool) -> bool {
-        let permissions = Permissions {
-            writable,
-            executable: true,
-            user: true,
-            cache: paging::Cache::Normal,
-        };
+    pub unsafe fn map(
+        &mut self,
+        virtual_address: usize,
+        physical: usize,
+        permissions: Permissions,
+    ) -> bool {
         // SAFETY: the caller's contract is this one's, unchanged.
         unsafe { self.map_page_with(virtual_address, physical, permissions) }
     }
@@ -949,53 +957,6 @@ pub(crate) fn walk_or_create(
     Some(unsafe { &*(current as *const PageTable) })
 }
 
-/// Map `physical` at `virtual_address`, reachable from EL0.
-///
-/// `map_region` re-encodes an existing identity-mapped page with different
-/// permissions: the virtual address and the physical one are the same number.
-/// A program's text is not identity mapped, it lives in a frame the allocator
-/// handed out, at an address of the kernel's choosing, so the two differ and
-/// the entry has to say so.
-///
-/// The permissions are `user: true` and executable: this is code a ring-3
-/// program runs, which is the whole point of the mapping.  The kernel's own
-/// text is `user: false`, and an entry that was not would let a program read
-/// the kernel through the address it happens to be at.
-///
-/// # Safety
-///
-/// `virtual_address` and `physical` must be page-aligned, `physical` must be a
-/// live frame, and the caller must have chosen a virtual address no other
-/// mapping owns.
-#[cfg(target_os = "none")]
-pub unsafe fn map_user_page(virtual_address: usize, physical: usize) -> bool {
-    let mut guard = TABLES.lock();
-    let tables = &mut *guard;
-
-    if virtual_address >= IDENTITY_LIMIT || !virtual_address.is_multiple_of(GRANULE) {
-        return false;
-    }
-    let Some(leaf) = leaf_for(&tables.root, virtual_address) else {
-        return false;
-    };
-
-    let entry = Entry::page(
-        physical,
-        Permissions {
-            writable: true,
-            executable: true,
-            user: true,
-            cache: paging::Cache::Normal,
-        },
-    );
-    leaf.set_entry(
-        index(Level::Leaf, virtual_address),
-        encode(entry, Level::Leaf),
-    );
-    arch::flush_translation();
-    true
-}
-
 /// A frame for a program's image, zeroed and owned by the caller.
 ///
 /// `None` when the pool is empty or the machine's tables cannot describe the
@@ -1011,12 +972,12 @@ pub fn allocate_image_frame() -> Option<usize> {
 /// A new address space holding one program: `bytes` at `image_va`, a stack at
 /// `stack_va`, and nothing else.
 ///
-/// `exec`'s builder.  The mapping is the boot's own [`map_user_page`]-shaped
-/// pair, image read-only and executable, stack writable, and the addresses
-/// are the **caller's**, not this function's choice: `exec` swaps the frames
-/// behind the window a task already owns rather than giving the task a new
-/// window, because the window is the one thing about a process that its
-/// callers may have come to rely on.
+/// `exec`'s builder.  The pair it maps is image read-execute and stack
+/// read-write, stated here rather than inherited from a convenience wrapper,
+/// and the addresses are the **caller's**, not this function's choice: `exec`
+/// swaps the frames behind the window a task already owns rather than giving
+/// the task a new window, because the window is the one thing about a process
+/// that its callers may have come to rely on.
 ///
 /// Every failure returns with the space released: the root and each frame the
 /// builder recorded go back, so a failed `exec` does not shrink the pool by a
@@ -1059,8 +1020,26 @@ pub unsafe fn image_space(bytes: &[u8], image_va: usize, stack_va: usize) -> Opt
     }
     // SAFETY: both frames belong to this space, and the two addresses are the
     // caller's own window, which this space does not map yet.
-    let mapped = unsafe { space.map(image_va, image_frame, false) }
-        && unsafe { space.map(stack_va, stack_frame, true) };
+    //
+    // The permissions are the pair the doc comment states: the image is
+    // read-execute, because it is bytes the machine fetches, and the stack is
+    // read-write and **not** executable.  The two used to come from `map`'s
+    // one flag plus a hardcoded execute bit, so this function's own comment
+    // described a pair the code did not produce.
+    let image_permissions = Permissions {
+        writable: false,
+        executable: true,
+        user: true,
+        cache: paging::Cache::Normal,
+    };
+    let stack_permissions = Permissions {
+        writable: true,
+        executable: false,
+        user: true,
+        cache: paging::Cache::Normal,
+    };
+    let mapped = unsafe { space.map(image_va, image_frame, image_permissions) }
+        && unsafe { space.map(stack_va, stack_frame, stack_permissions) };
     if !mapped {
         unsafe { space.release() };
         return None;
@@ -1120,7 +1099,7 @@ pub unsafe fn self_check_frame_pool() -> bool {
 /// writes, everything a fork needs to know about the page it is about to
 /// share, and nothing about the page tables themselves, so a caller that only
 /// reads this list cannot corrupt a walk by holding a reference into it.
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", test))]
 #[derive(Debug, Clone, Copy)]
 pub struct MappedPage {
     /// Where the program sees it.
@@ -1130,6 +1109,14 @@ pub struct MappedPage {
     /// Whether the parent's mapping allowed writes, which the fork demotes
     /// and the resolver restores.
     pub writable: bool,
+    /// Whether the parent's mapping allowed instruction fetch.
+    ///
+    /// Recorded because a fork used to hand every page to `AddressSpace::map`,
+    /// which hardcoded `executable: true`, so a child's data and stack came
+    /// back executable.  A fork that carried only `writable` could not say
+    /// what the parent's page had been, and the child's mapping is the
+    /// parent's mapping with one demotion: everything else has to survive.
+    pub executable: bool,
 }
 
 /// The pages `space` maps in the user window, in address order.
@@ -1206,6 +1193,7 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
                         virtual_address,
                         physical: page.address,
                         writable: page.permissions.writable,
+                        executable: page.permissions.executable,
                     };
                     count += 1;
                 }
@@ -1213,6 +1201,51 @@ pub fn mapped_pages(space: &AddressSpace, out: &mut [MappedPage]) -> Option<usiz
         }
     }
     Some(count)
+}
+
+/// How many pages of `space` are both writable and executable to a program.
+///
+/// The count W^X says must be zero, read back out of the page tables rather
+/// than out of any record of what was intended.  `MappedPage` already walks
+/// every user page and reads the two bits, so this is that walk with a filter,
+/// and the two cannot drift.
+///
+/// The fork path calls it on the **parent**, before the fork demotes anything,
+/// which is where the defect lived: a program's stack and data carried the
+/// execute bit from the mapping that created them, and the child inherited the
+/// pair along with the frame.  Counting the child afterwards would count pages
+/// the fork has just made read-only, which is zero by construction.
+///
+/// A page the walk cannot descend answers 1: an unreadable table is not a proof
+/// of zero, and a caller that printed "0" for it would be claiming a property
+/// nothing checked.
+#[cfg(target_os = "none")]
+pub fn writable_executable_pages(space: &AddressSpace) -> usize {
+    let mut pages = [MappedPage {
+        virtual_address: 0,
+        physical: 0,
+        writable: false,
+        executable: false,
+    }; MAX_FORK_PAGES];
+    let Some(count) = mapped_pages(space, &mut pages) else {
+        return 1;
+    };
+    count_writable_executable(&pages[..count])
+}
+
+/// How many of `pages` are both writable and executable.
+///
+/// Split out of [`writable_executable_pages`] so a host can test the rule
+/// itself: the walk needs page tables and a machine, and the filter does not.
+/// The property is the one whose absence a reviewer has to argue by reading
+/// three separate call sites, so it is worth an assertion that does not depend
+/// on a boot.
+#[cfg(any(target_os = "none", test))]
+pub(crate) fn count_writable_executable(pages: &[MappedPage]) -> usize {
+    pages
+        .iter()
+        .filter(|page| page.writable && page.executable)
+        .count()
 }
 
 /// A new address space sharing `parent`'s user pages.
@@ -1271,6 +1304,7 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
         virtual_address: 0,
         physical: 0,
         writable: false,
+        executable: false,
     }; MAX_FORK_PAGES];
     let count = mapped_pages(parent, &mut pages)?;
 
@@ -1300,7 +1334,23 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
         }
         // SAFETY: the frame is shared with the parent, and the address is the
         // parent's own user address, which this space does not map yet.
-        if !unsafe { child.map(page.virtual_address, page.physical, false) } {
+        //
+        // The child's permissions are the parent's with **one** change: the
+        // page is read-only, because the fork demoted it and the resolver will
+        // give the first writer a private copy.  Everything else travels,
+        // which is the point of `MappedPage` carrying `executable`.  This used
+        // to call `map`, whose signature takes only a writability flag and
+        // hardcodes the execute bit, so every child page came back executable:
+        // a program's data and stack were mapped read-execute, which is
+        // exactly the state `SECURITY.md` says the loader refuses.
+        let permissions = paging::Permissions {
+            writable: false,
+            executable: page.executable,
+            user: true,
+            cache: paging::Cache::Normal,
+        };
+        // SAFETY: as above.
+        if !unsafe { child.map_page_with(page.virtual_address, page.physical, permissions) } {
             unsafe { child.release() };
             return None;
         }
@@ -1452,6 +1502,21 @@ pub(crate) fn resolve_copy_on_write(space: &mut AddressSpace, fault_address: usi
         writable: true,
         ..entry.permissions
     };
+    // A page the resolver promotes must not end up writable **and** executable,
+    // which is the state `SECURITY.md` refuses and the state
+    // `..entry.permissions` would produce if `entry` were executable.  In
+    // practice it cannot be: a fork demotes only pages it found `writable`, and
+    // `loader::checked` refuses a segment that is both, so a copy-on-write page
+    // is data.  The check is here because "in practice" is the argument this
+    // tree keeps finding holes in, and a resolver is exactly the place a
+    // widened permission set turns into a page a program can rewrite.
+    //
+    // A page that is executable and demoted is refused rather than promoted to
+    // read-execute, which would be a quiet change of what the page means: the
+    // caller asked to write code, and the answer to that is no.
+    if permissions.writable && permissions.executable {
+        return false;
+    }
     let resolved = if tables.frames.co_owners(frame) > 0 {
         let Some(new_frame) = tables.frames.allocate(1) else {
             return false;
