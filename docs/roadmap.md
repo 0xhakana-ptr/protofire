@@ -1208,12 +1208,13 @@ and the answer it gives is the one the later drivers inherit.
 The syscall gap restated as work: roughly twenty mechanisms, ordered by what
 each unblocks rather than by size.
 
-1. **Descriptors and the file interface**, `Dup`, `Dup2`, `Fcntl`, `Poll`,
-   `SetFdFlags`, `SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`,
+1. **Descriptors and the file interface.  Done.**  `Dup`, `Dup2`, `Fcntl`,
+   `Poll`, `SetFdFlags`, `SetXattr`, `GetXattr`, `ListXattr`, `RemoveXattr`,
    `SetFileFlags`, `GetFileFlags`, `AccessQuery`, `AccessQueryAt`,
-   `AccessQueryFd`, `PermissionMetadata`, `PermissionMetadataAt`,
-   `PermissionMetadataFd`.  These are the leftover of Level 2 and the cheapest
-   row on this page: the filesystem already implements every operation.
+   `AccessQueryFd`, `PermissionMetadata`, `PermissionMetadataAt` and
+   `PermissionMetadataFd` are all served.  These were the leftover of Level 2
+   and the cheapest row on this page: the filesystem already implemented every
+   operation.
 
    **`Dup` and `Dup2` have landed**, and they were the two on this row that
    needed something no filesystem has: a second **handle** on one thing.
@@ -1260,11 +1261,20 @@ each unblocks rather than by size.
    kernel one: a kernel token bypasses the discretionary check, and an access
    query computed from one answers "allowed" for every file in the tree.
 
-   What is left on this row is `Poll` and `SetFdFlags`.  Both need a wire format
-   rather than a handler, which is why they are a separate change: `Poll` asks a
-   readiness question over a set of descriptors and has no event mask in `abi`
-   at all, and `SetFdFlags` overlaps `Fcntl`'s `F_SETFD` closely enough that the
-   two need deciding together rather than one after the other.
+   **`Poll` and `SetFdFlags` landed last**, and together for the reason the
+   paragraph that stood here gave: both needed a wire format, and `SetFdFlags`
+   overlaps `Fcntl`'s `F_SETFD` closely enough that deciding them apart would
+   have decided the same thing twice.  `Poll` took `PollFd`, eight bytes of
+   `fd`, `events` and `revents`, four event bits, and a readiness question
+   answered from the table: a file is always ready, a pipe answers from its
+   ends and its writer count, and everything else answers `POLL_ERR`.  It does
+   not block, because parking needs the scheduler and the handler holds the
+   registry's lock, which the handler's own comment states rather than implies.
+   `SetFdFlags` gave `FD_CLOEXEC` a place to live, a parallel
+   `[u8; MAX_DESCRIPTORS]` array beside the table's slots, and `exec` closes
+   what it marks, which is the promise `F_SETFD` had been refusing to make.
+   Three exact gate lines carry the evidence, `set descriptor 6 flags to 1`,
+   `to 0` and `polled 1 descriptor(s), 1 ready`.
 2. **Shared memory**, `ShmGet`, `ShmAt`, `ShmDt`, `ShmCtl`.  Two processes
    naming one region, which is a decision about the address space and not
    wiring.
