@@ -22,11 +22,16 @@ path named here has to exist.
 
 Five kernel defects and three engineering ones were reported against this tree
 by a contributor, and all five kernel ones were confirmed against the code.  Each
-needs a change of its own and a test that fails without it, and the reason they
+needed a change of its own and a test that fails without it, and the reason they
 survived every green gate is itself worth stating: the boot's programs are this
 tree's, and nothing in it ever handed the kernel a pointer, an ELF or a fault it
 did not mean.  `docs/roadmap.md`'s Level 7.5 states each one with its code site,
-its severity, and the order they should land.
+its severity, and what closed it.
+
+All five are fixed, and so are the three engineering findings.  One item is open
+and it is the class rather than an instance: nothing here runs a hostile program,
+so the next defect of this kind will also survive a green gate.  It is listed
+under Open with the reason.
 
 **Fixed.**
 
@@ -83,6 +88,13 @@ its severity, and the order they should land.
 
 **Open.**
 
+- **Nothing here runs a hostile program.**  Every defect this section records
+  was found by reading, not by a gate, and each fix now carries a test that
+  fails without it.  What is still missing is the class: a suite that builds a
+  program this tree does not ship, hands the kernel a bad pointer, a shaped ELF
+  and a fault handler that faults, and expects a refusal rather than a stop.
+  That needs a way to produce such an image, which the tree does not have yet.
+  It is the one finding of the eight with no commit behind it.
 - **The retired-space array holds eight.**  An `exec` retires the space it
   replaced rather than releasing it, because another CPU may still be inside
   its trap path with that root installed; a ninth exec keeps the eighth space
@@ -91,16 +103,20 @@ its severity, and the order they should land.
   free, which is the address-space activation path.  Nothing in this boot
   execs more than once, and Level 9 is where repeated exec becomes real.
 
-**Engineering.**
+**Engineering, all three closed.**
 
-- **The gates' `--offline` could not work on a fresh clone.**  Both documents
-  that had drifted are fixed and the two drifts are the evidence that
-  `check-docs.sh` resolves paths and not prose.  The build side is fixed too:
-  `vendor/` carries the 25 registry crates and `.cargo/config.toml` points
-  `crates.io` at it, which was verified with an empty `CARGO_HOME` and no
-  network resolving, building and compiling every test binary.  `vendor/README.md`
-  says how to regenerate it.  See `docs/roadmap.md`'s Level 7.5 for why the
-  `.gitignore` had to learn about it.
+- **The gates' `--offline` could not work on a fresh clone.**  Fixed: `vendor/`
+  carries the 25 registry crates and `.cargo/config.toml` points `crates.io` at
+  it, verified by cloning the tree, pointing `CARGO_HOME` at an empty directory
+  and building offline.  `vendor/README.md` says how to regenerate it, and
+  `docs/roadmap.md`'s Level 7.5 records why `.gitignore` had to learn about it.
+- **Two documents had drifted.**  Both were corrected, and the finding's real
+  content stands: `check-docs.sh` resolves paths and not prose, so a green docs
+  gate is not evidence that a number in a document is true.  The censuses in
+  `docs/roadmap.md` carry the commands that re-take them, which is the answer
+  available.
+- **The gates run only what this tree wrote.**  This is the first item under
+  Open, because fixing five instances did not fix the class.
 
 ## What every machine does
 

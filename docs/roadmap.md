@@ -1315,11 +1315,18 @@ tree does not have and a protocol above it, and they belong with Level 7's
 ### Level 7.5, the defects a contributor found
 
 A contributor read this tree and reported five kernel defects and three
-engineering ones.  All five are real, and every one of them is a case the gates
-cannot see: the boot is short, the programs are this tree's own, and nothing in
-it ever passes the kernel a pointer it did not mean.  They are recorded here as
-work with their evidence, ordered by what a program could do with them rather
-than by how hard they are to fix.
+engineering ones.  All of them were real, and every one was a case the gates
+could not see: the boot is short, the programs are this tree's own, and nothing
+in it ever passed the kernel a pointer, an ELF or a fault it did not mean.  They
+are recorded here with their evidence and with what closed each one, in the
+order they landed: by what a program could do with them rather than by how hard
+they were to fix.
+
+Every one is fixed except the retired-space bound, and that is not a defect but
+a decision this file now argues: the array is deliberate and documented at the
+field.  The rule this level leaves behind is the one its last item states: a
+test that fails without the fix is the only thing that makes a green gate mean
+the defect is gone.
 
 **1. A user pointer's *value* is checked and its *mapping* is not.  P0.
 Fixed.**
@@ -1486,22 +1493,31 @@ commands makes repeated exec real and makes the argument testable.
   committed 953 files that did not include any checksum; `cargo` then refuses
   the sources it cannot verify, and the directory would have been present and
   useless.  `check-ignored-files.sh` names exactly this case in its own header.
-- **Two documents have drifted, and `check-docs.sh` cannot see it.**
-  `kernel/src/syscall/mod.rs` says "Thirty-one numbers" where the boot
+- **Two documents had drifted, and `check-docs.sh` cannot see it.  Fixed.**
+  `kernel/src/syscall/mod.rs` said "Thirty-one numbers" where the boot
   registers 88, and this file said "147,731 lines of Rust across 40 crates"
-  where the workspace has 47.  The gate checks that a cited **path** exists,
-  which is a different claim from a number in prose being true, and "the docs
-  gate passed" is therefore not evidence that a document is accurate.
-- **The gates themselves run only what this tree wrote.** Nothing exercises a
-  program handing the kernel a bad pointer, a shaped ELF, or a fault handler
-  that faults.  That is why all five defects survived every green run, and it
-  is the reason each fix above needs a test that fails without it.
+  where the workspace has 47.  Both were corrected when the finding landed.  The
+  finding itself stands and is not repaired by correcting two numbers: the gate
+  checks that a cited **path** exists, which is a different claim from a number
+  in prose being true, so "the docs gate passed" is still not evidence that a
+  document is accurate.  The census in this file carries the command that
+  re-takes it, which is the answer available.
+- **The gates run only what this tree wrote, and that is what let all five
+  defects through.**  Each fix above carries a test or a boot line that fails
+  without it, which is the repair for the five.  What is not repaired is the
+  class: a program handing the kernel a bad pointer, a shaped ELF or a fault
+  handler that faults was not something any gate exercised, and the tests added
+  here are host tests and one boot probe rather than a fuzz or a hostile-program
+  suite.  That suite is the durable answer, it needs a way to build a program
+  this tree does not ship, and it is the one item on this level with no commit
+  behind it.
 
-The order they should land: 1 and 2 first, because they turn a program's
-mistake into a kernel stop and into a page a program can rewrite; then 3 and 4,
-which are each a loop or a panic from one syscall's worth of input; then 5,
-which is a leak rather than a fault.  The offline build is separate and does not
-wait for any of them.
+The order they landed is the order they were listed: 1 and 2 first, because they
+turned a program's mistake into a kernel stop and into a page a program could
+rewrite; then 3 and 4, which were each a loop or a panic from one syscall's
+worth of input; then 5, which was a channel between two images rather than a
+fault.  The offline build was separate and did not wait for any of them, which
+is why it is the commit after all five.
 
 ### Level 9, the programs
 
