@@ -442,6 +442,45 @@ pub fn free_frames() -> usize {
     tables.frames.free_frames() + tables.frames.available_frames()
 }
 
+/// Run `f` over the frame pool, with the page-table lock held.
+///
+/// The one way a caller outside this module can count a reference on a frame
+/// without owning the tables: shared memory adds a reference per attach and
+/// drops one per detach, and both are the pool's bookkeeping rather than a
+/// mapping.  The lock is the same one every other pool operation takes, so the
+/// order a caller has to keep is the order this file already states: page
+/// tables first and nothing else inside.
+///
+/// A caller that maps or unmaps a page inside `f` would be taking the lock
+/// twice, which is why the closure receives the allocator and not the tables.
+#[cfg(target_os = "none")]
+pub(crate) fn with_pool<R>(f: impl FnOnce(&mut memory::FrameAllocator) -> R) -> R {
+    let mut tables = TABLES.lock();
+    f(&mut tables.frames)
+}
+
+/// Give one frame back to the pool, answering whether it went.
+///
+/// Only for a caller the pool has already told it holds the last reference.
+/// The `deallocate` refuses a frame that is free, is not in the pool, or has a
+/// co-owner left, so a caller that gets this wrong is refused rather than
+/// corrupting the pool, and the `false` is what such a bug looks like.
+///
+/// # Safety
+///
+/// The frame must not be mapped by any page table this kernel can still walk:
+/// freeing one that is hands the same memory to the next caller while a
+/// program reads through an address that names it.
+#[cfg(target_os = "none")]
+pub(crate) unsafe fn free_frame(frame: usize) -> bool {
+    let mut tables = TABLES.lock();
+    // The pool's own `deallocate` is not `unsafe`: the safety of a double free
+    // is held by the reference count, which refuses a frame that still has an
+    // owner.  What makes *this* function `unsafe` is the page-table side, which
+    // no count can see.
+    tables.frames.deallocate(frame as *mut u8, 1)
+}
+
 pub mod space;
 pub mod table;
 

@@ -1680,6 +1680,213 @@ pub fn munmap(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Resul
     }
 }
 
+/// Name a shared region, making it if the caller asked to.
+///
+/// `ShmGet(key, bytes, flags)`.  `key` is a signed word because a program may
+/// pass any name; `0` is `IPC_PRIVATE`, which always makes a region no other
+/// process can find by name, and the answer is a negative identifier for one of
+/// those and the key itself for a named region.
+///
+/// `IPC_CREAT` is required to make a named region, so a mistyped key is
+/// `NotFound` rather than a second region nobody wanted.  An unknown flag bit
+/// is `InvalidArgument`, the rule every call in this tree keeps.
+///
+/// The length is rounded up to a page by the region, and a request of zero is
+/// refused here: a name with nothing behind it is not a region.
+pub fn shm_get(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let key = arguments.context.arg(0) as i32;
+    let bytes = arguments.context.arg(1);
+    let flags = arguments.context.arg(2);
+    validate_zeroed_args(arguments.context, 3)?;
+    validate_known_flags(flags, memory_abi::SHM_GET_KNOWN_FLAGS)?;
+
+    if bytes == 0 || bytes > memory_abi::MAP_MAX_BYTES {
+        return Err(Error::InvalidArgument);
+    }
+    let create = flags & memory_abi::IPC_CREAT != 0;
+    // A key the caller names must exist unless it asked to create it, which is
+    // the whole of what `IPC_CREAT` means; `IPC_PRIVATE` skips the question
+    // because a private region has no name to find.
+    if key != memory_abi::IPC_PRIVATE && !create {
+        #[cfg(target_os = "none")]
+        {
+            crate::shm::target::lookup(key).ok_or(Error::NotFound)?;
+        }
+        #[cfg(not(target_os = "none"))]
+        return Err(Error::NotImplemented);
+    }
+
+    #[cfg(target_os = "none")]
+    {
+        // An identifier the caller already holds answers it again: the second
+        // `ShmGet` of a key is a lookup and not a second region, which is what
+        // makes a key a name rather than a reference count.
+        if key != memory_abi::IPC_PRIVATE
+            && let Some(existing) = crate::shm::target::lookup(key)
+        {
+            let region = existing.lock();
+            if bytes > region.bytes() {
+                // A region cannot be grown, and answering a smaller request
+                // from a bigger region is what the design says: the caller
+                // asked for room, and there is at least that much.
+                return Err(Error::InvalidArgument);
+            }
+            return Ok(Dispatch::complete(key as usize));
+        }
+        let identifier = if key == memory_abi::IPC_PRIVATE {
+            crate::shm::target::next_private()
+        } else {
+            key
+        };
+        crate::shm::target::create(identifier, bytes).ok_or(Error::OutOfMemory)?;
+        Ok(Dispatch::complete(identifier as usize))
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = create;
+        Err(Error::NotImplemented)
+    }
+}
+
+/// Map a shared region into the calling process, answering where.
+///
+/// `ShmAt(identifier, address, flags)`: `address` is zero, because the kernel
+/// chooses where a region goes and a fixed address is a program asserting a
+/// number about a space it does not own.  The flags are the protection word, so
+/// an attach says whether it wants to write the region.
+///
+/// The mapping is the whole region and it stays writable: nothing is demoted
+/// and nothing is marked copy-on-write, which is the whole difference from a
+/// fork.
+pub fn shm_at(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let identifier = arguments.context.arg(0) as i32;
+    let address = arguments.context.arg(1);
+    let flags = arguments.context.arg(2);
+    validate_zeroed_args(arguments.context, 3)?;
+    validate_known_flags(flags, memory_abi::SHM_AT_KNOWN_FLAGS)?;
+
+    if address != 0 {
+        // The frozen ABI has a slot for it and this design does not honour it:
+        // a fixed address is refused rather than quietly replaced by the
+        // kernel's choice, because a program that asked for one and did not
+        // get it would read the region through an address it was wrong about.
+        return Err(Error::InvalidArgument);
+    }
+    if identifier == 0 {
+        return Err(Error::InvalidArgument);
+    }
+    let writable = flags & memory_abi::PROT_WRITE != 0;
+    let executable = flags & memory_abi::PROT_EXEC != 0;
+    if writable && executable {
+        return Err(Error::InvalidArgument);
+    }
+
+    #[cfg(target_os = "none")]
+    {
+        // The count goes up only after the mapping exists, so an attach that
+        // failed is one nothing counts.
+        let base = crate::shm::target::attach(identifier, writable, executable)
+            .ok_or(Error::OutOfMemory)?;
+        let _ = crate::shm::target::noted_attach(identifier);
+        Ok(Dispatch::complete(base))
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = (identifier, writable, executable);
+        Err(Error::NotImplemented)
+    }
+}
+
+/// Unmap one attach of a shared region.
+///
+/// `ShmDt(address)`: the address `ShmAt` answered.  The frames are released and
+/// the region survives, because an attach is one process's mapping and a region
+/// outlives the process that made it.
+pub fn shm_dt(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let address = arguments.context.arg(0);
+    validate_zeroed_args(arguments.context, 1)?;
+    if address < crate::address_space::USER_BASE || !address.is_multiple_of(paging::PAGE_SIZE) {
+        return Err(Error::InvalidArgument);
+    }
+
+    #[cfg(target_os = "none")]
+    {
+        if !crate::shm::target::detach(address) {
+            // The address names no attach, so a program handed a number that
+            // is not one it got from `ShmAt`: the same answer a descriptor
+            // naming nothing gets.
+            return Err(Error::NotFound);
+        }
+        Ok(Dispatch::complete(0))
+    }
+    #[cfg(not(target_os = "none"))]
+    {
+        let _ = address;
+        Err(Error::NotImplemented)
+    }
+}
+
+/// Change a shared region's life, or answer what it is.
+///
+/// `ShmCtl(identifier, command, record, length)`.  `IPC_RMID` marks the region
+/// for destruction, which happens when its last attach goes; freeing now would
+/// take memory out from under a program that still has it mapped.  `IPC_STAT`
+/// writes the region's length and attach count into the caller's record.
+pub fn shm_ctl(_table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let identifier = arguments.context.arg(0) as i32;
+    let command = arguments.context.arg(1);
+    validate_zeroed_args(arguments.context, 2)?;
+    if identifier == 0 {
+        return Err(Error::InvalidArgument);
+    }
+
+    match command {
+        memory_abi::IPC_RMID => {
+            // No record, so the two slots the record form uses are refused
+            // above by `validate_zeroed_args`.
+            #[cfg(target_os = "none")]
+            {
+                if !crate::shm::target::mark(identifier) {
+                    return Err(Error::NotFound);
+                }
+                Ok(Dispatch::complete(0))
+            }
+            #[cfg(not(target_os = "none"))]
+            {
+                let _ = identifier;
+                Err(Error::NotImplemented)
+            }
+        }
+        memory_abi::IPC_STAT => {
+            let destination = arguments
+                .buffer
+                .as_deref_mut()
+                .ok_or(Error::InvalidArgument)?;
+            if destination.len() < memory_abi::SHM_STAT_SIZE {
+                return Err(Error::InvalidArgument);
+            }
+            #[cfg(target_os = "none")]
+            {
+                let (bytes, attaches) =
+                    crate::shm::target::stat(identifier).ok_or(Error::NotFound)?;
+                destination[memory_abi::SHM_STAT_BYTES_OFFSET
+                    ..memory_abi::SHM_STAT_BYTES_OFFSET + core::mem::size_of::<usize>()]
+                    .copy_from_slice(&bytes.to_le_bytes());
+                destination[memory_abi::SHM_STAT_ATTACHES_OFFSET
+                    ..memory_abi::SHM_STAT_ATTACHES_OFFSET + core::mem::size_of::<usize>()]
+                    .copy_from_slice(&attaches.to_le_bytes());
+                Ok(Dispatch::complete(0))
+            }
+            #[cfg(not(target_os = "none"))]
+            {
+                let _ = identifier;
+                Err(Error::NotImplemented)
+            }
+        }
+        _ => Err(Error::InvalidArgument),
+    }
+}
+
 /// Read or move the program's break.
 ///
 /// `Brk(new_break)`: zero is a query, anything else is a request to grow to

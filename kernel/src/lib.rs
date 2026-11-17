@@ -82,6 +82,7 @@ pub mod programs;
 pub mod random;
 pub mod scheduler;
 pub mod service;
+pub mod shm;
 pub mod shootdown;
 pub mod syscall;
 pub mod tick;

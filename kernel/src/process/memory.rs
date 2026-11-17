@@ -57,5 +57,67 @@ pub(crate) fn serve_memory(
         return Some(outcome);
     }
 
+    // Shared memory.  Three of the four take no buffer and go the way the
+    // memory calls above do; `ShmCtl`'s `IPC_STAT` writes a record, so it takes
+    // the buffer path and its validation is here because this branch is what
+    // turns a ring-3 word into a borrow.
+    if number == SyscallNumber::ShmGet as usize
+        || number == SyscallNumber::ShmAt as usize
+        || number == SyscallNumber::ShmDt as usize
+    {
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, None, None, None);
+        if let CallOutcome::Return(answer) = outcome
+            && !abi::syscall::is_error_status(answer)
+        {
+            // One line per call that worked, and the answer in it, because the
+            // answer is the whole of what the call produced: an identifier, an
+            // address, or a region taken down.  A refusal prints nothing here
+            // and the program's own status carries it, which is the rule every
+            // family in this file keeps.
+            arch::serial::write_str("protofire: program shared memory call ");
+            arch::serial::write_u32(number as u32);
+            arch::serial::write_str(" answered ");
+            arch::serial::write_hex(answer as u64);
+            arch::serial::write_str("\n");
+        }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::ShmCtl as usize {
+        // `ShmCtl(identifier, command, record, length)`: `IPC_STAT` writes the
+        // record, so the buffer is validated the way every other buffer-taking
+        // call validates one, and `IPC_RMID` passes none of it.
+        let record = call.arguments[2];
+        let length = call.arguments[3];
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        if call.arguments[1] == abi::memory::IPC_STAT {
+            if length < abi::memory::SHM_STAT_SIZE {
+                return Some(CallOutcome::Return(abi::syscall::encode_error(
+                    abi::Error::InvalidArgument,
+                )));
+            }
+            if !crate::address_space::user_range(record, length, true) {
+                return Some(CallOutcome::Return(abi::syscall::encode_error(
+                    abi::Error::InvalidArgument,
+                )));
+            }
+            // SAFETY: the range is inside the user window and mapped in the
+            // calling task's own root, which `user_range` checked.  The handler
+            // writes the record and nothing past it.
+            let destination = unsafe { core::slice::from_raw_parts_mut(record as *mut u8, length) };
+            return Some(through_registry(
+                &mut context,
+                None,
+                None,
+                Some(destination),
+            ));
+        }
+        return Some(through_registry(&mut context, None, None, None));
+    }
+
     None
 }

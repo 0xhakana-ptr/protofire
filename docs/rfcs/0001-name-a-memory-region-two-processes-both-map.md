@@ -1,6 +1,6 @@
 # RFC 0001: Name a memory region two processes both map
 
-- **Status:** Proposed
+- **Status:** Implemented
 - **Author(s):** Raiden Lumine <2557597107@qq.com>
 - **Date:** 2026-11-17
 - **Supersedes:** none

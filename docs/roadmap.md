@@ -1275,9 +1275,17 @@ each unblocks rather than by size.
    what it marks, which is the promise `F_SETFD` had been refusing to make.
    Three exact gate lines carry the evidence, `set descriptor 6 flags to 1`,
    `to 0` and `polled 1 descriptor(s), 1 ready`.
-2. **Shared memory**, `ShmGet`, `ShmAt`, `ShmDt`, `ShmCtl`.  Two processes
-   naming one region, which is a decision about the address space and not
-   wiring.
+2. **Shared memory.  Done.**  `ShmGet`, `ShmAt`, `ShmDt` and `ShmCtl` are
+   served, and the decision they needed is
+   [`docs/rfcs/0001`](rfcs/0001-name-a-memory-region-two-processes-both-map.md):
+   a table from a key to a run of frames, owned by no address space, where an
+   attach maps the region writable and marks nothing copy-on-write.  That is
+   the whole difference from `fork`, whose demotion is what makes a child's
+   write private; a region whose first write unshared would not be shared
+   memory.  The evidence is a boot line and a probe: `/bin/init` makes a
+   region, forks, and the child's write is what the parent reads back, printing
+   `protofire: shared region crossed`; a probe mapping private copies in place
+   of the region's frames printed nothing and exited 234.
 3. **Synchronisation**, `Futex`.  One number, and the wrong shape for a kernel
    with a scheduler that already parks.
 4. **Timers and notifications**, `TimerFd`, `SignalFd`, `EventFd`,

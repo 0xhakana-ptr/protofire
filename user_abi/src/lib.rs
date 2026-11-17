@@ -213,6 +213,14 @@ pub const SYS_WAIT_PROCESS_OF: usize = SyscallNumber::WaitProcessOf as usize;
 pub const SYS_MMAP: usize = SyscallNumber::Mmap as usize;
 /// `Brk`, the program's break.
 pub const SYS_BRK: usize = SyscallNumber::Brk as usize;
+/// `ShmGet`, a shared region named by a key, or made if the caller asked.
+pub const SYS_SHM_GET: usize = SyscallNumber::ShmGet as usize;
+/// `ShmAt`, one region mapped into the calling process.
+pub const SYS_SHM_AT: usize = SyscallNumber::ShmAt as usize;
+/// `ShmDt`, one attach of a region taken away.
+pub const SYS_SHM_DT: usize = SyscallNumber::ShmDt as usize;
+/// `ShmCtl`, a region marked for destruction or described.
+pub const SYS_SHM_CTL: usize = SyscallNumber::ShmCtl as usize;
 /// `AbiInfo`, what this build's interface is.
 pub const SYS_ABI_INFO: usize = SyscallNumber::AbiInfo as usize;
 /// `SystemInfo`, what the machine has been doing.
@@ -1081,6 +1089,55 @@ pub fn sys_fork() -> usize {
 pub fn sys_wait_process_of(pid: usize) -> usize {
     syscall6(SYS_WAIT_PROCESS_OF, pid, 0, 0, 0, 0, 0)
 }
+
+/// `shm_get(key, bytes, flags)`: a region's identifier, or an error encoding.
+///
+/// A key of zero is `IPC_PRIVATE`: a region nobody else can find by name, and
+/// the caller must pass the answer to whoever should map it.  A named key needs
+/// `IPC_CREAT` to make a region the first time.
+#[cfg(target_os = "none")]
+pub fn sys_shm_get(key: i32, bytes: usize, flags: usize) -> usize {
+    syscall6(SYS_SHM_GET, key as usize, bytes, flags, 0, 0, 0)
+}
+
+/// `shm_at(identifier, address, protection)`: where the region was mapped.
+///
+/// `address` must be zero: the kernel chooses where a region goes, because a
+/// fixed address is a program asserting a number about a space it does not own.
+/// The protection word is the attach's own: `PROT_READ` always and `PROT_WRITE`
+/// if the caller means to write the region.
+#[cfg(target_os = "none")]
+pub fn sys_shm_at(identifier: usize, address: usize, protection: usize) -> usize {
+    syscall6(SYS_SHM_AT, identifier, address, protection, 0, 0, 0)
+}
+
+/// `shm_dt(address)`: zero, or an error encoding.
+///
+/// The address is the one `sys_shm_at` answered.  The region survives: an
+/// attach is one process's mapping, and a region outlives the process that made
+/// it.
+#[cfg(target_os = "none")]
+pub fn sys_shm_dt(address: usize) -> usize {
+    syscall6(SYS_SHM_DT, address, 0, 0, 0, 0, 0)
+}
+
+/// `shm_ctl(identifier, IPC_RMID)`: mark a region destroyed.
+///
+/// The region goes when its last attach does, not now: freeing a region a
+/// program still has mapped would take memory out from under it.
+#[cfg(target_os = "none")]
+pub fn sys_shm_remove(identifier: usize) -> usize {
+    syscall6(SYS_SHM_CTL, identifier, SYS_SHM_COMMAND_REMOVE, 0, 0, 0, 0)
+}
+
+/// The `IPC_RMID` command word, re-exported so a program need not spell it.
+pub const SYS_SHM_COMMAND_REMOVE: usize = abi::memory::IPC_RMID;
+/// `IPC_CREAT`, the flag a `ShmGet` needs to make a named region.
+pub const IPC_CREAT: usize = abi::memory::IPC_CREAT;
+/// The read protection bit, as `ShmAt` and `Mmap` take it.
+pub const PROT_READ: usize = abi::memory::PROT_READ;
+/// The write protection bit, as `ShmAt` and `Mmap` take it.
+pub const PROT_WRITE: usize = abi::memory::PROT_WRITE;
 
 /// `mmap(hint, length, prot, flags)`: the base address, or an error encoding.
 #[cfg(target_os = "none")]

@@ -133,7 +133,25 @@ pub struct AddressSpace {
     /// afterwards.  `(0, 0)` for a space no image was loaded into, which is the
     /// boot's own machine-code programs; they never reserve.
     window: (usize, usize),
+    /// The shared regions this space has mapped: where, which region, and how
+    /// many pages.
+    ///
+    /// A record on the space rather than a table beside it, because an attach
+    /// is a fact about one address space: a shared table keyed by root would
+    /// leak an entry when the space is reaped, and a sweep of it would be a
+    /// thing to remember rather than a thing the type keeps.  The array is
+    /// bounded for the reason the scheduler's retired-space array is: a slot is
+    /// a fact about a call, four is more than this boot's programs hold at
+    /// once, and a fifth attach is refused rather than resized mid-syscall.
+    attaches: [Option<(usize, i32, usize)>; MAX_SHARED_ATTACHES],
 }
+
+/// How many shared regions one space may have mapped at once.
+///
+/// Four.  A program that needs more is one whose design is worth looking at
+/// before the record grows, and a full record answers `OutOfMemory` from the
+/// attach rather than corrupting anything.
+pub const MAX_SHARED_ATTACHES: usize = 4;
 
 #[cfg(target_os = "none")]
 impl AddressSpace {
@@ -176,6 +194,7 @@ impl AddressSpace {
             brk: 0,
             map_cursor: 0,
             window: (0, 0),
+            attaches: [const { None }; MAX_SHARED_ATTACHES],
         })
     }
 
@@ -453,6 +472,143 @@ impl AddressSpace {
                 let _ = self.disown(frame);
             }
         }
+    }
+
+    /// Map `frames` into this space at `base`, page by page.
+    ///
+    /// `ShmAt`'s mapping, and the one place this kernel maps a frame a space
+    /// did not allocate.  The frames are the region's: the caller counted a
+    /// reference on each already, so this records each in this space's
+    /// ownership list and writes the leaf.  Nothing is demoted and nothing is
+    /// marked copy-on-write, which is the whole difference from a fork: a
+    /// shared page stays writable after a write on the other side, because
+    /// there is no resolver that would copy it and no mark that would ask.
+    ///
+    /// Every frame is recorded before any is mapped, so a space whose
+    /// ownership list is full is refused with nothing written.  A mapping that
+    /// fails partway unmaps and disowns what it did, and answers `false`; the
+    /// references the caller counted are the caller's to take back, because
+    /// this function did not count them.
+    ///
+    /// # Safety
+    ///
+    /// `self` must not be the installed address space, `base` must be a range
+    /// `reserve` answered, and each frame must be one the caller holds a
+    /// counted reference to for this attach.
+    pub unsafe fn map_shared(
+        &mut self,
+        base: usize,
+        frames: &[usize],
+        writable: bool,
+        executable: bool,
+    ) -> bool {
+        let permissions = Permissions {
+            writable,
+            executable,
+            user: true,
+            cache: paging::Cache::Normal,
+        };
+        // The record first: a refusal here costs nothing, and it is the one
+        // failure that cannot be undone after pages are live.
+        //
+        // The undo is a search over `owned` for the frames this call added, and
+        // not a counter, because `disown` takes `&mut self` and a loop over
+        // `owned` holds `&self`.  The search is over the frames this call was
+        // given, so it cannot touch a record an earlier call made.
+        for frame in frames {
+            if !self.own(*frame) {
+                // The frames themselves are not released: their references are
+                // the caller's, and a detach that never happened is not this
+                // function's to pretend.
+                for taken in frames {
+                    let _ = self.disown(*taken);
+                }
+                return false;
+            }
+        }
+        let mut mapped = 0usize;
+        while mapped < frames.len() {
+            // SAFETY: the caller's contract covers the range and the frames.
+            let ok = unsafe {
+                self.map_page_with(
+                    base + mapped * paging::PAGE_SIZE,
+                    frames[mapped],
+                    permissions,
+                )
+            };
+            if !ok {
+                // SAFETY: as above; the pages taken back are ones this call
+                // mapped.
+                unsafe { self.undo_anonymous(base, mapped) };
+                return false;
+            }
+            mapped += 1;
+        }
+        true
+    }
+
+    /// Unmap the shared attach at `base`, answering the region that made it
+    /// and the frames that were behind it.
+    ///
+    /// The region's identifier is read out of this space's own attach record,
+    /// which [`AddressSpace::remember_attach`] writes: an unmap of an address
+    /// that names no attach answers `None`, which is what a `ShmDt` of an
+    /// address nobody attached needs in order to answer `NotFound`.
+    ///
+    /// The record lives on the space and not in a table beside it, because an
+    /// attach is a fact about one address space: a shared table keyed by root
+    /// would leak an entry when the space is reaped and would need a sweep
+    /// nobody would remember to write.
+    ///
+    /// The frames are answered and not released, because releasing one takes
+    /// the page-table lock this function already holds; the caller drops each
+    /// after this returns.
+    ///
+    /// # Safety
+    ///
+    /// `self` must not be the installed address space, and `base` must be the
+    /// base a `map_shared` answered.
+    pub unsafe fn unmap_shared(&mut self, base: usize) -> Option<(i32, alloc::vec::Vec<usize>)> {
+        let position = self.attaches.iter().position(|attach| {
+            attach
+                .as_ref()
+                .is_some_and(|(address, _, _)| *address == base)
+        })?;
+        let (_, identifier, pages) = self.attaches[position].take()?;
+        let mut frames = alloc::vec::Vec::with_capacity(pages);
+        for index in 0..pages {
+            let address = base + index * paging::PAGE_SIZE;
+            // SAFETY: the caller's contract is this function's.
+            if let Some(frame) = unsafe { self.unmap_page(address) } {
+                let _ = self.disown(frame);
+                frames.push(frame);
+            }
+        }
+        Some((identifier, frames))
+    }
+
+    /// Whether this space has room for one more shared attach.
+    ///
+    /// Asked before a mapping rather than discovered after it, so an attach
+    /// that cannot be recorded is a refusal that has written nothing.  The
+    /// check and the write are two calls because the mapping between them must
+    /// not be done under a failed record; the scheduler takes the same lock for
+    /// both.
+    pub fn has_attach_room(&self) -> bool {
+        self.attaches.iter().any(|slot| slot.is_none())
+    }
+
+    /// Remember that `base` in this space is an attach of `identifier`.
+    ///
+    /// Called by the mapping that just succeeded, so a detach can find out
+    /// which region it is taking apart.  Answers `false` when the record is
+    /// full, which [`Self::has_attach_room`] is what a caller checks first.
+    pub fn remember_attach(&mut self, base: usize, identifier: i32, pages: usize) -> bool {
+        let Some(slot) = self.attaches.iter_mut().find(|slot| slot.is_none()) else {
+            return false;
+        };
+        *slot = Some((base, identifier, pages));
+        true
     }
 
     /// Unmap everything in `[base, base + length)` and give its frames back.
@@ -1309,6 +1465,24 @@ pub unsafe fn fork_from(parent: &AddressSpace) -> Option<AddressSpace> {
     let count = mapped_pages(parent, &mut pages)?;
 
     let mut child = unsafe { AddressSpace::new() }?;
+    // The child runs in its parent's window and can reserve in it.
+    //
+    // A fork copies the mapping, not just the pages: a child that could read
+    // its parent's addresses but could not `Mmap` or `ShmAt` one of its own
+    // would be a process whose memory calls all answer `OutOfMemory`, and that
+    // is what this was.  `AddressSpace::new` starts at `(0, 0)`, which
+    // `reserve` reads as "no window to reserve in", and the boot found it the
+    // first time a forked child attached a shared region: the child's `ShmAt`
+    // answered `OutOfMemory` and its `insist` exited 200.
+    //
+    // The break and the map cursor travel too, for the same reason one step
+    // further on: both are positions inside that window, and a child that
+    // started them at zero would hand out addresses above pages the parent had
+    // already mapped.  The parent's break is a number the child inherits with
+    // its pages, so it is the same number here.
+    child.set_window(parent.window.0, parent.window.1);
+    child.set_brk(parent.brk);
+    child.map_cursor = parent.map_cursor;
 
     for page in &pages[..count] {
         // Demote the parent's entry when the page was writable, and record the

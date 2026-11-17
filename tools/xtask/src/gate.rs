@@ -1086,14 +1086,21 @@ impl Machine {
                 // count is the pool's whole size.  A release that leaks even
                 // the walk's scaffolding, three tables per space, fifteen on
                 // this boot, prints a smaller number and fails here.
+                // Ten and not nine: the shared-memory exercise forks one more
+                // child, so the boot runs ten programs.  The free-frame count
+                // is unchanged, which is the half of this line that matters:
+                // the region's frame went back to the pool when the last
+                // detach took its mapping away and `IPC_RMID` found nothing
+                // attached.  A region that leaked printed 131071 here, and one
+                // did before `mark` learned to free an unattached region.
                 (
-                    "protofire: address spaces reaped 9, 131072 frame(s) free",
+                    "protofire: address spaces reaped 10, 131072 frame(s) free",
                     true,
                 ),
-                // Nine and not eight: the local-domain exchange forks once
-                // more than the stream exchange did, so the boot runs nine
-                // programs.  The number is the programs, which is why it is
-                // exact.
+                // Ten and not nine: the local-domain exchange forks once more
+                // than the stream exchange did, and the shared-memory exercise
+                // once more again, so the boot runs ten programs.  The number
+                // is the programs, which is why it is exact.
                 //
                 // The invalidation's own account, and **the count is not
                 // asserted**.
@@ -1237,6 +1244,15 @@ impl Machine {
                     "protofire: the parent has 0 writable-executable page(s)",
                     true,
                 ),
+                // Shared memory, as the one assertion a host cannot make: a
+                // region attached in two address spaces, a byte one process
+                // writes and the other reads back.  The line is the parent's
+                // own `WriteDebug` and it appears only after the byte it read
+                // was the one the child wrote; exit 234 is what a region that
+                // was copied instead of shared produces, and a probe mapping
+                // private copies in place of the region's frames printed
+                // no line and exited 234.
+                ("protofire: shared region crossed", true),
                 // The child's death, as the kernel reports it: which process,
                 // the address its write named, and the status the pair reads.
                 // A prefix, because the address is the program's own code page
@@ -1314,7 +1330,7 @@ impl Machine {
                     // and produced 186 page faults in six boots of eight, which
                     // is why the count is here at the end rather than absent.
                     (
-                        "protofire: address spaces reaped 9, 16384 frame(s) free",
+                        "protofire: address spaces reaped 10, 16384 frame(s) free",
                         true,
                     ),
                     // One invalidation, acknowledged, and no wait ran out.
@@ -1446,6 +1462,15 @@ impl Machine {
                         "protofire: the parent has 0 writable-executable page(s)",
                         true,
                     ),
+                    // Shared memory, as the one assertion a host cannot make: a
+                    // region attached in two address spaces, a byte one process
+                    // writes and the other reads back.  The line is the
+                    // parent's own `WriteDebug` and it appears only after the
+                    // byte it read was the one the child wrote; exit
+                    // 234 is what a region that was copied instead of shared
+                    // produces, and a probe mapping private copies in place of
+                    // the region's frames printed no line and exited 234.
+                    ("protofire: shared region crossed", true),
                     // The child's death, as the kernel reports it: which
                     // process, the address its write named, and the status
                     // the pair reads.  A prefix, because the address is the
@@ -2593,6 +2618,15 @@ impl Machine {
                     "protofire: the parent has 0 writable-executable page(s)",
                     true,
                 ),
+                // Shared memory, as the one assertion a host cannot make: a
+                // region attached in two address spaces, a byte one process
+                // writes and the other reads back.  The line is the parent's
+                // own `WriteDebug` and it appears only after the byte it read
+                // was the one the child wrote; exit 234 is what a region that
+                // was copied instead of shared produces, and a probe mapping
+                // private copies in place of the region's frames printed
+                // no line and exited 234.
+                ("protofire: shared region crossed", true),
                 // The child's death, as the kernel reports it: which process,
                 // the address its write named, and the status the pair reads.
                 // A prefix, because the address is the program's own code page
@@ -2613,7 +2647,7 @@ impl Machine {
                 // Every finished program's address space went back, as on the
                 // other two machines.
                 (
-                    "protofire: address spaces reaped 9, 16384 frame(s) free",
+                    "protofire: address spaces reaped 10, 16384 frame(s) free",
                     true,
                 ),
                 // No invalidation, and that is this machine's fact rather than

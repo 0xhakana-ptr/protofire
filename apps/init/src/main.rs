@@ -187,6 +187,14 @@ use user_abi::sys_set_sock_opt;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_xattr;
 #[cfg(target_os = "none")]
+use user_abi::sys_shm_at;
+#[cfg(target_os = "none")]
+use user_abi::sys_shm_dt;
+#[cfg(target_os = "none")]
+use user_abi::sys_shm_get;
+#[cfg(target_os = "none")]
+use user_abi::sys_shm_remove;
+#[cfg(target_os = "none")]
 use user_abi::sys_sigsuspend;
 #[cfg(target_os = "none")]
 use user_abi::sys_spawn;
@@ -1286,8 +1294,89 @@ pub extern "C" fn _start() -> ! {
         sys_exit(232);
     }
 
+    // The shared region, and the one assertion on this page a host test cannot
+    // make: two address spaces, one frame, and a byte one process writes that
+    // the other reads back.
+    //
+    // The shape matters.  A fork alone would not do it: `fork` demotes the
+    // shared pages read-only and marks them copy-on-write, so the child's write
+    // would give the child a private copy and the parent would read its own
+    // zero.  The region is attached **after** the fork, so each process maps it
+    // with `ShmAt` and neither mapping is demoted.
+    //
+    // The key is a number this program chose and nothing else knows, which is
+    // what makes the child able to find it: the child inherits the key in a
+    // register-sized value and the region is in the kernel's table, not in
+    // either process's memory.
+    let key: i32 = 0x4649;
+    let region = insist(sys_shm_get(key, SHM_REGION_BYTES, user_abi::IPC_CREAT));
+    let attach_child = sys_fork();
+    if attach_child == 0 {
+        // The child's side: map the region, write its mark, detach, and exit
+        // with the mark so the parent's wait says the write happened.
+        let base = insist(sys_shm_at(
+            region,
+            0,
+            user_abi::PROT_READ | user_abi::PROT_WRITE,
+        ));
+        // SAFETY: `shm_at` just answered an address the kernel mapped writable
+        // for this process, one page long, which is what the call was given.
+        unsafe { core::ptr::write_volatile(base as *mut u8, SHARED_MARK) };
+        insist(sys_shm_dt(base));
+        sys_exit(SHARED_MARK as usize);
+    }
+    // The parent's side: map the same region, wait for the child, and read the
+    // byte it wrote.  The order is deliberate, the parent maps **before** the
+    // wait so both attaches exist at once and the count `IPC_STAT` would report
+    // is two.
+    let base = insist(sys_shm_at(
+        region,
+        0,
+        user_abi::PROT_READ | user_abi::PROT_WRITE,
+    ));
+    let child_status = insist(sys_wait_process_of(attach_child));
+    if child_status != SHARED_MARK as usize {
+        sys_exit(233);
+    }
+    // SAFETY: `shm_at` answered an address this process may read, and the
+    // child's write is what is being read.
+    let seen = unsafe { core::ptr::read_volatile(base as *const u8) };
+    if seen != SHARED_MARK {
+        // The child wrote its mark and this process did not see it, which is
+        // the whole failure this exercise exists for: a region that was copied
+        // instead of shared.
+        sys_exit(234);
+    }
+    insist(sys_shm_dt(base));
+    // The region is marked **after** the last detach, which is the case
+    // `IPC_RMID` has to handle on its own: nothing is attached, so the mark
+    // frees it here rather than waiting for a detach that will never come.
+    // The other order is the one the design chose to survive, a detach that
+    // finds the region marked, and both have to free exactly once.  This one
+    // is the order the boot exercises because it is the shorter path; a
+    // region marked while attached leaks its frames until the last detach,
+    // which is what `docs/rfcs/0001` says it does.
+    insist(sys_shm_remove(region));
+    user_abi::sys_write_debug(b"protofire: shared region crossed\n");
+
     sys_exit(first)
 }
+
+/// The byte one process writes into the shared region and the other reads.
+///
+/// Not a value the program could guess from anything else: the parent's
+/// assertion is that this exact byte arrived through a frame it did not write,
+/// and a zero would pass on a region nothing had touched.
+#[cfg(target_os = "none")]
+const SHARED_MARK: u8 = 0x5A;
+
+/// How much of the region the exercise maps.
+///
+/// One page, which is the smallest region and the whole of what the exercise
+/// needs: a second page would double the frames and prove nothing the first did
+/// not.
+#[cfg(target_os = "none")]
+const SHM_REGION_BYTES: usize = 4096;
 
 /// Whether a filled `ReadDir` record names the expected entry.
 ///

@@ -970,6 +970,74 @@ pub(crate) fn unmap_current(cpu: usize, base: usize, length: usize) -> Option<us
     })
 }
 
+/// Map a shared region into the running process, answering the base.
+///
+/// `ShmAt`'s work, and the reason it is here rather than in `shm`: the space
+/// belongs to a task and reaching it takes the scheduler's lock, the same
+/// division `map_current` makes.  What it does **not** do is the part that
+/// matters: it does not count the frames, and it does not mark anything
+/// copy-on-write.  Counting is `shm`'s, because the region is `shm`'s, and not
+/// marking is the whole difference between this and a fork.
+///
+/// Every page is recorded in the space's ownership list before any is mapped,
+/// so a full record is refused with nothing written; a mapping that fails after
+/// some pages are live unmaps those and disowns them, and the references the
+/// caller counted are the caller's to take back.
+#[cfg(target_os = "none")]
+pub(crate) fn attach_shared(
+    cpu: usize,
+    identifier: i32,
+    frames: &[usize],
+    bytes: usize,
+    writable: bool,
+    executable: bool,
+) -> Option<usize> {
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        let task = scheduler.running.get(cpu).copied().flatten()?;
+        let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
+        let base = space.reserve(0, bytes)?;
+        // The record is checked **before** the mapping, so a full record is a
+        // refusal that costs nothing.  `remember_attach` is the writer and this
+        // is the one place its answer is read, which keeps "is there room" in
+        // the type that has the room.
+        if !space.has_attach_room() {
+            return None;
+        }
+        // SAFETY: the space is the running task's, so every address the region
+        // takes is one it does not map yet, which is `reserve`'s answer and
+        // the note `map_current` gives applies unchanged.
+        if !unsafe { space.map_shared(base, frames, writable, executable) } {
+            return None;
+        }
+        // The record goes in after the mapping succeeded; the room was checked
+        // above, so this cannot fail, and a `false` here would be a state this
+        // function created rather than one it found.
+        space.remember_attach(base, identifier, frames.len());
+        Some(base)
+    })
+}
+
+/// Take the shared attach at `address` out of the running process, answering
+/// the region it named and the frames it held.
+///
+/// The frames are answered rather than released, because releasing one takes
+/// the page-table lock and this function holds the scheduler's; the caller
+/// drops each after this returns, which is the order `map_current`'s note
+/// states.
+#[cfg(target_os = "none")]
+pub(crate) fn detach_shared(cpu: usize, address: usize) -> Option<(i32, alloc::vec::Vec<usize>)> {
+    with_scheduler(|scheduler| {
+        let scheduler = scheduler.as_mut()?;
+        let task = scheduler.running.get(cpu).copied().flatten()?;
+        let space = scheduler.tasks.get_mut(task)?.space.as_mut()?;
+        // SAFETY: the space is the running task's and the address is one it
+        // names; a `ShmDt` of an address this task is executing from is the
+        // program's own mistake, and the machine reports it as a fault.
+        unsafe { space.unmap_shared(address) }
+    })
+}
+
 /// Read or set the running process's break.
 ///
 /// `Some(current)` for a query, and the new break for a set that the space

@@ -2440,8 +2440,46 @@ with a store page fault three frames below `USER_BASE`, reported as
 destroyed the register that names the CPU.  Both are sized by the image bound
 now, which is the set of pages each actually describes.
 
-**The file interface.**  A program can write, measure, list, move and remove.
-Eleven numbers serve the filesystem now, `Write` (6), `CreateDir` (19),
+**Shared memory.**  Two processes can map one region and both see each other's
+writes.  `ShmGet`, `ShmAt`, `ShmDt` and `ShmCtl` are served, four frozen numbers
+that had no mechanism behind them, and `docs/rfcs/0001` is the decision:
+a table from a key to a run of frames that no address space owns, an attach
+that maps the region **writable with nothing marked copy-on-write**, and a
+detach that frees only when the pool says it was the last owner.
+
+That last clause is the whole difference from `fork`.  A fork makes two spaces
+map one frame too, and it demotes the page and marks it, so the first write
+gives that process a private copy; a region whose first write unshared would
+not be shared memory.  The boot proves the difference rather than asserting it:
+`/bin/init` makes a region, forks, and both processes attach it, the child
+writes a byte, and the parent reads that byte back from its own mapping:
+
+```
+protofire: program shared memory call 100 answered 0x4649
+protofire: program shared memory call 101 answered 0x807fffe000
+protofire: program shared memory call 101 answered 0x807fffe000
+protofire: program shared memory call 102 answered 0x0
+protofire: program shared memory call 102 answered 0x0
+protofire: shared region crossed
+```
+
+`100` is `ShmGet`, `101` `ShmAt`, `102` `ShmDt`.  The two attaches answering
+the **same** address is the parent and the child, and the crossed line is the
+parent's own `WriteDebug`, reached only when the byte it read was the child's.
+A probe that mapped private copies in place of the region's frames printed no
+line and exited 234, so the exercise fails on its own claim.
+
+Two defects surfaced here, both found by the boot and neither by a host test.
+`fork_from` built the child with `AddressSpace::new`, whose window is `(0, 0)`,
+so a forked child's every `Mmap` or `ShmAt` answered `OutOfMemory`: the window,
+the break and the map cursor now travel from the parent, because a fork copies
+the space and not just its pages.  And `IPC_RMID` only freed when the last
+detach found the region marked, so a mark arriving **after** the last detach
+left the frames in the pool; the frame census read `131071` where it reads
+`131072`, and `mark` now frees a region with no attaches because there is no
+later detach to do it.
+
+**The file interface.**  A program can write, measure, list, move and remove.Eleven numbers serve the filesystem now, `Write` (6), `CreateDir` (19),
 `RemovePath` (21), `Stat` (27), `ReadDir` (28), `Rename` (29) and the five
 `*At` forms (32–36), where a program could previously only open, read and
 close, and `Write` printed a fixed line instead of writing anything.  The boot

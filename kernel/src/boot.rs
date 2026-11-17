@@ -570,6 +570,15 @@ fn install_registry(namespace: fs::MountTable) {
         ::syscall::SyscallNumber::ReclaimPages,
         crate::syscall::reclaim_pages,
     );
+    // Shared memory.  The four numbers have been frozen since the range was and
+    // were served by nothing at all; `docs/rfcs/0001-name-a-memory-region-two-
+    // processes-both-map.md` is the decision behind them and these are its four
+    // calls.  They are registered beside the memory calls because they are the
+    // same subject, and a program reaches them the same way.
+    table.register(::syscall::SyscallNumber::ShmGet, crate::syscall::shm_get);
+    table.register(::syscall::SyscallNumber::ShmAt, crate::syscall::shm_at);
+    table.register(::syscall::SyscallNumber::ShmDt, crate::syscall::shm_dt);
+    table.register(::syscall::SyscallNumber::ShmCtl, crate::syscall::shm_ctl);
     // Time, randomness and the two calls that report what this build is.
     // `GetTimeOfDay` and `GetRandom` answer from the clock and the generator
     // the boot seeded; `SystemInfo` and `AbiInfo` answer from the scheduler's
