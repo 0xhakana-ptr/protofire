@@ -120,9 +120,13 @@ use user_abi::sys_get_sock_opt;
 #[cfg(target_os = "none")]
 use user_abi::sys_get_time_of_day;
 #[cfg(target_os = "none")]
+use user_abi::sys_get_xattr;
+#[cfg(target_os = "none")]
 use user_abi::sys_ipv6_status;
 #[cfg(target_os = "none")]
 use user_abi::sys_list_block_devices;
+#[cfg(target_os = "none")]
+use user_abi::sys_list_xattr;
 #[cfg(target_os = "none")]
 use user_abi::sys_listen_tcp;
 #[cfg(target_os = "none")]
@@ -148,6 +152,8 @@ use user_abi::sys_recv_raw_packet;
 #[cfg(target_os = "none")]
 use user_abi::sys_remove_path_at;
 #[cfg(target_os = "none")]
+use user_abi::sys_remove_xattr;
+#[cfg(target_os = "none")]
 use user_abi::sys_rename_at;
 #[cfg(target_os = "none")]
 use user_abi::sys_resolve_hostname;
@@ -170,6 +176,8 @@ use user_abi::sys_set_length;
 use user_abi::sys_set_signal_mask;
 #[cfg(target_os = "none")]
 use user_abi::sys_set_sock_opt;
+#[cfg(target_os = "none")]
+use user_abi::sys_set_xattr;
 #[cfg(target_os = "none")]
 use user_abi::sys_sigsuspend;
 #[cfg(target_os = "none")]
@@ -209,6 +217,11 @@ static GREETING_PATH: &[u8] = b"/greeting.txt\0";
 static NOTE_NAME: &[u8] = b"note.txt\0";
 #[cfg(target_os = "none")]
 static KEPT_NAME: &[u8] = b"kept.txt\0";
+/// The absolute path the attribute exercise uses: a file this program created
+/// earlier in the same run, so a set that stored nothing cannot be mistaken
+/// for a get that worked.
+#[cfg(target_os = "none")]
+static XATTR_PATH: &[u8] = b"/tmp/kept.txt\0";
 #[cfg(target_os = "none")]
 static NOTES_NAME: &[u8] = b"notes\0";
 #[cfg(target_os = "none")]
@@ -697,6 +710,62 @@ pub extern "C" fn _start() -> ! {
     let (kind, size) = user_abi::stat_words(&record);
     if kind != 2 || size != NOTE_TEXT.len() {
         sys_exit(207);
+    }
+
+    // The four extended-attribute calls, on the file the rename left behind.
+    // The round trip is what makes them evidence: the value read back is the
+    // one written, and the list is parsed with the ABI's own offsets rather
+    // than with the writer's, so a packing the handler got wrong fails here
+    // rather than passing a plausible byte count.
+    let attribute_name = b"user.motd\0";
+    let attribute_value = b"hello";
+    insist(sys_set_xattr(
+        XATTR_PATH.as_ptr() as usize,
+        attribute_name,
+        attribute_value,
+    ));
+    let mut attribute = [0u8; 16];
+    let read = insist(sys_get_xattr(
+        XATTR_PATH.as_ptr() as usize,
+        attribute_name,
+        &mut attribute,
+    ));
+    if read != attribute_value.len() || attribute[..read] != attribute_value[..] {
+        sys_exit(251);
+    }
+    let mut packed = [0u8; 128];
+    let listed = insist(sys_list_xattr(XATTR_PATH.as_ptr() as usize, &mut packed));
+    let record_size = user_abi::XATTR_ENTRY_RECORD_SIZE;
+    if listed < record_size + attribute_value.len() {
+        sys_exit(251);
+    }
+    let name_len = usize::from_le_bytes(
+        packed[user_abi::XATTR_ENTRY_RECORD_NAME_LEN_OFFSET
+            ..user_abi::XATTR_ENTRY_RECORD_NAME_LEN_OFFSET + 8]
+            .try_into()
+            .unwrap_or_default(),
+    );
+    let name_at = usize::from_le_bytes(
+        packed[user_abi::XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET
+            ..user_abi::XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET + 8]
+            .try_into()
+            .unwrap_or_default(),
+    );
+    if name_len != attribute_name.len() - 1
+        || packed[name_at..name_at + name_len] != attribute_name[..name_len]
+    {
+        sys_exit(251);
+    }
+    insist(sys_remove_xattr(
+        XATTR_PATH.as_ptr() as usize,
+        attribute_name,
+    ));
+    if !is_error(sys_get_xattr(
+        XATTR_PATH.as_ptr() as usize,
+        attribute_name,
+        &mut attribute,
+    )) {
+        sys_exit(251);
     }
 
     // The remove, of a file made for the purpose: created, closed, gone.

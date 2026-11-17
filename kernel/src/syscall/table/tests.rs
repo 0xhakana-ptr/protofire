@@ -103,6 +103,7 @@ fn open_path(table: &mut SyscallTable, path: &str, flags: usize) -> Result<usize
         path: Some(path),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     let dispatch = table.dispatch(&mut arguments)?;
     Ok(dispatch.value)
@@ -124,6 +125,7 @@ fn read_into(
         path: None,
         second_path: None,
         buffer: Some(buffer),
+        second_buffer: None,
     };
     let dispatch = table.dispatch(&mut arguments)?;
     Ok(dispatch.value)
@@ -230,6 +232,7 @@ fn write_as(
         path: None,
         second_path: None,
         buffer: Some(&mut copy),
+        second_buffer: None,
     };
     let dispatch = table.dispatch(&mut arguments)?;
     Ok(dispatch.value)
@@ -258,6 +261,7 @@ fn set_length_as(
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     table.dispatch(&mut arguments)?;
     Ok(())
@@ -532,6 +536,7 @@ fn flush_as(table: &mut SyscallTable, descriptor: usize, data_only: bool) -> Res
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     table.dispatch(&mut arguments)?;
     Ok(())
@@ -548,6 +553,7 @@ fn seek_as(table: &mut SyscallTable, descriptor: usize, offset: i64, whence: usi
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value as u64)
 }
@@ -753,6 +759,7 @@ fn punch_as(
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     table.dispatch(&mut arguments)?;
     Ok(())
@@ -769,6 +776,7 @@ fn flags_as(table: &mut SyscallTable, descriptor: usize) -> Result<u32> {
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value as u32)
 }
@@ -784,6 +792,7 @@ fn set_flags_as(table: &mut SyscallTable, descriptor: usize, set: u32, clear: u3
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     table.dispatch(&mut arguments)?;
     Ok(())
@@ -830,6 +839,7 @@ fn write_debug_answers_the_length_it_was_given() {
         path: None,
         second_path: None,
         buffer: Some(&mut copy),
+        second_buffer: None,
     };
     assert_eq!(
         table
@@ -852,6 +862,7 @@ fn write_debug_with_reserved_arguments_set_is_refused() {
         path: None,
         second_path: None,
         buffer: Some(&mut copy),
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
 }
@@ -880,6 +891,7 @@ fn read_console_answers_nothing_rather_than_refusing() {
         path: None,
         second_path: None,
         buffer: Some(&mut buffer),
+        second_buffer: None,
     };
     assert_eq!(
         table
@@ -896,6 +908,7 @@ fn read_console_answers_nothing_rather_than_refusing() {
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     assert_eq!(
         table
@@ -930,6 +943,7 @@ fn list_block_devices_fills_the_record_at_the_abis_offsets() {
         path: None,
         second_path: None,
         buffer: Some(&mut record),
+        second_buffer: None,
     };
     assert_eq!(
         table
@@ -976,6 +990,7 @@ fn list_block_devices_past_the_end_is_not_found() {
         path: None,
         second_path: None,
         buffer: Some(&mut record),
+        second_buffer: None,
     };
     assert_eq!(
         table.dispatch(&mut arguments),
@@ -1004,6 +1019,7 @@ fn list_block_devices_refuses_a_short_record() {
         path: None,
         second_path: None,
         buffer: Some(&mut record),
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
 
@@ -1026,6 +1042,7 @@ fn sync_answers_zero_over_the_namespace() {
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     assert_eq!(
         table
@@ -1041,6 +1058,7 @@ fn sync_answers_zero_over_the_namespace() {
         path: None,
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
 }
@@ -1377,6 +1395,7 @@ fn open_refuses_an_unknown_flag_and_a_reserved_argument() {
         path: Some("/greeting.txt"),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
 
@@ -1386,6 +1405,7 @@ fn open_refuses_an_unknown_flag_and_a_reserved_argument() {
         path: Some("/greeting.txt"),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
 }
@@ -1481,6 +1501,7 @@ fn open_as(table: &mut SyscallTable, path: &str, flags: usize, pid: u32) -> Resu
         path: Some(path),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
@@ -1621,6 +1642,7 @@ fn stat_path(table: &mut SyscallTable, path: &str) -> Result<(usize, usize)> {
         path: Some(path),
         second_path: None,
         buffer: Some(&mut record),
+        second_buffer: None,
     };
     table.dispatch(&mut arguments)?;
     let kind = usize::from_le_bytes(record[..8].try_into().expect("kind bytes"));
@@ -1638,6 +1660,7 @@ fn stat_descriptor(table: &mut SyscallTable, descriptor: usize) -> Result<(usize
         path: None,
         second_path: None,
         buffer: Some(&mut record),
+        second_buffer: None,
     };
     table.dispatch(&mut arguments)?;
     let kind = usize::from_le_bytes(record[..8].try_into().expect("kind bytes"));
@@ -1662,6 +1685,7 @@ fn list_entry_by_descriptor(
         path: None,
         second_path: None,
         buffer: Some(buffer),
+        second_buffer: None,
     };
     let written = table.dispatch(&mut arguments)?.value;
     let word =
@@ -1719,6 +1743,7 @@ fn a_record_shorter_than_the_stat_is_refused() {
         path: Some("/greeting.txt"),
         second_path: None,
         buffer: Some(&mut short),
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
     assert_eq!(short, [0u8; 8], "and nothing was written into it");
@@ -1866,6 +1891,7 @@ fn a_stat_with_reserved_arguments_set_is_refused() {
         path: Some("/greeting.txt"),
         second_path: None,
         buffer: Some(&mut record),
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
 }
@@ -1878,6 +1904,7 @@ fn make_dir(table: &mut SyscallTable, path: &str) -> Result<usize> {
         path: Some(path),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
@@ -1890,6 +1917,7 @@ fn remove(table: &mut SyscallTable, path: &str) -> Result<usize> {
         path: Some(path),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
@@ -1902,6 +1930,7 @@ fn rename_to(table: &mut SyscallTable, old_path: &str, new_path: &str) -> Result
         path: Some(old_path),
         second_path: Some(new_path),
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
@@ -2026,6 +2055,7 @@ fn a_rename_without_a_second_path_is_refused() {
         path: Some("/draft.txt"),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
 }
@@ -2044,6 +2074,7 @@ fn list_entry(
         path: Some(path),
         second_path: None,
         buffer: Some(buffer),
+        second_buffer: None,
     };
     let written = table.dispatch(&mut arguments)?.value;
     let word =
@@ -2156,6 +2187,7 @@ fn a_buffer_without_room_for_the_record_is_refused() {
         path: Some("/"),
         second_path: None,
         buffer: Some(&mut short),
+        second_buffer: None,
     };
     assert_eq!(
         table.dispatch(&mut arguments),
@@ -2173,6 +2205,7 @@ fn call_open_at(table: &mut SyscallTable, dirfd: usize, path: &str, flags: usize
         path: Some(path),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
@@ -2186,6 +2219,7 @@ fn call_stat_at(table: &mut SyscallTable, dirfd: usize, path: &str) -> Result<(u
         path: Some(path),
         second_path: None,
         buffer: Some(&mut record),
+        second_buffer: None,
     };
     table.dispatch(&mut arguments)?;
     let kind = usize::from_le_bytes(record[..8].try_into().expect("kind bytes"));
@@ -2202,6 +2236,7 @@ fn call_make_dir_at(table: &mut SyscallTable, dirfd: usize, path: &str) -> Resul
         path: Some(path),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
@@ -2215,6 +2250,7 @@ fn call_remove_at(table: &mut SyscallTable, dirfd: usize, path: &str) -> Result<
         path: Some(path),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
@@ -2236,6 +2272,7 @@ fn call_rename_at(
         path: Some(old_path),
         second_path: Some(new_path),
         buffer: None,
+        second_buffer: None,
     };
     Ok(table.dispatch(&mut arguments)?.value)
 }
@@ -2408,8 +2445,85 @@ fn an_at_open_with_reserved_arguments_set_is_refused() {
         path: Some("/anything"),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     assert_eq!(table.dispatch(&mut arguments), Err(Error::InvalidArgument));
+}
+
+/// Call a call that names a path, one mutable buffer and one read-only one.
+///
+/// `SetXattr`'s shape: the name is the mutable slot and the value the
+/// read-only one, which is the split the trap path makes when it copies the
+/// caller's windows in.
+fn call_with_two_buffers(
+    table: &mut SyscallTable,
+    number: SyscallNumber,
+    path: &str,
+    name: &mut [u8],
+    value: &[u8],
+) -> Result<usize> {
+    let mut context = SyscallContext::new(number as usize, [0, 0, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: Some(path),
+        second_path: None,
+        buffer: Some(name),
+        second_buffer: Some(value),
+    };
+    let dispatch = table.dispatch(&mut arguments)?;
+    Ok(dispatch.value)
+}
+
+/// Call a call that names a path, a read-only name and a mutable destination.
+///
+/// `GetXattr`'s shape: the name is the read-only slot and the destination the
+/// mutable one, the mirror of [`call_with_two_buffers`].
+fn call_with_name(
+    table: &mut SyscallTable,
+    number: SyscallNumber,
+    path: &str,
+    name: &[u8],
+    destination: &mut [u8],
+) -> Result<usize> {
+    let mut context = SyscallContext::new(number as usize, [0, 0, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: Some(path),
+        second_path: None,
+        buffer: Some(destination),
+        second_buffer: Some(name),
+    };
+    let dispatch = table.dispatch(&mut arguments)?;
+    Ok(dispatch.value)
+}
+
+/// Call a call that names a path and one mutable buffer.
+fn call_with_path_buffer(
+    table: &mut SyscallTable,
+    number: SyscallNumber,
+    path: &str,
+    buffer: &mut [u8],
+) -> Result<usize> {
+    let mut context = SyscallContext::new(number as usize, [0, 0, 0, 0, 0, 0]);
+    let mut arguments = Arguments {
+        context: &mut context,
+        path: Some(path),
+        second_path: None,
+        buffer: Some(buffer),
+        second_buffer: None,
+    };
+    let dispatch = table.dispatch(&mut arguments)?;
+    Ok(dispatch.value)
+}
+
+/// Call a call that names a path and one mutable buffer, with no answer size.
+fn call_with_one_buffer(
+    table: &mut SyscallTable,
+    number: SyscallNumber,
+    path: &str,
+    buffer: &mut [u8],
+) -> Result<usize> {
+    call_with_path_buffer(table, number, path, buffer)
 }
 
 /// Call a number through the registry with six argument words and no
@@ -2538,6 +2652,7 @@ fn call_with_buffer(
         path: None,
         second_path: None,
         buffer: Some(buffer),
+        second_buffer: None,
     };
     let dispatch = table.dispatch(&mut arguments)?;
     Ok(dispatch.value)
@@ -3142,5 +3257,160 @@ fn fcntl_refuses_an_unknown_command_and_a_foreign_descriptor() {
             [40, fs_abi::F_GETFL, 0, 0, 0, 0]
         ),
         Err(Error::InvalidArgument)
+    );
+}
+
+/// The four extended-attribute calls, through a tmpfs that really has them.
+///
+/// Set, get, list and remove in one test because the four are one mechanism
+/// observed at its four steps: a set that stored nothing would pass a get that
+/// invented an answer, and a list that dropped an entry would pass both.  The
+/// read-back is a byte the test wrote, and the list is parsed with the ABI's
+/// own record arithmetic rather than with the writer's.
+#[test]
+fn the_xattr_calls_round_trip_through_a_real_filesystem() {
+    let mut table = writable();
+    table.register(SyscallNumber::SetXattr, set_xattr);
+    table.register(SyscallNumber::GetXattr, get_xattr);
+    table.register(SyscallNumber::ListXattr, list_xattr);
+    table.register(SyscallNumber::RemoveXattr, remove_xattr);
+    let flags = fs_abi::OPEN_FLAG_READ | fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    open_path(&mut table, "/attrs.txt", flags).expect("create the file");
+    let path = "/attrs.txt";
+
+    // Set: the name is the mutable slot and the value the read-only one.
+    let mut name = *b"user.motd";
+    let value = b"hello";
+    assert_eq!(
+        call_with_two_buffers(&mut table, SyscallNumber::SetXattr, path, &mut name, value,),
+        Ok(0)
+    );
+
+    // Get: the same name answers the bytes that were stored.
+    let mut destination = [0u8; 32];
+    let length = call_with_name(
+        &mut table,
+        SyscallNumber::GetXattr,
+        path,
+        b"user.motd",
+        &mut destination,
+    )
+    .expect("get");
+    assert_eq!(length, 5);
+    assert_eq!(&destination[..length], b"hello");
+
+    // List: one record, its name and its value where its own offsets say.
+    let mut listed = [0u8; 256];
+    let filled = call_with_path_buffer(&mut table, SyscallNumber::ListXattr, path, &mut listed)
+        .expect("list");
+    assert_eq!(
+        filled,
+        fs_abi::XATTR_ENTRY_RECORD_SIZE + b"user.motd".len() + b"hello".len()
+    );
+    let record = fs_abi::XattrEntryRecord::new(b"user.motd".len(), b"hello".len());
+    assert_eq!(
+        &listed[record.name_offset..record.name_offset + record.name_len],
+        b"user.motd"
+    );
+    assert_eq!(
+        &listed[record.value_offset..record.value_offset + record.value_len],
+        b"hello"
+    );
+
+    // Remove: the attribute is gone, and a second remove says it was not there.
+    let mut removed = *b"user.motd";
+    assert_eq!(
+        call_with_one_buffer(&mut table, SyscallNumber::RemoveXattr, path, &mut removed),
+        Ok(0)
+    );
+    let mut again = *b"user.motd";
+    assert_eq!(
+        call_with_one_buffer(&mut table, SyscallNumber::RemoveXattr, path, &mut again),
+        Err(Error::NotFound)
+    );
+}
+
+/// A set whose name is empty, or whose value is past the ABI's maximum, is
+/// refused before any filesystem is asked.
+///
+/// Both limits are the ABI's rather than the volume's, which is what makes the
+/// answer the same whichever filesystem would have stored the attribute.
+#[test]
+fn set_xattr_refuses_a_name_or_value_past_the_limit() {
+    let mut table = writable();
+    table.register(SyscallNumber::SetXattr, set_xattr);
+    let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    open_path(&mut table, "/limits.txt", flags).expect("create");
+
+    let mut empty_name: [u8; 0] = [];
+    assert_eq!(
+        call_with_two_buffers(
+            &mut table,
+            SyscallNumber::SetXattr,
+            "/limits.txt",
+            &mut empty_name,
+            b"v",
+        ),
+        Err(Error::InvalidArgument),
+        "an attribute with no name cannot be looked up"
+    );
+
+    let mut name = *b"user.big";
+    let oversized = alloc::vec![0u8; fs_abi::XATTR_VALUE_MAX + 1];
+    assert_eq!(
+        call_with_two_buffers(
+            &mut table,
+            SyscallNumber::SetXattr,
+            "/limits.txt",
+            &mut name,
+            &oversized,
+        ),
+        Err(Error::InvalidArgument)
+    );
+}
+
+/// A get whose destination is too small is refused rather than truncated, and
+/// an attribute that is not there is `NotFound`.
+#[test]
+fn get_xattr_answers_not_found_and_refuses_a_short_buffer() {
+    let mut table = writable();
+    table.register(SyscallNumber::SetXattr, set_xattr);
+    table.register(SyscallNumber::GetXattr, get_xattr);
+    let flags = fs_abi::OPEN_FLAG_WRITE | fs_abi::OPEN_FLAG_CREATE;
+    open_path(&mut table, "/short.txt", flags).expect("create");
+
+    let mut name = *b"user.long";
+    let value = b"0123456789";
+    call_with_two_buffers(
+        &mut table,
+        SyscallNumber::SetXattr,
+        "/short.txt",
+        &mut name,
+        value,
+    )
+    .expect("set");
+
+    let mut small = [0u8; 4];
+    assert_eq!(
+        call_with_name(
+            &mut table,
+            SyscallNumber::GetXattr,
+            "/short.txt",
+            b"user.long",
+            &mut small
+        ),
+        Err(Error::InvalidArgument),
+        "half a value is not an answer"
+    );
+    let mut anywhere = [0u8; 32];
+    assert_eq!(
+        call_with_name(
+            &mut table,
+            SyscallNumber::GetXattr,
+            "/short.txt",
+            b"user.absent",
+            &mut anywhere
+        ),
+        Err(Error::NotFound)
     );
 }

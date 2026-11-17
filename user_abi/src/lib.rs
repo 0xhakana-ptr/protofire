@@ -71,6 +71,31 @@ pub const SYS_DUP: usize = SyscallNumber::Dup as usize;
 pub const SYS_DUP2: usize = SyscallNumber::Dup2 as usize;
 /// `Fcntl`, the descriptor control call.
 pub const SYS_FCNTL: usize = SyscallNumber::Fcntl as usize;
+/// The packed xattr record's size and the offsets a caller walks it with.
+///
+/// A program parses what the kernel wrote, so these come from `abi` rather
+/// than being restated: a drift between the two would be a list whose second
+/// record is read from inside the first one's value.
+pub const XATTR_ENTRY_RECORD_SIZE: usize = abi::fs::XATTR_ENTRY_RECORD_SIZE;
+/// Where a packed record's name length sits.
+pub const XATTR_ENTRY_RECORD_NAME_LEN_OFFSET: usize = abi::fs::XATTR_ENTRY_RECORD_NAME_LEN_OFFSET;
+/// Where a packed record's name starts, from the record's own first byte.
+pub const XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET: usize =
+    abi::fs::XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET;
+/// Where a packed record's value starts, from the record's own first byte.
+pub const XATTR_ENTRY_RECORD_VALUE_OFFSET_OFFSET: usize =
+    abi::fs::XATTR_ENTRY_RECORD_VALUE_OFFSET_OFFSET;
+/// How long a packed record's value is.
+pub const XATTR_ENTRY_RECORD_VALUE_LEN_OFFSET: usize = abi::fs::XATTR_ENTRY_RECORD_VALUE_LEN_OFFSET;
+
+/// `SetXattr`, attach an extended attribute.
+pub const SYS_SET_XATTR: usize = SyscallNumber::SetXattr as usize;
+/// `GetXattr`, read one extended attribute's value.
+pub const SYS_GET_XATTR: usize = SyscallNumber::GetXattr as usize;
+/// `ListXattr`, the packed list of a path's attributes.
+pub const SYS_LIST_XATTR: usize = SyscallNumber::ListXattr as usize;
+/// `RemoveXattr`, remove one extended attribute.
+pub const SYS_REMOVE_XATTR: usize = SyscallNumber::RemoveXattr as usize;
 /// `SetLength`, a descriptor's new length.
 pub const SYS_SET_LENGTH: usize = SyscallNumber::SetLength as usize;
 /// `Seek`, a descriptor's new position.
@@ -595,6 +620,73 @@ pub fn sys_dup2(descriptor: usize, target: usize) -> usize {
 #[cfg(target_os = "none")]
 pub fn sys_fcntl(descriptor: usize, command: usize, argument: usize) -> usize {
     syscall6(SYS_FCNTL, descriptor, command, argument, 0, 0, 0)
+}
+
+/// `set_xattr(path, name, value)`: zero, or an error's encoding.
+///
+/// The path and the name are NUL-terminated strings, and the name's length is
+/// its length **without** the terminator: the kernel reads exactly the bytes it
+/// is told about, because an attribute name is a map key and a key with a
+/// trailing zero is a different key.
+#[cfg(target_os = "none")]
+pub fn sys_set_xattr(path: usize, name: &[u8], value: &[u8]) -> usize {
+    let name_length = name.len().saturating_sub(1);
+    syscall6(
+        SYS_SET_XATTR,
+        path,
+        name.as_ptr() as usize,
+        name_length,
+        value.as_ptr() as usize,
+        value.len(),
+        0,
+    )
+}
+
+/// `get_xattr(path, name, buffer)`: the value's length, or an error.
+///
+/// A buffer too small for the value is refused rather than truncated, so a
+/// caller that knows the size reads it in one call and one that does not asks
+/// with an empty buffer first.
+#[cfg(target_os = "none")]
+pub fn sys_get_xattr(path: usize, name: &[u8], buffer: &mut [u8]) -> usize {
+    let name_length = name.len().saturating_sub(1);
+    syscall6(
+        SYS_GET_XATTR,
+        path,
+        name.as_ptr() as usize,
+        name_length,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        0,
+    )
+}
+
+/// `list_xattr(path, buffer)`: the packed list's byte count, or an error.
+#[cfg(target_os = "none")]
+pub fn sys_list_xattr(path: usize, buffer: &mut [u8]) -> usize {
+    syscall6(
+        SYS_LIST_XATTR,
+        path,
+        buffer.as_mut_ptr() as usize,
+        buffer.len(),
+        0,
+        0,
+        0,
+    )
+}
+
+/// `remove_xattr(path, name)`: zero, or an error's encoding.
+#[cfg(target_os = "none")]
+pub fn sys_remove_xattr(path: usize, name: &[u8]) -> usize {
+    syscall6(
+        SYS_REMOVE_XATTR,
+        path,
+        name.as_ptr() as usize,
+        name.len().saturating_sub(1),
+        0,
+        0,
+        0,
+    )
 }
 
 /// `set_length(descriptor, length)`: zero, or an error's encoding.

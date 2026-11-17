@@ -350,8 +350,48 @@ fn through_registry(
         path,
         second_path,
         buffer,
+        second_buffer: None,
     };
-    match crate::syscall::serve(&mut arguments) {
+    finish_registry_call(&mut arguments)
+}
+
+/// [`through_registry`] with a second read-only buffer.
+///
+/// `SetXattr` and `GetXattr` are the two calls that name two buffers, and this
+/// is the reason it exists rather than a fifth parameter on every other caller:
+/// a call that carries a name and a value reaches the registry here, and every
+/// call that carries one goes through the four-argument form above.
+///
+/// Target only: the calls that carry two windows are the ones the trap path
+/// hands a caller's memory to, and a host has no trap path.
+#[cfg(target_os = "none")]
+fn through_registry_with(
+    context: &mut syscall::SyscallContext,
+    path: Option<&str>,
+    second_path: Option<&str>,
+    buffer: Option<&mut [u8]>,
+    second_buffer: Option<&[u8]>,
+) -> arch::CallOutcome {
+    let mut arguments = crate::syscall::Arguments {
+        context,
+        path,
+        second_path,
+        buffer,
+        second_buffer,
+    };
+    finish_registry_call(&mut arguments)
+}
+
+/// Serve one call and act on its outcome.
+///
+/// The wake and the yield are here rather than in a handler because a handler
+/// runs with the registry's lock held, and the scheduler's lock is one a parked
+/// task holds while it re-checks its fact: a wake from inside one is a lock
+/// order two CPUs can invert.  Both entry points above end here so the two
+/// copies of that rule cannot drift.
+#[cfg(target_os = "none")]
+fn finish_registry_call(arguments: &mut crate::syscall::Arguments<'_>) -> arch::CallOutcome {
+    match crate::syscall::serve(arguments) {
         Some(Ok(dispatch)) => {
             // A call that made something a parked task waits for wakes
             // **here**, after the registry's lock is gone: a handler runs with

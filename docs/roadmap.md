@@ -1242,11 +1242,19 @@ each unblocks rather than by size.
    tree's `exec` replaces the image and keeps every descriptor, so accepting the
    bit would record a promise nothing keeps.
 
-   What is left on this row is `Poll`, `SetFdFlags` and the eleven xattr,
-   file-flag, access and permission calls.  The xattr four are the only ones
-   with a shape still missing: every filesystem that has them already
-   implements them, and what this ABI lacks is the packed list `ListXattr`
-   returns.
+   **The four extended-attribute calls have landed**, and the shape they
+   needed is `fs_abi::XattrEntryRecord`: a fixed header with the name's and the
+   value's lengths and offsets, then the variable bytes, with both offsets
+   measured from the record's own start so a caller can walk a buffer it did not
+   write.  It mirrors `DirectoryEntryRecord` deliberately.  Every filesystem that
+   has extended attributes already implemented them, so what this change added
+   is the encoding and the three branches over a path, plus the one branch that
+   names two user buffers.
+
+   What is left on this row is `Poll`, `SetFdFlags` and the six access and
+   permission calls, and none of the seven needs a new shape: the access
+   machinery and the permission records exist in `fs`, and what they lack is a
+   caller.
 2. **Shared memory**, `ShmGet`, `ShmAt`, `ShmDt`, `ShmCtl`.  Two processes
    naming one region, which is a decision about the address space and not
    wiring.

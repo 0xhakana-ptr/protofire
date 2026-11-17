@@ -125,6 +125,7 @@ fn open_as(identity: u32) -> bool {
         path: Some(BOOT_GREETING_PATH),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
 
     match crate::syscall::serve(&mut arguments) {

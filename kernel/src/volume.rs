@@ -456,6 +456,7 @@ pub fn read_greeting_through_syscall() -> bool {
         path: Some(BOOT_VOLUME_PATH),
         second_path: None,
         buffer: None,
+        second_buffer: None,
     };
     // Through the installed registry, not a table this function was handed.
     // The boot's own read is the first call served by the static the boot
@@ -477,6 +478,7 @@ pub fn read_greeting_through_syscall() -> bool {
         path: None,
         second_path: None,
         buffer: Some(&mut buffer),
+        second_buffer: None,
     };
     let read_ok = match crate::syscall::serve(&mut arguments) {
         Some(Ok(dispatch)) => {

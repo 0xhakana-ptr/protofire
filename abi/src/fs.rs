@@ -142,6 +142,54 @@ pub const XATTR_NAME_MAX: usize = 64;
 /// Maximum byte length of an xattr value.
 pub const XATTR_VALUE_MAX: usize = 256;
 
+/// The fixed-size header of one packed extended attribute.
+///
+/// `ListXattr` fills a caller's buffer with a run of these, each followed by
+/// its own name bytes and then its own value bytes.  The two offsets are **from
+/// the start of this record** rather than from the start of the buffer, which
+/// is what makes a record readable without knowing where in the buffer it sits:
+/// a caller walking the list reads one header, advances by [`Self::total_len`],
+/// and is at the next one.
+///
+/// The shape deliberately mirrors [`DirectoryEntryRecord`]: a header carrying
+/// the two lengths and the two offsets, then the variable bytes.  A reader who
+/// has walked one listing has walked this.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct XattrEntryRecord {
+    /// Where this record's name bytes begin, from the record's own start.
+    pub name_offset: usize,
+    /// How many name bytes there are.
+    pub name_len: usize,
+    /// Where this record's value bytes begin, from the record's own start.
+    pub value_offset: usize,
+    /// How many value bytes there are.
+    pub value_len: usize,
+}
+
+impl XattrEntryRecord {
+    pub const fn new(name_len: usize, value_len: usize) -> Self {
+        Self {
+            name_offset: XATTR_ENTRY_RECORD_SIZE,
+            name_len,
+            value_offset: XATTR_ENTRY_RECORD_SIZE + name_len,
+            value_len,
+        }
+    }
+
+    /// The whole record's length: the header, the name and the value.
+    pub const fn total_len(&self) -> usize {
+        self.value_offset + self.value_len
+    }
+}
+
+pub const XATTR_ENTRY_RECORD_SIZE: usize = size_of::<XattrEntryRecord>();
+pub const XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET: usize = offset_of!(XattrEntryRecord, name_offset);
+pub const XATTR_ENTRY_RECORD_NAME_LEN_OFFSET: usize = offset_of!(XattrEntryRecord, name_len);
+pub const XATTR_ENTRY_RECORD_VALUE_OFFSET_OFFSET: usize =
+    offset_of!(XattrEntryRecord, value_offset);
+pub const XATTR_ENTRY_RECORD_VALUE_LEN_OFFSET: usize = offset_of!(XattrEntryRecord, value_len);
+
 // Open flags
 //
 // A program passes one of these as `open`'s second argument and the kernel
@@ -430,6 +478,12 @@ mod tests {
     use crate::fs::PERMISSION_METADATA_RECORD_OWNER_UID_OFFSET;
     use crate::fs::PERMISSION_METADATA_RECORD_RESERVED_OFFSET;
     use crate::fs::PERMISSION_METADATA_RECORD_SIZE;
+    use crate::fs::XATTR_ENTRY_RECORD_NAME_LEN_OFFSET;
+    use crate::fs::XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET;
+    use crate::fs::XATTR_ENTRY_RECORD_SIZE;
+    use crate::fs::XATTR_ENTRY_RECORD_VALUE_LEN_OFFSET;
+    use crate::fs::XATTR_ENTRY_RECORD_VALUE_OFFSET_OFFSET;
+    use crate::fs::XattrEntryRecord;
 
     #[test]
     fn file_kind_values_are_stable() {
@@ -557,6 +611,53 @@ mod tests {
         assert_eq!(record.name_offset, DIRECTORY_ENTRY_RECORD_SIZE);
         assert_eq!(record.name_len, 5);
         assert_eq!(record.size, 3);
+    }
+
+    /// An xattr record's header, and the arithmetic a caller walks it with.
+    ///
+    /// The two offsets are relative to the record, which is the whole reason
+    /// this type exists: a caller reading the third entry of a listing has no
+    /// idea where in the buffer it starts, and an offset from the buffer's
+    /// start would only be meaningful to the writer.  The walk is asserted here
+    /// because it is the property a reader relies on: the next record begins
+    /// exactly where `total_len` says.
+    #[test]
+    fn xattr_entry_record_packs_its_name_then_its_value() {
+        assert_eq!(
+            XATTR_ENTRY_RECORD_SIZE,
+            core::mem::size_of::<XattrEntryRecord>()
+        );
+        assert_eq!(XATTR_ENTRY_RECORD_SIZE, core::mem::size_of::<usize>() * 4);
+        assert_eq!(XATTR_ENTRY_RECORD_NAME_OFFSET_OFFSET, 0);
+        assert_eq!(
+            XATTR_ENTRY_RECORD_NAME_LEN_OFFSET,
+            core::mem::size_of::<usize>()
+        );
+        assert_eq!(
+            XATTR_ENTRY_RECORD_VALUE_OFFSET_OFFSET,
+            core::mem::size_of::<usize>() * 2
+        );
+        assert_eq!(
+            XATTR_ENTRY_RECORD_VALUE_LEN_OFFSET,
+            core::mem::size_of::<usize>() * 3
+        );
+
+        let record = XattrEntryRecord::new(4, 6);
+        assert_eq!(record.name_offset, XATTR_ENTRY_RECORD_SIZE);
+        assert_eq!(record.name_len, 4);
+        assert_eq!(record.value_offset, XATTR_ENTRY_RECORD_SIZE + 4);
+        assert_eq!(record.value_len, 6);
+        assert_eq!(
+            record.total_len(),
+            XATTR_ENTRY_RECORD_SIZE + 4 + 6,
+            "the next record starts exactly past the value"
+        );
+
+        // An empty value is a record whose value is zero bytes, not an absent
+        // one: an attribute can be set with no value, and a reader that treated
+        // `value_len == 0` as "no record" would lose it.
+        let empty = XattrEntryRecord::new(4, 0);
+        assert_eq!(empty.total_len(), XATTR_ENTRY_RECORD_SIZE + 4);
     }
 
     /// The open flags keep their values, and the known set covers exactly them.

@@ -13,6 +13,7 @@ use super::PROGRAM_OUTPUT;
 use super::copy_user_path;
 use super::stat_kind_name;
 use super::through_registry;
+use super::through_registry_with;
 
 pub(crate) fn serve_io(
     call: arch::CallFrame,
@@ -925,6 +926,164 @@ pub(crate) fn serve_io(
             arch::serial::write_u32(answer as u32);
             arch::serial::write_str("\n");
         }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::SetXattr as usize {
+        // `SetXattr(path, name, name_len, value, value_len)`: three user
+        // windows in one call, which is why this is the branch that names both
+        // of the registry's buffer slots.  The name goes in the mutable slot
+        // and the value in the read-only one; the handler reads the name and
+        // never writes either.
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        };
+        let name = call.arguments[1];
+        let name_length = call.arguments[2];
+        if !crate::address_space::is_user_range(name, name_length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let value = call.arguments[3];
+        let value_length = call.arguments[4];
+        if !crate::address_space::is_user_range(value, value_length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        // SAFETY: both ranges are inside the user window, which
+        // `is_user_range` checked, and the pages behind them are the calling
+        // task's own mappings, installed on this CPU.  The handler reads both
+        // and writes neither.
+        let name = unsafe { core::slice::from_raw_parts_mut(name as *mut u8, name_length) };
+        let value = unsafe { core::slice::from_raw_parts(value as *const u8, value_length) };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome =
+            through_registry_with(&mut context, Some(path), None, Some(name), Some(value));
+        if matches!(outcome, CallOutcome::Return(0)) {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" set an attribute, ");
+            arch::serial::write_u32(name_length as u32);
+            arch::serial::write_str(" byte name, ");
+            arch::serial::write_u32(value_length as u32);
+            arch::serial::write_str(" byte value\n");
+        }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::GetXattr as usize {
+        // `GetXattr(path, name, name_len, buffer, length)`: the name is the
+        // read-only second slot and the destination is the mutable first one.
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        };
+        let name = call.arguments[1];
+        let name_length = call.arguments[2];
+        if !crate::address_space::is_user_range(name, name_length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let destination = call.arguments[3];
+        let length = call.arguments[4];
+        if !crate::address_space::is_user_range(destination, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        // SAFETY: both ranges are inside the user window, which
+        // `is_user_range` checked, and the pages behind them are the calling
+        // task's own mappings.  The handler writes the destination and reads
+        // the name.
+        let name = unsafe { core::slice::from_raw_parts(name as *const u8, name_length) };
+        let destination =
+            unsafe { core::slice::from_raw_parts_mut(destination as *mut u8, length) };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry_with(
+            &mut context,
+            Some(path),
+            None,
+            Some(destination),
+            Some(name),
+        );
+        if let CallOutcome::Return(read) = outcome
+            && !abi::syscall::is_error_status(read)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" read attribute, ");
+            arch::serial::write_u32(read as u32);
+            arch::serial::write_str(" byte value\n");
+        }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::ListXattr as usize {
+        // `ListXattr(path, buffer, length)`: the packed list goes into one
+        // buffer, and its length is the answer.
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        };
+        let buffer = call.arguments[1];
+        let length = call.arguments[2];
+        if !crate::address_space::is_user_range(buffer, length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        // SAFETY: the range is inside the user window, which `is_user_range`
+        // checked, and the pages behind it are the calling task's own
+        // mappings.  The handler writes the packed list and nothing past it.
+        let destination = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u8, length) };
+        let outcome = through_registry(&mut context, Some(path), None, Some(destination));
+        if let CallOutcome::Return(filled) = outcome
+            && !abi::syscall::is_error_status(filled)
+        {
+            arch::serial::write_str("protofire: process ");
+            arch::serial::write_u32(crate::scheduler::current_pid().unwrap_or(0));
+            arch::serial::write_str(" listed attributes, ");
+            arch::serial::write_u32(filled as u32);
+            arch::serial::write_str(" packed byte(s)\n");
+        }
+        return Some(outcome);
+    }
+    if number == SyscallNumber::RemoveXattr as usize {
+        // `RemoveXattr(path, name, name_len)`: the name is the only buffer.
+        let mut path_bytes = [0u8; OPEN_PATH_MAX];
+        let Ok(path) = copy_user_path(call.arguments[0], &mut path_bytes) else {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        };
+        let name = call.arguments[1];
+        let name_length = call.arguments[2];
+        if !crate::address_space::is_user_range(name, name_length) {
+            return Some(CallOutcome::Return(abi::syscall::encode_error(
+                abi::Error::InvalidArgument,
+            )));
+        }
+        // SAFETY: the range is inside the user window and the handler only
+        // reads it.
+        let name = unsafe { core::slice::from_raw_parts_mut(name as *mut u8, name_length) };
+        let mut context = syscall::SyscallContext::new(number, call.arguments)
+            .with_identity(security::mac::MAC_TYPE_SYSTEM)
+            .with_caller(crate::scheduler::current_pid().unwrap_or(crate::programs::BOOT_PROCESS));
+        let outcome = through_registry(&mut context, Some(path), None, Some(name));
         return Some(outcome);
     }
     if number == SyscallNumber::Stat as usize {

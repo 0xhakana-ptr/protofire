@@ -571,6 +571,157 @@ pub fn fcntl(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<
     }
 }
 
+/// Attach an extended attribute to a path.
+///
+/// Arguments: the path, the value, the value's length, then three reserved
+/// slots that must be zero.  The **name** is the call's second buffer, which
+/// the trap path copies in beside the path; its length is the first of the
+/// three reserved slots, so the two variable-length strings are named
+/// separately and neither is inferred from the other's terminator.
+///
+/// Answers zero.
+///
+/// The two maxima are checked here rather than at the node: a name longer than
+/// [`fs_abi::XATTR_NAME_MAX`] is a caller that must be told no the same way
+/// whichever filesystem answers, and a value past
+/// [`fs_abi::XATTR_VALUE_MAX`] would otherwise be refused by some volumes and
+/// stored by others.
+pub fn set_xattr(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let name = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    let value = arguments.second_buffer.ok_or(Error::InvalidArgument)?;
+    // Five arguments are used: the path, the name, its length, the value and
+    // its length.  The reserved tail starts after the fifth.
+    validate_zeroed_args(arguments.context, 5)?;
+
+    if name.is_empty() || name.len() > fs_abi::XATTR_NAME_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    if value.len() > fs_abi::XATTR_VALUE_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    let (filesystem, relative) = namespace.resolve(&resolved)?;
+    filesystem.set_xattr(&relative, name, value)?;
+    Ok(Dispatch::complete(0))
+}
+
+/// The value of one extended attribute on a path.
+///
+/// Arguments: the path, the destination buffer, its length, then three
+/// reserved slots that must be zero.  The **name** is the call's second
+/// buffer, the read-only one beside the path.  Answers how many value bytes the
+/// destination holds.
+///
+/// A buffer too small is `InvalidArgument` rather than a truncated answer: a
+/// caller that sized its buffer from a previous call and got a longer value
+/// must be told, not handed half of it.  An attribute that is not there is
+/// `NotFound`, which is what a caller sizes its buffer against.
+pub fn get_xattr(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let name = arguments.second_buffer.ok_or(Error::InvalidArgument)?;
+    // Five arguments: the path, the name, its length, the destination and its
+    // length.  The reserved tail starts after the fifth.
+    validate_zeroed_args(arguments.context, 5)?;
+    if name.is_empty() || name.len() > fs_abi::XATTR_NAME_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let destination = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    let (filesystem, relative) = namespace.resolve(&resolved)?;
+    let value = filesystem
+        .get_xattr(&relative, name)?
+        .ok_or(Error::NotFound)?;
+    if value.len() > destination.len() {
+        return Err(Error::InvalidArgument);
+    }
+    let length = value.len();
+    destination[..length].copy_from_slice(&value);
+    Ok(Dispatch::complete(length))
+}
+
+/// List every extended attribute on a path, packed.
+///
+/// Arguments: the path, the buffer, its length, then three reserved slots that
+/// must be zero.  Answers how many bytes of the buffer the packed list fills.
+///
+/// The packing is [`fs_abi::XattrEntryRecord`]'s: a run of headers, each
+/// followed by its own name and then its own value, with both offsets measured
+/// from the record's own start.  A caller walks the list by reading one header
+/// and advancing by its `total_len`.
+///
+/// A buffer too small for the whole list is `InvalidArgument` rather than a
+/// prefix: a caller that got half a list could not tell a truncated answer from
+/// a short one.
+pub fn list_xattr(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    // Three arguments: the path, the buffer and its length.
+    validate_zeroed_args(arguments.context, 3)?;
+    let destination = arguments
+        .buffer
+        .as_deref_mut()
+        .ok_or(Error::InvalidArgument)?;
+
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    let (filesystem, relative) = namespace.resolve(&resolved)?;
+    let entries = filesystem.list_xattrs(&relative)?;
+
+    let mut at = 0usize;
+    for entry in entries {
+        let record = fs_abi::XattrEntryRecord::new(entry.name.len(), entry.value.len());
+        let total = record.total_len();
+        if at + total > destination.len() {
+            return Err(Error::InvalidArgument);
+        }
+        let mut header = at;
+        for word in [
+            record.name_offset,
+            record.name_len,
+            record.value_offset,
+            record.value_len,
+        ] {
+            destination[header..header + 8].copy_from_slice(&word.to_le_bytes());
+            header += 8;
+        }
+        let name_at = at + record.name_offset;
+        destination[name_at..name_at + record.name_len].copy_from_slice(&entry.name);
+        let value_at = at + record.value_offset;
+        destination[value_at..value_at + record.value_len].copy_from_slice(&entry.value);
+        at += total;
+    }
+    Ok(Dispatch::complete(at))
+}
+
+/// Remove one extended attribute from a path.
+///
+/// Arguments: the path, the name, then four reserved slots that must be zero.
+/// Answers zero.
+///
+/// Removing an attribute that is not there is `NotFound` rather than a no-op:
+/// the caller asked to make something go away, and "it was not there" is the
+/// answer it needs to tell from "it is gone now".
+pub fn remove_xattr(table: &mut SyscallTable, arguments: &mut Arguments<'_>) -> Result<Dispatch> {
+    let path = arguments.path.ok_or(Error::InvalidArgument)?;
+    let name = arguments.buffer.as_deref().ok_or(Error::InvalidArgument)?;
+    // Three arguments: the path, the name and its length.
+    validate_zeroed_args(arguments.context, 3)?;
+    if name.is_empty() || name.len() > fs_abi::XATTR_NAME_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let namespace = table.namespace().ok_or(Error::NotFound)?;
+    let resolved = fs::path::normalize_path(path, "/")?;
+    let (filesystem, relative) = namespace.resolve(&resolved)?;
+    filesystem.remove_xattr(&relative, name)?;
+    Ok(Dispatch::complete(0))
+}
+
 /// Report a path's kind and size.
 ///
 /// Arguments: the path, the record, its length, then three reserved slots

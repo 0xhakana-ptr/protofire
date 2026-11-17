@@ -3574,9 +3574,19 @@ mod tests {
 
     use super::KeyboardQueue;
 
+    /// The lock the three tests take, because they share one `static`.
+    ///
+    /// `KeyboardQueue` is the kernel's own queue and not a fixture, so all
+    /// three tests clear, inject into and drain the same bytes.  Measured, a
+    /// boot's test run failed `a_full_queue_drops` with 19 bytes instead of 64:
+    /// the other two tests had drained what this one filled.  The lock is what
+    /// makes each test see the queue it built.
+    static QUEUE: spin::Mutex<()> = spin::Mutex::new(());
+
     /// A queue injected into answers what was put in, in order.
     #[test]
     fn the_queue_answers_what_was_injected() {
+        let _queue = QUEUE.lock();
         KeyboardQueue::clear();
         KeyboardQueue::inject(0x1E);
         KeyboardQueue::inject(0x9E);
@@ -3589,6 +3599,7 @@ mod tests {
     /// `ReadConsole` gave before there was a keyboard at all.
     #[test]
     fn an_empty_queue_answers_nothing() {
+        let _queue = QUEUE.lock();
         KeyboardQueue::clear();
         assert_eq!(KeyboardQueue::take(), None);
     }
@@ -3599,6 +3610,7 @@ mod tests {
     /// exhaustion instead.
     #[test]
     fn a_full_queue_drops() {
+        let _queue = QUEUE.lock();
         KeyboardQueue::clear();
         // Sixty-four bytes hold; the sixty-fifth is dropped, and the reads
         // still answer the sixty-four that were kept, in order.

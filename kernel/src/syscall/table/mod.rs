@@ -73,6 +73,15 @@ pub struct Arguments<'a> {
     pub second_path: Option<&'a str>,
     /// The buffer `read` was given, when this is a `read`.
     pub buffer: Option<&'a mut [u8]>,
+    /// A second buffer, for the one call that names two of them.
+    ///
+    /// `SetXattr` takes a name and a value, and both are in the caller's
+    /// memory.  A separate slot rather than a pair packed into
+    /// [`Self::buffer`], for the reason [`Self::second_path`] is separate from
+    /// [`Self::path`]: the call that needs two is one call, and a handler that
+    /// reached into a list for its second slice could not say from its
+    /// signature whether it had one.
+    pub second_buffer: Option<&'a [u8]>,
 }
 
 impl<'a> Arguments<'a> {
@@ -83,6 +92,7 @@ impl<'a> Arguments<'a> {
             path: None,
             second_path: None,
             buffer: None,
+            second_buffer: None,
         }
     }
 }

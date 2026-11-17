@@ -302,6 +302,25 @@ fn install_registry(namespace: fs::MountTable) {
     // `F_DUPFD`, the two per-descriptor flags, the two status flags, and the
     // two pipe-capacity commands.
     table.register(::syscall::SyscallNumber::Fcntl, crate::syscall::fcntl);
+    // The four extended-attribute calls.  Every filesystem that has them
+    // already implements them; what was missing was the packed list this ABI
+    // now names in `fs_abi::XattrEntryRecord`.
+    table.register(
+        ::syscall::SyscallNumber::SetXattr,
+        crate::syscall::set_xattr,
+    );
+    table.register(
+        ::syscall::SyscallNumber::GetXattr,
+        crate::syscall::get_xattr,
+    );
+    table.register(
+        ::syscall::SyscallNumber::ListXattr,
+        crate::syscall::list_xattr,
+    );
+    table.register(
+        ::syscall::SyscallNumber::RemoveXattr,
+        crate::syscall::remove_xattr,
+    );
     // The truncate.  A number the ABI froze at twenty and this table served
     // nothing for until now: `VNode::set_len` existed and no program could
     // reach it, which is the whole of what that gap was.

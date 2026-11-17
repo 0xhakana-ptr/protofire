@@ -108,6 +108,44 @@ answering the floor itself.  Measured, making `duplicate_from_for` search from
 zero instead of from the floor made the floor assertion fail with `left: 1,
 right: 7`.
 
+**The four extended-attribute calls** are served on the same row, and they
+needed the one thing this ABI genuinely lacked: a wire format for `ListXattr`'s
+packed answer.  `fs_abi::XattrEntryRecord` is it, and its shape is
+`DirectoryEntryRecord`'s: a fixed header carrying the name's and the value's
+lengths and offsets, then the variable bytes.  The two offsets are measured from
+the **record's own start**, which is what makes a record readable without
+knowing where in the buffer it sits -- a caller walking the list reads one
+header and advances by `total_len`.
+
+Every filesystem that has extended attributes already implemented them, so the
+handlers are the three branches over a path: set takes the name in the mutable
+buffer slot and the value in the read-only one, the only call that names both;
+get takes them the other way round, with the destination mutable and the name
+read-only; list packs; remove names one.  The limits are the ABI's rather than
+the volume's, so a name past `XATTR_NAME_MAX` is refused the same way whichever
+filesystem would have stored it.
+
+The evidence is three exact gate lines, and each number is arithmetic only a
+correct path reaches:
+
+```
+protofire: process 1 set an attribute, 9 byte name, 5 byte value
+protofire: process 1 read attribute, 5 byte value
+protofire: process 1 listed attributes, 46 packed byte(s)
+```
+
+`9` is `user.motd` without its terminator, `5` is `hello`, and `46` is
+thirty-two bytes of record header plus the nine name bytes plus the five value
+bytes.  Measured, packing the record with a zero value length stopped the boot:
+the program's own size check exited 251 before the lines after it could run.
+
+Passing `buffer.len()` where the name's length belonged was the defect this
+work found in itself, and it is worth recording because the symptom named
+nothing: `insist` answers any error with exit 200, so the boot reported a
+program that ended at 200 with no line saying why.  The name is a map key and a
+key with a trailing zero is a different key, which is why the wrapper subtracts
+the terminator and the kernel reads exactly the bytes it is told about.
+
 The pipe's reader also calls `WaitProcess` after its end-of-file read, and the
 gate requires the kernel's own `a wait answered status ` line on all three
 machines: the guard, the park's retry contract and the exit's wake are on a
