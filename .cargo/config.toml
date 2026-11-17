@@ -64,3 +64,31 @@ rustflags = [
     "-C", "relocation-model=static",
     "-C", "link-arg=-Tarch/riscv64/linker-riscv64.ld",
 ]
+
+# ## The registry, from the tree instead of from crates.io
+#
+# 25 crates in `Cargo.lock` come from the registry, and every gate runs
+# `cargo ... --offline`.  On a machine whose `~/.cargo` cache is warm those
+# flags pass; on a clone that has never built this tree they fail at the first
+# resolve, with `attempting to make an HTTP request, but --offline was
+# specified`.  A competition or CI runner with no network is therefore a build
+# that never starts, and the `--offline` in the gate was reading as a property
+# of the build when it was a property of one machine's cache.
+#
+# `vendor/` is those crates' sources, produced by `cargo vendor --versioned-dirs
+# vendor` and committed.  The two stanzas below are what makes cargo read them:
+# every `crates.io` dependency is satisfied from the directory, so a fresh
+# clone with an empty `CARGO_HOME` resolves and builds with no network at all.
+#
+# What this costs is 27 MiB and one directory of sources that nobody reads.
+# What it buys is that `sh scripts/verify.sh p3` means the same thing on a
+# machine that has never seen this tree, which is the only version of the gate
+# a contributor can trust.  Re-run `cargo vendor --versioned-dirs vendor` and
+# commit the result when a dependency changes; `cargo` names the crates whose
+# checksums no longer match, and a vendor directory that disagrees with the
+# lockfile fails the build rather than silently using the old sources.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

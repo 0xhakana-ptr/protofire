@@ -39,6 +39,22 @@
 !.rustfmt.toml
 
 #
+# The vendored registry sources, and everything in them.
+#
+# `.*` above is the rule that hides a dotfile, and it is right for this tree's
+# own files.  A vendor directory is different: `cargo vendor` writes
+# `.cargo-checksum.json` beside every crate, and cargo **requires** that file to
+# trust the sources, so hiding it makes the vendored tree unusable.  Some
+# crates also bring `.cargo_vcs_info.json` and a `.github/`.
+#
+# `check-ignored-files.sh` is what found this.  An untracked directory whose
+# contents are ignored is invisible to `git add -A`, so the vendor directory
+# would have been committed almost empty and `--offline` would have failed on a
+# clone exactly as it did before the directory existed.
+!/vendor/
+!/vendor/**
+
+#
 # Editors and agents
 #
 # '__pycache__/' is the case the kernel's first guard rail does not cover: it

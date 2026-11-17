@@ -72,6 +72,10 @@ census() {
         -not -path './target/*' \
         -not -path './arch/*' \
         -not -path './.git/*' \
+        `# vendor/ is cargo's source, not this tree's: a crates.io package's` \
+        `# own target_arch gates are a fact about that package, and this` \
+        `# census is about the crates this tree writes.` \
+        -not -path './vendor/*' \
         | sort | while read -r file; do
         rel="${file#./}"
         count="$(awk '

@@ -91,11 +91,16 @@ its severity, and the order they should land.
   free, which is the address-space activation path.  Nothing in this boot
   execs more than once, and Level 9 is where repeated exec becomes real.
 
-The engineering findings are in the same place: the gates' `--offline` cannot
-work on a clone with no vendor directory and a cold cargo cache, and the two
-documents that had drifted (this file's sibling counts, and
-`kernel/src/syscall/mod.rs`) are the evidence that `check-docs.sh` resolves
-paths and not prose.
+**Engineering.**
+
+- **The gates' `--offline` could not work on a fresh clone.**  Both documents
+  that had drifted are fixed and the two drifts are the evidence that
+  `check-docs.sh` resolves paths and not prose.  The build side is fixed too:
+  `vendor/` carries the 25 registry crates and `.cargo/config.toml` points
+  `crates.io` at it, which was verified with an empty `CARGO_HOME` and no
+  network resolving, building and compiling every test binary.  `vendor/README.md`
+  says how to regenerate it.  See `docs/roadmap.md`'s Level 7.5 for why the
+  `.gitignore` had to learn about it.
 
 ## What every machine does
 

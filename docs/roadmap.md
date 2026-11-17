@@ -1470,11 +1470,22 @@ commands makes repeated exec real and makes the argument testable.
 
 **The engineering problems, which are not kernel defects and are not smaller.**
 
-- **`cargo --offline` cannot work on a fresh clone.** There is no `vendor/`,
-  and 25 of the lockfile's packages come from the registry.  The gates all pass
-  `--offline`, so they pass on a machine whose `~/.cargo` cache is warm and fail
-  on one that has never built this tree.  A competition or CI runner with no
-  network is a build that never starts.
+- **`cargo --offline` cannot work on a fresh clone.  Fixed.**  There was no
+  `vendor/`, and 25 of the lockfile's packages come from the registry, so the
+  gates' `--offline` passed on a machine whose `~/.cargo` cache was warm and
+  failed on one that had never built this tree: `attempting to make an HTTP
+  request, but --offline was specified`, at the first resolve.  The tree now
+  carries `vendor/` (27 MiB, 25 crate sources) and `.cargo/config.toml` replaces
+  `crates.io` with it, which is verified the way the finding was made: with
+  `CARGO_HOME` pointed at an empty directory and no network, `cargo metadata
+  --offline` resolves and `cargo build --offline --workspace` builds.
+
+  The `.gitignore` found this one, and that is worth recording.  `.*` hides
+  every dotfile, `cargo vendor` writes `.cargo-checksum.json` beside every
+  crate, and the vendor directory was untracked, so `git add -A` would have
+  committed 953 files that did not include any checksum; `cargo` then refuses
+  the sources it cannot verify, and the directory would have been present and
+  useless.  `check-ignored-files.sh` names exactly this case in its own header.
 - **Two documents have drifted, and `check-docs.sh` cannot see it.**
   `kernel/src/syscall/mod.rs` says "Thirty-one numbers" where the boot
   registers 88, and this file said "147,731 lines of Rust across 40 crates"

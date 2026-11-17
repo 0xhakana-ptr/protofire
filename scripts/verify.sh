@@ -118,8 +118,16 @@ check_source_headers() {
         else
             printf 'header runs into the body: %s\n' "$file" >&2
         fi
+    # `vendor/` is excluded, and the exclusion is the exception that proves the
+    # rule rather than a hole in it.  The header rule is about **this tree's**
+    # files: line 1 names the file's own path so a reader who finds it in
+    # isolation knows where it came from.  A vendored crate's source is not this
+    # tree's, it is cargo's, and its `.cargo-checksum.json` is a hash of the
+    # bytes: rewriting a vendored file's header makes cargo reject the source it
+    # cannot verify, so the exemption is what keeps the directory usable at all.
+    # The rule still fires on everything a contributor writes.
     done <<EOF
-$(find . -name '*.rs' -not -path './target/*' | sed 's|^\./||' | sort)
+$(find . -name '*.rs' -not -path './target/*' -not -path './vendor/*' | sed 's|^\./||' | sort)
 EOF
     printf 'check_source_headers: path=%d blank=%d separated=%d total=%d\n' \
         "$path_ok" "$blank_ok" "$separated_ok" "$total"

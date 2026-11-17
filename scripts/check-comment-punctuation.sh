@@ -67,6 +67,14 @@ for file in $(git ls-files '*.rs' '*.md'); do
         # this is the one exemption, named rather than pattern-matched so a
         # second file cannot join it quietly.
         docs/fmts/comments.md) continue ;;
+        # `vendor/` is cargo's, not this tree's.  Those bytes are hashed by the
+        # `.cargo-checksum.json` beside each crate, so editing a vendored file
+        # to satisfy a style rule makes cargo reject a source it cannot verify:
+        # the rule and the vendored directory cannot both be obeyed, and the
+        # directory is what makes `--offline` mean anything on a fresh clone.
+        # The exemption is the directory, not a file, so a contributor's file
+        # cannot borrow it.
+        vendor/*) continue ;;
     esac
 
     # 1. The em dash, anywhere.
